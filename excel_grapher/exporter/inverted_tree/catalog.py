@@ -6,6 +6,7 @@ import warnings
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastpyxl.utils.cell import get_column_letter
@@ -34,6 +35,7 @@ from excel_grapher.series_bindings.graph_predicates import (
     is_graph_leaf,
 )
 from excel_grapher.series_bindings.normalize import (
+    effective_dimension_id,
     effective_validation,
     has_constant_direction,
     has_input_direction,
@@ -140,6 +142,7 @@ class BoundSeries:
     _key_axis_cache: dict[str, Literal["sheet", "row", "col"] | None] = field(
         init=False, repr=False, compare=False
     )
+    _dimension_binds: Mapping[str, Mapping[str, Any]] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -150,6 +153,11 @@ class BoundSeries:
         object.__setattr__(self, "_rect", _dense_rect(self.cells))
         object.__setattr__(self, "_holes_by_index", {hole.index: hole for hole in self.holes})
         object.__setattr__(self, "_key_axis_cache", {})
+        object.__setattr__(
+            self,
+            "_dimension_binds",
+            MappingProxyType(_collect_dimension_binds(self.raw)),
+        )
 
     @property
     def is_scalar(self) -> bool:
@@ -183,6 +191,25 @@ class BoundSeries:
     def index_of(self, address: CanonicalAddress) -> int | None:
         """Return the 0-based index of canonical `address` in `cells`, if present."""
         return self._cell_indices.get(address)
+
+    def dimension_bind(self, field: str) -> Mapping[str, Any] | None:
+        """Return the declared bind mapping for `field`, if any."""
+        return self._dimension_binds.get(field)
+
+    def dimension_binds(self) -> Mapping[str, Mapping[str, Any]]:
+        """Declared dimension and attribute bind mappings for this series.
+
+        Bind mappings are series-level. Per-cell coordinates live on `domain`
+        and `key_point_for`. Measure binds are not included.
+        """
+        return self._dimension_binds
+
+    def key_point_for(self, address: CanonicalAddress) -> KeyPoint | None:
+        """Return resolved key coordinates for `address`, if this series owns it."""
+        index = self.index_of(address)
+        if index is None or index >= len(self.domain):
+            return None
+        return self.domain[index]
 
     @property
     def hole_indices(self) -> tuple[int, ...]:
@@ -496,6 +523,11 @@ class SeriesCatalog:
     `schedule` is built once in `build_catalog` (and copied by
     `partition_catalog`). Join coordinates are a catalog property, not a
     lazily cached attribute of scheduling.
+
+    Graph node identity stays `CellKey`. Use `key_point_for` and `binds_for`
+    to reach per-cell key coordinates and series-level dimension binds
+    without copying them onto `Node.metadata`. Unbound cells return `None`;
+    `require_key_point_for` / `require_binds_for` fail closed.
     """
 
     series: dict[str, BoundSeries]
@@ -522,6 +554,38 @@ class SeriesCatalog:
     def require_series_for(self, address: CanonicalAddress) -> BoundSeries:
         """Return the series owning `address`, or fail closed."""
         found = self.series_for(address)
+        if found is None:
+            raise InvertedTreeExportError(f"cell {address} is not in any bound series")
+        return found
+
+    def key_point_for(self, address: CanonicalAddress) -> KeyPoint | None:
+        """Return resolved key coordinates for `address`, or `None` if unbound."""
+        series = self.series_for(address)
+        if series is None:
+            return None
+        return series.key_point_for(address)
+
+    def require_key_point_for(self, address: CanonicalAddress) -> KeyPoint:
+        """Return resolved key coordinates for `address`, or fail closed."""
+        found = self.key_point_for(address)
+        if found is None:
+            raise InvertedTreeExportError(f"cell {address} has no key point")
+        return found
+
+    def binds_for(self, address: CanonicalAddress) -> Mapping[str, Mapping[str, Any]] | None:
+        """Return series-level dimension binds for the owner of `address`.
+
+        `None` when `address` is not in any bound series. An empty mapping when
+        the series declares no dimension or attribute binds.
+        """
+        series = self.series_for(address)
+        if series is None:
+            return None
+        return series.dimension_binds()
+
+    def require_binds_for(self, address: CanonicalAddress) -> Mapping[str, Mapping[str, Any]]:
+        """Return dimension binds for `address`, or fail closed."""
+        found = self.binds_for(address)
         if found is None:
             raise InvertedTreeExportError(f"cell {address} is not in any bound series")
         return found
@@ -587,6 +651,27 @@ def _dtype_of(entry: Mapping[str, Any]) -> str:
 def _key_fields_of(entry: Mapping[str, Any]) -> tuple[str, ...]:
     keys = entry.get("key") or []
     return tuple(str(k) for k in keys)
+
+
+def _collect_dimension_binds(raw: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
+    """Return declared dimension/attribute bind mappings keyed by field id."""
+    structure = raw.get("structure") or {}
+    if not isinstance(structure, Mapping):
+        return {}
+    found: dict[str, Mapping[str, Any]] = {}
+    for component in (
+        *(structure.get("dimensions") or []),
+        *(structure.get("attributes") or []),
+    ):
+        if not isinstance(component, dict):
+            continue
+        field = effective_dimension_id(component)
+        if not field or field in found:
+            continue
+        bind = component.get("bind")
+        if isinstance(bind, dict):
+            found[field] = bind
+    return found
 
 
 def _compute_name_of(entry: Mapping[str, Any], series_id: str) -> str | None:

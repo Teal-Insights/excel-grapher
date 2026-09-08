@@ -969,6 +969,25 @@ with CodeGenerator(graph) as gen:
     )
 ```
 
+Graph identity stays `CellKey`. To reach dimension binds and key coordinates
+from a node, use `SeriesCatalog` (do not copy them onto `Node.metadata`):
+
+```python
+from excel_grapher.exporter.inverted_tree.catalog import build_catalog
+
+catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+node = graph.get_node("Inputs!B10")
+key_point = catalog.key_point_for(node.key)  # KeyPoint | None
+binds = catalog.binds_for(node.key)  # series-level bind mappings | None
+
+# Thin adapters on Node / NodeView:
+key_point = node.key_point(catalog)
+binds = node.dimension_binds(catalog)
+```
+
+Unbound cells return `None`. Use `require_key_point_for` / `require_binds_for`
+to fail closed. Bind mappings are series-level; key points are per-cell.
+
 After export:
 
 ```python
