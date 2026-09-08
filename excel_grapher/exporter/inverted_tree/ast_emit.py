@@ -1157,8 +1157,7 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
         return "()"
     covered = covering_series(ctx.catalog, addresses)
     if covered is not None:
-        _access_or_fail(covered, ctx)
-        return _emit_covering_values(covered, addresses, ctx)
+        return _emit_aggregate_covering(covered, node, addresses, ctx)
     missing = [addr for addr in addresses if ctx.catalog.series_id_for(addr) is None]
     if missing:
         raise _host_export_error(ctx, f"range is not a bound series (unbound cells: {missing[:8]})")
@@ -1166,6 +1165,133 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
     if len(parts) == 1:
         return parts[0]
     return f"({', '.join(parts)})"
+
+
+def _catalog_slots(
+    covered: BoundSeries,
+    addresses: Sequence[CanonicalAddress],
+    ctx: EmitContext,
+) -> tuple[int, ...]:
+    """Return catalog indices of `addresses` inside `covered`."""
+    indices: list[int] = []
+    for addr in addresses:
+        idx = covered.index_of(addr)
+        if idx is None:
+            raise _host_export_error(
+                ctx, f"range cell {addr} is not inside bound series {covered.series_id!r}"
+            )
+        indices.append(idx)
+    return tuple(indices)
+
+
+def _member_slots_source(slots: Sequence[Sequence[int]]) -> str:
+    """Return a Python tuple of per-member `take` index sequences."""
+    parts = [indices_to_source(item) for item in slots]
+    if len(parts) == 1:
+        return f"({parts[0]},)"
+    return f"({', '.join(parts)})"
+
+
+def _emit_demanded_slots(covered: BoundSeries, indices_expr: str, ctx: EmitContext) -> str:
+    """Demand each selected catalog instance of an in-SCC producer."""
+    fn = ctx.compute_names.get(covered.series_id)
+    if fn is None:
+        raise _host_export_error(
+            ctx, f"in-SCC producer {covered.series_id!r} has no instance compute"
+        )
+    ctx.use("demand_instance")
+    return (
+        f"tuple({ctx.use('demand_instance')}("
+        f"{covered.series_id!r}, j, {fn}, memo, stack) for j in {indices_expr})"
+    )
+
+
+def _emit_static_slots(covered: BoundSeries, slots: Sequence[int], ctx: EmitContext) -> str:
+    """Emit a covering window whose catalog slots are the same for every member."""
+    name = ctx.param(covered.series_id)
+    if covered.series_id in ctx.scc_ids:
+        return _emit_demanded_slots(covered, indices_to_source(slots), ctx)
+    if tuple(slots) == tuple(range(len(covered.cells))):
+        return name
+    return f"{ctx.use('take')}({name}, {indices_to_source(slots)})"
+
+
+def _emit_indexed_slots(
+    covered: BoundSeries,
+    table: Sequence[Sequence[int]],
+    ctx: EmitContext,
+    index_var: str,
+) -> str:
+    """Emit a covering window whose catalog slots are a function of the host index."""
+    selector = f"{_member_slots_source(table)}[{index_var}]"
+    if covered.series_id in ctx.scc_ids:
+        return _emit_demanded_slots(covered, selector, ctx)
+    name = ctx.param(covered.series_id)
+    return f"{ctx.use('take')}({name}, {selector})"
+
+
+def _aggregate_member_slot_table(
+    covered: BoundSeries,
+    node: AstNode,
+    ctx: EmitContext,
+) -> tuple[tuple[int, ...], ...] | None:
+    """Return per-host catalog slots of `node` over the current statement.
+
+    Relative range endpoints are resolved against each statement member. Slots
+    outside the statement stay empty; generated code for this region only
+    indexes statement members.
+    """
+    if ctx.graph is None:
+        return None
+    members = _statement_cells(ctx) or tuple(ctx.host.cells)
+    table: list[tuple[int, ...]] = [() for _ in ctx.host.cells]
+    seen = False
+    for cell in members:
+        host_i = ctx.host.index_of(cell)
+        if host_i is None:
+            continue
+        addresses = addresses_outside_blank_ranges(
+            iter_ref_addresses(node, cell, ctx.graph),
+            ctx.blank_rects,
+        )
+        table[host_i] = _catalog_slots(covered, addresses, ctx)
+        seen = True
+    if not seen:
+        return None
+    return tuple(table)
+
+
+def _emit_aggregate_covering(
+    covered: BoundSeries,
+    node: AstNode,
+    addresses: Sequence[CanonicalAddress],
+    ctx: EmitContext,
+) -> str:
+    """Emit a literal aggregate range as catalog slots, not a block-axis access.
+
+    Literal `SUM`/`AND` windows are member-local cell sets. Fitting them as an
+    affine row/col origin fails on sparse catalogs and freezes dense take indices
+    to the template member.
+    """
+    if covered.is_scalar:
+        return ctx.param(covered.series_id)
+    current = _catalog_slots(covered, addresses, ctx)
+    table = _aggregate_member_slot_table(covered, node, ctx)
+    if table is None:
+        return _emit_static_slots(covered, current, ctx)
+    members = _statement_cells(ctx) or tuple(ctx.host.cells)
+    unique: set[tuple[int, ...]] = set()
+    for cell in members:
+        host_i = ctx.host.index_of(cell)
+        if host_i is not None:
+            unique.add(table[host_i])
+    if len(unique) <= 1:
+        return _emit_static_slots(covered, next(iter(unique), current), ctx)
+    if ctx.index_var is None:
+        raise _host_export_error(
+            ctx, "aggregate range slots vary across statement members without a host index"
+        )
+    return _emit_indexed_slots(covered, table, ctx, ctx.index_var)
 
 
 def _emit_lookup_arg(node: AstNode, ctx: EmitContext) -> str:
