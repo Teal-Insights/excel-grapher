@@ -9,7 +9,7 @@ from __future__ import annotations
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -48,9 +48,9 @@ def test_evaluator_column_without_reference_uses_calling_cell_column() -> None:
 
 def test_codegen_matches_evaluator_row_without_reference() -> None:
     graph = _make_graph(_make_node("S!D9", "=ROW()", None))
-    assert_codegen_matches_evaluator(graph, ["S!D9"])
+    evaluate_targets(graph, ["S!D9"])
 
 
 def test_codegen_matches_evaluator_column_without_reference() -> None:
     graph = _make_graph(_make_node("S!F2", "=COLUMN()", None))
-    assert_codegen_matches_evaluator(graph, ["S!F2"])
+    evaluate_targets(graph, ["S!F2"])

@@ -45,28 +45,8 @@ def test_package_generation_requires_bindings() -> None:
         CodeGenerator(DependencyGraph()).generate_modules()  # ty: ignore[missing-argument]
 
 
-def test_generate_signature_is_bindings_free() -> None:
-    params = inspect.signature(CodeGenerator.generate).parameters
-    assert "targets" in params
-    for removed in (
-        "series_bindings",
-        "bindings_workbook",
-        "series_docstring_callback",
-        "docstring_renderer",
-    ):
-        assert removed not in params
-
-
-def test_generate_rejects_series_binding_kwargs() -> None:
-    gen = CodeGenerator(DependencyGraph())
-    for extra in (
-        {"series_bindings": {"series": []}},
-        {"bindings_workbook": "x.xlsx"},
-        {"series_docstring_callback": "docs"},
-        {"docstring_renderer": "google"},
-    ):
-        with pytest.raises(TypeError, match="unexpected keyword argument"):
-            gen.generate(["Sheet1!A1"], **extra)
+def test_address_keyed_generate_is_removed() -> None:
+    assert not hasattr(CodeGenerator, "generate")
 
 
 def test_generate_modules_rejects_legacy_kwargs() -> None:

@@ -1,18 +1,19 @@
-# Consolidated Micro-Workbook Basic Code Generation Examples
+# Consolidated Micro-Workbook Evaluation Examples
 
 
 Each row of
 [examples/micro_workbooks/codegen_basics.xlsx](codegen_basics.xlsx)
 contains a self-contained example that can be extracted as a graph and
-then exported to standalone Python code. This workbook demonstrates the
-workflow and application behavior for different Excel dependency
-scenarios.
+evaluated with `FormulaEvaluator`. For a standalone Python
+**package** (`compute_*` over named series), provide series bindings
+and use `CodeGenerator.generate_modules` — see
+[Series bindings](series_bindings.md).
 
 ``` python
 from pathlib import Path
 
 from excel_grapher.grapher import create_dependency_graph, DependencyGraph
-from excel_grapher.exporter import CodeGenerator
+from excel_grapher.evaluator import FormulaEvaluator
 
 # Load the example workbook
 workbook_path = Path("codegen_basics.xlsx")
@@ -20,41 +21,16 @@ workbook_path = Path("codegen_basics.xlsx")
 
 ## 01. Formula with no dependencies
 
-The first example is a single-cell formula with no dependencies. We can
-extract the graph with the `create_dependency_graph` function (see
-[Extraction Basics](extraction_basics.md) for more details); then,
-instead of running the graph using the `FormulaEvaluator` Excel
-emulator, we can transpile the graph to standalone Python code using the
-`CodeGenerator` class. We’ll write the code to a file called
-`formula_with_no_dependencies.py` in the `codegen_outputs` folder.
+The first example is a single-cell formula with no dependencies. Extract
+the graph with `create_dependency_graph` (see
+[Extraction Basics](extraction_basics.md) for more details), then
+evaluate it with `FormulaEvaluator`.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B1"])
 
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("codegen_outputs/formula_with_no_dependencies.py", "w", encoding="utf-8") as f:
-    f.write(code)
-```
-
-Note that `CodeGenerator`’s `generate` method exports a miniature Excel
-runtime, with error handling and formula/operator implementations for
-the Excel functions used in the graph. So while the implementation of
-our `1+1` function on line 344-346 is brief, the full code output is
-nearly 400 lines of code, which feels excessive. There is enormous room
-to optimize this code generation process to reduce the final output
-length.
-
-We can then append the file as a module to our current session and run
-the code:
-
-``` python
-import sys
-
-sys.path.append("codegen_outputs")
-from formula_with_no_dependencies import compute_all
-
-result = compute_all()
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate(["Sheet1!B1"])
 print(f"```text\n{result}\n```")
 ```
 
@@ -62,27 +38,21 @@ print(f"```text\n{result}\n```")
 {'Sheet1!B1': 2.0}
 ```
 
-The return value of the `compute_all` function is a dictionary of the
-target cell address and its computed value.
+The return value is a dictionary of target cell addresses and computed
+values.
 
 ## 02. Linear dependency
 
-The second example consists of two cells: one hardcoded (“Sheet1!B2”)
-and one a formula that depends on the hardcoded cell (“Sheet1!C2”).
-Let’s generate the code for this example and run it with the default
-input:
+The second example consists of two cells: one hardcoded
+(“Sheet1!B2”) and one a formula that depends on the hardcoded cell
+(“Sheet1!C2”). Evaluate with the workbook defaults, then change the
+input leaf and re-evaluate:
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C2"])
 
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("codegen_outputs/linear_dependency.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-from linear_dependency import compute_all
-
-result = compute_all()
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate(["Sheet1!C2"])
 print(f"```text\n{str(result['Sheet1!C2'])}\n```")
 ```
 
@@ -90,15 +60,11 @@ print(f"```text\n{str(result['Sheet1!C2'])}\n```")
 2.0
 ```
 
-To recompute the value of “Sheet1!C2” with a different input value for
-“Sheet1!B2”, we can create a `context` object with our desired inputs
-and call `compute_all` with it:
-
 ``` python
-from linear_dependency import make_context
+graph.set_node_value("Sheet1!B2", 2)
 
-context = make_context(inputs={"Sheet1!B2": 2})
-result = compute_all(ctx=context)
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate(["Sheet1!C2"])
 print(f"```text\n{str(result['Sheet1!C2'])}\n```")
 ```
 
@@ -106,30 +72,23 @@ print(f"```text\n{str(result['Sheet1!C2'])}\n```")
 3.0
 ```
 
-The implementation of the C2 function is defined on lines 345-347. The
-hardcoded input value for B2 is set in lines 338-340. Note that the
-exported code is object-oriented rather than functional, with inputs and
-computation caching stored in a mutable `Context` object, so you must
-take care not to share the same `Context` instance if running multiple
-scenarios in parallel in the same session.
+`set_node_value` mutates the graph. Subsequent evaluations on that graph
+see the new leaf value. For a named, records-shaped output API
+(dimensions plus `OBS_VALUE`), export an inverted-tree **package** with
+series bindings (`generate_modules`) — see
+[Series bindings](series_bindings.md).
 
 ## 03. Multiple non-adjacent targets
 
 If there are multiple target cells that are not adjacent to each other,
-`compute_all` simply returns a dictionary keyed by cell address for each
-target cell.
+`evaluate` returns a dictionary keyed by cell address for each target
+cell.
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C3", "Sheet1!E3"])
 
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("codegen_outputs/multiple_non_adjacent_targets.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-from multiple_non_adjacent_targets import compute_all
-
-result = compute_all()
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate(["Sheet1!C3", "Sheet1!E3"])
 print(f"```text\n{str(result)}\n```")
 ```
 
@@ -137,75 +96,50 @@ print(f"```text\n{str(result)}\n```")
 {'Sheet1!C3': 2.0, 'Sheet1!E3': 3.0}
 ```
 
-An unordered dictionary does seem like the right output shape for
-`compute_all` outputs representing non-adjacent target cells. For named,
-records-shaped output APIs (dimensions plus `OBS_VALUE`), export an
-inverted-tree **package** with series bindings (`generate_modules`) —
-see [Series bindings](series_bindings.qmd).
-
 ## 04. Multiple adjacent targets
 
-The next example demonstrates what happens when we export the code with
-multiple adjacent targets.
+The next example evaluates two adjacent target cells.
+`FormulaEvaluator` still returns one dictionary entry per address (it
+does not collapse contiguous cells into a range key).
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!C4", "Sheet1!D4"])
 
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("codegen_outputs/multiple_adjacent_targets.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-from multiple_adjacent_targets import compute_all
-
-result = compute_all()
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate(["Sheet1!C4", "Sheet1!D4"])
 print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!C4:D4': [[2.0, 3.0]]}
+{'Sheet1!C4': 2.0, 'Sheet1!D4': 3.0}
 ```
 
-Here, the adjacent cell addresses are automatically aggregated into a
-single Excel *range address*, which is used as the key in the returned
-dictionary. The value for that key is a NumPy array of the computed
-values for each cell in the range.
-
-This is probably a good default in *most* cases, because contiguous
-cells will often comprise a logical unit. For stable tabular contracts
-with named `compute_*` functions that return tuples (and `as_records`
-for a Records view), export an inverted-tree **package** with series
-bindings — see [Series bindings](series_bindings.qmd).
+For stable tabular contracts with named `compute_*` functions that
+return tuples (and `as_records` for a Records view), export an
+inverted-tree **package** with series bindings — see
+[Series bindings](series_bindings.md).
 
 ## 05. Must cycle
 
-In the fourth example, The B5 and C5 formula cells make a cycle. Excel’s
+In this example, the B5 and C5 formula cells make a cycle. Excel’s
 internal behavior with respect to cycles is different depending on
 workbook settings. If `iterate` is enabled in the workbook, Excel will
 iterate over the cycle until it converges on a value or hits a maximum
-number of iterations. Otherwise, it will stop and return 0 from any cell
-already seen before in a formula chain. Like `FormulaEvaluator`,
-standalone Python code generated and exported from `CodeGenerator`
+number of iterations. Otherwise, it will stop and return 0 from any
+cell already seen before in a formula chain. `FormulaEvaluator`
 replicates this behavior with a `CircularReferenceWarning` unless the
 workbook is configured to allow cycles:
 
 ``` python
 graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!B5", "Sheet1!C5"])
 
-with CodeGenerator(graph) as gen:
-    code = gen.generate()
-with open("codegen_outputs/must_cycle.py", "w", encoding="utf-8") as f:
-    f.write(code)
-
-from must_cycle import compute_all
-
-result = compute_all()
+with FormulaEvaluator(graph) as ev:
+    result = ev.evaluate(["Sheet1!B5", "Sheet1!C5"])
 print(f"```text\n{str(result)}\n```")
 ```
 
 ``` text
-{'Sheet1!B5:C5': [[2.0, 1.0]]}
+{'Sheet1!B5': 2.0, 'Sheet1!C5': 1.0}
 ```
 
-    /workspace/examples/micro_workbooks/codegen_outputs/must_cycle.py:719: CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).
-      warn_circular_reference(stacklevel=2)
+    CircularReferenceWarning: Circular reference detected; returning 0 (iterative calculation is disabled).

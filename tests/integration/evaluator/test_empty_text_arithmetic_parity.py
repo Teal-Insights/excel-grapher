@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from excel_grapher import DependencyGraph, Node, XlError
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -45,10 +45,10 @@ def test_empty_text_arithmetic_parity_matches_excel_error_classes() -> None:
         _make_node("S!B3", "=S!A1+S!A2", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3"])
-    assert result.evaluator_results["S!B1"] == XlError.VALUE
-    assert result.evaluator_results["S!B2"] == XlError.DIV
-    assert result.evaluator_results["S!B3"] == XlError.VALUE
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3"])
+    assert results["S!B1"] == XlError.VALUE
+    assert results["S!B2"] == XlError.DIV
+    assert results["S!B3"] == XlError.VALUE
 
 
 def test_sum_skips_empty_text_while_arithmetic_rejects_it() -> None:
@@ -61,6 +61,6 @@ def test_sum_skips_empty_text_while_arithmetic_rejects_it() -> None:
         _make_node("S!B2", "=S!A1+S!A2", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2"])
-    assert result.evaluator_results["S!B1"] == 3.0
-    assert result.evaluator_results["S!B2"] == XlError.VALUE
+    results = evaluate_targets(graph, ["S!B1", "S!B2"])
+    assert results["S!B1"] == 3.0
+    assert results["S!B2"] == XlError.VALUE

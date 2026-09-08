@@ -14,9 +14,8 @@ Validation uses the JSON Schema shipped with the package at
 
 Package exports (`generate_modules(...)`) use **inverted-tree**: `compute_*` functions take
 explicit inputs and return tuples. Use `as_records(compute, result)` for a Records view.
-Single-file `generate()` is address-keyed cell functions (`make_context`, `compute_all`) for
-evaluator↔export parity and teaching; it does not emit `set_*` / `read_*` / Records.
-See [Exporting standalone Python](06-export.qmd) for the migration recipe.
+There is no bindings-free `generate()` path; callers who want a named `compute_*` API provide
+a sidecar. See [Exporting standalone Python](06-export.qmd) for the package layout.
 
 **Example workbook:** [series_bindings.xlsx](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.xlsx)
 with [series_bindings.bindings.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.bindings.yaml)
@@ -304,7 +303,7 @@ Suggested workflow:
 | Setter name | `setter.name` |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
-5. **Export.** `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit inputs, tuples). Single-file `generate()` is bindings-free (`make_context` / `compute_all`) and does not emit `set_*` / `read_*` / Records (see [Code export](export.qmd)).
+5. **Export.** `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit inputs, tuples). There is no bindings-free `generate()` path (see [Code export](export.qmd)).
 
 Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`. Use `read: int` for offset-style headers and `read: datetime` (or `read: auto` when Excel stores native date cells) for calendar `TIME_PERIOD` keys.
 
@@ -333,7 +332,7 @@ tuples. Use `as_records(compute, result)` for a tidy `list[dict]` view.
 
 The library emitters `emit_setter_function` / `emit_compute_function` still accept **series**
 and **matrix** `SeriesInput`: records or a **tidy** pandas/polars `DataFrame`. Those helpers
-are not wired into `generate()` or `generate_modules()`. **Series** setters also accept a 1D
+are not wired into `generate_modules()`. **Series** setters also accept a 1D
 iterable of measure values when the binding has a single key. **Scalar** setters accept a bare
 measure value, one record dict, or a one-element record list. `ctx: EvalContext` is always the
 first argument.
@@ -999,7 +998,6 @@ result = compute_borvelia_primary_balance(
 records = as_records(compute_borvelia_primary_balance, result)
 ```
 
-Address-keyed `compute_all` is the bindings-free `generate()` entry point, not the series API.
 Package discovery is `api.__all__` (compute names). `list_groups()` is not emitted.
 
 `generate_modules` omits setters, readers, `make_context`, and `list_groups`.

@@ -9,7 +9,6 @@ import pytest
 
 from excel_grapher.core.address_keys import format_range_key, normalize_key
 from excel_grapher.core.formula_ast import RangeNode, parse
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.grapher.builder import _format_missing_leaves, create_dependency_graph
 from excel_grapher.grapher.parser import (
     CellRef,
@@ -97,18 +96,12 @@ class TestFormulaNormalizerSinglePrefix:
             assert normalize_key(inner) == inner
 
 
-def test_ast_and_codegen_emit_single_prefix_xl_range() -> None:
-    """AST accepts both-end and single-prefix; codegen emits single-prefix."""
+def test_ast_parses_both_end_and_single_prefix_ranges() -> None:
+    """AST accepts both-end and single-prefix same-sheet ranges."""
     assert parse("=Sheet1!A1:A3") == RangeNode("Sheet1!A1", "Sheet1!A3")
     assert parse("=Sheet1!A1:Sheet1!A3") == RangeNode("Sheet1!A1", "Sheet1!A3")
-
-    gen = CodeGenerator(None)
-    assert gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!A3")) == "xl_range(ctx, 'Sheet1!A1:A3')"
-    assert gen._emit_ast(RangeNode("Sheet1!A1", "Sheet1!B2")) == "xl_range(ctx, 'Sheet1!A1:B2')"
-    assert (
-        gen._emit_ast(RangeNode("'My Sheet'!A1", "'My Sheet'!C1"))
-        == "xl_range(ctx, \"'My Sheet'!A1:C1\")"
-    )
+    assert parse("=Sheet1!A1:B2") == RangeNode("Sheet1!A1", "Sheet1!B2")
+    assert parse("='My Sheet'!A1:'My Sheet'!C1") == RangeNode("'My Sheet'!A1", "'My Sheet'!C1")
 
 
 @pytest.mark.parametrize(

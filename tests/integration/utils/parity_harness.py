@@ -1,25 +1,16 @@
-"""Evaluator ↔ export parity: `FormulaEvaluator` vs generated standalone code.
+"""Evaluator helpers and export-runtime scaffold checks.
 
-Excel reference checks live elsewhere (e.g. `excel_workbook_parity` for cached
-workbook values; live Excel via automation when available). See `.cursor/rules/parity.mdc`.
+Address-keyed `CodeGenerator.generate` was removed (#764). Evaluator ↔ export
+parity for packages uses inverted-tree `generate_modules` with series bindings.
+`FormulaEvaluator` remains the in-process Excel engine for function tests.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import dataclass
 from math import isfinite
 from typing import Any, cast
 
-from excel_grapher import CycleError, DependencyGraph, FormulaEvaluator
-from excel_grapher.exporter.codegen import CodeGenerator
-
-
-@dataclass(frozen=True, slots=True)
-class ParityResult:
-    evaluator_results: dict[str, object]
-    generated_results: dict[str, object]
-    generated_code: str
+from excel_grapher import DependencyGraph, FormulaEvaluator
 
 
 def _is_finite_number(x: object) -> bool:
@@ -40,184 +31,23 @@ def _values_equal(a: object, b: object, *, rtol: float, atol: float) -> bool:
     return False
 
 
-def _dependency_closure(graph: DependencyGraph, targets: list[str]) -> set[str]:
-    closure: set[str] = set()
-    stack = list(targets)
-    while stack:
-        addr = stack.pop()
-        if addr in closure:
-            continue
-        if graph.get_node(addr) is None:
-            continue
-        closure.add(addr)
-        for dep in graph.get_dependencies(addr):
-            if graph.get_node(dep) is None:
-                continue
-            stack.append(dep)
-    return closure
-
-
-def _dependency_order(graph: DependencyGraph, targets: list[str]) -> list[str]:
-    closure = _dependency_closure(graph, targets)
-    if not closure:
-        return list(targets)
-    try:
-        eval_order = graph.evaluation_order(strict=False)
-    except CycleError:
-        eval_order = []
-    ordered = [addr for addr in eval_order if addr in closure]
-    missing = [addr for addr in closure if addr not in ordered]
-    if missing:
-        ordered.extend(sorted(missing))
-    return ordered
-
-
-def exec_generated_code(
+def evaluate_targets(
     graph: DependencyGraph,
     targets: list[str],
     *,
-    namespace_seed: dict[str, object] | None = None,
-    blank_ranges: list[str] | tuple[str, ...] | None = None,
-    unpack_return: bool = False,
-) -> tuple[dict[str, object], str, dict[str, object]]:
-    """Generate + exec code for targets and return (results, code, namespace)."""
-    code = CodeGenerator(graph, unpack_return=unpack_return).generate(
-        targets,
-        blank_ranges=blank_ranges,
-    )
-    ns: dict[str, object] = dict(namespace_seed or {})
-    exec(code, ns)
-    compute_all = ns["compute_all"]
-    assert callable(compute_all)
-    compute_all_typed = cast(Callable[[], dict[str, object]], compute_all)
-    generated_results = compute_all_typed()
-    assert isinstance(generated_results, dict)
-    return generated_results, code, ns
-
-
-def exec_generated_code_with_cache(
-    graph: DependencyGraph,
-    targets: list[str],
-    *,
-    namespace_seed: dict[str, object] | None = None,
-    blank_ranges: list[str] | tuple[str, ...] | None = None,
-    unpack_return: bool = False,
-) -> tuple[dict[str, object], str, dict[str, object]]:
-    """Generate + exec code for targets and return (cache, code, namespace).
-
-    The exported runtime raises `XlErrorException` for Excel errors; raised
-    codes are recorded in the returned cache as `XlError` sentinel values so
-    they compare directly against evaluator results.
-    """
-    code = CodeGenerator(graph, unpack_return=unpack_return).generate(
-        targets,
-        blank_ranges=blank_ranges,
-    )
-    ns: dict[str, object] = dict(namespace_seed or {})
-    exec(code, ns)
-    merged = dict(cast(dict[str, object], ns["DEFAULT_INPUTS"]))
-    resolver = cast(Callable[[str], object], ns["_resolve_formula"])
-    ctx = cast(Callable[..., object], ns["EvalContext"])(inputs=merged, resolver=resolver)
-    xl_cell = cast(Callable[..., object], ns["xl_cell"])
-    xl_error_exception = cast("type[BaseException] | None", ns.get("XlErrorException"))
-    ctx_any = cast(Any, ctx)
-    cache = cast(dict[str, object], ctx_any.cache)
-    for target in targets:
-        try:
-            xl_cell(ctx, target)
-        except BaseException as exc:
-            if xl_error_exception is None or not isinstance(exc, xl_error_exception):
-                raise
-            # The evaluation boundary caches the raising cell's error code.
-            cache.setdefault(target, cast(Any, exc).code)
-    return dict(cache), code, ns
-
-
-def assert_codegen_matches_evaluator(
-    graph: DependencyGraph,
-    targets: list[str],
-    *,
-    rtol: float = 0.0,
-    atol: float = 0.0,
-    dependency_order: bool = False,
-    fail_fast: bool = False,
-    blank_ranges: tuple[str, ...] | None = None,
-    unpack_return: bool = False,
-) -> ParityResult:
-    """Assert evaluator results match generated code for the given targets."""
-    compare_targets = _dependency_order(graph, targets) if dependency_order else list(targets)
-    eval_computed: dict[str, object] = {}
-
-    def _record(address: str, value: object) -> None:
-        eval_computed[address] = value
-
-    with FormulaEvaluator(graph, on_cell_evaluated=_record, blank_ranges=blank_ranges) as ev:
-        evaluator_results = cast(dict[str, object], ev.evaluate(targets))
-
-    generated_cache, code, _ns = exec_generated_code_with_cache(
-        graph,
-        targets,
-        blank_ranges=blank_ranges,
-        unpack_return=unpack_return,
-    )
-    generated_results = {t: generated_cache[t] for t in targets}
-
-    missing = [t for t in targets if t not in evaluator_results or t not in generated_results]
-    if missing:
-        raise AssertionError(f"Missing targets in results: {missing}")
-
-    mismatches: list[tuple[str, object, object]] = []
-    for idx, t in enumerate(compare_targets):
-        ev_val = eval_computed.get(t)
-        gen_val = generated_cache.get(t)
-        if ev_val is None or gen_val is None:
-            continue
-        if not _values_equal(ev_val, gen_val, rtol=rtol, atol=atol):
-            if fail_fast:
-                node = graph.get_node(t)
-                formula = None if node is None else node.formula
-                normalized = None if node is None else node.normalized_formula
-                detail_parts: list[str] = []
-                if formula:
-                    detail_parts.append(f"formula={formula}")
-                if normalized and normalized != formula:
-                    detail_parts.append(f"normalized_formula={normalized}")
-                kind = (
-                    "numeric_drift"
-                    if (_is_finite_number(ev_val) and _is_finite_number(gen_val))
-                    else "value_mismatch"
-                )
-                detail = (" (" + "; ".join(detail_parts) + ")") if detail_parts else ""
-                raise AssertionError(
-                    f"First parity mismatch ({kind}) at "
-                    f"{t}{detail} [{idx + 1}/{len(compare_targets)}]: "
-                    f"evaluator={ev_val!r} generated={gen_val!r}"
-                )
-            mismatches.append((t, ev_val, gen_val))
-
-    if mismatches:
-        lines = ["Parity mismatch (evaluator vs generated):"]
-        for t, ev_val, gen_val in mismatches[:25]:
-            lines.append(f"- {t}: evaluator={ev_val!r} generated={gen_val!r}")
-        if len(mismatches) > 25:
-            lines.append(f"... plus {len(mismatches) - 25} more mismatches")
-        raise AssertionError("\n".join(lines))
-
-    return ParityResult(
-        evaluator_results=evaluator_results,
-        generated_results=generated_results,
-        generated_code=code,
-    )
+    blank_ranges: tuple[str, ...] | list[str] | None = None,
+) -> dict[str, object]:
+    """Evaluate `targets` with `FormulaEvaluator` and return the result map."""
+    with FormulaEvaluator(graph, blank_ranges=blank_ranges) as ev:
+        return cast(dict[str, object], ev.evaluate(targets))
 
 
 _CACHE_EVAL_SCAFFOLD_DEFS = ("def _evaluate_address(", "def xl_cell(", "def xl_eval(")
-# Pre-refactor standalone exports embedded ~78 lines for xl_cell + xl_eval alone.
-# Post-refactor shared helper keeps the block at ~69 lines; budget guards re-bloat.
 CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 80
 
 
 def count_cache_eval_scaffold_lines(code: str) -> int:
-    """Count lines for ``_evaluate_address``, ``xl_cell``, and ``xl_eval`` in export code."""
+    """Count lines for `_evaluate_address`, `xl_cell`, and `xl_eval` in export code."""
     lines = code.splitlines()
     try:
         start = next(
@@ -231,8 +61,6 @@ def count_cache_eval_scaffold_lines(code: str) -> int:
         is_next_def = line.startswith("def ") and not any(
             line.startswith(marker) for marker in _CACHE_EVAL_SCAFFOLD_DEFS
         )
-        # Stop at section markers too: the scaffold may be the last runtime def
-        # before generated data/formula sections.
         if is_next_def or line.startswith("# ---"):
             end = index
             break
@@ -289,13 +117,12 @@ DEP_TRACKING_CALL_MARKERS = frozenset(
     }
 )
 
-# Baseline for non-iterative minimal export (S!A1 leaf + S!B1 formula).
 DEP_TRACKING_BASELINE_VERSION = 16
 SLIM_CACHE_EVAL_SCAFFOLD_LINE_BUDGET = 62
 
 
 def extract_embedded_runtime(code: str) -> str:
-    """Return the embedded ``emit_runtime`` block from generated export code."""
+    """Return the embedded `emit_runtime` block from generated export code."""
     lines = code.splitlines()
     try:
         start = next(i for i, line in enumerate(lines) if line.strip() == EMBEDDED_RUNTIME_HEADER)
@@ -337,7 +164,7 @@ def _eval_context_class_start(lines: list[str]) -> int:
 
 
 def count_dep_tracking_lines(code: str) -> int:
-    """Count EvalContext dep-tracking fields/methods plus ``_record_dependency`` call sites."""
+    """Count EvalContext dep-tracking fields/methods plus `_record_dependency` call sites."""
     lines = code.splitlines()
     try:
         class_start = _eval_context_class_start(lines)
@@ -400,7 +227,7 @@ def assert_dep_tracking_present(code: str) -> None:
 
 
 def assert_dep_tracking_absent(code: str) -> None:
-    """Assert generated export omits the invalidation subsystem (Sprint 2 target)."""
+    """Assert generated export omits the invalidation subsystem."""
     hits = dep_tracking_hits(code)
     methods = cast(dict[str, bool], hits["methods"])
     present: list[str] = []

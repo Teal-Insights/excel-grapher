@@ -5,7 +5,7 @@ from __future__ import annotations
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -39,11 +39,11 @@ def test_compare_trailing_spaces_codegen_parity() -> None:
         _make_node("S!B3", "=S!A1=S!A2", None),
         _make_node("S!B4", '="high"="HIGH"', None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3", "S!B4"])
-    assert result.generated_results["S!B1"] is False
-    assert result.generated_results["S!B2"] is True
-    assert result.generated_results["S!B3"] is False
-    assert result.generated_results["S!B4"] is True
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3", "S!B4"])
+    assert results["S!B1"] is False
+    assert results["S!B2"] is True
+    assert results["S!B3"] is False
+    assert results["S!B4"] is True
 
 
 def test_match_exact_trailing_spaces_codegen_parity() -> None:
@@ -54,7 +54,7 @@ def test_match_exact_trailing_spaces_codegen_parity() -> None:
         _make_node("S!B2", '=MATCH("High",S!A2:S!A2,0)', None),
         _make_node("S!B3", '=MATCH("High ",S!A2:S!A2,0)', None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3"])
-    assert result.generated_results["S!B1"] == 1
-    assert result.generated_results["S!B2"] == XlError.NA
-    assert result.generated_results["S!B3"] == 1
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3"])
+    assert results["S!B1"] == 1
+    assert results["S!B2"] == XlError.NA
+    assert results["S!B3"] == 1

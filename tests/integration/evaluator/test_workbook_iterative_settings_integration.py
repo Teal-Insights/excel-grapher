@@ -1,12 +1,7 @@
-"""Iterative calculation settings in workbooks flow into codegen and evaluators (integration).
-
-Builds patched `calcPr` workbooks and asserts generated Python and evaluators honor
-iterate flags when converging circular guarded formulas.
-"""
+"""Iterative calculation settings in workbooks flow into FormulaEvaluator (integration)."""
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -14,7 +9,6 @@ import pytest
 import xlsxwriter
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph, get_calc_settings
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.runtime.cache import CircularReferenceWarning
 from tests.utils.workbook_xml import patch_workbook_calcpr
 
@@ -62,20 +56,6 @@ def test_workbook_iterate_disabled_keeps_default_circular_behavior(tmp_path: Pat
         evaluator_result = ev.evaluate(["Sheet1!A1"])
     assert evaluator_result["Sheet1!A1"] == 0
 
-    generated_code = CodeGenerator(
-        graph,
-        iterate_enabled=settings.iterate_enabled,
-        iterate_count=settings.iterate_count,
-        iterate_delta=settings.iterate_delta,
-    ).generate(["Sheet1!A1"])
-    ns: dict[str, Any] = {}
-    exec(generated_code, ns)
-    with pytest.warns(RuntimeWarning, match=r"Circular reference detected; returning 0") as w:
-        compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-        generated_result = compute_all()
-    assert any(wi.category.__name__ == "CircularReferenceWarning" for wi in w)
-    assert generated_result["Sheet1!A1"] == 0
-
 
 def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -> None:
     base = tmp_path / "iterative_base.xlsx"
@@ -94,24 +74,11 @@ def test_workbook_iterate_enabled_drives_iterative_convergence(tmp_path: Path) -
     ) as ev:
         evaluator_result = ev.evaluate(["Sheet1!A1"])
 
-    generated_code = CodeGenerator(
-        graph,
-        iterate_enabled=settings.iterate_enabled,
-        iterate_count=settings.iterate_count,
-        iterate_delta=settings.iterate_delta,
-    ).generate(["Sheet1!A1"])
-    assert "iterate_count=75" in generated_code
-    ns: dict[str, Any] = {}
-    exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-    generated_result = compute_all()
-
     assert abs(float(cast(Any, evaluator_result["Sheet1!A1"])) - 1.0) <= 1e-4
-    assert abs(float(generated_result["Sheet1!A1"]) - 1.0) <= 1e-4
 
 
-def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Path) -> None:
-    """Oscillation never meets iterateDelta; both paths must agree after iterateCount sweeps."""
+def test_workbook_iterate_max_iterations_without_convergence(tmp_path: Path) -> None:
+    """Oscillation never meets iterateDelta; evaluator returns after iterateCount sweeps."""
     base = tmp_path / "oscillation_base.xlsx"
     _make_oscillation_workbook(base)
     workbook = tmp_path / "oscillation_iterate_on.xlsx"
@@ -131,18 +98,4 @@ def test_workbook_iterate_max_iterations_without_convergence_parity(tmp_path: Pa
     ) as ev:
         evaluator_result = ev.evaluate(["Sheet1!A1"])
 
-    generated_code = CodeGenerator(
-        graph,
-        iterate_enabled=settings.iterate_enabled,
-        iterate_count=settings.iterate_count,
-        iterate_delta=settings.iterate_delta,
-    ).generate(["Sheet1!A1"])
-    assert "iterate_count=3" in generated_code
-    assert "iterate_delta=" in generated_code
-
-    ns: dict[str, Any] = {}
-    exec(generated_code, ns)
-    compute_all = cast(Callable[[], dict[str, Any]], ns["compute_all"])
-    generated_result = compute_all()
-
-    assert evaluator_result["Sheet1!A1"] == generated_result["Sheet1!A1"]
+    assert evaluator_result["Sheet1!A1"] in {0, 1}

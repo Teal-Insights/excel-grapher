@@ -1,12 +1,12 @@
 """NUMBERVALUE: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Guards numeric parsing parity through `assert_codegen_matches_evaluator` for small
+Guards numeric parsing parity through `evaluate_targets` for small
 dependency graphs.
 """
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -47,9 +47,9 @@ def test_numbervalue_parity_with_explicit_separators() -> None:
         ),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2"])
-    assert result.generated_results["S!A1"] == 1234.56
-    assert result.generated_results["S!A2"] == 2500.0
+    results = evaluate_targets(graph, ["S!A1", "S!A2"])
+    assert results["S!A1"] == 1234.56
+    assert results["S!A2"] == 2500.0
 
 
 def test_numbervalue_parity_with_percent_and_parentheses() -> None:
@@ -71,10 +71,10 @@ def test_numbervalue_parity_with_percent_and_parentheses() -> None:
         ),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1", "S!B2", "S!B3"])
-    assert result.generated_results["S!B1"] == 0.12
-    assert result.generated_results["S!B2"] == -1234.56
-    assert result.generated_results["S!B3"] == 0.125
+    results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3"])
+    assert results["S!B1"] == 0.12
+    assert results["S!B2"] == -1234.56
+    assert results["S!B3"] == 0.125
 
 
 def test_numbervalue_parity_with_currency_and_spaces() -> None:
@@ -96,10 +96,10 @@ def test_numbervalue_parity_with_currency_and_spaces() -> None:
         ),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!C1", "S!C2", "S!C3"])
-    assert result.generated_results["S!C1"] == 1234.56
-    assert result.generated_results["S!C2"] == -1234.56
-    assert result.generated_results["S!C3"] == 1234.56
+    results = evaluate_targets(graph, ["S!C1", "S!C2", "S!C3"])
+    assert results["S!C1"] == 1234.56
+    assert results["S!C2"] == -1234.56
+    assert results["S!C3"] == 1234.56
 
 
 def test_numbervalue_parity_with_xludf_prefix() -> None:
@@ -121,7 +121,7 @@ def test_numbervalue_parity_with_xludf_prefix() -> None:
         ),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!A1", "S!A2", "S!A3"])
-    assert result.generated_results["S!A1"] == 1234.56
-    assert result.generated_results["S!A2"] == -1234.56
-    assert result.generated_results["S!A3"] == 0.12
+    results = evaluate_targets(graph, ["S!A1", "S!A2", "S!A3"])
+    assert results["S!A1"] == 1234.56
+    assert results["S!A2"] == -1234.56
+    assert results["S!A3"] == 0.12

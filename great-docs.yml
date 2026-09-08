@@ -231,8 +231,6 @@ reference:
       - CodeGenerator.__enter__
       - CodeGenerator.__exit__
       - CodeGenerator.derive_input_series
-      - CodeGenerator.classify_leaf_nodes
-      - CodeGenerator.generate
       - CodeGenerator.generate_modules
 
   - title: Dataclasses

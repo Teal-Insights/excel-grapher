@@ -1,13 +1,13 @@
 """MATCH: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Covers lookup-style MATCH behavior via `assert_codegen_matches_evaluator` so
+Covers lookup-style MATCH behavior via `evaluate_targets` so
 evaluator↔codegen semantics do not drift.
 """
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -40,8 +40,8 @@ def test_match_parity_with_single_cell() -> None:
         _make_node("S!B1", "=MATCH(1, S!A1, 0)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == 1
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == 1
 
 
 def test_match_parity_with_error_single_cell() -> None:
@@ -50,5 +50,5 @@ def test_match_parity_with_error_single_cell() -> None:
         _make_node("S!B1", "=MATCH(TRUE, S!A1, 0)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == XlError.VALUE
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == XlError.VALUE

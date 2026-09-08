@@ -90,6 +90,7 @@ from pathlib import Path
 from excel_grapher.grapher import create_dependency_graph, write_workbook
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter import CodeGenerator
+from excel_grapher.series_bindings import load_series_bindings
 
 workbook_path = Path("model.xlsx")
 targets = ["Sheet1!A10"]
@@ -102,8 +103,13 @@ print(len(graph))  # number of visited nodes
 with FormulaEvaluator(graph) as ev:
     results = ev.evaluate(targets)
 
-# 3a) Export standalone Python code
-code = CodeGenerator(graph).generate(targets)
+# 3a) Export a standalone Python package (requires series bindings)
+bindings = load_series_bindings(workbook_path.with_suffix(".bindings.yaml"))
+with CodeGenerator(graph) as gen:
+    modules = gen.generate_modules(
+        series_bindings=bindings,
+        bindings_workbook=workbook_path,
+    )
 
 # 3b) Write a new workbook from the graph (or a ProjectionResult)
 write_workbook(graph, Path("edited.xlsx"))
@@ -140,6 +146,6 @@ Hands-on walkthroughs (Markdown on GitHub):
 | Topic | Walkthrough |
 | --- | --- |
 | Graph extraction | [extraction_basics.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/extraction_basics.md) |
-| Code generation | [codegen_basics.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/codegen_basics.md) |
+| Graph evaluation | [codegen_basics.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/codegen_basics.md) |
 | Series bindings | [series_bindings.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/micro_workbooks/series_bindings.md) |
 | Induced graph | [induced_graph.md](https://github.com/Teal-Insights/excel-grapher/blob/main/examples/induced_graph/induced_graph.md) |

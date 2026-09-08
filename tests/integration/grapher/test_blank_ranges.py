@@ -1,7 +1,7 @@
-"""Declared structural blank ranges interact with graph build, evaluator, and codegen (integration).
+"""Declared structural blank ranges interact with graph build and the evaluator (integration).
 
-Parses blank-range specs and uses `assert_codegen_matches_evaluator` so graphs that
-respect declared blanks stay aligned with transpiled runtime behavior (issue #39).
+Parses blank-range specs and uses `evaluate_targets` so graphs that
+respect declared blanks resolve INDEX over omitted rectangles as empty (issue #39).
 """
 
 from __future__ import annotations
@@ -18,7 +18,7 @@ from excel_grapher.grapher.blank_ranges import (
     normalize_blank_range_specs,
     parse_blank_range_spec,
 )
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -102,7 +102,7 @@ def test_missing_cell_outside_declared_blank_still_keyerror() -> None:
         assert ev2._evaluate_cell("S!A1") == 0
 
 
-def test_blank_range_codegen_compact_and_parity(tmp_path: Path) -> None:
+def test_blank_range_evaluator_parity(tmp_path: Path) -> None:
     path = tmp_path / "blank_range_parity.xlsx"
     wb = fastpyxl.Workbook()
     ws = wb.active
@@ -119,11 +119,6 @@ def test_blank_range_codegen_compact_and_parity(tmp_path: Path) -> None:
         path, ["Sheet1!D1", "Sheet1!E1"], load_values=True, blank_ranges=blank
     )
 
-    from excel_grapher.exporter.codegen import CodeGenerator
-
-    code = CodeGenerator(graph).generate(["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)
-    assert "_BLANK_RANGE_RECTS" in code
-    assert "def cell_sheet1_a2(" not in code
-    assert "_blank_structural_cell" in code
-
-    assert_codegen_matches_evaluator(graph, ["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)
+    results = evaluate_targets(graph, ["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)
+    assert results["Sheet1!D1"] == 10
+    assert results["Sheet1!E1"] == 0

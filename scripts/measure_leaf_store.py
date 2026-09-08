@@ -231,20 +231,16 @@ def _leaves_from_workbook(
     workbook: Path, targets: Sequence[str]
 ) -> list[tuple[str, int, int, object]]:
     from excel_grapher import create_dependency_graph
-    from excel_grapher.exporter.codegen import CodeGenerator
 
     graph = create_dependency_graph(workbook, list(targets), load_values=True)
-    code = CodeGenerator(graph).generate(list(targets))
-    ns: dict[str, Any] = {}
-    exec(code, ns)
-    store = ns["DEFAULT_INPUTS"]
-    if store and isinstance(next(iter(store.values())), dict):
-        out: list[tuple[str, int, int, object]] = []
-        for sheet, cells in store.items():
-            for (row, col), value in cells.items():
-                out.append((sheet, row, col, value))
-        return out
-    return leaves_from_nodekey_dict(store)
+    out: list[tuple[str, int, int, object]] = []
+    for key in graph:
+        node = graph.get_node(key)
+        if node is None or not node.is_leaf:
+            continue
+        sheet, row, col = parse_cell_coords(key)
+        out.append((sheet, row, col, node.value))
+    return out
 
 
 def _render_table(payload: Mapping[str, Any]) -> str:

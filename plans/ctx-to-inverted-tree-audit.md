@@ -4,10 +4,10 @@ Historical audit: the context-based **package** exporter has been removed.
 `generate_modules()` and binding smoke checks use inverted-tree exclusively;
 `paradigm` and `--paradigm` are no longer accepted.
 
-Single-file `generate()` remains the ctx cell-function exporter (`make_context`,
-`compute_all`). Series-binding helpers (`set_*` / `read_*`, Records, `list_groups`)
-were removed from `generate()` (#764 Phase C); series I/O uses `generate_modules()`
-only. Removing `generate()` entirely is a later cut.
+Address-keyed `CodeGenerator.generate()` (`make_context`, `compute_all`) was
+removed (#764 Phase A). Series I/O uses `generate_modules()` only. Callers who
+want a named `compute_*` API provide series bindings; there is no bindings-free
+inverted-tree path.
 
 The #662 default-flip gate (LIC-DSF pool green) was waived for package removal:
 inverted-tree was already the only package path that matched the product, and
@@ -19,7 +19,7 @@ Pin: `3fe65d3` (12.7.2) plus this change. Probes live in
 
 Legend: **port** = inverted-tree should grow the feature; **bindings-equivalent**
 = already true at sidecar/catalog load, or a documented caller recipe;
-**drop** = ctx-only by design (including `generate()` leftovers).
+**drop** = ctx-only by design (including removed `generate()` leftovers).
 
 | Feature | ctx | inverted-tree | decision |
 | --- | --- | --- | --- |

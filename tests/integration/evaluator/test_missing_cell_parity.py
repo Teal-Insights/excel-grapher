@@ -1,14 +1,12 @@
-"""Missing cell references: evaluator matches executed generated code (integration).
+"""Missing cell references raise in the evaluator (integration).
 
-Uses `exec_generated_code` paths to ensure blank/missing operand handling stays
-consistent when formulas reference empty cells.
+Formulas that reference cells absent from the graph fail closed with `KeyError`.
 """
 
 import pytest
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import exec_generated_code
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -35,8 +33,8 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
-def test_missing_cell_reference_raises_in_both_paths() -> None:
-    """Missing cell access should raise in evaluator and generated code."""
+def test_missing_cell_reference_raises() -> None:
+    """Missing cell access should raise in the evaluator."""
     graph = _make_graph(
         _make_node("S!A1", "=S!B1+1", None),
         # S!B1 is NOT in the graph
@@ -44,6 +42,3 @@ def test_missing_cell_reference_raises_in_both_paths() -> None:
 
     with pytest.raises(KeyError, match="S!B1"), FormulaEvaluator(graph) as ev:
         ev.evaluate(["S!A1"])
-
-    with pytest.raises(KeyError, match="S!B1"):
-        exec_generated_code(graph, ["S!A1"])

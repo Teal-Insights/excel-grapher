@@ -3,8 +3,9 @@
 
 Builds a dependency graph from ``Report`` targets that reference ``Data`` inputs,
 prints the full TACO index, compares it to a **codegen-boundary** index (targets
-and inputs stay at cell granularity), runs ``CodeGenerator``, and optionally
-plots the full index next to the cell-level graph.
+and declared input ranges stay at cell granularity), evaluates the targets with
+``FormulaEvaluator``, and optionally plots the full index next to the cell-level
+graph.
 
 Run from the repo root::
 
@@ -17,17 +18,16 @@ from __future__ import annotations
 import argparse
 import importlib.util
 from pathlib import Path
-from typing import Any
 
-from excel_grapher import create_dependency_graph
-from excel_grapher.exporter import CodeGenerator
+from excel_grapher import FormulaEvaluator, create_dependency_graph
+from excel_grapher.core.address_keys import CellKey, RangeKey, format_key, parse_node_key
 from excel_grapher.grapher import (
     TacoBuildConfig,
     build_taco_index,
-    input_keys_from_graph,
 )
 from excel_grapher.grapher.export import to_networkx
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.parser import expand_range
 from excel_grapher.grapher.range_compression import TacoIndex
 
 WORKBOOK = Path(__file__).with_name("cross_sheet_taco_patterns.xlsx")
@@ -51,57 +51,51 @@ def _print_edge_summary(title: str, index: TacoIndex) -> None:
     print()
 
 
-def _print_codegen_example(graph: DependencyGraph, full_index: TacoIndex) -> None:
-    cell_targets = graph.target_keys()
-    generator = CodeGenerator(graph)
-    inputs, constants = generator.classify_leaf_nodes(
-        cell_targets,
-        input_ranges=INPUT_RANGES,
-        attach_to_graph=True,
-    )
+def _input_keys_from_ranges(specs: list[str]) -> frozenset[str]:
+    keys: set[str] = set()
+    for spec in specs:
+        parsed = parse_node_key(spec)
+        if isinstance(parsed, CellKey):
+            keys.add(str(parsed))
+            continue
+        if not isinstance(parsed, RangeKey):
+            raise TypeError(f"expected cell or range spec, got {type(parsed).__name__}: {spec}")
+        for sheet, a1 in expand_range(
+            sheet=parsed.sheet,
+            start_col=parsed.min_col,
+            start_row=parsed.min_row,
+            end_col=parsed.max_col,
+            end_row=parsed.max_row,
+            max_cells=10_000,
+        ):
+            keys.add(format_key(sheet, a1))
+    return frozenset(keys)
 
-    codegen_index = build_taco_index(graph, TacoBuildConfig.for_codegen(graph))
+
+def _print_codegen_boundary(graph: DependencyGraph, full_index: TacoIndex) -> None:
+    input_keys = _input_keys_from_ranges(INPUT_RANGES)
+    codegen_index = build_taco_index(
+        graph, TacoBuildConfig.for_codegen(graph, input_keys=input_keys)
+    )
 
     print("=== Codegen boundary TACO ===")
     print(
         "Targets and declared inputs stay at cell granularity; "
         "only internal formula columns would compress (none in this workbook)."
     )
-    print(f"  classified inputs: {len(inputs)}")
-    print(f"  classified constants: {len(constants)}")
-    print(f"  leaf inputs from graph: {len(input_keys_from_graph(graph))}")
+    print(f"  declared input cells: {len(input_keys)}")
     print(
         f"  full TACO compressed edges: {len(full_index.compressed_edges)} "
         f"-> codegen boundary: {len(codegen_index.compressed_edges)}"
     )
     _print_edge_summary("Codegen-boundary index:", codegen_index)
 
-    print("=== CodeGenerator (cell-level export today) ===")
-    print(
-        "CodeGenerator does not consume the TACO index yet; "
-        "it emits one function per formula cell (or vectorized target blocks)."
-    )
-    code = generator.generate(cell_targets)
-    formula_defs = [
-        line
-        for line in code.splitlines()
-        if line.startswith("def _formula_") or line.strip().startswith("'''Formula:")
-    ]
-    print(f"  generated lines: {len(code.splitlines())}")
-    print(f"  formula function defs: {len(formula_defs) // 2}")
-    print("  sample defs:")
-    for line in formula_defs[:6]:
-        print(f"    {line.strip()}")
-    print()
-
-    namespace: dict[str, Any] = {}
-    exec(code, namespace)
-    results = namespace["compute_all"]()
-    print("  compute_all() target blocks:")
+    print("=== FormulaEvaluator ===")
+    with FormulaEvaluator(graph) as ev:
+        results = ev.evaluate(list(graph.target_keys()))
+    print(f"  evaluated targets: {len(results)}")
     for key in sorted(results):
-        value = results[key]
-        preview = value.flatten().tolist() if hasattr(value, "flatten") else value
-        print(f"    {key}: {preview}")
+        print(f"    {key}: {results[key]}")
     print()
 
 
@@ -140,7 +134,7 @@ def main() -> None:
     print()
     _print_edge_summary("=== Full TACO index (analysis default) ===", full_index)
 
-    _print_codegen_example(graph, full_index)
+    _print_codegen_boundary(graph, full_index)
 
     if args.no_plot:
         return

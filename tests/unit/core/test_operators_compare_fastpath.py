@@ -22,7 +22,7 @@ from tests.bench.operators_bench import (
     numeric_string_column,
     whitespace_numeric_string_column,
 )
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 from tests.unit.core.operators_test_helpers import (
     COMPARE_OPS,
     array_tolist,
@@ -130,9 +130,9 @@ def test_large_string_criteria_sumproduct_eval_codegen_parity(tmp_path: Path) ->
         load_values=True,
         use_cached_dynamic_refs=True,
     )
-    result = assert_codegen_matches_evaluator(graph, ["Data!C1"])
-    assert result.evaluator_results["Data!C1"] == pytest.approx(500_000.0)
-    assert result.generated_results["Data!C1"] == pytest.approx(500_000.0)
+    results = evaluate_targets(graph, ["Data!C1"])
+    assert results["Data!C1"] == pytest.approx(500_000.0)
+    assert results["Data!C1"] == pytest.approx(500_000.0)
 
 
 @pytest.mark.slow

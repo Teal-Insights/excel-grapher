@@ -1,7 +1,7 @@
-"""May-cycles with IF guards interact with codegen and iterative calc settings (integration).
+"""May-cycles with IF guards interact with iterative calc settings (integration).
 
-Uses patched workbooks and `CodeGenerator` where applicable so cycle detection
-matches Excel-style iteration and guarded-edge semantics end-to-end.
+Uses patched workbooks so cycle detection matches Excel-style iteration and
+guarded-edge semantics end-to-end.
 """
 
 from __future__ import annotations
@@ -12,7 +12,6 @@ import pytest
 import xlsxwriter
 
 from excel_grapher import CycleError, create_dependency_graph
-from excel_grapher.exporter.codegen import CodeGenerator
 from tests.utils.workbook_xml import patch_workbook_calcpr
 
 
@@ -186,18 +185,6 @@ def test_evaluation_order_iterate_true_raises_on_may_cycle(tmp_path: Path) -> No
     assert e.value.is_must_cycle is False
     assert "guarded" in str(e.value).lower()
     assert "iterate" in str(e.value).lower()
-
-
-def test_codegen_iterate_true_emits_iterative_runtime_on_may_cycle(tmp_path: Path) -> None:
-    base = tmp_path / "may_cycle_codegen_base.xlsx"
-    _make_feasible_may_cycle_if_workbook(base)
-    excel_path = tmp_path / "may_cycle_codegen_iterate.xlsx"
-    patch_workbook_calcpr(base, excel_path, iterate=True, iterate_count=100, iterate_delta=0.001)
-
-    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
-
-    code = CodeGenerator(graph, iterate_enabled=True).generate(["Sheet1!A1"])
-    assert "xl_iterative_compute" in code
 
 
 def test_evaluation_order_iterate_true_raises_on_must_cycle(tmp_path: Path) -> None:

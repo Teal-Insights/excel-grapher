@@ -1,6 +1,6 @@
 """VALUE: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Guards numeric parsing parity through `assert_codegen_matches_evaluator` for small
+Guards numeric parsing parity through `evaluate_targets` for small
 dependency graphs.
 """
 
@@ -11,7 +11,7 @@ import pytest
 from excel_grapher import DependencyGraph, Node, XlError
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.coercions import datetime_to_excel_serial
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -43,8 +43,8 @@ def test_value_parity_with_lic_dsf_style_key() -> None:
         _make_node("S!A1", '=VALUE("6522014")', None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!A1"])
-    assert result.generated_results["S!A1"] == 6522014.0
+    results = evaluate_targets(graph, ["S!A1"])
+    assert results["S!A1"] == 6522014.0
 
 
 def test_value_parity_with_currency() -> None:
@@ -52,8 +52,8 @@ def test_value_parity_with_currency() -> None:
         _make_node("S!B1", '=VALUE("$1,234.56")', None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == 1234.56
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == 1234.56
 
 
 def test_value_parity_with_invalid_text() -> None:
@@ -61,8 +61,8 @@ def test_value_parity_with_invalid_text() -> None:
         _make_node("S!C1", '=VALUE("abc")', None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!C1"])
-    assert result.generated_results["S!C1"] == XlError.VALUE
+    results = evaluate_targets(graph, ["S!C1"])
+    assert results["S!C1"] == XlError.VALUE
 
 
 def test_value_parity_with_iso_date_string() -> None:
@@ -70,6 +70,6 @@ def test_value_parity_with_iso_date_string() -> None:
         _make_node("S!D1", '=VALUE("2018-03-15")', None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!D1"])
+    results = evaluate_targets(graph, ["S!D1"])
     expected = datetime_to_excel_serial(datetime(2018, 3, 15))
-    assert result.generated_results["S!D1"] == pytest.approx(expected)
+    assert results["S!D1"] == pytest.approx(expected)

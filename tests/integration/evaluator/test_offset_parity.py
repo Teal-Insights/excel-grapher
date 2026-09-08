@@ -1,6 +1,6 @@
 """OFFSET: evaluator and generated export runtime agree on synthetic graphs (integration).
 
-Guards volatile offset expansion through `assert_codegen_matches_evaluator` so
+Guards volatile offset expansion through `evaluate_targets` so
 dynamic reference behavior matches embedded runtime helpers.
 """
 
@@ -9,7 +9,7 @@ from __future__ import annotations
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -41,8 +41,8 @@ def test_offset_parity_static_single_cell() -> None:
         _make_node("S!A2", None, 20),
         _make_node("S!B1", "=OFFSET(S!A1, 1, 0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == 20
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == 20
 
 
 def test_offset_parity_static_range_sum() -> None:
@@ -54,8 +54,8 @@ def test_offset_parity_static_range_sum() -> None:
         _make_node("S!B2", None, 20),
         _make_node("S!C1", "=SUM(OFFSET(S!A1, 0, 0, 2, 2))", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!C1"])
-    assert result.generated_results["S!C1"] == 33.0
+    results = evaluate_targets(graph, ["S!C1"])
+    assert results["S!C1"] == 33.0
 
 
 def test_offset_parity_dynamic_row_offset() -> None:
@@ -67,8 +67,8 @@ def test_offset_parity_dynamic_row_offset() -> None:
         _make_node("S!B1", None, 1),
         _make_node("S!C1", "=OFFSET(S!A1, S!B1, 0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!C1"])
-    assert result.generated_results["S!C1"] == 10
+    results = evaluate_targets(graph, ["S!C1"])
+    assert results["S!C1"] == 10
 
 
 def test_offset_parity_negative_offset() -> None:
@@ -79,8 +79,8 @@ def test_offset_parity_negative_offset() -> None:
         _make_node("S!A3", None, 300),
         _make_node("S!B1", "=OFFSET(S!A3, -2, 0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == 100
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == 100
 
 
 def test_offset_parity_invalid_returns_ref_error() -> None:
@@ -89,5 +89,5 @@ def test_offset_parity_invalid_returns_ref_error() -> None:
         _make_node("S!A1", None, 1),
         _make_node("S!B1", "=OFFSET(S!A1, -1, 0)", None),
     )
-    result = assert_codegen_matches_evaluator(graph, ["S!B1"])
-    assert result.generated_results["S!B1"] == XlError.REF
+    results = evaluate_targets(graph, ["S!B1"])
+    assert results["S!B1"] == XlError.REF

@@ -181,7 +181,7 @@ Output records include **all declared dimensions** (and attributes such as `UNIT
 
 ### Package export (`generate_modules`)
 
-Series I/O is an inverted-tree **package**. `generate()` stays bindings-free (`make_context` / `compute_all`) for parity and teaching. Package `compute_*` functions take catalog-order input tuples and return measure tuples; `as_records` zips the published domain into a Records view.
+Series I/O is an inverted-tree **package**. Package `compute_*` functions take catalog-order input tuples and return measure tuples; `as_records` zips the published domain into a Records view. There is no bindings-free `generate()` path.
 
 The input row `F5:J5` is values, so export adds identity formulas on `F6:J6` as the output series:
 

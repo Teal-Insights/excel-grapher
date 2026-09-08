@@ -1,12 +1,12 @@
 """IF empty/omitted branches: evaluator and codegen agree on Excel 0/FALSE.
 
-Uses `assert_codegen_matches_evaluator` so empty-vs-omitted IF semantics stay
+Uses `evaluate_targets` so empty-vs-omitted IF semantics stay
 aligned on the evaluator↔codegen path independent of Excel file I/O.
 """
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -45,10 +45,10 @@ def test_if_empty_vs_omitted_branch_parity() -> None:
     )
 
     targets = ["S!A1", "S!A2", "S!A3", "S!A4", "S!A5", "S!A6"]
-    result = assert_codegen_matches_evaluator(graph, targets)
-    assert result.generated_results["S!A1"] is False
-    assert result.generated_results["S!A2"] == 0
-    assert result.generated_results["S!A3"] == 0
-    assert result.generated_results["S!A4"] == 5
-    assert result.generated_results["S!A5"] == 1
-    assert result.generated_results["S!A6"] is False
+    results = evaluate_targets(graph, targets)
+    assert results["S!A1"] is False
+    assert results["S!A2"] == 0
+    assert results["S!A3"] == 0
+    assert results["S!A4"] == 5
+    assert results["S!A5"] == 1
+    assert results["S!A6"] is False

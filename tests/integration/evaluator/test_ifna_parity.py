@@ -1,12 +1,12 @@
 """IFNA: `FormulaEvaluator` and generated export runtime agree on synthetic graphs (integration).
 
-Uses `assert_codegen_matches_evaluator` so IFNA semantics stay aligned on the
+Uses `evaluate_targets` so IFNA semantics stay aligned on the
 evaluator↔codegen path independent of Excel file I/O.
 """
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from tests.integration.utils.parity_harness import assert_codegen_matches_evaluator
+from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -43,9 +43,9 @@ def test_ifna_parity_with_na_and_value() -> None:
         _make_node("S!A6", "=_xludf.IFNA(S!A1, 13)", None),
     )
 
-    result = assert_codegen_matches_evaluator(graph, ["S!A2", "S!A3", "S!A4", "S!A5", "S!A6"])
-    assert result.generated_results["S!A2"] == 7
-    assert result.generated_results["S!A3"] == 9
-    assert result.generated_results["S!A4"] == 5
-    assert result.generated_results["S!A5"] == "text"
-    assert result.generated_results["S!A6"] == 13
+    results = evaluate_targets(graph, ["S!A2", "S!A3", "S!A4", "S!A5", "S!A6"])
+    assert results["S!A2"] == 7
+    assert results["S!A3"] == 9
+    assert results["S!A4"] == 5
+    assert results["S!A5"] == "text"
+    assert results["S!A6"] == 13
