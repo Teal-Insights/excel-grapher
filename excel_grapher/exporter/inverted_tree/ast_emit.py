@@ -88,6 +88,9 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     collect_dependence_edges,
     indices_to_source,
     plan_fused_scc,
+    slot_table_needs_intern,
+    slot_table_to_source,
+    wrap_slot_table_source,
 )
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
 from excel_grapher.series_bindings.types import Scalar
@@ -142,16 +145,19 @@ _ARRAY_IF_UNSOUND_FNS = frozenset(
 
 @dataclass
 class KeyedReadIntern:
-    """Intern domain tuples, slot maps, and catalog-index tables for internals.
+    """Intern domain tuples, slot maps, catalog-index tables, and member tables.
 
     `emit_internals_module` binds one instance for a package so repeated keyed
-    reads share metadata instead of embedding it at every site (#786).
+    reads share metadata instead of embedding it at every site (#786). Nested
+    aggregate member tables that need construction are interned the same way
+    so compact source does not reallocate per host index (#795).
     """
 
     plan: DomainEmitPlan
     _sequences: dict[tuple[object, ...], str] = field(default_factory=dict)
     _slot_maps: dict[str, str] = field(default_factory=dict)
     _slot_tables: dict[tuple[int, ...], str] = field(default_factory=dict)
+    _member_tables: dict[tuple[tuple[int, ...], ...], str] = field(default_factory=dict)
     uses_data: bool = False
     uses_datetime: bool = False
 
@@ -196,6 +202,22 @@ class KeyedReadIntern:
         self._slot_tables[indices] = name
         return name
 
+    def member_slots(self, table: tuple[tuple[int, ...], ...]) -> str:
+        """Return a compact or interned expression for a nested member-slot table.
+
+        Constructor forms (`*`, concatenation, comprehensions) are bound once at
+        module level so compact source does not reallocate on every host index.
+        """
+        source = slot_table_to_source(table)
+        if not slot_table_needs_intern(source):
+            return source
+        existing = self._member_tables.get(table)
+        if existing is not None:
+            return existing
+        name = f"_MEMBERS_{len(self._member_tables)}"
+        self._member_tables[table] = name
+        return name
+
     def emit_lines(self) -> list[str]:
         """Return module-level assignments for interned keyed-read metadata."""
         lines: list[str] = []
@@ -203,6 +225,8 @@ class KeyedReadIntern:
             lines.append(f"{name} = {values!r}")
         for indices, name in self._slot_tables.items():
             lines.append(f"{name} = {indices_to_source(indices)}")
+        for table, name in self._member_tables.items():
+            lines.append(f"{name} = {slot_table_to_source(table)}")
         for series_id, name in self._slot_maps.items():
             domain = self.plan.series_expr[series_id]
             lines.append(f"{name} = {{key: i for i, key in enumerate({domain})}}")
@@ -1484,10 +1508,11 @@ def _catalog_slots(
 
 def _member_slots_source(slots: Sequence[Sequence[int]]) -> str:
     """Return a Python tuple of per-member `take` index sequences."""
-    parts = [indices_to_source(item) for item in slots]
-    if len(parts) == 1:
-        return f"({parts[0]},)"
-    return f"({', '.join(parts)})"
+    intern = current_keyed_intern()
+    table = tuple(tuple(row) for row in slots)
+    if intern is not None:
+        return intern.member_slots(table)
+    return slot_table_to_source(table)
 
 
 def _emit_demanded_slots(covered: BoundSeries, indices_expr: str, ctx: EmitContext) -> str:
@@ -1519,9 +1544,16 @@ def _emit_indexed_slots(
     table: Sequence[Sequence[int]],
     ctx: EmitContext,
     index_var: str,
+    *,
+    origin: int = 0,
 ) -> str:
-    """Emit a covering window whose catalog slots are a function of the host index."""
-    selector = f"{_member_slots_source(table)}[{index_var}]"
+    """Emit a covering window whose catalog slots are a function of the host index.
+
+    Statement-local tables are subscripted as `table[i - start]` when `origin`
+    is the statement's catalog start.
+    """
+    table_expr = wrap_slot_table_source(_member_slots_source(table))
+    selector = f"{table_expr}[{_index_expr(-origin, index_var)}]"
     if covered.series_id in ctx.scc_ids:
         return _emit_demanded_slots(covered, selector, ctx)
     name = ctx.param(covered.series_id)
@@ -1545,19 +1577,26 @@ def _aggregate_member_slot_table(
     covered: BoundSeries,
     node: AstNode,
     ctx: EmitContext,
-) -> tuple[tuple[int, ...], ...] | None:
-    """Return per-host catalog slots of `node` over the current statement.
+) -> tuple[tuple[tuple[int, ...], ...], int] | None:
+    """Return per-statement catalog slots of `node` and the catalog origin.
 
-    Relative range endpoints are resolved against each statement member. Slots
-    outside the statement stay empty; generated code for this region only
-    indexes statement members.
+    Relative range endpoints are resolved against each statement member. The
+    table is statement-local: generated code indexes it as `table[i - start]`.
     """
     if ctx.graph is None:
         return None
     template_ranges = _range_nodes(node_formula_ast(ctx.graph, ctx.host_cell))
     range_slot = template_ranges.index(node)
-    members = _statement_cells(ctx) or tuple(ctx.host.cells)
-    table: list[tuple[int, ...]] = [() for _ in ctx.host.cells]
+    stmt = _current_statement(ctx)
+    if stmt is not None:
+        members = stmt.cells
+        origin = stmt.start
+        length = stmt.stop - stmt.start
+    else:
+        members = tuple(ctx.host.cells)
+        origin = 0
+        length = len(ctx.host.cells)
+    table: list[tuple[int, ...]] = [() for _ in range(length)]
     seen = False
     for cell in members:
         host_i = ctx.host.index_of(cell)
@@ -1570,11 +1609,11 @@ def _aggregate_member_slot_table(
             iter_ref_addresses(member_ranges[range_slot], cell, ctx.graph),
             ctx.blank_rects,
         )
-        table[host_i] = _catalog_slots(covered, addresses, ctx)
+        table[host_i - origin] = _catalog_slots(covered, addresses, ctx)
         seen = True
     if not seen:
         return None
-    return tuple(table)
+    return tuple(table), origin
 
 
 def _emit_aggregate_covering(
@@ -1592,22 +1631,23 @@ def _emit_aggregate_covering(
     if covered.is_scalar:
         return ctx.param(covered.series_id)
     current = _catalog_slots(covered, addresses, ctx)
-    table = _aggregate_member_slot_table(covered, node, ctx)
-    if table is None:
+    packed = _aggregate_member_slot_table(covered, node, ctx)
+    if packed is None:
         return _emit_static_slots(covered, current, ctx)
+    table, origin = packed
     members = _statement_cells(ctx) or tuple(ctx.host.cells)
     unique: set[tuple[int, ...]] = set()
     for cell in members:
         host_i = ctx.host.index_of(cell)
         if host_i is not None:
-            unique.add(table[host_i])
+            unique.add(table[host_i - origin])
     if len(unique) <= 1:
         return _emit_static_slots(covered, next(iter(unique), current), ctx)
     if ctx.index_var is None:
         raise _host_export_error(
             ctx, "aggregate range slots vary across statement members without a host index"
         )
-    return _emit_indexed_slots(covered, table, ctx, ctx.index_var)
+    return _emit_indexed_slots(covered, table, ctx, ctx.index_var, origin=origin)
 
 
 def _emit_lookup_arg(node: AstNode, ctx: EmitContext) -> str:
