@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, runtime
 
 if TYPE_CHECKING:
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
+    from .graph_consistency import GraphConsistencyIssue
 
 from excel_grapher.core.address_keys import (
     CellKey,
@@ -465,7 +466,8 @@ class DependencyGraph:
         Edges are not recomputed; callers rewiring dependencies must update
         edges explicitly. Intended for projection authors building export-only
         graph views. Drops `formula_shapes`; callers who want the overlay must
-        rewarm.
+        rewarm. Does not validate formula/edge agreement; call
+        `validate_consistency` after rewiring.
 
         Raises:
             KeyError: If the node is missing.
@@ -501,7 +503,9 @@ class DependencyGraph:
         Unset `formula_ast` clears the derived formula view and, unless
         `formula=` is passed, the raw audit string. Edges are not recomputed;
         callers rewiring dependencies must update edges explicitly. Drops
-        `formula_shapes`; callers who want the overlay must rewarm.
+        `formula_shapes`; callers who want the overlay must rewarm. Does not
+        validate formula/edge agreement; call `validate_consistency` after
+        rewiring.
 
         Raises:
             KeyError: If the node is missing.
@@ -524,7 +528,9 @@ class DependencyGraph:
         Both outgoing dependency edges and incoming dependent edges are dropped,
         along with their guards and provenance. Dependent formulas are not
         rewritten; callers collapsing nodes must update dependents explicitly.
-        Node hooks are not invoked. Absent keys are a no-op.
+        Node hooks are not invoked. Absent keys are a no-op. Does not
+        validate remaining formulas; call `validate_consistency` after
+        collapsing nodes.
         """
         nk = normalize_key(key)
         if nk not in self._nodes:
@@ -536,6 +542,25 @@ class DependencyGraph:
         self._nodes.pop(nk, None)
         self._edges.pop(nk, None)
         self._reverse_edges.pop(nk, None)
+
+    def consistency_issues(self) -> tuple[GraphConsistencyIssue, ...]:
+        """Return structured formula/edge/flag disagreements (empty if consistent)."""
+        from .graph_consistency import collect_graph_consistency_issues
+
+        return collect_graph_consistency_issues(self)
+
+    def validate_consistency(self) -> None:
+        """Raise `GraphConsistencyError` if formulas, edges, or flags disagree.
+
+        Does not rewrite the graph. Opt-in for projection authors after
+        `set_node_formula` / `add_edge` / `remove_node`.
+
+        Raises:
+            GraphConsistencyError: If any structured consistency issue is found.
+        """
+        from .graph_consistency import validate_graph_consistency
+
+        validate_graph_consistency(self)
 
     def move_node(self, old_key: NodeKey, new_key: NodeKey) -> None:
         """Move a node to a new cell, preserving resolved formula targets.

@@ -39,6 +39,7 @@ from excel_grapher.grapher.guard import GuardExpr
 from excel_grapher.grapher.node import NodeView
 
 if TYPE_CHECKING:
+    from excel_grapher.grapher.graph_consistency import GraphConsistencyIssue
     from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 __all__ = [
@@ -571,6 +572,20 @@ class ProjectionResult:
         """Map a canonical workbook address to its projected computation address."""
         return self.manifest.map_to_projected(address)
 
+    def consistency_issues(self) -> tuple[GraphConsistencyIssue, ...]:
+        """Return structured formula/edge/flag disagreements on the projected graph."""
+        return self.projected_graph.consistency_issues()
+
+    def validate(self) -> None:
+        """Raise `GraphConsistencyError` if the projected graph is inconsistent.
+
+        Opt-in for projection authors. Does not rewrite formulas or edges.
+
+        Raises:
+            GraphConsistencyError: If formulas, edges, or flags disagree.
+        """
+        self.projected_graph.validate_consistency()
+
 
 class IdentityTransitCompression:
     """Collapse pure identity transit nodes into a projected export graph.
@@ -704,6 +719,8 @@ def _chain_forwarding_maps(manifests: list[ProjectionManifest]) -> dict[str, str
 def apply_projection(
     graph: DependencyGraph,
     projections: Iterable[ProjectionStep],
+    *,
+    validate: bool = False,
 ) -> ProjectionResult:
     """Apply one or more projection steps, returning the final projection result.
 
@@ -711,6 +728,17 @@ def apply_projection(
     graph. A single step's manifest is returned as-is; multiple steps are folded
     into a `CompositeProjectionManifest` carrying the chained forwarding map and
     every component manifest. Heterogeneous step kinds are supported.
+
+    Args:
+        graph: Canonical graph to project.
+        projections: Ordered projection steps.
+        validate: When True, run `ProjectionResult.validate` on the result.
+            Default False so composition does not change `set_node_formula`
+            semantics.
+
+    Raises:
+        GraphConsistencyError: If `validate` is True and the projected graph
+            is inconsistent.
     """
     manifests: list[ProjectionManifest] = []
     projected = graph
@@ -720,25 +748,29 @@ def apply_projection(
         projected = result.projected_graph
 
     if not manifests:
-        return ProjectionResult(
+        result = ProjectionResult(
             original_graph=graph,
             projected_graph=graph._copy_for_projection(),
             manifest=BaseProjectionManifest.empty(kind="empty"),
         )
-    if len(manifests) == 1:
-        return ProjectionResult(
+    elif len(manifests) == 1:
+        result = ProjectionResult(
             original_graph=graph,
             projected_graph=projected,
             manifest=manifests[0],
         )
-    return ProjectionResult(
-        original_graph=graph,
-        projected_graph=projected,
-        manifest=CompositeProjectionManifest(
-            forwarding_map=_chain_forwarding_maps(manifests),
-            steps=tuple(manifests),
-        ),
-    )
+    else:
+        result = ProjectionResult(
+            original_graph=graph,
+            projected_graph=projected,
+            manifest=CompositeProjectionManifest(
+                forwarding_map=_chain_forwarding_maps(manifests),
+                steps=tuple(manifests),
+            ),
+        )
+    if validate:
+        result.validate()
+    return result
 
 
 register_projection_manifest("identity_transit", BaseProjectionManifest.from_dict)
