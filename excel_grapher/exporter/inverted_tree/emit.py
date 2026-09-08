@@ -194,7 +194,8 @@ def _emit_domain_constants(plan: DomainEmitPlan) -> list[str]:
         lines.append(f"{name}: {domain_annotation(values)} = {_py_literal(values)}")
         lines.append("")
     for name, values in plan.interned:
-        lines.append(f"{name}: {domain_annotation(values)} = {_py_literal(values)}")
+        rhs = plan.interned_source.get(name) or _py_literal(values)
+        lines.append(f"{name}: {domain_annotation(values)} = {rhs}")
         lines.append("")
     return lines
 
