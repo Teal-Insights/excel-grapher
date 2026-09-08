@@ -213,6 +213,32 @@ class DomainEmitPlan:
             return True
         return any("data." in expr for expr in self.scc_expr.values())
 
+    def sequence_expr(self, values: tuple[object, ...], *, field: str | None = None) -> str | None:
+        """Return a `data.py` expression for `values`, or `None` if not interned.
+
+        Prefers a field-domain constant (or slice) when `field` is known,
+        then any interned subset, then any field domain that matches exactly.
+        """
+        candidates: list[tuple[str, tuple[object, ...]]] = []
+        if field is not None and field in self.field_domains:
+            candidates.append((domain_const_name(field), self.field_domains[field]))
+        candidates.extend(self.interned)
+        if field is None:
+            candidates.extend(
+                (domain_const_name(name), domain) for name, domain in self.field_domains.items()
+            )
+        seen: set[str] = set()
+        for name, full in candidates:
+            if name in seen:
+                continue
+            seen.add(name)
+            slc = _contiguous_slice(full, values)
+            if slc is None:
+                continue
+            ref = f"data.{name}"
+            return ref if slc == slice(None) else f"{ref}{_slice_source(slc)}"
+        return None
+
 
 class _Planner:
     """Build domain expressions, interning tuples that are not slices/products."""

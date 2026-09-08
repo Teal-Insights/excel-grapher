@@ -203,18 +203,10 @@ def test_scenario_pair_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> 
     assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert (
-        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'))[i][0]"
-    ) in internals
-    assert (
-        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'))[i][1]"
-    ) in internals
-    assert (
-        "(('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i - 2][0]"
-    ) in internals
-    assert (
-        "(('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i - 2][1]"
-    ) in internals
+    assert "paths[i]" in internals
+    assert "paths[i + 2]" in internals
+    assert "paths[i + 4]" in internals
+    assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a34_eval")
     cells = ["Engine!C10", "Engine!D10", "Engine!C11", "Engine!D11"]
     expected = FormulaEvaluator(
@@ -397,12 +389,10 @@ def test_direct_baseline_plus_scenario_pairs_emits(
     assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document, force_rung=force_rung)
     internals = modules["internals.py"]
-    assert (
-        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'))[i - 2][0]"
-    ) in internals
-    assert (
-        "(('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i - 4][0]"
-    ) in internals
+    assert "paths[i]" in internals
+    assert "paths[i + 2]" in internals
+    assert "paths[i + 4]" in internals
+    assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name=f"a34_baseline_{force_rung}")
     cells = [
         "Engine!C9",

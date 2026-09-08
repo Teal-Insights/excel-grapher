@@ -197,11 +197,9 @@ def test_threshold_coread_emits_and_matches_evaluator(tmp_path: Path) -> None:
     assert "paths" in deps["breach"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert (
-        "('Baseline', 'Baseline', 'MX shock Standard&Tailored', 'MX shock Standard&Tailored')[i]"
-        in internals
-    )
-    assert "('Threshold', (2024, 2025, 2024, 2025)[i])" in internals
+    assert "paths[i]" in internals
+    assert "paths[i + 2]" in internals
+    assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a33_eval")
     cells = ["Outputs!A1", "Outputs!A2", "Outputs!A3", "Outputs!A4"]
     expected = FormulaEvaluator(
