@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.6.1 (2026-09-08)
+
+### Performance Improvements
+
+- **export**: Intern keyed domains and emit affine catalog indices
+  ([#789](https://github.com/Teal-Insights/excel-grapher/pull/789),
+  [`9b13511`](https://github.com/Teal-Insights/excel-grapher/commit/9b13511583623264d8a08981214eafc7f9b3e683))
+
+
 ## v14.6.0 (2026-09-08)
 
 ### Bug Fixes
