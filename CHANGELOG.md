@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.8.0 (2026-09-08)
+
+### Documentation
+
+- **export**: Describe compact interned domain emission
+  ([#804](https://github.com/Teal-Insights/excel-grapher/pull/804),
+  [`42e486f`](https://github.com/Teal-Insights/excel-grapher/commit/42e486f7b0f3cfa5e1262091a15b77b6d9aa4e01))
+
+### Features
+
+- **export**: Compact mostly-regular sparse multidimensional domains
+  ([#804](https://github.com/Teal-Insights/excel-grapher/pull/804),
+  [`42e486f`](https://github.com/Teal-Insights/excel-grapher/commit/42e486f7b0f3cfa5e1262091a15b77b6d9aa4e01))
+
+### Performance Improvements
+
+- **export**: Factor shared formula prefixes across generated API functions
+  ([#801](https://github.com/Teal-Insights/excel-grapher/pull/801),
+  [`d1afdbf`](https://github.com/Teal-Insights/excel-grapher/commit/d1afdbf79c2173f6ea679fb03aa2b21ec1758382))
+
+
 ## v14.7.3 (2026-09-08)
 
 ### Performance Improvements
