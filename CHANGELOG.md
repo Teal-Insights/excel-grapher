@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v14.5.5 (2026-09-08)
+
+### Bug Fixes
+
+- **export**: Demote partition-contraction cycles and fit demand indexes
+  ([#783](https://github.com/Teal-Insights/excel-grapher/pull/783),
+  [`82b8dcf`](https://github.com/Teal-Insights/excel-grapher/commit/82b8dcfd6f4664c5ba45cad2c29043caf20b062c))
+
+- **export**: Restrict scenario-pair tables to the current statement
+  ([#780](https://github.com/Teal-Insights/excel-grapher/pull/780),
+  [`01ca1e3`](https://github.com/Teal-Insights/excel-grapher/commit/01ca1e35a8aff9d6fccb78bacb2bdec8ff3bc448))
+
+
 ## v14.5.4 (2026-09-08)
 
 ### Bug Fixes
