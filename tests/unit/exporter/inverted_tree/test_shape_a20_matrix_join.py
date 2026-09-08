@@ -572,3 +572,85 @@ def test_mutual_cross_country_same_index_fails_closed_naming_cells(tmp_path: Pat
     assert "Engine!B3" in message
     with pytest.raises(InvertedTreeExportError, match="Engine!B2"):
         generate_inverted(workbook, document)
+
+
+def _cross_year_chain_sheets() -> dict[str, dict[str, object]]:
+    """France@2021 reads Kenya@2021; Kenya@2020 reads France@2020 (#779).
+
+    Cells are a chain `B2 -> B3 -> C3 -> C2`. Contracting by REF_AREA invents
+    a France <-> Kenya cycle.
+    """
+    return {
+        "Engine": {
+            "B1": 2020,
+            "C1": 2021,
+            "A2": "France",
+            "B2": "=100",
+            "C2": "=C3",
+            "A3": "Kenya",
+            "B3": "=B2",
+            "C3": "=B3+1",
+        }
+    }
+
+
+def test_cross_year_partition_cycle_demotes_to_rung3_and_matches_evaluator(
+    tmp_path: Path,
+) -> None:
+    workbook = write_workbook(tmp_path / "a20_cross_year_chain.xlsx", _cross_year_chain_sheets())
+    document = _cross_country_legal_bindings()
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    assert plan_fused_scc(("path",), catalog=catalog, graph=graph) is None
+    assert plan_scc(("path",), catalog=catalog, graph=graph).rung == 3
+    modules = generate_inverted(workbook, document)
+    internals = modules["internals.py"]
+    assert "demand_instance(" in internals
+    assert "-3 * i + 6" in internals
+    assert "i + 2" not in internals
+    pkg = load_package(modules, tmp_path, name="a20_cross_year_chain")
+    assert pkg.compute_path() == pytest.approx((100.0, 101.0, 100.0, 101.0))
+    addresses = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
+    expected = _evaluator_values(workbook, addresses)
+    assert pkg.compute_path() == pytest.approx(tuple(expected[addr] for addr in addresses))
+
+
+def _cross_year_non_affine_sheets() -> dict[str, dict[str, object]]:
+    """Three areas: opposite year-0/year-1 reads plus a third-country hop (#779)."""
+    return {
+        "Engine": {
+            "B1": 2020,
+            "C1": 2021,
+            "A2": "France",
+            "B2": "=100",
+            "C2": "=C3",
+            "A3": "Kenya",
+            "B3": "=B2",
+            "C3": "=C4",
+            "A4": "Spain",
+            "B4": "=50",
+            "C4": "=B4+1",
+        }
+    }
+
+
+def test_cross_year_non_affine_demand_slots_match_evaluator(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "a20_cross_year_slots.xlsx", _cross_year_non_affine_sheets()
+    )
+    document = bindings_document(
+        _matrix_entry("path", "Engine!B2:C4", header_row=1, direction="output"),
+    )
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    assert plan_scc(("path",), catalog=catalog, graph=graph).rung == 3
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a20_cross_year_slots")
+    assert pkg.compute_path() == pytest.approx((100.0, 51.0, 100.0, 51.0, 50.0, 51.0))
+    addresses = [
+        "Engine!B2",
+        "Engine!C2",
+        "Engine!B3",
+        "Engine!C3",
+        "Engine!B4",
+        "Engine!C4",
+    ]
+    expected = _evaluator_values(workbook, addresses)
+    assert pkg.compute_path() == pytest.approx(tuple(expected[addr] for addr in addresses))
