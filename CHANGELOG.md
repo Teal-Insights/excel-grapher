@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.2.0 (2026-09-08)
+
+### Bug Fixes
+
+- Align consistency check with extraction masking
+  ([#808](https://github.com/Teal-Insights/excel-grapher/pull/808),
+  [`c562429`](https://github.com/Teal-Insights/excel-grapher/commit/c562429666f7c0bf196080d0d4df8131ad2cab73))
+
+### Features
+
+- Add fail-closed graph formula/edge consistency check
+  ([#808](https://github.com/Teal-Insights/excel-grapher/pull/808),
+  [`c562429`](https://github.com/Teal-Insights/excel-grapher/commit/c562429666f7c0bf196080d0d4df8131ad2cab73))
+
+- Fail-closed projection formula/edge consistency check
+  ([#808](https://github.com/Teal-Insights/excel-grapher/pull/808),
+  [`c562429`](https://github.com/Teal-Insights/excel-grapher/commit/c562429666f7c0bf196080d0d4df8131ad2cab73))
+
+
 ## v15.1.0 (2026-09-08)
 
 ### Documentation
