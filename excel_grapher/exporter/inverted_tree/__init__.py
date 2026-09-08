@@ -1,7 +1,8 @@
 """Generate standalone packages with explicit input-leaf compute functions.
 
 Constant leaves are read from `data`. Key domains are published on
-`data.{FIELD}_DOMAIN` and as `__key__` / `__domain__` on each `compute_*`.
+`data.{FIELD}_DOMAIN` and as `__key__` / `__domain__` on each `compute_*`
+via `@publish`.
 """
 
 from __future__ import annotations

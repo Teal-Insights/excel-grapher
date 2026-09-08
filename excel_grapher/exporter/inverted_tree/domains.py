@@ -3,7 +3,7 @@
 Field domains (`TIME_PERIOD_DOMAIN`, ...) are the catalog-order union of resolved
 key values, one tuple per distinct field. Each `compute_*` / internals helper
 publishes `__key__` and `__domain__` so callers index by key instead of column
-count (#676).
+count (#676). Generated modules attach that metadata with `@publish` (#766).
 """
 
 from __future__ import annotations
@@ -349,26 +349,22 @@ def plan_domain_emission(
     )
 
 
-def publish_attr_source(name: str, attr: str, value_expr: str) -> str:
-    """Return a setattr publication line for generated function metadata."""
-    return f"setattr({name}, {attr!r}, {value_expr})"
-
-
-def key_domain_attr_source(
-    name: str,
+def publish_decorator_source(
     *,
     keys: tuple[str, ...],
     domain_expr: str,
+    holes: tuple[int, ...] = (),
+    constants: Sequence[str] | None = None,
 ) -> str:
-    """Return setattr lines that publish `{name}` `__key__` and `__domain__`."""
-    return "\n".join(
-        (
-            publish_attr_source(name, "__key__", repr(keys)),
-            publish_attr_source(name, "__domain__", domain_expr),
-        )
-    )
+    """Return a `@publish(...)` decorator for generated series metadata.
 
-
-def constants_attr_source(name: str, constants: Sequence[str]) -> str:
-    """Return a setattr line that publishes `{name}` `__constants__`."""
-    return publish_attr_source(name, "__constants__", repr(tuple(constants)))
+    Empty `holes` are omitted (`holes=()` is the decorator default). `constants`
+    is emitted only when given, including an empty tuple for api `compute_*`.
+    """
+    args = [f"key={keys!r}", f"domain={domain_expr}"]
+    if holes:
+        args.append(f"holes={holes!r}")
+    if constants is not None:
+        args.append(f"constants={tuple(constants)!r}")
+    body = ",\n    ".join(args)
+    return f"@publish(\n    {body},\n)"

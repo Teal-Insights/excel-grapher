@@ -14,7 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from datetime import date, datetime
-from typing import Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
+from typing import Any, Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.logic_funcs import logical_if
@@ -30,6 +30,7 @@ from excel_grapher.series_bindings.input_coerce import (
 from excel_grapher.series_bindings.input_coerce import require_input_domain as require_input_domain
 
 T = TypeVar("T")
+F = TypeVar("F", bound=Callable[..., object])
 
 
 class KeyedCompute(Protocol):
@@ -38,6 +39,31 @@ class KeyedCompute(Protocol):
     __key__: tuple[str, ...]
     __domain__: tuple[object, ...]
     __holes__: tuple[int, ...]
+
+
+def publish(
+    *,
+    key: tuple[str, ...],
+    domain: tuple[object, ...],
+    holes: tuple[int, ...] = (),
+    constants: tuple[str, ...] | None = None,
+) -> Callable[[F], F]:
+    """Attach series metadata to a generated helper and return it unchanged.
+
+    Sets `__key__`, `__domain__`, and `__holes__` on `fn`. When `constants` is
+    given, also sets `__constants__`. Does not wrap `fn`.
+    """
+
+    def decorator(fn: F) -> F:
+        target = cast(Any, fn)
+        target.__key__ = key
+        target.__domain__ = domain
+        target.__holes__ = holes
+        if constants is not None:
+            target.__constants__ = constants
+        return fn
+
+    return decorator
 
 
 XL_ERROR_CODES = frozenset(
