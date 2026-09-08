@@ -180,26 +180,15 @@ def test_lookup_does_not_copy_binds_onto_node_metadata() -> None:
     assert list(node.metadata) == []
 
 
-def test_node_module_does_not_import_inverted_tree_at_runtime() -> None:
+def test_node_module_does_not_import_inverted_tree() -> None:
     tree = ast.parse(Path("excel_grapher/grapher/node.py").read_text(encoding="utf-8"))
-    runtime: list[str] = []
-    for stmt in tree.body:
-        if (
-            isinstance(stmt, ast.If)
-            and isinstance(stmt.test, ast.Name)
-            and stmt.test.id == "TYPE_CHECKING"
-        ):
-            continue
-        for child in ast.walk(stmt):
-            if (
-                isinstance(child, ast.ImportFrom)
-                and child.module
-                and "inverted_tree" in child.module
-            ):
-                runtime.append(child.module)
-            if isinstance(child, ast.Import):
-                runtime.extend(alias.name for alias in child.names if "inverted_tree" in alias.name)
-    assert runtime == []
+    found: list[str] = []
+    for child in ast.walk(tree):
+        if isinstance(child, ast.ImportFrom) and child.module and "inverted_tree" in child.module:
+            found.append(child.module)
+        if isinstance(child, ast.Import):
+            found.extend(alias.name for alias in child.names if "inverted_tree" in alias.name)
+    assert found == []
 
 
 def test_build_catalog_lookup_resolves_header_binds(tmp_path: Path) -> None:

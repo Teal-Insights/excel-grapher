@@ -4,7 +4,7 @@ from collections import OrderedDict
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Any, TypeAlias
+from typing import Any, Protocol, TypeAlias
 
 import fastpyxl.utils.cell
 
@@ -22,9 +22,6 @@ from excel_grapher.core.formula_ast import (
     render_formula,
 )
 
-if TYPE_CHECKING:
-    from excel_grapher.exporter.inverted_tree.catalog import KeyPoint, SeriesCatalog
-
 # Graph node identity; canonical sheet-qualified cell address string.
 NodeKey: TypeAlias = str
 
@@ -34,6 +31,18 @@ NodeKey: TypeAlias = str
 # Use a dict LRU (not `functools.lru_cache`): `_make_key` treats `str` subclasses
 # as distinct from plain `str`, which would split AddressKey / str traffic.
 _NODE_DERIVED_CACHE_MAXSIZE = 16384
+
+
+class _SeriesBindLookup(Protocol):
+    """Duck type for `SeriesCatalog` node lookup without importing the exporter."""
+
+    def key_point_for(self, address: str) -> Any:
+        """Return the cell's key point, or `None` if unbound."""
+        ...
+
+    def binds_for(self, address: str) -> Mapping[str, Mapping[str, Any]] | None:
+        """Return series-level dimension binds, or `None` if unbound."""
+        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -423,11 +432,14 @@ class Node:
         """True when this cell has a formula AST or unparseable formula text."""
         return self.formula_ast is not None or self._unparseable_formula is not None
 
-    def key_point(self, catalog: SeriesCatalog) -> KeyPoint | None:
-        """Resolved key coordinates for this cell in `catalog`, or `None` if unbound."""
+    def key_point(self, catalog: _SeriesBindLookup) -> Any:
+        """Resolved key coordinates for this cell in `catalog`, or `None` if unbound.
+
+        `catalog` is a `SeriesCatalog`. Returns a `KeyPoint` when the cell is bound.
+        """
         return catalog.key_point_for(as_canonical(self.key))
 
-    def dimension_binds(self, catalog: SeriesCatalog) -> Mapping[str, Mapping[str, Any]] | None:
+    def dimension_binds(self, catalog: _SeriesBindLookup) -> Mapping[str, Mapping[str, Any]] | None:
         """Series-level dimension binds for this cell in `catalog`, or `None` if unbound."""
         return catalog.binds_for(as_canonical(self.key))
 
@@ -512,11 +524,14 @@ class NodeView:
         """True when this cell has a formula AST or unparseable formula text."""
         return self.formula_ast is not None or self._unparseable_formula is not None
 
-    def key_point(self, catalog: SeriesCatalog) -> KeyPoint | None:
-        """Resolved key coordinates for this cell in `catalog`, or `None` if unbound."""
+    def key_point(self, catalog: _SeriesBindLookup) -> Any:
+        """Resolved key coordinates for this cell in `catalog`, or `None` if unbound.
+
+        `catalog` is a `SeriesCatalog`. Returns a `KeyPoint` when the cell is bound.
+        """
         return catalog.key_point_for(as_canonical(self.key))
 
-    def dimension_binds(self, catalog: SeriesCatalog) -> Mapping[str, Mapping[str, Any]] | None:
+    def dimension_binds(self, catalog: _SeriesBindLookup) -> Mapping[str, Mapping[str, Any]] | None:
         """Series-level dimension binds for this cell in `catalog`, or `None` if unbound."""
         return catalog.binds_for(as_canonical(self.key))
 
