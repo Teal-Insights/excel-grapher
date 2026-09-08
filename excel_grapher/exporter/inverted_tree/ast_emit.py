@@ -38,6 +38,7 @@ from excel_grapher.exporter.inverted_tree.access import (
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
+    Statement,
     covering_series,
     covering_series_of_column,
     covering_series_of_range,
@@ -288,11 +289,21 @@ def _emit_cell_ref(node: CellRefNode, ctx: EmitContext) -> str:
     return _emit_address(as_canonical(resolve_cell_ref(node, ctx.host_cell)), ctx, ref=node)
 
 
-def _statement_cells(ctx: EmitContext) -> tuple[CanonicalAddress, ...] | None:
+def _current_statement(ctx: EmitContext) -> Statement | None:
+    """Return the host statement covering `ctx.host_index`."""
+    index = ctx.host_index
+    for stmt in ctx.host.statements:
+        if stmt.start <= index < stmt.stop:
+            return stmt
     return next(
-        (stmt.cells for stmt in ctx.host.statements if ctx.host_cell in stmt.cells),
+        (stmt for stmt in ctx.host.statements if ctx.host_cell in stmt.cells),
         None,
     )
+
+
+def _statement_cells(ctx: EmitContext) -> tuple[CanonicalAddress, ...] | None:
+    stmt = _current_statement(ctx)
+    return None if stmt is None else stmt.cells
 
 
 def _static_catalog_literal(
@@ -416,7 +427,12 @@ def _pair_key_value_expr(
     ctx: EmitContext,
     pair_maps: Mapping[str, Mapping[object, tuple[object, object]]],
 ) -> str:
-    """Return a Python expr for `pair_maps[field][host[field]][branch]`."""
+    """Return a Python expr for `pair_maps[field][host[field]][branch]`.
+
+    The pair table covers the current host statement only. Catalog index
+    `index_var` is the host origin, so a statement that starts at `start`
+    is subscripted as `table[i - start]`.
+    """
     mapped = pair_maps.get(field)
     if mapped is None:
         raise InvertedTreeExportError(f"series {ctx.host.series_id!r}: no IF pair map for {field}")
@@ -435,8 +451,11 @@ def _pair_key_value_expr(
                 f"has no IF pair for {field}"
             )
         return repr(pair[branch])
+    stmt = _current_statement(ctx)
+    domain = ctx.host.domain if stmt is None else stmt.domain
+    origin = 0 if stmt is None else stmt.start
     column: list[tuple[object, object]] = []
-    for point in ctx.host.domain:
+    for point in domain:
         try:
             host_value = point[field]
         except KeyError as exc:
@@ -450,7 +469,8 @@ def _pair_key_value_expr(
                 f"has no IF pair for {field}"
             )
         column.append(pair)
-    return f"{tuple(column)!r}[{ctx.index_var}][{branch}]"
+    index_expr = _index_expr(-origin, ctx.index_var)
+    return f"{tuple(column)!r}[{index_expr}][{branch}]"
 
 
 def _producer_field_binding(
@@ -560,8 +580,9 @@ def _verify_keyed_binding(
 ) -> None:
     """Fail closed when a host member has no producer cell for `binding`.
 
-    Only members that share this formula's host-followed keys are
-    checked. A literal year listed by IDA need not exist on IMF (#760).
+    Only members of the current statement that share this formula's
+    host-followed keys are checked. A literal year listed by IDA need
+    not exist on IMF (#760).
     """
     domain = series_domain_points(owner)
     known = set(domain)
@@ -574,11 +595,14 @@ def _verify_keyed_binding(
         if spec == "host" or (isinstance(spec, tuple) and spec[0] == "pair")
     )
     current_part = _host_join_key(ctx.host, ctx.host_index, follow_fields)
+    stmt = _current_statement(ctx)
     for edge in ctx.deps.edges:
         if edge.producer_id != owner.series_id or edge.consumer_id != ctx.host.series_id:
             continue
         host_i = ctx.host.index_of(edge.consumer_cell)
         if host_i is None or host_i in seen or host_i >= len(ctx.host.domain):
+            continue
+        if stmt is not None and not (stmt.start <= host_i < stmt.stop):
             continue
         if follow_fields and _host_join_key(ctx.host, host_i, follow_fields) != current_part:
             continue

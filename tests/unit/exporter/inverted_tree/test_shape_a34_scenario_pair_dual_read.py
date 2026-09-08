@@ -9,16 +9,28 @@ fail-closes.
 Correspondence is IF then/else operand position, not catalog order or string
 prefixes. Emit indexes a host-ordered pair table; `TIME_PERIOD` follows the
 host. A dual without an IF stays unclassifiable.
+
+A host Baseline direct-read statement has no IF pair. Pair-table emission
+covers only the current statement and shifts the index origin (#777).
 """
 
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.ast_emit import EmitContext, _pair_key_value_expr
+from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    KeyPoint,
+    SeriesCatalog,
+    Statement,
+    build_schedule_index,
+)
+from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -192,12 +204,16 @@ def test_scenario_pair_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> 
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert (
-        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'), "
-        "('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i][0]"
+        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'))[i][0]"
     ) in internals
     assert (
-        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'), "
-        "('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i][1]"
+        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'))[i][1]"
+    ) in internals
+    assert (
+        "(('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i - 2][0]"
+    ) in internals
+    assert (
+        "(('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i - 2][1]"
     ) in internals
     pkg = load_package(modules, tmp_path, name="a34_eval")
     cells = ["Engine!C10", "Engine!D10", "Engine!C11", "Engine!D11"]
@@ -268,3 +284,140 @@ def test_scenario_pair_sum_without_if_is_unclassifiable(tmp_path: Path) -> None:
     assert "Engine!C3" in message
     assert "Engine!C4" in message
     assert "B2.2 Non-Market" in message
+
+
+def test_pair_key_value_expr_omits_unpaired_baseline_statement() -> None:
+    """Pair tables cover the current IF statement, not a Baseline direct read (#777)."""
+    cells = ("Engine!A1", "Engine!A2")
+    points = (KeyPoint((("SCENARIO", "Baseline"),)), KeyPoint((("SCENARIO", "B2"),)))
+    host = BoundSeries(
+        "selected",
+        "series",
+        "output",
+        cells,
+        ("SCENARIO",),
+        "float",
+        "compute_selected",
+        {},
+        points,
+        (
+            Statement("direct", "selected", "direct", 0, 1, cells[:1], points[:1]),
+            Statement("paired", "selected", "if", 1, 2, cells[1:], points[1:]),
+        ),
+    )
+    catalog = SeriesCatalog(
+        {"selected": host},
+        ("selected",),
+        {cell: "selected" for cell in cells},
+        build_schedule_index({"selected": host}),
+    )
+    deps = SeriesDeps(
+        "selected",
+        (),
+        False,
+        None,
+        frozenset(),
+        frozenset(),
+        frozenset(),
+        frozenset(),
+        {},
+        {},
+    )
+    ctx = EmitContext(host, catalog, deps, 1, cells[1], "i", None)
+    expression = _pair_key_value_expr("SCENARIO", 0, ctx, {"SCENARIO": {"B2": ("B2.1", "B2.2")}})
+    assert eval(expression, {}, {"i": 1}) == "B2.1"
+
+
+def _baseline_pair_path_scenario() -> dict[str, Any]:
+    return {
+        "id": "SCENARIO",
+        "concept": "SCENARIO",
+        "role": "key",
+        "scope": "cell",
+        "bind": {
+            "kind": "value_map",
+            "values": {
+                "Baseline": 2,
+                "B2.1 Market": 3,
+                "B2.2 Non-Market": 4,
+                "B6.1 Market": 5,
+                "B6.2 Non-Market": 6,
+            },
+            "read": "string",
+        },
+    }
+
+
+def _baseline_pair_host_scenario() -> dict[str, Any]:
+    return {
+        "id": "SCENARIO",
+        "concept": "SCENARIO",
+        "role": "key",
+        "scope": "cell",
+        "bind": {
+            "kind": "value_map",
+            "values": {"Baseline": 9, "B2": 10, "B6": 11},
+            "read": "string",
+        },
+    }
+
+
+def _baseline_pair_sheets() -> dict[str, dict[str, object]]:
+    sheets = _mcve_sheets()
+    engine = sheets["Engine"]
+    engine["C2"] = 1
+    engine["D2"] = 2
+    engine["C9"] = "=C2"
+    engine["D9"] = "=D2"
+    return sheets
+
+
+def _baseline_pair_bindings() -> dict[str, Any]:
+    paths = _paths_entry()
+    paths["data_range"] = "Engine!C2:D6"
+    paths["structure"]["dimensions"] = [_baseline_pair_path_scenario(), _TIME_DIM]
+    selected = _selected_entry()
+    selected["data_range"] = ["Engine!C9:D9", "Engine!C10:D10", "Engine!C11:D11"]
+    selected["structure"]["dimensions"] = [_baseline_pair_host_scenario(), _TIME_DIM]
+    return bindings_document(paths, selected, _flag_entry(), schema_version="1.14.0")
+
+
+@pytest.mark.parametrize("force_rung", [None, 3])
+def test_direct_baseline_plus_scenario_pairs_emits(
+    tmp_path: Path, force_rung: Literal[3] | None
+) -> None:
+    """Direct Baseline plus two IF pairs export in fused and demand-driven mode (#777)."""
+    workbook = write_workbook(tmp_path / f"a34_baseline_{force_rung}.xlsx", _baseline_pair_sheets())
+    document = _baseline_pair_bindings()
+    catalog, deps, graph = inverted_graph_parts(workbook, document)
+    host = catalog.get("selected")
+    assert host.statements[0].start == 0
+    assert host.statements[0].stop == 2
+    assert all(point["SCENARIO"] == "Baseline" for point in host.statements[0].domain)
+    assert "paths" in deps["selected"].keyed_ids
+    modules = generate_inverted(workbook, document, force_rung=force_rung)
+    internals = modules["internals.py"]
+    assert (
+        "(('B2.1 Market', 'B2.2 Non-Market'), ('B2.1 Market', 'B2.2 Non-Market'))[i - 2][0]"
+    ) in internals
+    assert (
+        "(('B6.1 Market', 'B6.2 Non-Market'), ('B6.1 Market', 'B6.2 Non-Market'))[i - 4][0]"
+    ) in internals
+    pkg = load_package(modules, tmp_path, name=f"a34_baseline_{force_rung}")
+    cells = [
+        "Engine!C9",
+        "Engine!D9",
+        "Engine!C10",
+        "Engine!D10",
+        "Engine!C11",
+        "Engine!D11",
+    ]
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, cells, load_values=True)
+    ).evaluate(cells)
+    kwargs = input_kwargs(catalog, graph)
+    got = call_compute(pkg, "selected", kwargs)
+    assert got == pytest.approx((1.0, 2.0, 10.0, 11.0, 30.0, 31.0))
+    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    flipped = call_compute(pkg, "selected", {**kwargs, "flag": 0})
+    assert flipped == pytest.approx((1.0, 2.0, 20.0, 21.0, 40.0, 41.0))
