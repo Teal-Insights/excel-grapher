@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.6.0 (2026-09-09)
+
+### Features
+
+- **viz**: Accept GraphReadView in to_web_viz_payload
+  ([#818](https://github.com/Teal-Insights/excel-grapher/pull/818),
+  [`6cfb9e5`](https://github.com/Teal-Insights/excel-grapher/commit/6cfb9e59fba0467f3525ef2e5a8f62364b54f86f))
+
+
 ## v15.5.1 (2026-09-09)
 
 ### Bug Fixes
