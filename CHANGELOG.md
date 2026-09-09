@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.5.0 (2026-09-09)
+
+### Bug Fixes
+
+- **viz**: Keep arrowheads visible on dashed lag edges
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Keep statement-graph HTML usable on large bound workbooks
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Open statement graphs on a readable camera window
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Scale statement-graph arrowheads with the viewBox
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Show directed arrowheads on statement-graph edges
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+### Features
+
+- **viz**: Add statement-graph visualization from series bindings
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Statement-graph visualization from series bindings
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+
 ## v15.4.1 (2026-09-09)
 
 ### Bug Fixes
