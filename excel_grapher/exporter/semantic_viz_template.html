@@ -14,7 +14,7 @@
     }
     #toolbar label { display: flex; gap: 4px; align-items: center; user-select: none; }
     #wrap { position: relative; width: 100%; height: calc(100% - 48px); background: #fff; overflow: hidden; }
-    svg, canvas { width: 100%; height: 100%; display: block; cursor: grab; background: #fff; }
+    svg, canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; background: #fff; }
     svg.dragging, canvas.dragging { cursor: grabbing; }
     svg[hidden], canvas[hidden] { display: none; }
     .node rect { stroke: #1f2328; stroke-width: 1.2; cursor: pointer; }
@@ -193,20 +193,21 @@
         n._h = 28;
       });
     });
-    var maxW = 920;
+    var packedW = 0;
     ranks.forEach(function (rank) {
       var rowNodes = byRank[rank];
       var inner = 0;
       rowNodes.forEach(function (n) { inner += n._w; });
       if (rowNodes.length > 1) inner += nodeGap * (rowNodes.length - 1);
-      maxW = Math.max(maxW, pad + inner + pad);
+      packedW = Math.max(packedW, pad + inner + pad);
     });
+    var maxW = Math.max(920, packedW);
     ranks.forEach(function (rank, row) {
       var rowNodes = byRank[rank];
       var y = pad + row * rankGap;
       var centers = spreadRank(
         rowNodes.map(function (n) { return n._w; }),
-        pad, nodeGap, CAMERA_MAX_W, maxW
+        pad, nodeGap, CAMERA_MAX_W, packedW || maxW
       );
       rowNodes.forEach(function (n, i) {
         n._x = centers[i];
@@ -377,9 +378,12 @@
     }
 
     function paintCanvas() {
+      try {
       var wrap = document.getElementById('wrap');
-      var cssW = Math.max(1, wrap.clientWidth);
-      var cssH = Math.max(1, wrap.clientHeight);
+      var cssW = Math.max(wrap.clientWidth || window.innerWidth || 1600, 320);
+      var cssH = Math.max(wrap.clientHeight || (window.innerHeight - 48) || 640, 200);
+      raster.style.width = cssW + 'px';
+      raster.style.height = cssH + 'px';
       var dpr = window.devicePixelRatio || 1;
       raster.width = Math.floor(cssW * dpr);
       raster.height = Math.floor(cssH * dpr);
@@ -393,29 +397,35 @@
       ctx.translate(-vb.x * sx, -vb.y * sy);
       ctx.scale(sx, sy);
       var q = query();
+      var edgeCap = nodes.length > 4000 ? 2500 : 6000;
+      var painted = 0;
+      var zoomedOut = vb.w > 1400;
       bundles.forEach(function (b) {
+        if (painted >= edgeCap) return;
         var a = byId[b.consumer_id];
         var c = byId[b.producer_id];
         if (!a || !c || a._hidden || c._hidden) return;
-        var x0 = Math.min(a._x, c._x) - 48;
-        var y0 = Math.min(a._y, c._y) - 48;
-        var x1 = Math.max(a._x, c._x) + 48;
-        var y1 = Math.max(a._y, c._y) + 48;
-        if (!inView(x0, y0, x1, y1)) return;
-        ctx.save();
-        if (b.guarded) ctx.globalAlpha *= 0.55;
-        if (q && (!a._match || !c._match)) ctx.globalAlpha *= 0.18;
+        var margin = 80;
+        var aIn = a._x >= vb.x - margin && a._x <= vb.x + vb.w + margin &&
+          a._y >= vb.y - margin && a._y <= vb.y + vb.h + margin;
+        var cIn = c._x >= vb.x - margin && c._x <= vb.x + vb.w + margin &&
+          c._y >= vb.y - margin && c._y <= vb.y + vb.h + margin;
+        if (!aIn && !cIn) return;
+        painted += 1;
         var color = MARKER_COLORS[b.discharged ? 'shift' : (b.access || 'identity')] || MARKER_COLORS.identity;
+        ctx.globalAlpha = (b.guarded ? 0.55 : 1) * (q && (!a._match || !c._match) ? 0.18 : 1);
         ctx.strokeStyle = color;
         ctx.lineWidth = 1.8;
-        ctx.lineJoin = 'round';
-        ctx.lineCap = 'round';
-        if (b.discharged || b.access === 'shift') ctx.setLineDash([6, 4]);
+        ctx.setLineDash((b.discharged || b.access === 'shift') ? [6, 4] : []);
         ctx.beginPath();
         if (a === c) {
           var r = Math.max(a._w, 56) * 0.45;
           ctx.moveTo(a._x + 12, a._y - a._h / 2);
           ctx.bezierCurveTo(a._x + r, a._y - r - 18, a._x - r, a._y - r - 18, a._x - 12, a._y - a._h / 2);
+          ctx.stroke();
+        } else if (nodes.length > 4000) {
+          ctx.moveTo(c._x, c._y);
+          ctx.lineTo(a._x, a._y);
           ctx.stroke();
         } else {
           var start = boxPoint(c._x, c._y, a);
@@ -427,21 +437,23 @@
           ctx.moveTo(start.x, start.y);
           ctx.quadraticCurveTo(cx, cy, end.x, end.y);
           ctx.stroke();
-          ctx.setLineDash([]);
-          var tx = end.x - cx;
-          var ty = end.y - cy;
-          var len = Math.sqrt(tx * tx + ty * ty) || 1;
-          tx /= len;
-          ty /= len;
-          ctx.fillStyle = color;
-          ctx.beginPath();
-          ctx.moveTo(end.x, end.y);
-          ctx.lineTo(end.x - 12 * tx + 5 * ty, end.y - 12 * ty - 5 * tx);
-          ctx.lineTo(end.x - 12 * tx - 5 * ty, end.y - 12 * ty + 5 * tx);
-          ctx.closePath();
-          ctx.fill();
+          if (!zoomedOut) {
+            ctx.setLineDash([]);
+            var tx = end.x - cx;
+            var ty = end.y - cy;
+            var len = Math.sqrt(tx * tx + ty * ty) || 1;
+            tx /= len;
+            ty /= len;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.moveTo(end.x, end.y);
+            ctx.lineTo(end.x - 12 * tx + 5 * ty, end.y - 12 * ty - 5 * tx);
+            ctx.lineTo(end.x - 12 * tx - 5 * ty, end.y - 12 * ty + 5 * tx);
+            ctx.closePath();
+            ctx.fill();
+          }
         }
-        ctx.restore();
+        ctx.globalAlpha = 1;
       });
       var showLabels = 12 * (cssW / Math.max(vb.w, 1)) >= 7;
       nodes.forEach(function (n) {
@@ -469,6 +481,9 @@
         ctx.restore();
       });
       ctx.restore();
+      } catch (err) {
+        document.getElementById('stats').textContent = String(err);
+      }
     }
 
     function applyView() {

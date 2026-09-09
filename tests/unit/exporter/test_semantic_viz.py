@@ -290,7 +290,8 @@ def test_html_ships_canvas_painter_and_rank_spread(tmp_path: Path) -> None:
     write_semantic_viz_html(payload, html_path)
     html = html_path.read_text(encoding="utf-8")
     assert "getContext('2d')" in html
-    assert "spread_rank_centers" in html or "spreadRank" in html
+    assert "spreadRank" in html
+    assert "position: absolute" in html
     assert str(SEMANTIC_VIZ_SVG_MAX_PRIMITIVES) in html
     assert "roundRect" in html or "quadraticCurveTo" in html
     assert payload.graph.stats.statement_count + 2 * payload.graph.stats.bundle_count < (
