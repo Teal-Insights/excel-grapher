@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 from pathlib import Path
 
 from excel_grapher.exporter import to_web_viz_payload
@@ -12,7 +13,9 @@ from excel_grapher.exporter.semantic_graph import (
     build_statement_graph,
 )
 from excel_grapher.exporter.semantic_viz import (
+    SEMANTIC_VIZ_CELL_SAMPLE,
     SEMANTIC_VIZ_PAYLOAD_VERSION,
+    serialize_semantic_viz_json,
     to_semantic_viz_payload,
     write_semantic_viz_html,
 )
@@ -169,6 +172,32 @@ def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     assert "orient', 'auto'" in html or 'orient", "auto"' in html
     assert "auto-start-reverse" not in html
     assert "stroke-opacity" in html
+    assert "addEventListener('wheel'" in html or 'addEventListener("wheel"' in html
+    assert 'data-dir="constant"' in html
+    assert "layoutByRank" in html
+
+
+def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _zipper_bindings())
+    payload = to_semantic_viz_payload(
+        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    )
+    full = payload.to_dict()
+    sampled = payload.to_dict(cell_sample=1)
+    assert any(len(node["cells"]) > 1 for node in full["nodes"])
+    for full_node, sampled_node in zip(full["nodes"], sampled["nodes"], strict=True):
+        assert sampled_node["cell_count"] == full_node["cell_count"]
+        assert len(sampled_node["cells"]) <= 1
+        if full_node["cells"]:
+            assert sampled_node["cells"] == full_node["cells"][:1]
+    embedded = serialize_semantic_viz_json(payload)
+    html_path = tmp_path / "zipper.html"
+    write_semantic_viz_html(payload, html_path)
+    html = html_path.read_text(encoding="utf-8")
+    assert embedded in html
+    for node in json.loads(embedded)["nodes"]:
+        assert len(node["cells"]) <= SEMANTIC_VIZ_CELL_SAMPLE
 
 
 def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:

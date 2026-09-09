@@ -156,6 +156,10 @@ uv run excel-grapher bindings viz model.xlsx --bindings bindings.yaml --output m
 
 Cell-level `to_web_viz_payload` is unchanged and does not require bindings.
 
+The HTML viewer lays statements out by schedule rank without overlapping labels, supports pan/zoom, and can hide constant/input/internal/output nodes. Inline HTML samples up to eight cell addresses per node; `payload.to_dict()` and `excel-grapher bindings viz --json` keep the full lists.
+
+On the Q-CRAFT extraction-pipeline workbook (`Teal-Insights/qcraft-extraction-pipeline`, 260,027 bound cells / 489,651 graph edges), catalog analysis plus the statement quotient finished in about 16s and emitted 715 statements / 5,725 bundles (no unbound remainder). That is the heavy-duty check for this overlay; do not vendor that private workbook into excel-grapher.
+
 
 ### Validation via `calcChain.xml`
 

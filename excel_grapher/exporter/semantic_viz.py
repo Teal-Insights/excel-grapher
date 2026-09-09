@@ -23,11 +23,14 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 SEMANTIC_VIZ_PAYLOAD_VERSION = 1
 SEMANTIC_VIZ_OVERLAY_ID = "webviz.statement_graph"
+SEMANTIC_VIZ_CELL_SAMPLE = 8
 
 __all__ = [
+    "SEMANTIC_VIZ_CELL_SAMPLE",
     "SEMANTIC_VIZ_OVERLAY_ID",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
     "SemanticVizPayload",
+    "serialize_semantic_viz_json",
     "to_semantic_viz_payload",
     "write_semantic_viz_html",
 ]
@@ -45,8 +48,14 @@ class SemanticVizPayload:
     graph: StatementGraph
     annotations: Mapping[str, Any] | None = None
 
-    def to_dict(self) -> dict[str, Any]:
-        """Return a JSON-serializable mapping."""
+    def to_dict(self, *, cell_sample: int | None = None) -> dict[str, Any]:
+        """Return a JSON-serializable mapping.
+
+        Args:
+            cell_sample: If set, keep only the first `cell_sample` addresses on
+                each node. The HTML viewer uses this cap; omit it for a full
+                dump (`--json`). `cell_count` is always the true statement size.
+        """
         g = self.graph
         return {
             "version": self.version,
@@ -68,7 +77,9 @@ class SemanticVizPayload:
                     "start": node.start,
                     "stop": node.stop,
                     "cell_count": node.cell_count,
-                    "cells": list(node.cells),
+                    "cells": (
+                        list(node.cells) if cell_sample is None else list(node.cells[:cell_sample])
+                    ),
                     "direction": node.direction,
                     "is_remainder": node.is_remainder,
                     "rank": g.ranks[i],
@@ -124,9 +135,23 @@ def to_semantic_viz_payload(
     return SemanticVizPayload(version=SEMANTIC_VIZ_PAYLOAD_VERSION, graph=statement_graph)
 
 
-def serialize_semantic_viz_json(payload: SemanticVizPayload) -> str:
-    """Serialize `payload` as compact JSON."""
-    return json.dumps(payload.to_dict(), separators=(",", ":"), ensure_ascii=False)
+def serialize_semantic_viz_json(
+    payload: SemanticVizPayload,
+    *,
+    cell_sample: int | None = SEMANTIC_VIZ_CELL_SAMPLE,
+) -> str:
+    """Serialize `payload` as compact JSON.
+
+    Args:
+        payload: Statement-graph visualization to encode.
+        cell_sample: Address cap per node for the HTML viewer. Pass `None` to
+            keep every bound cell (same as `SemanticVizPayload.to_dict()`).
+    """
+    return json.dumps(
+        payload.to_dict(cell_sample=cell_sample),
+        separators=(",", ":"),
+        ensure_ascii=False,
+    )
 
 
 def write_semantic_viz_html(
