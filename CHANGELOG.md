@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.4.0 (2026-09-09)
+
+### Features
+
+- Add topology-aware replace_node_formula
+  ([#812](https://github.com/Teal-Insights/excel-grapher/pull/812),
+  [`f821abe`](https://github.com/Teal-Insights/excel-grapher/commit/f821abefb7274c0fe29319f3c467c1a0d0f7305d))
+
+
 ## v15.3.0 (2026-09-08)
 
 ### Documentation
