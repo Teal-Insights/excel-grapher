@@ -7,6 +7,182 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.7.1 (2026-09-09)
+
+### Bug Fixes
+
+- **export**: Skip caller take() for shared-helper parameters
+  ([#821](https://github.com/Teal-Insights/excel-grapher/pull/821),
+  [`20f19ff`](https://github.com/Teal-Insights/excel-grapher/commit/20f19ff1af6cf99bf63addac0b07a78f33970d07))
+
+
+## v15.7.0 (2026-09-09)
+
+### Bug Fixes
+
+- **viz**: Size the canvas backing store and cull offscreen edges
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+### Features
+
+- **viz**: Canvas boxes at Q-CRAFT scale, dots on large graphs
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+- **viz**: Canvas painter for large statement graphs
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+- **viz**: Paint large statement graphs on canvas
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+
+## v15.6.0 (2026-09-09)
+
+### Features
+
+- **viz**: Accept GraphReadView in to_web_viz_payload
+  ([#818](https://github.com/Teal-Insights/excel-grapher/pull/818),
+  [`6cfb9e5`](https://github.com/Teal-Insights/excel-grapher/commit/6cfb9e59fba0467f3525ef2e5a8f62364b54f86f))
+
+
+## v15.5.1 (2026-09-09)
+
+### Bug Fixes
+
+- Skip FormulaEvaluator leaf scan when values are unchanged
+  ([#817](https://github.com/Teal-Insights/excel-grapher/pull/817),
+  [`24440e4`](https://github.com/Teal-Insights/excel-grapher/commit/24440e42cb3aa60a54f4d03e9b6de147d454eca7))
+
+- **viz**: Honor blank_ranges in statement-graph catalog walks
+  ([#815](https://github.com/Teal-Insights/excel-grapher/pull/815),
+  [`4524926`](https://github.com/Teal-Insights/excel-grapher/commit/452492642283d4bd4b552713b244c5f3825e2d4d))
+
+### Testing
+
+- Treat value generation as graph structure in projection copy
+  ([#817](https://github.com/Teal-Insights/excel-grapher/pull/817),
+  [`24440e4`](https://github.com/Teal-Insights/excel-grapher/commit/24440e42cb3aa60a54f4d03e9b6de147d454eca7))
+
+
+## v15.5.0 (2026-09-09)
+
+### Bug Fixes
+
+- **viz**: Keep arrowheads visible on dashed lag edges
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Keep statement-graph HTML usable on large bound workbooks
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Open statement graphs on a readable camera window
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Scale statement-graph arrowheads with the viewBox
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Show directed arrowheads on statement-graph edges
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+### Features
+
+- **viz**: Add statement-graph visualization from series bindings
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+- **viz**: Statement-graph visualization from series bindings
+  ([#811](https://github.com/Teal-Insights/excel-grapher/pull/811),
+  [`bd2e7c6`](https://github.com/Teal-Insights/excel-grapher/commit/bd2e7c6b7192e2b0b5a8ca5530d3784aef3a605a))
+
+
+## v15.4.1 (2026-09-09)
+
+### Bug Fixes
+
+- **export**: Splice shared helpers only after params are bound
+  ([#814](https://github.com/Teal-Insights/excel-grapher/pull/814),
+  [`02c5a76`](https://github.com/Teal-Insights/excel-grapher/commit/02c5a76b8ee450be7ba42e26af994d279ee155ae))
+
+
+## v15.4.0 (2026-09-09)
+
+### Features
+
+- Add topology-aware replace_node_formula
+  ([#812](https://github.com/Teal-Insights/excel-grapher/pull/812),
+  [`f821abe`](https://github.com/Teal-Insights/excel-grapher/commit/f821abefb7274c0fe29319f3c467c1a0d0f7305d))
+
+
+## v15.3.0 (2026-09-08)
+
+### Documentation
+
+- Document mixed-series bound-leaf authoring
+  ([#810](https://github.com/Teal-Insights/excel-grapher/pull/810),
+  [`dfb498f`](https://github.com/Teal-Insights/excel-grapher/commit/dfb498fbff90a6f00f9b88aaf662bd5a5a365eb6))
+
+### Features
+
+- **export**: Double-bind retained graph leaves to input/constant series
+  ([#810](https://github.com/Teal-Insights/excel-grapher/pull/810),
+  [`dfb498f`](https://github.com/Teal-Insights/excel-grapher/commit/dfb498fbff90a6f00f9b88aaf662bd5a5a365eb6))
+
+
+## v15.2.0 (2026-09-08)
+
+### Bug Fixes
+
+- Align consistency check with extraction masking
+  ([#808](https://github.com/Teal-Insights/excel-grapher/pull/808),
+  [`c562429`](https://github.com/Teal-Insights/excel-grapher/commit/c562429666f7c0bf196080d0d4df8131ad2cab73))
+
+### Features
+
+- Add fail-closed graph formula/edge consistency check
+  ([#808](https://github.com/Teal-Insights/excel-grapher/pull/808),
+  [`c562429`](https://github.com/Teal-Insights/excel-grapher/commit/c562429666f7c0bf196080d0d4df8131ad2cab73))
+
+- Fail-closed projection formula/edge consistency check
+  ([#808](https://github.com/Teal-Insights/excel-grapher/pull/808),
+  [`c562429`](https://github.com/Teal-Insights/excel-grapher/commit/c562429666f7c0bf196080d0d4df8131ad2cab73))
+
+
+## v15.1.0 (2026-09-08)
+
+### Documentation
+
+- Record LIC-DSF may-cycle SCC#0 investigation
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+### Features
+
+- **guards**: Consult leaf domains and cell-cell equality in may-cycle feasibility
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+- **guards**: Load may-cycle solver MCVE fragments for feasibility replay
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+- **guards**: Tighten may-cycle feasibility for LIC-DSF SCC#0 (#533)
+  ([#809](https://github.com/Teal-Insights/excel-grapher/pull/809),
+  [`68eda27`](https://github.com/Teal-Insights/excel-grapher/commit/68eda2780a6209c850124ff7c33759ce27c23873))
+
+### Testing
+
+- Build LIC-DSF chart shortlist without cached dynamic refs
+  ([#807](https://github.com/Teal-Insights/excel-grapher/pull/807),
+  [`c1aecdb`](https://github.com/Teal-Insights/excel-grapher/commit/c1aecdb626a182750a35861621a3a63ccdf65858))
+
+
 ## v15.0.0 (2026-09-08)
 
 ### Bug Fixes

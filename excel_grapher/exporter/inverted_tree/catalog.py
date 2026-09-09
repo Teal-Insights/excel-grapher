@@ -48,6 +48,11 @@ from excel_grapher.series_bindings.normalize import (
     has_internal_direction,
     has_output_direction,
 )
+from excel_grapher.series_bindings.occupancy import (
+    BoundLeafPair,
+    CellOccupancyError,
+    resolve_occupants,
+)
 from excel_grapher.series_bindings.ranges import (
     apply_series_excludes,
     expand_data_range,
@@ -68,7 +73,7 @@ if TYPE_CHECKING:
 
 Direction = Literal["input", "constant", "internal", "output"]
 Layout = Literal["scalar", "series", "matrix"]
-HoleKind = Literal["blank", "off_closure", "literal", "graph_leaf"]
+HoleKind = Literal["blank", "off_closure", "literal", "graph_leaf", "bound_leaf"]
 _SCHEDULE_AXIS = "TIME_PERIOD"
 _NONE_HOLE_KINDS = frozenset({"blank", "off_closure"})
 
@@ -127,6 +132,7 @@ class SeriesHole:
     address: CanonicalAddress
     kind: HoleKind
     literal: object | None = None
+    claimant_id: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -470,8 +476,16 @@ def _statement_id_by_coord(
     }
 
 
-def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
-    """Walk bound series once and index join keys and per-cell coordinates."""
+def build_schedule_index(
+    series: Mapping[str, BoundSeries],
+    address_to_id: Mapping[CanonicalAddress, str] | None = None,
+) -> ScheduleIndex:
+    """Walk bound series once and index join keys and per-cell coordinates.
+
+    When `address_to_id` is given, global per-cell maps (`coord_of`,
+    `partition_of`, `axis_of`) keep the formula-series owner for a bound
+    leaf so a claimant series does not overwrite the owner's schedule.
+    """
     preferred = {series_id: _compute_preferred_fields(item) for series_id, item in series.items()}
     positions: dict[tuple[str, ...], dict[tuple[Scalar, ...], int]] = {}
     for fields in {item for item in preferred.values() if item is not None}:
@@ -484,10 +498,13 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         fields = preferred[item.series_id]
         if fields is None:
             for index, address in enumerate(item.cells):
-                coord_of[address] = index
+                if _owns_schedule_cell(item, address, address_to_id):
+                    coord_of[address] = index
             continue
         lookup = positions.get(fields)
         for index, address in enumerate(item.cells):
+            if not _owns_schedule_cell(item, address, address_to_id):
+                continue
             coord = index
             if lookup is not None and index < len(item.domain):
                 key = _join_key(item.domain[index], fields)
@@ -522,6 +539,8 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
     for item in series.values():
         outer, axis = _axis_fields(preferred[item.series_id])
         for index, address in enumerate(item.cells):
+            if not _owns_schedule_cell(item, address, address_to_id):
+                continue
             addr = address
             fallback = coord_of[addr]
             if axis is None or index >= len(item.domain):
@@ -548,6 +567,18 @@ def build_schedule_index(series: Mapping[str, BoundSeries]) -> ScheduleIndex:
         axis_of=axis_of,
         coords_of=coords_of,
     )
+
+
+def _owns_schedule_cell(
+    series: BoundSeries,
+    address: CanonicalAddress,
+    address_to_id: Mapping[CanonicalAddress, str] | None,
+) -> bool:
+    """True when `series` owns `address` for global schedule maps."""
+    if address_to_id is None:
+        return True
+    owner = address_to_id.get(address)
+    return owner is None or owner == series.series_id
 
 
 def preferred_fields(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, ...] | None:
@@ -1152,17 +1183,19 @@ def build_catalog(
     series keep graph formula cells and on-graph leaves (issues #693 / #707).
     Input and constant series stay unfiltered. `layout: matrix` keeps hole
     cells so the rectangle, stride, and key domain stay intact (issue #696).
+    A retained graph leaf may also be named by one input or constant series
+    (issue #708); occupancy stays with the formula series.
 
     Raises:
         InvertedTreeExportError: A series is missing `id`, two series share an
             id (message names both `data_range`s), two series claim the same
-            cell, key-domain resolution fails, a formula series has no graph
-            formula cells, or a retained graph leaf has no cached value.
+            cell without an allowed bound-leaf pairing, key-domain resolution
+            fails, a formula series has no graph formula cells, or a retained
+            graph leaf has no cached value.
     """
     blank_rects = normalize_blank_range_specs(blank_ranges)
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
-    address_to_id: dict[CanonicalAddress, str] = {}
     concept_scheme = bindings.get("concept_scheme")
     pending: list[tuple[str, dict[str, Any], tuple[CanonicalAddress, ...]]] = []
     authored_by_id: dict[str, tuple[CanonicalAddress, ...]] = {}
@@ -1282,22 +1315,79 @@ def build_catalog(
             )
             series_map[series_id] = bound
             order.append(series_id)
-            for address in bound.cells:
-                existing = address_to_id.get(address)
-                if existing is not None and existing != series_id:
-                    raise InvertedTreeExportError(
-                        f"cell {address} is bound to both {existing!r} and {series_id!r}"
-                    )
-                address_to_id[address] = series_id
+    address_to_id, series_map = _resolve_occupancy(series_map, graph)
     catalog = SeriesCatalog(
         series=series_map,
         order=tuple(order),
         address_to_id=address_to_id,
-        schedule=build_schedule_index(series_map),
+        schedule=build_schedule_index(series_map, address_to_id),
     )
     if graph is None:
         return catalog
     return partition_catalog(catalog, graph, blank_rects=blank_rects)
+
+
+def _resolve_occupancy(
+    series_map: dict[str, BoundSeries],
+    graph: DependencyGraph | None,
+) -> tuple[dict[CanonicalAddress, str], dict[str, BoundSeries]]:
+    """Assign unique owners, allowing one bound-leaf input/constant pairing."""
+    occupants: dict[CanonicalAddress, list[str]] = {}
+    for series_id, bound in series_map.items():
+        for address in bound.cells:
+            occupants.setdefault(address, []).append(series_id)
+
+    address_to_id: dict[CanonicalAddress, str] = {}
+    claimants: dict[CanonicalAddress, str] = {}
+    for address, ids in occupants.items():
+        unique_ids = list(dict.fromkeys(ids))
+        if len(unique_ids) == 1:
+            address_to_id[address] = unique_ids[0]
+            continue
+        occupant_dirs = [(sid, series_map[sid].direction) for sid in unique_ids]
+        is_leaf = graph is not None and is_graph_leaf(graph, address)
+        try:
+            resolved = resolve_occupants(occupant_dirs, address=address, is_graph_leaf=is_leaf)
+        except CellOccupancyError as exc:
+            raise InvertedTreeExportError(str(exc)) from exc
+        if not isinstance(resolved, BoundLeafPair):
+            address_to_id[address] = resolved
+            continue
+        owner = series_map[resolved.owner_id]
+        index = owner.index_of(address)
+        hole = None if index is None else owner.hole_at(index)
+        if hole is None or hole.kind != "graph_leaf":
+            raise InvertedTreeExportError(
+                f"cell {address} is bound to both {unique_ids[0]!r} and {unique_ids[1]!r}"
+            )
+        address_to_id[address] = resolved.owner_id
+        claimants[address] = resolved.claimant_id
+    if claimants:
+        series_map = _rewrite_bound_leaf_holes(series_map, claimants)
+    return address_to_id, series_map
+
+
+def _rewrite_bound_leaf_holes(
+    series_map: dict[str, BoundSeries],
+    claimants: Mapping[CanonicalAddress, str],
+) -> dict[str, BoundSeries]:
+    """Upgrade graph_leaf holes that have an input/constant claimant."""
+    updated = dict(series_map)
+    for series_id, bound in series_map.items():
+        if not bound.holes:
+            continue
+        new_holes: list[SeriesHole] = []
+        changed = False
+        for hole in bound.holes:
+            claimant_id = claimants.get(hole.address)
+            if hole.kind == "graph_leaf" and claimant_id is not None:
+                new_holes.append(replace(hole, kind="bound_leaf", claimant_id=claimant_id))
+                changed = True
+            else:
+                new_holes.append(hole)
+        if changed:
+            updated[series_id] = replace(bound, holes=tuple(new_holes))
+    return updated
 
 
 def covering_series(

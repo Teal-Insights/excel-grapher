@@ -705,6 +705,9 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
     from excel_grapher.core.formula_shape import intern_formula_shapes
 
     graph.formula_shapes = intern_formula_shapes([("Sheet1!B1", "=Sheet1!A1+1")])
+    from excel_grapher.core.cell_types import CellKind, CellType
+
+    graph.cell_type_env = {"Sheet1!A1": CellType(kind=CellKind.NUMBER)}
 
     graph_structure_fields = {
         "_nodes",
@@ -713,6 +716,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "_guards",
         "_edge_provenance",
         "_hooks",
+        "_value_generation",
     }
     metadata_field_names = tuple(
         field.name for field in fields(DependencyGraph) if field.name not in graph_structure_fields
@@ -725,6 +729,7 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
         "named_range_ranges",
         "preparsed_formulas",
         "formula_shapes",
+        "cell_type_env",
     )
 
     projected = graph._copy_for_projection()

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import keyword
 import re
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, Literal
 
@@ -16,6 +17,13 @@ from excel_grapher.series_bindings.normalize import (
     has_output_direction,
     input_mode,
     is_override_input,
+)
+from excel_grapher.series_bindings.occupancy import (
+    BoundLeafPair,
+    CellOccupancyError,
+    binding_direction,
+    occupancy_addresses,
+    resolve_occupants,
 )
 from excel_grapher.series_bindings.ranges import (
     expand_bound_series_addresses_for_graph,
@@ -351,6 +359,128 @@ def _validate_constant_binding_overlap(
             )
         )
     return issues
+
+
+def _validate_cell_occupancy(
+    graph: DependencyGraph,
+    occupancy_rows: Sequence[tuple[dict[str, Any], list[str]]],
+) -> list[ValidationIssue]:
+    """Reject illegal cell overlap; allow one graph-leaf input/constant pairing."""
+    occupants: dict[str, list[tuple[str, str]]] = {}
+    for series, addresses in occupancy_rows:
+        series_id = str(series.get("id") or "")
+        direction = binding_direction(series)
+        if not series_id or direction is None:
+            continue
+        for address in occupancy_addresses(graph, series, addresses):
+            occupants.setdefault(address, []).append((series_id, direction))
+    issues: list[ValidationIssue] = []
+    seen: set[tuple[str, str, str]] = set()
+    for address, claimed in occupants.items():
+        unique_ids = {series_id for series_id, _direction in claimed}
+        if len(unique_ids) < 2:
+            continue
+        directions = {direction for _series_id, direction in claimed}
+        has_formula = bool(directions & {"internal", "output"})
+        has_claimant = bool(directions & {"input", "constant"})
+        if not has_formula or not has_claimant:
+            continue
+        try:
+            resolve_occupants(
+                claimed,
+                address=address,
+                is_graph_leaf=is_graph_leaf(graph, address),
+            )
+        except CellOccupancyError as exc:
+            key = (exc.address, exc.first_id, exc.second_id)
+            if key in seen:
+                continue
+            seen.add(key)
+            issues.append(
+                _issue(
+                    "error",
+                    "double_bound_cell",
+                    str(exc),
+                    series_id=exc.second_id,
+                    address=address,
+                )
+            )
+    return issues
+
+
+def _bound_leaf_addresses(
+    graph: DependencyGraph,
+    occupancy_rows: Sequence[tuple[dict[str, Any], list[str]]],
+) -> dict[str, set[str]]:
+    """Map formula-series ids to graph-leaf cells claimed by an input/constant."""
+    occupants: dict[str, list[tuple[str, str]]] = {}
+    for series, addresses in occupancy_rows:
+        series_id = str(series.get("id") or "")
+        direction = binding_direction(series)
+        if not series_id or direction is None:
+            continue
+        for address in occupancy_addresses(graph, series, addresses):
+            occupants.setdefault(address, []).append((series_id, direction))
+    bound: dict[str, set[str]] = {}
+    for address, claimed in occupants.items():
+        if len({series_id for series_id, _direction in claimed}) < 2:
+            continue
+        try:
+            resolved = resolve_occupants(
+                claimed,
+                address=address,
+                is_graph_leaf=is_graph_leaf(graph, address),
+            )
+        except CellOccupancyError:
+            continue
+        if isinstance(resolved, BoundLeafPair):
+            bound.setdefault(resolved.owner_id, set()).add(address)
+    return bound
+
+
+def _downgrade_bound_leaf_notices(
+    graph: DependencyGraph,
+    occupancy_rows: Sequence[tuple[dict[str, Any], list[str]]],
+    issues: list[ValidationIssue],
+) -> list[ValidationIssue]:
+    """Drop or shrink `leaf_in_formula_series` when those leaves are double-bound."""
+    bound = _bound_leaf_addresses(graph, occupancy_rows)
+    if not bound:
+        return issues
+    remaining_by_series: dict[str, int] = {}
+    for series, addresses in occupancy_rows:
+        series_id = str(series.get("id") or "")
+        if series_id not in bound:
+            continue
+        unbound = [
+            address
+            for address in occupancy_addresses(graph, series, addresses)
+            if is_graph_leaf(graph, address)
+            and not is_graph_formula_node(graph, address)
+            and address not in bound[series_id]
+        ]
+        remaining_by_series[series_id] = len(unbound)
+    result: list[ValidationIssue] = []
+    for issue in issues:
+        if issue["code"] != "leaf_in_formula_series":
+            result.append(issue)
+            continue
+        series_id = issue["series_id"]
+        if series_id is None or series_id not in remaining_by_series:
+            result.append(issue)
+            continue
+        remaining = remaining_by_series[series_id]
+        if remaining == 0:
+            continue
+        result.append(
+            _issue(
+                "warning",
+                "leaf_in_formula_series",
+                f"Retained {remaining} graph leaf cell(s) in formula series as cached literals",
+                series_id=series_id,
+            )
+        )
+    return result
 
 
 def _validate_bind_smoke(bind: Any, *, series_id: str, context: str) -> list[ValidationIssue]:
@@ -773,6 +903,7 @@ def validate_series_bindings(
     concept_dtypes = _concept_dtype_map(bindings)
     shared_reader: _WorkbookValues | None = None
     seen_ranges: dict[str, str] = {}
+    occupancy_rows: list[tuple[dict[str, Any], list[str]]] = []
 
     try:
         for series in bindings.get("series", []):
@@ -831,6 +962,7 @@ def validate_series_bindings(
                 )
                 continue
 
+            occupancy_rows.append((series, addresses))
             issues.extend(_validate_input_mode(series))
             issues.extend(_validate_input_binding_overlap(graph, series, addresses))
             issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
@@ -896,5 +1028,7 @@ def validate_series_bindings(
         if shared_reader is not None:
             shared_reader.close()
 
+    issues.extend(_validate_cell_occupancy(graph, occupancy_rows))
+    issues = _downgrade_bound_leaf_notices(graph, occupancy_rows, issues)
     ok = not any(i["level"] == "error" for i in issues)
     return {"ok": ok, "issues": issues}

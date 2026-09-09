@@ -6,7 +6,8 @@ import re
 import time
 import warnings
 from collections import deque
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Iterator, Mapping
+from contextlib import contextmanager
 from pathlib import Path
 
 import fastpyxl
@@ -17,6 +18,7 @@ from fastpyxl.worksheet.worksheet import Worksheet
 from excel_grapher.core.address_keys import (
     CellKey,
     format_range_key,
+    normalize_key,
     parse_address,
     sort_node_keys,
     sort_sheet_a1_pairs,
@@ -39,6 +41,7 @@ from .blank_ranges import (
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_ref_walk import DynamicRefWalkContext
 from .dynamic_refs import (
+    DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
@@ -503,6 +506,7 @@ def create_dependency_graph(
     type_analysis_cache: TypeAnalysisCache | None = None,
     warm_ast_cache: bool = False,
     warm_formula_shapes: bool = False,
+    formula_overrides: Mapping[str, str] | None = None,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -647,6 +651,12 @@ def create_dependency_graph(
     (issue #539). Callers doing iterative constraint-tuning workflows can
     leave `capture_dependency_provenance=False` (the default) to skip
     remaining provenance overhead.
+
+    `formula_overrides` is an optional map of canonical node keys to formula
+    text used instead of the workbook cell when that address is visited. The
+    rest of the BFS still reads the workbook. Used by
+    `DependencyGraph.replace_node_formula` to re-extract a cell whose in-memory
+    formula has changed.
     """
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
@@ -658,6 +668,9 @@ def create_dependency_graph(
         )
 
     blank_rects = normalize_blank_range_specs(blank_ranges)
+    formula_override_map = (
+        {normalize_key(k): v for k, v in formula_overrides.items()} if formula_overrides else {}
+    )
 
     def load_wb(
         *,
@@ -1702,17 +1715,23 @@ def create_dependency_graph(
 
             ws_f = _get_ws_f(sheet)
             cell = ws_f[a1]
-            raw = cell.value
-            # CSE array formulas are evaluated element-wise, which is one of the
-            # array contexts that make range-typed `IF` conditions per-element.
-            is_array_formula = isinstance(raw, ArrayFormula)
-            array_formula_ref: str | None = None
-            if is_array_formula:
-                observed_ref = raw.ref
-                array_formula_ref = observed_ref if observed_ref else None
-                raw = raw.text or ""
-                if raw and not raw.startswith("="):
-                    raw = f"={raw}"
+            override = formula_override_map.get(key)
+            if override is not None:
+                raw = override
+                is_array_formula = False
+                array_formula_ref = None
+            else:
+                raw = cell.value
+                # CSE array formulas are evaluated element-wise, which is one of the
+                # array contexts that make range-typed `IF` conditions per-element.
+                is_array_formula = isinstance(raw, ArrayFormula)
+                array_formula_ref = None
+                if is_array_formula:
+                    observed_ref = raw.ref
+                    array_formula_ref = observed_ref if observed_ref else None
+                    raw = raw.text or ""
+                    if raw and not raw.startswith("="):
+                        raw = f"={raw}"
             is_formula = isinstance(raw, str) and raw.startswith("=")
 
             if is_formula:
@@ -1870,7 +1889,24 @@ def create_dependency_graph(
             graph.preparsed_formulas = parsed
         if warm_formula_shapes:
             graph.formula_shapes = intern_graph_formula_shapes(graph, parsed=parsed)
+    if dynamic_refs is not None:
+        graph.cell_type_env = dict(dynamic_refs.cell_type_env)
     return graph
+
+
+@contextmanager
+def _suppress_recoverable_dynamic_ref_errors() -> Iterator[None]:
+    """Swallow analysis errors, but not `max_cells` overflows.
+
+    A bounding rectangle that exceeds `max_cells` is a known target set we
+    refuse to drop; other `DynamicRefError` kinds stay best-effort.
+    """
+    try:
+        yield
+    except DynamicRefCellLimitError:
+        raise
+    except DynamicRefError:
+        pass
 
 
 def list_dynamic_ref_constraint_candidates(
@@ -1899,6 +1935,14 @@ def list_dynamic_ref_constraint_candidates(
     will not be visited, so their constraint candidates won't appear in the output.
     A second call after adding the first batch of constraints will quickly find any
     remaining missing entries.
+
+    OFFSET argument domains that are known but too wide to enumerate under
+    `max_branches` still walk the bounding rectangle of possible targets, so a
+    failed exact inference does not hide downstream missing leaves.
+
+    Raises:
+        DynamicRefCellLimitError: An inferred OFFSET/INDEX/INDIRECT target set
+            exceeds `max_cells`. The scan refuses to return an incomplete list.
     """
     if isinstance(workbook, fastpyxl.Workbook):
         wb_formulas = workbook
@@ -2185,14 +2229,13 @@ def list_dynamic_ref_constraint_candidates(
                     # Skip infer — dynamic targets unknown without full constraints.
                 elif dynamic_refs is not None:
                     # All leaves constrained — run infer to discover dynamic targets.
-                    try:
-                        bounds = GlobalWorkbookBounds(sheet=current_sheet)
-                        formula_for_infer = normalizer.normalize(f, current_sheet)
-                        _col_letter, _current_row = fastpyxl.utils.cell.coordinate_from_string(
-                            current_a1
-                        )
-                        _current_col = fastpyxl.utils.cell.column_index_from_string(_col_letter)
-
+                    # Expand and each infer kind are isolated so one DynamicRefError
+                    # (branch limit, divisor, missing domain) does not hide targets
+                    # that another path can still resolve.
+                    bounds = GlobalWorkbookBounds(sheet=current_sheet)
+                    formula_for_infer = formula_for_infer_cand
+                    expanded_env = dynamic_refs.cell_type_env
+                    with _suppress_recoverable_dynamic_ref_errors():
                         if all_refs and all(
                             addr in _shared_cell_type_cache_cand for addr in all_refs
                         ):
@@ -2237,7 +2280,33 @@ def list_dynamic_ref_constraint_candidates(
                                 workbook_sha256=_wb_sha256_cand,
                                 get_cell_ast=_get_cell_ast,
                             )
-                        offset_targets = infer_dynamic_offset_targets(
+
+                    dyn_targets: set[str] = set()
+                    with _suppress_recoverable_dynamic_ref_errors():
+                        dyn_targets |= infer_dynamic_offset_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                            current_row=_current_row,
+                            current_col=_current_col,
+                            allow_wide_bounds=True,
+                        )
+                    with _suppress_recoverable_dynamic_ref_errors():
+                        dyn_targets |= infer_dynamic_indirect_targets(
+                            formula_for_infer,
+                            current_sheet=current_sheet,
+                            cell_type_env=expanded_env,
+                            limits=dynamic_refs.limits,
+                            bounds=bounds,
+                            named_ranges=named_ranges,
+                            named_range_ranges=named_range_ranges,
+                        )
+                    with _suppress_recoverable_dynamic_ref_errors():
+                        dyn_targets |= infer_dynamic_index_targets(
                             formula_for_infer,
                             current_sheet=current_sheet,
                             cell_type_env=expanded_env,
@@ -2248,34 +2317,9 @@ def list_dynamic_ref_constraint_candidates(
                             current_row=_current_row,
                             current_col=_current_col,
                         )
-                        indirect_targets = infer_dynamic_indirect_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                        )
-                        index_targets = infer_dynamic_index_targets(
-                            formula_for_infer,
-                            current_sheet=current_sheet,
-                            cell_type_env=expanded_env,
-                            limits=dynamic_refs.limits,
-                            bounds=bounds,
-                            named_ranges=named_ranges,
-                            named_range_ranges=named_range_ranges,
-                            current_row=_current_row,
-                            current_col=_current_col,
-                        )
-                        for addr in sort_node_keys(
-                            offset_targets | indirect_targets | index_targets,
-                            sheet_order=sheetnames,
-                        ):
-                            sh, a1 = parse_address(addr)
-                            queue.append((sh, a1, depth + 1))
-                    except DynamicRefError:
-                        pass  # best-effort: skip dynamic targets for this formula
+                    for addr in sort_node_keys(dyn_targets, sheet_order=sheetnames):
+                        sh, a1 = parse_address(addr)
+                        queue.append((sh, a1, depth + 1))
 
             # Queue static (non-dynamic-ref) deps for continued BFS.
             for addr in _refs_without_dynamic(f, current_sheet):

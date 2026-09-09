@@ -181,6 +181,8 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
     graph.sheet_bounds = None
     graph.preparsed_formulas = None
     graph.formula_shapes = None
+    graph.cell_type_env = None
+    graph._value_generation = 0
     del part1, nodes, node_keys
 
     part2 = pickle.load(buf)

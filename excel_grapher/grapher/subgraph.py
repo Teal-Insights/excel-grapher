@@ -286,6 +286,8 @@ def _induced_dependency_subgraph(
         sub.sheet_order = list(graph.sheet_order)
     if graph.leaf_classification is not None:
         sub.leaf_classification = dict(graph.leaf_classification)
+    if graph.cell_type_env is not None:
+        sub.cell_type_env = dict(graph.cell_type_env)
 
     for key in graph.keys(order="workbook", source=keep_keys):
         node = graph._get_internal_node(key)

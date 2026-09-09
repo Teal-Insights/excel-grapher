@@ -54,6 +54,7 @@ display(
 | **Location** | One sidecar per workbook, colocated with the `.xlsx` |
 | **Granularity (MVP)** | One `series[]` entry per logical indicator → one `compute_*` argument (`layout: series`) |
 | **Naming** | Stable `id` (snake_case); `setter.name` must match `set_[a-z][a-z0-9_]*` |
+| **Mixed-series leaves** | To tune a retained graph leaf inside an `internal`/`output` range, also bind that cell as a separate `input` or `constant` series |
 | **Non-executable prose** | `sdmx_notes`, `notes` — documentation only |
 
 ### Default file layout
@@ -143,7 +144,7 @@ optional direction blocks:
 
 At least one of `input`, `output`, `internal`, or `constant` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
 
-### Input mode: `leaf` vs `override` (schema 1.6.0+)
+### Input mode: `leaf` vs `override` (schema 1.6.0+) {#input-mode-override}
 
 By default, input bindings use **`input.mode: leaf`**: every cell in `data_range` must be a **graph leaf** (a value cell with no formula in the dependency graph). If `data_range` includes a formula cell, validation fails with `non_leaf_input_overlap` instead of silently skipping it.
 
@@ -186,7 +187,9 @@ Use **`internal: {}`** for formula cells that need the same dimensional key mach
 
 Internal bindings:
 
-- Resolve **formula graph nodes** in `data_range` (not leaves).
+- Resolve **formula graph nodes** in `data_range`. `layout: series` may also retain
+  on-graph leaves as holes; those stay baked unless
+  [double-bound](#bound-leaf-double-bind).
 - Default to **`validation.intersect_graph_formulas: true`** so constants outside the formula graph are skipped; set `false` to include every expanded cell.
 - Require **at least one formula cell** in the range when intersection is enabled (`no_formula_internal_targets` otherwise).
 - Preserve **`validation.require_unique_key`** so each address is uniquely identified by its declared key concepts.
@@ -215,6 +218,10 @@ series:
     key: [TIME_PERIOD]
 ```
 
+A `layout: series` internal range may also contain graph **leaves**. See
+[double-binding retained graph leaves](#bound-leaf-double-bind) to expose one as an `input`
+or `constant` instead of a baked literal.
+
 ### Constant direction (schema 1.11.0+)
 
 Use **`constant: {}`** for graph **leaves** that participate in formulas as fixed parameters,
@@ -229,7 +236,10 @@ Constant bindings:
 - Default to **`validation.intersect_graph_leaves: true`**; non-leaf / formula cells in the
   range fail validation (`non_leaf_constant_overlap`), and a range with no leaf overlap fails
   with `no_leaf_constant_targets`.
-- Are mutually exclusive with `input`, `output`, and `internal`.
+- A single series entry cannot combine `constant` with `input`, `output`, or `internal`. A
+  **separate** `constant` (or `input`) series may name a graph leaf that already sits inside
+  an `internal`/`output` rectangle; see
+  [Double-binding retained graph leaves](#bound-leaf-double-bind).
 - Emit **`read_*`** (optional `constant.reader.name` override) plus leaf-index /
   `list_readers` / Phase 2 body rewrite — the same semantic read path as input duals.
 - Emit **no** `set_*` or `compute_*`; `list_setters()` stays empty for these series.
@@ -264,6 +274,83 @@ coordinate without reading a cell.
 Example fixture for internals: [internal_engine_row.yaml](https://github.com/Teal-Insights/excel-grapher/blob/main/tests/fixtures/series_bindings/internal_engine_row.yaml).
 
 **Pipeline note:** `derive_*_series` omits series with zero resolved leaves. Call `validate_series_bindings()` first so hard errors such as `no_formula_internal_targets` or `no_leaf_constant_targets` surface before derive.
+
+### Double-binding retained graph leaves (mixed series) {#bound-leaf-double-bind}
+
+An `internal` or `output` `layout: series` rectangle may include literal cells next to
+formulas — a seed in a recursive block, a populated corner of a vintage triangle. Those
+leaves stay in the formula series as retained graph-leaf holes. Leave them unbound when the
+workbook value should stay baked. To make a retained leaf **tunable**, also bind that same
+cell as a separate `input` or `constant` series.
+
+Occupancy **is** the feature: there is no extra schema flag and no `mixed` direction.
+
+```yaml
+schema_version: "1.11.0"
+series:
+  - id: engine_row
+    sheet: Engine
+    data_range: Engine!B2:D2
+    layout: series
+    internal: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions:
+        - concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: { kind: column_header, header_row: 1, read: int }
+    key: [TIME_PERIOD]
+  - id: seed
+    sheet: Engine
+    data_range: Engine!C2
+    layout: scalar
+    constant: {}
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: { kind: data_cell, read: float }
+      dimensions: []
+    key: []
+```
+
+What this pairing does:
+
+- Catalog **ownership** (range walks, covering series) stays with the formula series
+  (`engine_row`). The claimant does not splice the rectangle.
+- The claimant (`seed`) supplies the value. Export emits it as a helper parameter
+  (`engine_row(..., seed=)`) instead of a Python literal. A `constant` claimant also appears
+  in `__constants__` (so `data.overrides(SEED=...)` works); an `input` claimant is a normal
+  `compute_*` argument.
+- `validate_series_bindings()` accepts the overlap and drops the `leaf_in_formula_series`
+  notice when every retained leaf in the formula series is double-bound.
+
+Choose `constant` when the leaf is a named knob with a workbook default. Choose `input` when
+callers should pass it on every compute.
+
+**Allowed pairing:** exactly one `internal`/`output` owner where the cell is a **graph leaf**,
+plus exactly one `input`/`constant` claimant.
+
+**Still errors** (`cell … is bound to both` / `double_bound_cell`):
+
+- The cell is a formula (use [`input.mode: override`](#input-mode-override)
+  if you need to type over a formula).
+- A third series names the same cell.
+- Two formula series (`internal`/`output`) share the cell.
+
+Two `input` series (or two `output` series) sharing a cell is a different occupancy pattern
+and stays legal when it already was — for example sliced week stats versus a full-season
+input.
+
+**Do not confuse** this with `input.mode: override`. Override displaces a **formula cell**.
+Double-binding exposes a **literal leaf** that already sits inside a formula-series
+rectangle.
+
+**Out of scope:** general multi-owner cells, range splicing, and a `mixed` direction block.
 
 ## `data_range` addressing
 
@@ -922,7 +1009,9 @@ per-dimension `dtype` or split the concepts.
 ## Validation and codegen closure
 
 `validate_series_bindings()` and `derive_*_series` intersect bindings with the extracted graph (input:
-**leaves**; output: **any graph node**; internal: **formula nodes**). **Codegen** intersects with the export closure from the current
+**leaves**; output: **any graph node**; internal: **formula nodes**). A retained graph leaf inside an
+`internal`/`output` `layout: series` range may also be named by one `input` or `constant` series;
+see [double-binding retained graph leaves](#bound-leaf-double-bind). **Codegen** intersects with the export closure from the current
 `CodeGenerator` targets (formula cells, inputs, and dependencies actually emitted). Cells outside that
 closure are skipped; `validation.warn_on_partial_overlap` (default `true`) emits a warning when that
 happens.

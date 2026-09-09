@@ -2646,8 +2646,13 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
 
 
-def _emit_hole_expr(series: BoundSeries, host_index: int, graph: DependencyGraph) -> str:
-    """Return a Python literal for a retained hole cell."""
+def _emit_hole_expr(
+    series: BoundSeries,
+    host_index: int,
+    graph: DependencyGraph,
+    catalog: SeriesCatalog | None = None,
+) -> str:
+    """Return a Python literal or claimant lookup for a retained hole cell."""
     from excel_grapher.exporter.inverted_tree.emit import (
         _cell_value,
         _coerce_cached_value,
@@ -2658,6 +2663,22 @@ def _emit_hole_expr(series: BoundSeries, host_index: int, graph: DependencyGraph
     address = series.cells[host_index]
     if hole is None or hole.kind in {"blank", "off_closure"}:
         return "None"
+    if hole.kind == "bound_leaf":
+        if catalog is None or hole.claimant_id is None:
+            raise InvertedTreeExportError(
+                f"series {series.series_id!r} cell {address}: bound leaf has no claimant"
+            )
+        claimant = catalog.get(hole.claimant_id)
+        name = claimant.series_id
+        if claimant.is_scalar:
+            return name
+        index = claimant.index_of(address)
+        if index is None:
+            raise InvertedTreeExportError(
+                f"series {series.series_id!r} cell {address}: "
+                f"bound leaf is not in claimant {claimant.series_id!r}"
+            )
+        return f"{name}[{index}]"
     if hole.kind == "graph_leaf":
         node = graph.get_node(address)
         if node is None or node.value is None:
@@ -2683,7 +2704,7 @@ def _region_measure(
     prior_var: str | None,
 ) -> tuple[str, set[str], tuple[tuple[str, str], ...]]:
     if try_formula_ast(graph, series.cells[host_index]) is None:
-        return _emit_hole_expr(series, host_index, graph), set(), ()
+        return _emit_hole_expr(series, host_index, graph, catalog), set(), ()
     ctx = EmitContext(
         host=series,
         catalog=catalog,
@@ -3047,7 +3068,7 @@ def _emit_region_return(
         graph=graph,
     )
     if try_formula_ast(graph, series.cells[host_index]) is None:
-        return _emit_hole_expr(series, host_index, graph), set(), ()
+        return _emit_hole_expr(series, host_index, graph, catalog), set(), ()
     reuse = _start_formula()
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     if reuse is not None:
@@ -3253,7 +3274,7 @@ def _emit_fused_expr(
         graph=graph,
     )
     if try_formula_ast(graph, series.cells[host_index]) is None:
-        return _emit_hole_expr(series, host_index, graph), set(), ()
+        return _emit_hole_expr(series, host_index, graph, catalog), set(), ()
     reuse = _start_formula()
     expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
     if reuse is not None:

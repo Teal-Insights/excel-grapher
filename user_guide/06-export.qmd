@@ -126,6 +126,7 @@ records = as_records(compute_output_baseline, result)
 |-----|----------------|
 | `make_context()` then `set_<series>(ctx, records)` | Pass a validated tensor or a plain scalar as a `compute_*` argument. |
 | `input.mode: override` non-leaf setters | Bind the cells as **inputs** if callers must vary them; otherwise they stay formula internals. |
+| Retained graph leaf inside an `internal`/`output` series | Also bind that cell as a separate `input` or `constant` series; otherwise export bakes the workbook literal. See [double-binding retained graph leaves](05-series-bindings.qmd#bound-leaf-double-bind). |
 | `read_<series>()` / `input.reader` | Import `data.SERIES` (constants) or pass the value you would have read. |
 | `input.domain` on setters | Applied to `compute_*` / `_run_N` arguments (`enum`, `between`, `real_between`) ([issue 666](https://github.com/Teal-Insights/excel-grapher/issues/666)). Out-of-domain values raise `ValueError` naming the series. |
 | `input.value_map` on scalar inputs | Applied after the domain check, before any expression ([issue 677](https://github.com/Teal-Insights/excel-grapher/issues/677)). Callers pass map keys; internals see workbook needles. |
@@ -301,10 +302,9 @@ resolving) from **collapse lineage** (`retained_to_collapsed_sources`,
 `formula_rewrites`) for audit and refactoring. Visualization can use the same facade:
 
 ```python
-from excel_grapher.grapher import to_networkx
 from excel_grapher.exporter import to_web_viz_payload
 
-payload = to_web_viz_payload(to_networkx(projection))
+payload = to_web_viz_payload(projection)
 ```
 
 Projection is an extension point: implement the `ProjectionStep` protocol to build your own

@@ -8,7 +8,11 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, runtime_checkable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
+    from .dynamic_refs import DynamicRefConfig
+    from .graph_consistency import GraphConsistencyIssue
 
 from excel_grapher.core.address_keys import (
     CellKey,
@@ -16,6 +20,7 @@ from excel_grapher.core.address_keys import (
     parse_node_key,
     sort_node_keys,
 )
+from excel_grapher.core.cell_types import CellTypeEnv
 from excel_grapher.core.formula_ast import (
     AstNode,
     bind_axes,
@@ -40,8 +45,10 @@ from .guard import (
     Or,
     intern_guard,
     or_guard,
+    rewrite_guard_aliases,
     rewrite_guard_keys,
 )
+from .may_cycle import identity_alias_map
 from .node import Node, NodeKey, NodeView, copy_node, node_to_view
 
 # Sentinel so `set_node_ast(..., formula=None)` can clear the raw audit string
@@ -106,11 +113,12 @@ class GraphReadView(Protocol):
     """Read-only dependency-graph surface shared by graphs and projected views.
 
     Consumers that only read a graph (for example `to_networkx`,
-    `CodeGenerator`, and `write_workbook`) can accept any object satisfying
-    this protocol, including projected facades such as `ProjectionResult`,
-    without depending on the concrete `DependencyGraph` type. It captures
-    node iteration, node and edge lookups, key listings, leaf/formula/target
-    classification, and evaluation order; mutation is intentionally excluded.
+    `to_web_viz_payload`, `CodeGenerator`, and `write_workbook`) can accept any
+    object satisfying this protocol, including projected facades such as
+    `ProjectionResult`, without depending on the concrete `DependencyGraph`
+    type. It captures node iteration, node and edge lookups, key listings,
+    leaf/formula/target classification, and evaluation order; mutation is
+    intentionally excluded.
     """
 
     leaf_classification: dict[str, str] | None
@@ -154,10 +162,10 @@ class GraphReadView(Protocol):
     def target_keys(self) -> list[NodeKey]: ...
 
     def evaluation_order(
-        self, *, strict: bool = ..., iterate_enabled: bool | None = ...
+        self, *, strict: bool = ..., iterate_enabled: bool | None = ..., cell_type_env: Any = ...
     ) -> list[NodeKey]: ...
 
-    def cycle_report(self) -> CycleReport: ...
+    def cycle_report(self, *, cell_type_env: Any = ...) -> CycleReport: ...
 
 
 @dataclass
@@ -198,6 +206,12 @@ class DependencyGraph:
     # authoritative; missing overlay falls back. Not JSON/pickle serialized;
     # compression and formula rewrite drop it. Callers must rewarm.
     formula_shapes: FormulaShapeTable | None = None
+    # Optional leaf domains used by `cycle_report` when the caller does not pass
+    # `cell_type_env`. Not pickled (same as `formula_shapes`).
+    cell_type_env: CellTypeEnv | None = None
+    # Bumped by `set_node_value` so FormulaEvaluator can skip a full leaf poll
+    # when no durable value write has happened since the last eager scan.
+    _value_generation: int = field(default=0, repr=False, compare=False)
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
@@ -240,6 +254,8 @@ class DependencyGraph:
         cloned.formula_shapes = (
             self.formula_shapes.copy() if self.formula_shapes is not None else None
         )
+        cloned.cell_type_env = dict(self.cell_type_env) if self.cell_type_env is not None else None
+        cloned._value_generation = self._value_generation
         return cloned
 
     # ---- node insertion and iteration ---------------------------------------
@@ -422,12 +438,17 @@ class DependencyGraph:
     # ---- durable node mutation ---------------------------------------------
 
     def set_node_value(self, key: NodeKey, value: Any) -> None:
-        """Set a node's `value` field durably. Raises `KeyError` if missing."""
+        """Set a node's `value` field durably. Raises `KeyError` if missing.
+
+        Increments `_value_generation` so evaluators can skip polling every
+        leaf when no durable write has occurred since the last scan.
+        """
         nk = normalize_key(key)
         node = self._nodes.get(nk)
         if node is None:
             raise KeyError(f"Cell {key} not found in graph")
         node.value = value
+        self._value_generation += 1
 
     def set_node_metadata(self, key: NodeKey, metadata: Mapping[str, Any]) -> None:
         """Replace a node's metadata mapping durably.
@@ -457,8 +478,10 @@ class DependencyGraph:
         `formula_ast` unset and keep `normalized_formula` as fallback text.
         Edges are not recomputed; callers rewiring dependencies must update
         edges explicitly. Intended for projection authors building export-only
-        graph views. Drops `formula_shapes`; callers who want the overlay must
-        rewarm.
+        graph views. For a topology-aware durable edit, use
+        `replace_node_formula`. Drops `formula_shapes`; callers who want the
+        overlay must rewarm. Does not validate formula/edge agreement; call
+        `validate_consistency` after rewiring.
 
         Raises:
             KeyError: If the node is missing.
@@ -480,6 +503,79 @@ class DependencyGraph:
             node._unparseable_formula = normalized_formula
         self._invalidate_formula_shapes()
 
+    def replace_node_formula(
+        self,
+        key: NodeKey,
+        formula: str | None,
+        normalized_formula: str | None,
+        *,
+        workbook: str | Path | None = None,
+        dynamic_refs: DynamicRefConfig | None = None,
+        use_cached_dynamic_refs: bool = False,
+        load_values: bool = True,
+        capture_dependency_provenance: bool = True,
+        max_depth: int = 50,
+        expand_ranges: bool = True,
+        max_range_cells: int | None = None,
+    ) -> None:
+        """Replace a node's formula and rewire outgoing edges from extraction.
+
+        Unlike `set_node_formula` (the projection primitive), this recomputes
+        leaf/formula state, outgoing guards, and provenance from the new
+        formula. Newly referenced cells are materialized when `workbook` is
+        provided. Named ranges that are not on the graph, dynamic
+        OFFSET/INDIRECT/INDEX that need the book, and missing subgraph cells
+        fail closed with `WorkbookContextRequiredError` when `workbook` is
+        omitted — the graph is left unchanged.
+
+        Incoming edges (dependents of this cell) are preserved. `formula_shapes`
+        is dropped; callers who want the overlay must rewarm.
+
+        Args:
+            key: Existing node to edit.
+            formula: New raw formula text, or `None` to clear the formula and
+                become a leaf.
+            normalized_formula: Fallback parse text when `formula` is
+                unparseable. Ignored when `formula` parses.
+            workbook: Source `.xlsx` used to resolve named ranges, dynamic
+                refs, and to materialize off-path cells.
+            dynamic_refs: Constraint-based dynamic-ref config forwarded to
+                extraction when `workbook` is set.
+            use_cached_dynamic_refs: Resolve OFFSET/INDIRECT/INDEX from cached
+                workbook values (requires `workbook`).
+            load_values: Load cached Excel values for newly materialized cells.
+            capture_dependency_provenance: Record extraction provenance on new
+                edges (default True).
+            max_depth: BFS depth when materializing from `workbook`.
+            expand_ranges: Expand rectangular refs to member cells.
+            max_range_cells: Expansion budget; defaults to
+                `DEFAULT_MAX_RANGE_CELLS`.
+
+        Raises:
+            KeyError: If the node is missing.
+            WorkbookContextRequiredError: If workbook context is required and
+                `workbook` is omitted.
+        """
+        from .formula_replace import replace_node_formula as _replace
+        from .parser import DEFAULT_MAX_RANGE_CELLS as _DEFAULT_MAX_RANGE_CELLS
+
+        _replace(
+            self,
+            key,
+            formula,
+            normalized_formula,
+            workbook=workbook,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=use_cached_dynamic_refs,
+            load_values=load_values,
+            capture_dependency_provenance=capture_dependency_provenance,
+            max_depth=max_depth,
+            expand_ranges=expand_ranges,
+            max_range_cells=(
+                _DEFAULT_MAX_RANGE_CELLS if max_range_cells is None else max_range_cells
+            ),
+        )
+
     def set_node_ast(
         self,
         key: NodeKey,
@@ -494,7 +590,9 @@ class DependencyGraph:
         Unset `formula_ast` clears the derived formula view and, unless
         `formula=` is passed, the raw audit string. Edges are not recomputed;
         callers rewiring dependencies must update edges explicitly. Drops
-        `formula_shapes`; callers who want the overlay must rewarm.
+        `formula_shapes`; callers who want the overlay must rewarm. Does not
+        validate formula/edge agreement; call `validate_consistency` after
+        rewiring.
 
         Raises:
             KeyError: If the node is missing.
@@ -517,7 +615,9 @@ class DependencyGraph:
         Both outgoing dependency edges and incoming dependent edges are dropped,
         along with their guards and provenance. Dependent formulas are not
         rewritten; callers collapsing nodes must update dependents explicitly.
-        Node hooks are not invoked. Absent keys are a no-op.
+        Node hooks are not invoked. Absent keys are a no-op. Does not
+        validate remaining formulas; call `validate_consistency` after
+        collapsing nodes.
         """
         nk = normalize_key(key)
         if nk not in self._nodes:
@@ -529,6 +629,25 @@ class DependencyGraph:
         self._nodes.pop(nk, None)
         self._edges.pop(nk, None)
         self._reverse_edges.pop(nk, None)
+
+    def consistency_issues(self) -> tuple[GraphConsistencyIssue, ...]:
+        """Return structured formula/edge/flag disagreements (empty if consistent)."""
+        from .graph_consistency import collect_graph_consistency_issues
+
+        return collect_graph_consistency_issues(self)
+
+    def validate_consistency(self) -> None:
+        """Raise `GraphConsistencyError` if formulas, edges, or flags disagree.
+
+        Does not rewrite the graph. Opt-in for projection authors after
+        `set_node_formula` / `add_edge` / `remove_node`.
+
+        Raises:
+            GraphConsistencyError: If any structured consistency issue is found.
+        """
+        from .graph_consistency import validate_graph_consistency
+
+        validate_graph_consistency(self)
 
     def move_node(self, old_key: NodeKey, new_key: NodeKey) -> None:
         """Move a node to a new cell, preserving resolved formula targets.
@@ -804,7 +923,16 @@ class DependencyGraph:
                     out[k].add(resolved)
         return out
 
-    def cycle_report(self) -> CycleReport:
+    def cycle_report(self, *, cell_type_env: CellTypeEnv | None = None) -> CycleReport:
+        """Classify must-cycles vs may-cycles, dropping guard-infeasible SCCs.
+
+        When `cell_type_env` is omitted, uses `self.cell_type_env` (set by
+        `create_dependency_graph` from `DynamicRefConfig`). Identity-formula
+        cells are rewritten to their copied cell before guards are conjoined, so
+        singleton leaf domains apply through aliases.
+        """
+        env = self.cell_type_env if cell_type_env is None else cell_type_env
+        aliases = identity_alias_map(self._nodes)
         uncond = self._unconditional_adjacency()
         all_edges = self._all_adjacency()
 
@@ -819,13 +947,15 @@ class DependencyGraph:
             if _subgraph_has_cycle(uncond, scc):
                 continue
             # Filter out SCCs whose only cycles are infeasible due to contradictory guards.
-            if not _subgraph_has_feasible_cycle(self, scc):
+            if not _subgraph_has_feasible_cycle(self, scc, cell_type_env=env, aliases=aliases):
                 continue
             may_sccs.append(scc)
 
         if may_sccs:
             # Best-effort: find a feasible example path inside the first may-SCC.
-            example_may = _find_feasible_cycle_path(self, may_sccs[0])
+            example_may = _find_feasible_cycle_path(
+                self, may_sccs[0], cell_type_env=env, aliases=aliases
+            )
 
         return CycleReport(
             has_must_cycles=bool(must_sccs),
@@ -846,7 +976,11 @@ class DependencyGraph:
         return sorted(materialized)
 
     def evaluation_order(
-        self, *, strict: bool = True, iterate_enabled: bool | None = None
+        self,
+        *,
+        strict: bool = True,
+        iterate_enabled: bool | None = None,
+        cell_type_env: CellTypeEnv | None = None,
     ) -> list[NodeKey]:
         """Return nodes in dependency-first order (leaves before formulas that use them).
 
@@ -857,8 +991,11 @@ class DependencyGraph:
         must-cycle or may-cycle is rejected: generated Python does not emulate Excel's
         iterative convergence. Pass `False` or `None` to apply the usual strict /
         non-strict rules without this check.
+
+        `cell_type_env` is forwarded to `cycle_report` so leaf-domain constraints
+        can prove guarded cycles infeasible.
         """
-        report = self.cycle_report()
+        report = self.cycle_report(cell_type_env=cell_type_env)
         if iterate_enabled is True:
             if report.has_must_cycles:
                 raise CycleError(
@@ -1216,6 +1353,8 @@ class DependencyGraph:
         self.sheet_bounds = None
         self.preparsed_formulas = None
         self.formula_shapes = None
+        self.cell_type_env = None
+        self._value_generation = 0
         state.clear()
 
     def _invalidate_formula_shapes(self) -> None:
@@ -1600,7 +1739,11 @@ def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> l
 
 
 def _apply_guard_constraints(
-    constraints: GuardConstraints, guard: GuardExpr | None
+    constraints: GuardConstraints,
+    guard: GuardExpr | None,
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    aliases: Mapping[NodeKey, NodeKey] | None = None,
 ) -> list[GuardConstraints]:
     """Conjoin an edge guard onto the current constraints.
 
@@ -1608,13 +1751,15 @@ def _apply_guard_constraints(
     one per feasible disjunct (best-effort). This keeps cycle feasibility checks
     conservative without requiring full boolean reasoning.
     """
+    if guard is not None and aliases:
+        guard = rewrite_guard_aliases(guard, aliases)
     if guard is None:
         return [constraints]
     if isinstance(guard, Or):
         out: list[GuardConstraints] = []
         # Best-effort: branch on each disjunct and keep feasible ones.
         for g in guard.operands:
-            nxt = constraints.add(g)
+            nxt = constraints.add(g, cell_type_env=cell_type_env)
             if nxt is None:
                 continue
             out.append(nxt)
@@ -1622,11 +1767,25 @@ def _apply_guard_constraints(
             if len(out) >= 32:
                 break
         return out
-    nxt = constraints.add(guard)
+    nxt = constraints.add(guard, cell_type_env=cell_type_env)
     return [] if nxt is None else [nxt]
 
 
-def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) -> bool:
+def _seed_guard_constraints(cell_type_env: CellTypeEnv | None) -> GuardConstraints:
+    seed = GuardConstraints()
+    if cell_type_env is None:
+        return seed
+    seeded = seed.seed_cell_type_env(cell_type_env)
+    return seed if seeded is None else seeded
+
+
+def _subgraph_has_feasible_cycle(
+    graph: DependencyGraph,
+    nodes: set[NodeKey],
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    aliases: Mapping[NodeKey, NodeKey] | None = None,
+) -> bool:
     """Return whether `nodes` contains a guard-feasible cycle.
 
     True when at least one cycle within `nodes` has jointly consistent
@@ -1649,7 +1808,9 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
             guard = graph._guards.get((v, raw_w))
             if guard is None:
                 guard = graph._guards.get((v, w))
-            for c2 in _apply_guard_constraints(c, guard):
+            for c2 in _apply_guard_constraints(
+                c, guard, cell_type_env=cell_type_env, aliases=aliases
+            ):
                 if w in on_stack:
                     return True
                 if dfs(w, c2):
@@ -1658,11 +1819,17 @@ def _subgraph_has_feasible_cycle(graph: DependencyGraph, nodes: set[NodeKey]) ->
         on_stack.remove(v)
         return False
 
-    seed = GuardConstraints()
+    seed = _seed_guard_constraints(cell_type_env)
     return any(dfs(n, seed) for n in nodes)
 
 
-def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> list[NodeKey] | None:
+def _find_feasible_cycle_path(
+    graph: DependencyGraph,
+    nodes: set[NodeKey],
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    aliases: Mapping[NodeKey, NodeKey] | None = None,
+) -> list[NodeKey] | None:
     """Best-effort: find one feasible cycle path within `nodes` (symbolic constraints)."""
     visited: set[tuple[NodeKey, GuardConstraints]] = set()
     stack: list[NodeKey] = []
@@ -1683,7 +1850,9 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
             guard = graph._guards.get((v, raw_w))
             if guard is None:
                 guard = graph._guards.get((v, w))
-            for c2 in _apply_guard_constraints(c, guard):
+            for c2 in _apply_guard_constraints(
+                c, guard, cell_type_env=cell_type_env, aliases=aliases
+            ):
                 if w in on_stack:
                     i = stack.index(w)
                     return stack[i:] + [w]
@@ -1695,7 +1864,7 @@ def _find_feasible_cycle_path(graph: DependencyGraph, nodes: set[NodeKey]) -> li
         on_stack.remove(v)
         return None
 
-    seed = GuardConstraints()
+    seed = _seed_guard_constraints(cell_type_env)
     for n in nodes:
         out = dfs(n, seed)
         if out is not None:

@@ -30,6 +30,7 @@ from .constraints import (
 )
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .dynamic_refs import (
+    DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
@@ -56,8 +57,14 @@ from .export import (
     write_lightweight_viz_data,
     write_web_viz_html,
 )
+from .formula_replace import WorkbookContextRequiredError
 from .formula_shapes import warm_formula_shapes
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
+from .graph_consistency import (
+    GraphConsistencyError,
+    GraphConsistencyIssue,
+    GraphConsistencyKind,
+)
 from .graph_pickle import dump_graph, load_graph
 from .guard import And, Compare, GuardExpr, Literal, Not, Or
 from .guard import CellRef as GuardCellRef
@@ -107,6 +114,7 @@ __all__ = [
     "load_constraints_module",
     "resolve_constraints_path",
     "DynamicRefConfig",
+    "DynamicRefCellLimitError",
     "DynamicRefError",
     "DynamicRefLimits",
     "DynamicRefTraceEvent",
@@ -123,6 +131,9 @@ __all__ = [
     "NodeHook",
     "CycleError",
     "CycleReport",
+    "GraphConsistencyError",
+    "GraphConsistencyIssue",
+    "GraphConsistencyKind",
     "GuardExpr",
     "GuardCellRef",
     "GuardRangeRef",
@@ -152,6 +163,7 @@ __all__ = [
     "ValidationResult",
     "get_calc_settings",
     "WorkbookCalcSettings",
+    "WorkbookContextRequiredError",
     "format_cell_key",
     "format_key",
     "DEFAULT_MAX_RANGE_CELLS",

@@ -90,7 +90,7 @@ Two workflows share the same write API:
 
 | Workflow | Object | What is written |
 |----------|--------|-----------------|
-| **Mutation** | This `DependencyGraph` *is* the workbook (`set_node_ast`, `set_node_value`, `move_node`, in-place `compress_*`) | Current formulas and values at current keys. After `move_node`, `new_key` is written and `old_key` is absent (Excel cut semantics: relatives still resolve to the pre-move targets). |
+| **Mutation** | This `DependencyGraph` *is* the workbook (`set_node_ast`, `set_node_value`, `replace_node_formula`, `move_node`, in-place `compress_*`) | Current formulas and values at current keys. `replace_node_formula` re-extracts outgoing edges; `set_node_formula` is the projection primitive and does not rewire. After `move_node`, `new_key` is written and `old_key` is absent (Excel cut semantics: relatives still resolve to the pre-move targets). |
 | **Projection** | Non-mutating export view (`IdentityTransitCompression().project`) | Projected cells only; collapsed addresses are absent |
 
 **Move then write** vs **project then write**: `move_node` mutates the

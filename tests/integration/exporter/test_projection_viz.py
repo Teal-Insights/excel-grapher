@@ -33,7 +33,8 @@ def test_projected_networkx_omits_transit_nodes_without_mutating_graph(tmp_path:
 
     projection = IdentityTransitCompression().project(graph)
     nx_graph = to_networkx(projection)
-    payload = to_web_viz_payload(nx_graph)
+    payload = to_web_viz_payload(projection)
+    nx_payload = to_web_viz_payload(nx_graph)
     flat = lightweight_viz_flat(payload)
 
     assert len(graph) == original_node_count
@@ -41,3 +42,36 @@ def test_projected_networkx_omits_transit_nodes_without_mutating_graph(tmp_path:
     assert "Outputs!B12" not in projection
     assert "Outputs!B12" not in nx_graph
     assert flat.stats.node_count < original_node_count
+    assert lightweight_viz_flat(nx_payload).stats.node_count == flat.stats.node_count
+
+
+def test_projected_graph_skips_nx_reconstruction(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    workbook_path = tmp_path / "identity_target.xlsx"
+    wb = xlsxwriter.Workbook(workbook_path)
+    ws = wb.add_worksheet("Engine")
+    ws.write_number("C6", 10)
+    out = wb.add_worksheet("Outputs")
+    out.write_formula("B12", "=Engine!C6")
+    out.write_formula("B14", "=Outputs!B12+1")
+    wb.close()
+
+    graph = create_dependency_graph(
+        workbook_path,
+        ["Outputs!B14"],
+        capture_dependency_provenance=True,
+    )
+    projection = IdentityTransitCompression().project(graph)
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("GraphReadView must not round-trip through NetworkX")
+
+    monkeypatch.setattr(
+        "excel_grapher.exporter.lightweight_viz._dependency_graph_from_networkx",
+        boom,
+    )
+    payload = to_web_viz_payload(projection)
+    flat = lightweight_viz_flat(payload)
+    assert flat.stats.node_count == len(projection)
+    assert flat.stats.node_count < len(graph)

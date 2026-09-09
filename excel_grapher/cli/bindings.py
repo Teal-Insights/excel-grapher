@@ -11,6 +11,9 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
+from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
+from excel_grapher.exporter.semantic_viz import to_semantic_viz_payload, write_semantic_viz_html
+from excel_grapher.grapher.blank_ranges import BlankRangesLoadError, load_blank_ranges_module
 from excel_grapher.grapher.constraints import (
     ConstraintsLoadError,
     dynamic_refs_from_path,
@@ -89,14 +92,122 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
         "a constraints module.",
     )
+    viz_parser = bindings_sub.add_parser(
+        "viz",
+        help="Write a statement-graph HTML visualization from series bindings",
+    )
+    viz_parser.add_argument("workbook", type=Path, help="Path to the .xlsx workbook")
+    viz_parser.add_argument(
+        "--bindings",
+        type=Path,
+        default=None,
+        help="Binding sidecar file or shard directory (default: colocated sidecar)",
+    )
+    viz_parser.add_argument(
+        "--output",
+        type=Path,
+        required=True,
+        help="Path to write the HTML viewer",
+    )
+    viz_parser.add_argument(
+        "--constraints",
+        type=Path,
+        default=None,
+        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type]",
+    )
+    viz_parser.add_argument(
+        "--use-cached-dynamic-refs",
+        action="store_true",
+        help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
+        "a constraints module.",
+    )
+    viz_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Also write the statement-graph payload next to --output as .viz.json",
+    )
+    viz_parser.add_argument(
+        "--blank-ranges",
+        type=Path,
+        default=None,
+        help="Python module exposing BLANK_RANGES: Sequence[str] "
+        "(sheet-qualified rectangles omitted from the graph)",
+    )
 
 
 def dispatch(args: argparse.Namespace) -> int:
     """Dispatch a ``bindings`` subcommand."""
     if args.bindings_command == "validate":
         return cmd_validate(args)
+    if args.bindings_command == "viz":
+        return cmd_viz(args)
     print(f"Unknown bindings command: {args.bindings_command}", file=sys.stderr)
     return 2
+
+
+def cmd_viz(args: argparse.Namespace) -> int:
+    """Run ``excel-grapher bindings viz``."""
+    workbook = args.workbook
+    if not workbook.is_file():
+        print(f"Workbook not found: {workbook}", file=sys.stderr)
+        return 1
+    try:
+        bindings_path = resolve_bindings_path(workbook, args.bindings)
+    except SeriesBindingsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
+        blank_ranges = (
+            load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
+        )
+        result = validate_bindings_workbook(
+            workbook,
+            bindings_path,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+            blank_ranges=blank_ranges,
+        )
+        payload = to_semantic_viz_payload(
+            result["graph"],
+            result["bindings"],
+            workbook=workbook,
+            blank_ranges=blank_ranges,
+        )
+        write_semantic_viz_html(payload, args.output, title=workbook.name)
+        if args.json:
+            json_path = args.output.with_suffix(".viz.json")
+            json_path.write_text(
+                json.dumps(payload.to_dict(), indent=2, default=str),
+                encoding="utf-8",
+            )
+            print(f"wrote {json_path}")
+        print(
+            f"wrote {args.output} "
+            f"statements={payload.graph.stats.statement_count} "
+            f"bundles={payload.graph.stats.bundle_count} "
+            f"instance_edges={payload.graph.stats.instance_edge_count} "
+            f"cells={payload.graph.stats.cell_count}"
+        )
+        return 0
+    except SeriesBindingsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except SeriesBindingsSchemaError as exc:
+        print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
+        return 1
+    except ConstraintsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except BlankRangesLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (SemanticCatalogError, InvertedTreeExportError) as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
+        return 1
 
 
 def cmd_validate(args: argparse.Namespace) -> int:
@@ -114,11 +225,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     try:
         dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
-        graph_kwargs = {
-            "dynamic_refs": dynamic_refs,
-            "use_cached_dynamic_refs": args.use_cached_dynamic_refs,
-        }
-        result = validate_bindings_workbook(workbook, bindings_path, **graph_kwargs)
+        result = validate_bindings_workbook(
+            workbook,
+            bindings_path,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+        )
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -156,7 +268,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                         module_dir=module_dir,
                         package_name=args.package_name,
                         smoke_test=True,
-                        **graph_kwargs,
+                        dynamic_refs=dynamic_refs,
+                        use_cached_dynamic_refs=args.use_cached_dynamic_refs,
                     )
             else:
                 module_dir = _module_dir(args.emit_dir, args.package_name)
@@ -166,7 +279,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     module_dir=module_dir,
                     package_name=args.package_name,
                     smoke_test=True,
-                    **graph_kwargs,
+                    dynamic_refs=dynamic_refs,
+                    use_cached_dynamic_refs=args.use_cached_dynamic_refs,
                 )
                 if not args.json:
                     _write_generated_files(check_result, module_dir)

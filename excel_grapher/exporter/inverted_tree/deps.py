@@ -1411,6 +1411,15 @@ def collect_series_edges(
     for index, address in enumerate(series.cells):
         ast = try_formula_ast(graph, address)
         if ast is None:
+            hole = series.hole_at(index)
+            if hole is not None and hole.kind == "bound_leaf" and hole.claimant_id is not None:
+                claimant = catalog.get(hole.claimant_id)
+                collector._emit(
+                    producer_id=claimant.series_id,
+                    host_cell=address,
+                    producer_cell=address,
+                    access=_member_access(address, claimant, address, catalog),
+                )
             continue
         collector.visit(ast, host_cell=address, host_index=index)
     return refine_access_classes(collector.edges, catalog)
