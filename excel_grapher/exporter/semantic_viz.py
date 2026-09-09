@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -24,16 +24,89 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 SEMANTIC_VIZ_PAYLOAD_VERSION = 1
 SEMANTIC_VIZ_OVERLAY_ID = "webviz.statement_graph"
 SEMANTIC_VIZ_CELL_SAMPLE = 8
+SEMANTIC_VIZ_CAMERA_MAX_WIDTH = 2800
+# One rect per statement plus two SVG paths per bundle (stroke + arrow overlay).
+# Q-CRAFT is ~12k (SVG); LIC-DSF is ~260k (canvas).
+SEMANTIC_VIZ_SVG_MAX_PRIMITIVES = 20_000
 
 __all__ = [
+    "SEMANTIC_VIZ_CAMERA_MAX_WIDTH",
     "SEMANTIC_VIZ_CELL_SAMPLE",
     "SEMANTIC_VIZ_OVERLAY_ID",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
+    "SEMANTIC_VIZ_SVG_MAX_PRIMITIVES",
     "SemanticVizPayload",
+    "semantic_viz_renderer",
+    "semantic_viz_svg_primitive_count",
     "serialize_semantic_viz_json",
+    "spread_rank_centers",
     "to_semantic_viz_payload",
     "write_semantic_viz_html",
 ]
+
+
+def semantic_viz_svg_primitive_count(*, statement_count: int, bundle_count: int) -> int:
+    """Return estimated SVG DOM nodes for a statement graph.
+
+    Each bundle currently paints two `path` elements (stroke + arrow overlay)
+    and each statement paints one `rect`.
+    """
+    return statement_count + 2 * bundle_count
+
+
+def semantic_viz_renderer(*, statement_count: int, bundle_count: int) -> Literal["svg", "canvas"]:
+    """Choose SVG or canvas from estimated DOM size.
+
+    SVG keeps labeled boxes and native hit-testing. Above
+    `SEMANTIC_VIZ_SVG_MAX_PRIMITIVES` the same shapes are painted to a canvas
+    so the browser is not asked to composite hundreds of thousands of elements.
+    """
+    count = semantic_viz_svg_primitive_count(
+        statement_count=statement_count, bundle_count=bundle_count
+    )
+    return "canvas" if count > SEMANTIC_VIZ_SVG_MAX_PRIMITIVES else "svg"
+
+
+def spread_rank_centers(
+    widths: Sequence[float],
+    *,
+    pad: float = 48,
+    min_gap: float = 16,
+    min_row_width: float = SEMANTIC_VIZ_CAMERA_MAX_WIDTH,
+    graph_width: float,
+) -> tuple[float, ...]:
+    """Return center-x for each node in a rank.
+
+    Sparse ranks expand to `min(min_row_width, graph_width)` so they fill the
+    initial camera instead of packing at the left pad. Dense ranks keep
+    `min_gap` between boxes.
+
+    Args:
+        widths: Box widths in the rank's display order.
+        pad: Left/right graph padding.
+        min_gap: Minimum space between adjacent boxes.
+        min_row_width: Camera width used as the sparse-rank floor.
+        graph_width: Packed width of the densest rank (including pad).
+    """
+    n = len(widths)
+    if n == 0:
+        return ()
+    inner_nodes = float(sum(widths))
+    packed_inner = inner_nodes + min_gap * (n - 1) if n > 1 else inner_nodes
+    packed_width = pad + packed_inner + pad
+    target = max(packed_width, min(min_row_width, graph_width))
+    inner = target - 2 * pad
+    if n == 1:
+        return (pad + inner / 2,)
+    gap = (inner - inner_nodes) / (n - 1)
+    if gap < min_gap:
+        gap = min_gap
+    x = pad
+    centers: list[float] = []
+    for width in widths:
+        centers.append(x + width / 2)
+        x += width + gap
+    return tuple(centers)
 
 
 @dataclass(frozen=True, slots=True)
@@ -206,6 +279,7 @@ def write_semantic_viz_html(
         tpl.replace("__TITLE__", title)
         .replace("/*__BOOTSTRAP__*/", bootstrap)
         .replace("/*__SIDECAR__*/", sidecar_js)
+        .replace("__SVG_MAX_PRIMITIVES__", str(SEMANTIC_VIZ_SVG_MAX_PRIMITIVES))
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

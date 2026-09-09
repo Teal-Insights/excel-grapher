@@ -14,8 +14,9 @@
     }
     #toolbar label { display: flex; gap: 4px; align-items: center; user-select: none; }
     #wrap { position: relative; width: 100%; height: calc(100% - 48px); background: #fff; overflow: hidden; }
-    svg { width: 100%; height: 100%; display: block; cursor: grab; }
-    svg.dragging { cursor: grabbing; }
+    svg, canvas { width: 100%; height: 100%; display: block; cursor: grab; background: #fff; }
+    svg.dragging, canvas.dragging { cursor: grabbing; }
+    svg[hidden], canvas[hidden] { display: none; }
     .node rect { stroke: #1f2328; stroke-width: 1.2; cursor: pointer; }
     .node text { font-size: 12px; pointer-events: none; fill: #1f2328; }
     .bundle { fill: none; stroke-width: 1.8; }
@@ -53,6 +54,7 @@
       <defs id="markers"></defs>
       <g id="viewport"></g>
     </svg>
+    <canvas id="raster" hidden></canvas>
   </div>
   <div id="tip"></div>
   <script>
@@ -142,6 +144,30 @@
     return DIR_ORDER[n.direction] == null ? 1 : DIR_ORDER[n.direction];
   }
 
+  var CAMERA_MAX_W = 2800;
+  var SVG_MAX_PRIMITIVES = __SVG_MAX_PRIMITIVES__;
+
+  function spreadRank(widths, pad, minGap, minRowWidth, graphWidth) {
+    var n = widths.length;
+    if (!n) return [];
+    var innerNodes = 0;
+    widths.forEach(function (w) { innerNodes += w; });
+    var packedInner = n > 1 ? innerNodes + minGap * (n - 1) : innerNodes;
+    var packedWidth = pad + packedInner + pad;
+    var target = Math.max(packedWidth, Math.min(minRowWidth, graphWidth));
+    var inner = target - 2 * pad;
+    if (n === 1) return [pad + inner / 2];
+    var gap = (inner - innerNodes) / (n - 1);
+    if (gap < minGap) gap = minGap;
+    var x = pad;
+    var centers = [];
+    widths.forEach(function (w) {
+      centers.push(x + w / 2);
+      x += w + gap;
+    });
+    return centers;
+  }
+
   function layoutByRank(nodes) {
     var pad = 48;
     var rankGap = 72;
@@ -153,8 +179,7 @@
       (byRank[rank] || (byRank[rank] = [])).push(n);
     });
     var ranks = Object.keys(byRank).map(Number).sort(function (a, b) { return a - b; });
-    var maxW = 920;
-    ranks.forEach(function (rank, row) {
+    ranks.forEach(function (rank) {
       var rowNodes = byRank[rank];
       rowNodes.sort(function (a, b) {
         var da = dirRank(a) - dirRank(b);
@@ -163,27 +188,40 @@
         if (a.series_id > b.series_id) return 1;
         return a.start - b.start;
       });
-      var x = pad;
-      var y = pad + row * rankGap;
       rowNodes.forEach(function (n) {
         n._w = Math.max(72, n._label.length * 7 + 16);
         n._h = 28;
-        n._x = x + n._w / 2;
-        n._y = y;
-        x += n._w + nodeGap;
       });
-      maxW = Math.max(maxW, x + pad);
+    });
+    var maxW = 920;
+    ranks.forEach(function (rank) {
+      var rowNodes = byRank[rank];
+      var inner = 0;
+      rowNodes.forEach(function (n) { inner += n._w; });
+      if (rowNodes.length > 1) inner += nodeGap * (rowNodes.length - 1);
+      maxW = Math.max(maxW, pad + inner + pad);
+    });
+    ranks.forEach(function (rank, row) {
+      var rowNodes = byRank[rank];
+      var y = pad + row * rankGap;
+      var centers = spreadRank(
+        rowNodes.map(function (n) { return n._w; }),
+        pad, nodeGap, CAMERA_MAX_W, maxW
+      );
+      rowNodes.forEach(function (n, i) {
+        n._x = centers[i];
+        n._y = y;
+      });
     });
     var height = Math.max(640, pad + Math.max(ranks.length, 1) * rankGap + pad);
     return {width: maxW, height: height};
   }
 
   function cameraFor(size) {
-    var maxW = 2800;
     return {
       x: 0,
       y: 0,
-      w: Math.min(size.width, maxW),
+      w: Math.min(size.width, CAMERA_MAX_W),
       h: size.height
     };
   }
@@ -201,6 +239,7 @@
     }
 
     var svg = document.getElementById('canvas');
+    var raster = document.getElementById('raster');
     var viewport = document.getElementById('viewport');
     var defs = document.getElementById('markers');
     Object.keys(MARKER_COLORS).forEach(function (access) {
@@ -213,6 +252,14 @@
       if (seriesIds.indexOf(n.series_id) < 0) seriesIds.push(n.series_id);
       n._label = nodeLabel(n);
     });
+    var useCanvas = (nodes.length + 2 * bundles.length) > SVG_MAX_PRIMITIVES;
+    if (useCanvas) {
+      svg.hidden = true;
+      raster.hidden = false;
+      if (!document.getElementById('banner').textContent) {
+        document.getElementById('banner').textContent = 'Canvas view (large graph)';
+      }
+    }
     var constantCount = nodes.filter(function (n) { return n.direction === 'constant'; }).length;
     if (constantCount >= 24) {
       var constBox = document.querySelector('#toolbar input[data-dir="constant"]');
@@ -220,6 +267,7 @@
     }
 
     var vb = {x: 0, y: 0, w: 920, h: 640};
+    var byId = {};
     function setViewBox() {
       svg.setAttribute('viewBox', vb.x + ' ' + vb.y + ' ' + vb.w + ' ' + vb.h);
     }
@@ -236,23 +284,27 @@
       return (document.getElementById('search').value || '').trim().toLowerCase();
     }
 
-    function draw(resetView) {
-      var dirs = enabledDirs();
-      var q = query();
-      nodes.forEach(function (n) {
-        var dir = n.is_remainder ? 'internal' : (n.direction || 'internal');
-        n._hidden = dirs[dir] === false;
-        n._match = !q || String(n.series_id).toLowerCase().indexOf(q) >= 0 || String(n.id).toLowerCase().indexOf(q) >= 0;
-      });
-      var size = layoutByRank(nodes);
-      if (resetView !== false) {
-        vb = cameraFor(size);
-        setViewBox();
-      }
-      while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
-      var byId = {};
-      nodes.forEach(function (n) { byId[n.id] = n; });
+    function nodeTip(n) {
+      return [
+        n.id,
+        'series ' + n.series_id + '  direction ' + n.direction,
+        'rank ' + n.rank + '  cells ' + n.cell_count,
+        (n.cells || []).slice(0, 8).join(', ')
+      ].join('\n');
+    }
 
+    function bundleTip(b) {
+      return [
+        b.consumer_id + ' → ' + b.producer_id,
+        'access=' + b.access + ' distance=' + b.distance + (b.guarded ? ' guarded' : ''),
+        b.instance_edge_count + ' instance edges',
+        'cells ' + b.representative_consumer_cell + ' → ' + b.representative_producer_cell
+      ].join('\n');
+    }
+
+    function paintSvg() {
+      var q = query();
+      while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
       bundles.forEach(function (b) {
         var a = byId[b.consumer_id];
         var c = byId[b.producer_id];
@@ -280,12 +332,7 @@
             ' ' + end.x + ' ' + end.y;
         }
         path.setAttribute('d', d);
-        path.dataset.tip = [
-          b.consumer_id + ' → ' + b.producer_id,
-          'access=' + b.access + ' distance=' + b.distance + (b.guarded ? ' guarded' : ''),
-          b.instance_edge_count + ' instance edges',
-          'cells ' + b.representative_consumer_cell + ' → ' + b.representative_producer_cell
-        ].join('\n');
+        path.dataset.tip = bundleTip(b);
         viewport.appendChild(path);
         var arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
         arrow.setAttribute('d', d);
@@ -320,14 +367,132 @@
           text.textContent = n._label;
           g.appendChild(text);
         }
-        g.dataset.tip = [
-          n.id,
-          'series ' + n.series_id + '  direction ' + n.direction,
-          'rank ' + n.rank + '  cells ' + n.cell_count,
-          (n.cells || []).slice(0, 8).join(', ')
-        ].join('\n');
+        g.dataset.tip = nodeTip(n);
         viewport.appendChild(g);
       });
+    }
+
+    function inView(x0, y0, x1, y1) {
+      return x1 >= vb.x && x0 <= vb.x + vb.w && y1 >= vb.y && y0 <= vb.y + vb.h;
+    }
+
+    function paintCanvas() {
+      var wrap = document.getElementById('wrap');
+      var cssW = Math.max(1, wrap.clientWidth);
+      var cssH = Math.max(1, wrap.clientHeight);
+      var dpr = window.devicePixelRatio || 1;
+      raster.width = Math.floor(cssW * dpr);
+      raster.height = Math.floor(cssH * dpr);
+      var ctx = raster.getContext('2d');
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      ctx.fillStyle = '#fff';
+      ctx.fillRect(0, 0, cssW, cssH);
+      var sx = cssW / vb.w;
+      var sy = cssH / vb.h;
+      ctx.save();
+      ctx.translate(-vb.x * sx, -vb.y * sy);
+      ctx.scale(sx, sy);
+      var q = query();
+      bundles.forEach(function (b) {
+        var a = byId[b.consumer_id];
+        var c = byId[b.producer_id];
+        if (!a || !c || a._hidden || c._hidden) return;
+        var x0 = Math.min(a._x, c._x) - 48;
+        var y0 = Math.min(a._y, c._y) - 48;
+        var x1 = Math.max(a._x, c._x) + 48;
+        var y1 = Math.max(a._y, c._y) + 48;
+        if (!inView(x0, y0, x1, y1)) return;
+        ctx.save();
+        if (b.guarded) ctx.globalAlpha *= 0.55;
+        if (q && (!a._match || !c._match)) ctx.globalAlpha *= 0.18;
+        var color = MARKER_COLORS[b.discharged ? 'shift' : (b.access || 'identity')] || MARKER_COLORS.identity;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1.8;
+        ctx.lineJoin = 'round';
+        ctx.lineCap = 'round';
+        if (b.discharged || b.access === 'shift') ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        if (a === c) {
+          var r = Math.max(a._w, 56) * 0.45;
+          ctx.moveTo(a._x + 12, a._y - a._h / 2);
+          ctx.bezierCurveTo(a._x + r, a._y - r - 18, a._x - r, a._y - r - 18, a._x - 12, a._y - a._h / 2);
+          ctx.stroke();
+        } else {
+          var start = boxPoint(c._x, c._y, a);
+          var end = boxPoint(a._x, a._y, c);
+          var dx = end.x - start.x;
+          var bend = (b.discharged ? 36 : 0) * (dx >= 0 ? 1 : -1);
+          var cx = (start.x + end.x) / 2 + bend;
+          var cy = (start.y + end.y) / 2;
+          ctx.moveTo(start.x, start.y);
+          ctx.quadraticCurveTo(cx, cy, end.x, end.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          var tx = end.x - cx;
+          var ty = end.y - cy;
+          var len = Math.sqrt(tx * tx + ty * ty) || 1;
+          tx /= len;
+          ty /= len;
+          ctx.fillStyle = color;
+          ctx.beginPath();
+          ctx.moveTo(end.x, end.y);
+          ctx.lineTo(end.x - 12 * tx + 5 * ty, end.y - 12 * ty - 5 * tx);
+          ctx.lineTo(end.x - 12 * tx - 5 * ty, end.y - 12 * ty + 5 * tx);
+          ctx.closePath();
+          ctx.fill();
+        }
+        ctx.restore();
+      });
+      var showLabels = 12 * (cssW / Math.max(vb.w, 1)) >= 7;
+      nodes.forEach(function (n) {
+        if (n._hidden) return;
+        var x0 = n._x - n._w / 2;
+        var y0 = n._y - n._h / 2;
+        if (!inView(x0, y0, x0 + n._w, y0 + n._h)) return;
+        ctx.save();
+        if (q && !n._match) ctx.globalAlpha *= 0.18;
+        ctx.fillStyle = n.is_remainder ? '#d0d7de' : seriesColor(n.series_id, seriesIds);
+        ctx.strokeStyle = '#1f2328';
+        ctx.lineWidth = (q && n._match) ? 2.4 : 1.2;
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x0, y0, n._w, n._h, 6);
+        else ctx.rect(x0, y0, n._w, n._h);
+        ctx.fill();
+        ctx.stroke();
+        if (showLabels) {
+          ctx.fillStyle = '#1f2328';
+          ctx.font = '12px system-ui, sans-serif';
+          ctx.textAlign = 'center';
+          ctx.textBaseline = 'middle';
+          ctx.fillText(n._label, n._x, n._y);
+        }
+        ctx.restore();
+      });
+      ctx.restore();
+    }
+
+    function applyView() {
+      if (useCanvas) paintCanvas();
+      else setViewBox();
+    }
+
+    function draw(resetView) {
+      var dirs = enabledDirs();
+      var q = query();
+      nodes.forEach(function (n) {
+        var dir = n.is_remainder ? 'internal' : (n.direction || 'internal');
+        n._hidden = dirs[dir] === false;
+        n._match = !q || String(n.series_id).toLowerCase().indexOf(q) >= 0 || String(n.id).toLowerCase().indexOf(q) >= 0;
+      });
+      var size = layoutByRank(nodes);
+      if (resetView !== false) vb = cameraFor(size);
+      byId = {};
+      nodes.forEach(function (n) { byId[n.id] = n; });
+      if (useCanvas) paintCanvas();
+      else {
+        setViewBox();
+        paintSvg();
+      }
     }
 
     draw();
@@ -338,33 +503,34 @@
     document.getElementById('search').addEventListener('input', function () { draw(false); });
     document.getElementById('fit').addEventListener('click', function () { draw(true); });
 
+    var surface = useCanvas ? raster : svg;
     var dragging = false;
     var last = null;
-    svg.addEventListener('pointerdown', function (ev) {
+    surface.addEventListener('pointerdown', function (ev) {
       if (ev.button !== 0) return;
       dragging = true;
       last = {x: ev.clientX, y: ev.clientY};
-      svg.classList.add('dragging');
-      svg.setPointerCapture(ev.pointerId);
+      surface.classList.add('dragging');
+      surface.setPointerCapture(ev.pointerId);
     });
-    svg.addEventListener('pointerup', function () {
+    surface.addEventListener('pointerup', function () {
       dragging = false;
       last = null;
-      svg.classList.remove('dragging');
+      surface.classList.remove('dragging');
     });
-    svg.addEventListener('pointermove', function (ev) {
+    surface.addEventListener('pointermove', function (ev) {
       if (!dragging || !last) return;
-      var rect = svg.getBoundingClientRect();
+      var rect = surface.getBoundingClientRect();
       var dx = (ev.clientX - last.x) * (vb.w / rect.width);
       var dy = (ev.clientY - last.y) * (vb.h / rect.height);
       vb.x -= dx;
       vb.y -= dy;
       last = {x: ev.clientX, y: ev.clientY};
-      setViewBox();
+      applyView();
     });
-    svg.addEventListener('wheel', function (ev) {
+    surface.addEventListener('wheel', function (ev) {
       ev.preventDefault();
-      var rect = svg.getBoundingClientRect();
+      var rect = surface.getBoundingClientRect();
       var mx = vb.x + (ev.clientX - rect.left) * (vb.w / rect.width);
       var my = vb.y + (ev.clientY - rect.top) * (vb.h / rect.height);
       var factor = ev.deltaY < 0 ? 0.9 : 1.1;
@@ -372,17 +538,39 @@
       vb.h *= factor;
       vb.x = mx - (ev.clientX - rect.left) * (vb.w / rect.width);
       vb.y = my - (ev.clientY - rect.top) * (vb.h / rect.height);
-      setViewBox();
+      applyView();
     }, {passive: false});
 
     var tip = document.getElementById('tip');
-    svg.addEventListener('mousemove', function (ev) {
-      var t = ev.target.closest('[data-tip]');
-      if (!t) { tip.style.display = 'none'; return; }
+    function showTip(ev, text) {
+      if (!text) { tip.style.display = 'none'; return; }
       tip.style.display = 'block';
       tip.style.left = (ev.clientX + 12) + 'px';
       tip.style.top = (ev.clientY + 12) + 'px';
-      tip.innerHTML = esc(t.dataset.tip).replace(/\n/g, '<br/>');
+      tip.innerHTML = esc(text).replace(/\n/g, '<br/>');
+    }
+    svg.addEventListener('mousemove', function (ev) {
+      var t = ev.target.closest('[data-tip]');
+      showTip(ev, t ? t.dataset.tip : '');
+    });
+    raster.addEventListener('mousemove', function (ev) {
+      if (dragging) return;
+      var rect = raster.getBoundingClientRect();
+      var wx = vb.x + (ev.clientX - rect.left) * (vb.w / rect.width);
+      var wy = vb.y + (ev.clientY - rect.top) * (vb.h / rect.height);
+      var hit = null;
+      for (var i = nodes.length - 1; i >= 0; i--) {
+        var n = nodes[i];
+        if (n._hidden) continue;
+        if (Math.abs(wx - n._x) <= n._w / 2 && Math.abs(wy - n._y) <= n._h / 2) {
+          hit = nodeTip(n);
+          break;
+        }
+      }
+      showTip(ev, hit);
+    });
+    window.addEventListener('resize', function () {
+      if (useCanvas) paintCanvas();
     });
   }).catch(function (err) {
     document.getElementById('stats').textContent = String(err);

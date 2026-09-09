@@ -17,7 +17,11 @@ from excel_grapher.exporter.semantic_graph import (
 from excel_grapher.exporter.semantic_viz import (
     SEMANTIC_VIZ_CELL_SAMPLE,
     SEMANTIC_VIZ_PAYLOAD_VERSION,
+    SEMANTIC_VIZ_SVG_MAX_PRIMITIVES,
+    semantic_viz_renderer,
+    semantic_viz_svg_primitive_count,
     serialize_semantic_viz_json,
+    spread_rank_centers,
     to_semantic_viz_payload,
     write_semantic_viz_html,
 )
@@ -239,3 +243,56 @@ def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:
     assert remainder[0].statement_id == REMAINDER_STATEMENT_ID
     assert statement_graph.stats.unbound_cell_count >= 1
     assert "Engine!Z99" in catalog.address_to_id or "Engine!Z99" in statement_graph.remainder_sample
+
+
+def test_qcraft_scale_stays_on_svg() -> None:
+    # Q-CRAFT: 715 statements / 5,725 bundles. SVG first paint was usable.
+    count = semantic_viz_svg_primitive_count(statement_count=715, bundle_count=5725)
+    assert count < SEMANTIC_VIZ_SVG_MAX_PRIMITIVES
+    assert semantic_viz_renderer(statement_count=715, bundle_count=5725) == "svg"
+
+
+def test_lic_dsf_scale_uses_canvas() -> None:
+    # LIC-DSF statement grain: ~20k statements / ~120k bundles. SVG paint hung.
+    assert semantic_viz_svg_primitive_count(statement_count=20020, bundle_count=119808) > (
+        SEMANTIC_VIZ_SVG_MAX_PRIMITIVES
+    )
+    assert semantic_viz_renderer(statement_count=20020, bundle_count=119808) == "canvas"
+
+
+def test_spread_rank_centers_fills_camera_not_left_edge() -> None:
+    widths = (80.0, 80.0, 80.0)
+    centers = spread_rank_centers(
+        widths, pad=48, min_gap=16, min_row_width=2800, graph_width=5_000_000
+    )
+    assert centers[0] >= 48
+    assert centers[-1] <= 2800 - 48
+    assert centers[-1] - centers[0] > 2000
+
+
+def test_spread_rank_centers_keeps_dense_packing() -> None:
+    widths = tuple(72.0 for _ in range(40))
+    packed_span = 40 * 72 + 39 * 16
+    centers = spread_rank_centers(
+        widths, pad=48, min_gap=16, min_row_width=2800, graph_width=packed_span + 96
+    )
+    gaps = [centers[i + 1] - centers[i] - 72 for i in range(len(centers) - 1)]
+    assert all(abs(g - 16) < 1e-6 for g in gaps)
+
+
+def test_html_ships_canvas_painter_and_rank_spread(tmp_path: Path) -> None:
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _zipper_bindings())
+    payload = to_semantic_viz_payload(
+        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    )
+    html_path = tmp_path / "zipper.html"
+    write_semantic_viz_html(payload, html_path)
+    html = html_path.read_text(encoding="utf-8")
+    assert "getContext('2d')" in html
+    assert "spread_rank_centers" in html or "spreadRank" in html
+    assert str(SEMANTIC_VIZ_SVG_MAX_PRIMITIVES) in html
+    assert "roundRect" in html or "quadraticCurveTo" in html
+    assert payload.graph.stats.statement_count + 2 * payload.graph.stats.bundle_count < (
+        SEMANTIC_VIZ_SVG_MAX_PRIMITIVES
+    )
