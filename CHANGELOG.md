@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.5.1 (2026-09-09)
+
+### Bug Fixes
+
+- Skip FormulaEvaluator leaf scan when values are unchanged
+  ([#817](https://github.com/Teal-Insights/excel-grapher/pull/817),
+  [`24440e4`](https://github.com/Teal-Insights/excel-grapher/commit/24440e42cb3aa60a54f4d03e9b6de147d454eca7))
+
+- **viz**: Honor blank_ranges in statement-graph catalog walks
+  ([#815](https://github.com/Teal-Insights/excel-grapher/pull/815),
+  [`4524926`](https://github.com/Teal-Insights/excel-grapher/commit/452492642283d4bd4b552713b244c5f3825e2d4d))
+
+### Testing
+
+- Treat value generation as graph structure in projection copy
+  ([#817](https://github.com/Teal-Insights/excel-grapher/pull/817),
+  [`24440e4`](https://github.com/Teal-Insights/excel-grapher/commit/24440e42cb3aa60a54f4d03e9b6de147d454eca7))
+
+
 ## v15.5.0 (2026-09-09)
 
 ### Bug Fixes
