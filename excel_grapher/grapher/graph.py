@@ -8,7 +8,10 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, runtime_checkable
 
 if TYPE_CHECKING:
+    from pathlib import Path
+
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
+    from .dynamic_refs import DynamicRefConfig
     from .graph_consistency import GraphConsistencyIssue
 
 from excel_grapher.core.address_keys import (
@@ -465,8 +468,9 @@ class DependencyGraph:
         `formula_ast` unset and keep `normalized_formula` as fallback text.
         Edges are not recomputed; callers rewiring dependencies must update
         edges explicitly. Intended for projection authors building export-only
-        graph views. Drops `formula_shapes`; callers who want the overlay must
-        rewarm. Does not validate formula/edge agreement; call
+        graph views. For a topology-aware durable edit, use
+        `replace_node_formula`. Drops `formula_shapes`; callers who want the
+        overlay must rewarm. Does not validate formula/edge agreement; call
         `validate_consistency` after rewiring.
 
         Raises:
@@ -488,6 +492,79 @@ class DependencyGraph:
         else:
             node._unparseable_formula = normalized_formula
         self._invalidate_formula_shapes()
+
+    def replace_node_formula(
+        self,
+        key: NodeKey,
+        formula: str | None,
+        normalized_formula: str | None,
+        *,
+        workbook: str | Path | None = None,
+        dynamic_refs: DynamicRefConfig | None = None,
+        use_cached_dynamic_refs: bool = False,
+        load_values: bool = True,
+        capture_dependency_provenance: bool = True,
+        max_depth: int = 50,
+        expand_ranges: bool = True,
+        max_range_cells: int | None = None,
+    ) -> None:
+        """Replace a node's formula and rewire outgoing edges from extraction.
+
+        Unlike `set_node_formula` (the projection primitive), this recomputes
+        leaf/formula state, outgoing guards, and provenance from the new
+        formula. Newly referenced cells are materialized when `workbook` is
+        provided. Named ranges that are not on the graph, dynamic
+        OFFSET/INDIRECT/INDEX that need the book, and missing subgraph cells
+        fail closed with `WorkbookContextRequiredError` when `workbook` is
+        omitted — the graph is left unchanged.
+
+        Incoming edges (dependents of this cell) are preserved. `formula_shapes`
+        is dropped; callers who want the overlay must rewarm.
+
+        Args:
+            key: Existing node to edit.
+            formula: New raw formula text, or `None` to clear the formula and
+                become a leaf.
+            normalized_formula: Fallback parse text when `formula` is
+                unparseable. Ignored when `formula` parses.
+            workbook: Source `.xlsx` used to resolve named ranges, dynamic
+                refs, and to materialize off-path cells.
+            dynamic_refs: Constraint-based dynamic-ref config forwarded to
+                extraction when `workbook` is set.
+            use_cached_dynamic_refs: Resolve OFFSET/INDIRECT/INDEX from cached
+                workbook values (requires `workbook`).
+            load_values: Load cached Excel values for newly materialized cells.
+            capture_dependency_provenance: Record extraction provenance on new
+                edges (default True).
+            max_depth: BFS depth when materializing from `workbook`.
+            expand_ranges: Expand rectangular refs to member cells.
+            max_range_cells: Expansion budget; defaults to
+                `DEFAULT_MAX_RANGE_CELLS`.
+
+        Raises:
+            KeyError: If the node is missing.
+            WorkbookContextRequiredError: If workbook context is required and
+                `workbook` is omitted.
+        """
+        from .formula_replace import replace_node_formula as _replace
+        from .parser import DEFAULT_MAX_RANGE_CELLS as _DEFAULT_MAX_RANGE_CELLS
+
+        _replace(
+            self,
+            key,
+            formula,
+            normalized_formula,
+            workbook=workbook,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=use_cached_dynamic_refs,
+            load_values=load_values,
+            capture_dependency_provenance=capture_dependency_provenance,
+            max_depth=max_depth,
+            expand_ranges=expand_ranges,
+            max_range_cells=(
+                _DEFAULT_MAX_RANGE_CELLS if max_range_cells is None else max_range_cells
+            ),
+        )
 
     def set_node_ast(
         self,
