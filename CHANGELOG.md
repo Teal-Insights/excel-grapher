@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.7.1 (2026-09-09)
+
+### Bug Fixes
+
+- **export**: Skip caller take() for shared-helper parameters
+  ([#821](https://github.com/Teal-Insights/excel-grapher/pull/821),
+  [`20f19ff`](https://github.com/Teal-Insights/excel-grapher/commit/20f19ff1af6cf99bf63addac0b07a78f33970d07))
+
+
 ## v15.7.0 (2026-09-09)
 
 ### Bug Fixes
