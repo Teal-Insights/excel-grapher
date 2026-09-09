@@ -57,6 +57,7 @@ from .export import (
     write_lightweight_viz_data,
     write_web_viz_html,
 )
+from .formula_replace import WorkbookContextRequiredError
 from .formula_shapes import warm_formula_shapes
 from .graph import CycleError, CycleReport, DependencyGraph, GraphReadView, NodeHook
 from .graph_consistency import (
@@ -162,6 +163,7 @@ __all__ = [
     "ValidationResult",
     "get_calc_settings",
     "WorkbookCalcSettings",
+    "WorkbookContextRequiredError",
     "format_cell_key",
     "format_key",
     "DEFAULT_MAX_RANGE_CELLS",

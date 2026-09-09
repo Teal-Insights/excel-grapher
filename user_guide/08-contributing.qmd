@@ -220,6 +220,13 @@ Unlabeled edges are treated as formula-ref claims unless the host formula
 contains `OFFSET` / `INDIRECT` / dynamic `INDEX`; edges whose provenance is
 dynamic-only are exempt from that reverse check.
 
+Do not call `replace_node_formula` from a projection step. That method is the
+separate durable-edit API: it re-extracts outgoing edges, guards, and
+provenance, materializes newly referenced cells when a workbook is provided,
+and raises `WorkbookContextRequiredError` if that context is required and
+missing. Projection authors still rewire with `add_edge` / `remove_node`
+themselves.
+
 Compose steps with `apply_projection(graph, [step_a, step_b])`; multiple steps
 fold into a `CompositeProjectionManifest` that chains the forwarding map and
 preserves each component manifest (heterogeneous kinds supported).

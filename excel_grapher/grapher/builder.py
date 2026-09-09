@@ -18,6 +18,7 @@ from fastpyxl.worksheet.worksheet import Worksheet
 from excel_grapher.core.address_keys import (
     CellKey,
     format_range_key,
+    normalize_key,
     parse_address,
     sort_node_keys,
     sort_sheet_a1_pairs,
@@ -505,6 +506,7 @@ def create_dependency_graph(
     type_analysis_cache: TypeAnalysisCache | None = None,
     warm_ast_cache: bool = False,
     warm_formula_shapes: bool = False,
+    formula_overrides: Mapping[str, str] | None = None,
 ) -> DependencyGraph:
     r"""Build a dependency graph starting from target cells.
 
@@ -649,6 +651,12 @@ def create_dependency_graph(
     (issue #539). Callers doing iterative constraint-tuning workflows can
     leave `capture_dependency_provenance=False` (the default) to skip
     remaining provenance overhead.
+
+    `formula_overrides` is an optional map of canonical node keys to formula
+    text used instead of the workbook cell when that address is visited. The
+    rest of the BFS still reads the workbook. Used by
+    `DependencyGraph.replace_node_formula` to re-extract a cell whose in-memory
+    formula has changed.
     """
     if not isinstance(workbook, (str, Path)):
         raise TypeError(
@@ -660,6 +668,9 @@ def create_dependency_graph(
         )
 
     blank_rects = normalize_blank_range_specs(blank_ranges)
+    formula_override_map = (
+        {normalize_key(k): v for k, v in formula_overrides.items()} if formula_overrides else {}
+    )
 
     def load_wb(
         *,
@@ -1704,17 +1715,23 @@ def create_dependency_graph(
 
             ws_f = _get_ws_f(sheet)
             cell = ws_f[a1]
-            raw = cell.value
-            # CSE array formulas are evaluated element-wise, which is one of the
-            # array contexts that make range-typed `IF` conditions per-element.
-            is_array_formula = isinstance(raw, ArrayFormula)
-            array_formula_ref: str | None = None
-            if is_array_formula:
-                observed_ref = raw.ref
-                array_formula_ref = observed_ref if observed_ref else None
-                raw = raw.text or ""
-                if raw and not raw.startswith("="):
-                    raw = f"={raw}"
+            override = formula_override_map.get(key)
+            if override is not None:
+                raw = override
+                is_array_formula = False
+                array_formula_ref = None
+            else:
+                raw = cell.value
+                # CSE array formulas are evaluated element-wise, which is one of the
+                # array contexts that make range-typed `IF` conditions per-element.
+                is_array_formula = isinstance(raw, ArrayFormula)
+                array_formula_ref = None
+                if is_array_formula:
+                    observed_ref = raw.ref
+                    array_formula_ref = observed_ref if observed_ref else None
+                    raw = raw.text or ""
+                    if raw and not raw.startswith("="):
+                        raw = f"={raw}"
             is_formula = isinstance(raw, str) and raw.startswith("=")
 
             if is_formula:
