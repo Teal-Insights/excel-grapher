@@ -208,6 +208,9 @@ class DependencyGraph:
     # Optional leaf domains used by `cycle_report` when the caller does not pass
     # `cell_type_env`. Not pickled (same as `formula_shapes`).
     cell_type_env: CellTypeEnv | None = None
+    # Bumped by `set_node_value` so FormulaEvaluator can skip a full leaf poll
+    # when no durable value write has happened since the last eager scan.
+    _value_generation: int = field(default=0, repr=False, compare=False)
 
     def copy(self) -> DependencyGraph:
         """Return a deep copy of this graph (node hooks are not copied)."""
@@ -251,6 +254,7 @@ class DependencyGraph:
             self.formula_shapes.copy() if self.formula_shapes is not None else None
         )
         cloned.cell_type_env = dict(self.cell_type_env) if self.cell_type_env is not None else None
+        cloned._value_generation = self._value_generation
         return cloned
 
     # ---- node insertion and iteration ---------------------------------------
@@ -433,12 +437,17 @@ class DependencyGraph:
     # ---- durable node mutation ---------------------------------------------
 
     def set_node_value(self, key: NodeKey, value: Any) -> None:
-        """Set a node's `value` field durably. Raises `KeyError` if missing."""
+        """Set a node's `value` field durably. Raises `KeyError` if missing.
+
+        Increments `_value_generation` so evaluators can skip polling every
+        leaf when no durable write has occurred since the last scan.
+        """
         nk = normalize_key(key)
         node = self._nodes.get(nk)
         if node is None:
             raise KeyError(f"Cell {key} not found in graph")
         node.value = value
+        self._value_generation += 1
 
     def set_node_metadata(self, key: NodeKey, metadata: Mapping[str, Any]) -> None:
         """Replace a node's metadata mapping durably.
@@ -1344,6 +1353,7 @@ class DependencyGraph:
         self.preparsed_formulas = None
         self.formula_shapes = None
         self.cell_type_env = None
+        self._value_generation = 0
         state.clear()
 
     def _invalidate_formula_shapes(self) -> None:

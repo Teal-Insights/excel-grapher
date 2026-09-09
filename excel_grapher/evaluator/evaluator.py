@@ -155,6 +155,11 @@ class FormulaEvaluator:
     `_shape_fns`. Construct a new `FormulaEvaluator` after rewarming if you
     want compiled shape helpers. Missing shapes fall back to
     `Node.formula_ast`; correctness does not require the overlay to be warm.
+
+    With `auto_detect_changes` and `eager_invalidation` (the defaults),
+    `evaluate` polls leaf values only after `DependencyGraph.set_node_value`
+    since the previous scan (or construction). Repeated `evaluate(cell)`
+    calls against an unchanged leaf set do not walk unused leaves.
     """
 
     graph: DependencyGraph
@@ -189,6 +194,10 @@ class FormulaEvaluator:
         self._runtime_deps: dict[str, set[str]] = {}
         self._runtime_reverse_deps: dict[str, set[str]] = {}
         self._circular_warning_roots: set[str] = set()
+        # Last `DependencyGraph._value_generation` observed by a full eager
+        # leaf scan (or construction). Eager `evaluate` skips the O(|leaves|)
+        # poll while this matches the graph counter.
+        self._leaf_scan_generation: int | None = getattr(self.graph, "_value_generation", None)
 
     def __enter__(self) -> FormulaEvaluator:
         return self
@@ -322,16 +331,30 @@ class FormulaEvaluator:
         results = {addr: self._evaluate_cell(addr) for addr in target_list}
         return next(iter(results.values())) if single else results
 
+    def _leaf_values_may_have_changed(self) -> bool:
+        """Return whether `set_node_value` ran since the last eager leaf scan."""
+        generation = getattr(self.graph, "_value_generation", None)
+        if generation is None:
+            return True
+        return generation != self._leaf_scan_generation
+
     def _detect_and_invalidate_changed_leaves(self) -> None:
-        """Scan all leaves and invalidate any whose values have changed."""
-        for key in self.graph.leaf_keys():
-            node = self.graph.get_node(key)
-            if node is None:
-                continue
+        """Scan leaves and invalidate any whose values have changed.
+
+        Skips the walk when `_value_generation` is unchanged since the last
+        scan (or evaluator construction). Uses `leaf_node_items` so stored
+        keys are not re-normalized through `get_node`.
+        """
+        generation = getattr(self.graph, "_value_generation", None)
+        if generation is not None and generation == self._leaf_scan_generation:
+            return
+        for key, node in self.graph.leaf_node_items():
             current_value = node.value
             if key in self._leaf_values and self._leaf_values[key] != current_value:
                 self._invalidate_with_dependents(key)
             self._leaf_values[key] = current_value
+        if generation is not None:
+            self._leaf_scan_generation = generation
 
     def _check_and_invalidate_if_leaves_changed(self, address: str) -> bool:
         """Check if any leaf dependencies of address have changed. Returns True if invalidated."""
@@ -392,7 +415,10 @@ class FormulaEvaluator:
         if norm in self._cache:
             # Lazy invalidation: check if leaf dependencies have changed
             if self.auto_detect_changes and not self.eager_invalidation:
-                if self._check_and_invalidate_if_leaves_changed(norm):
+                leaves_changed = self._leaf_values_may_have_changed() and (
+                    self._check_and_invalidate_if_leaves_changed(norm)
+                )
+                if leaves_changed:
                     # Cache was invalidated, need to re-evaluate (fall through)
                     pass
                 else:
