@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+import pytest
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
 
 from excel_grapher.core.address_keys import (
@@ -504,3 +505,60 @@ def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, obj
     function = getattr(pkg, name)
     accepted = set(inspect.signature(function).parameters)
     return function(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def assert_package_matches_evaluator(
+    workbook: Path,
+    document: dict[str, Any],
+    tmp_path: Path,
+    name: str,
+    *,
+    dynamic_refs: DynamicRefConfig | None = None,
+    blank_ranges: Sequence[str] | None = None,
+) -> types.ModuleType:
+    """Export `document`, then compare every formula series with the evaluator.
+
+    Formula series are evaluated in statement order; each computed tensor feeds
+    later helpers, so the first divergence names the root cause.
+    """
+    from excel_grapher.evaluator import FormulaEvaluator
+
+    catalog, deps, graph = inverted_graph_parts(
+        workbook, document, dynamic_refs=dynamic_refs, blank_ranges=blank_ranges
+    )
+    modules = generate_inverted(
+        workbook, document, dynamic_refs=dynamic_refs, blank_ranges=blank_ranges
+    )
+    pkg = load_package(modules, tmp_path, name=name)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    for series in catalog.constant_series():
+        kwargs[series.series_id] = getattr(pkg.data, series.series_id.upper())
+    cells = [cell for series in catalog.formula_series() for cell in series.cells]
+    expected = FormulaEvaluator(graph).evaluate(cells)
+    from excel_grapher.exporter.inverted_tree.deps import formula_closure
+
+    ordered = sorted(
+        catalog.formula_series(),
+        key=lambda series: len(formula_closure(series.series_id, catalog=catalog, deps=deps)),
+    )
+    for series in ordered:
+        function = getattr(pkg, series.compute_name or f"compute_{series.series_id}", None)
+        if function is None:
+            function = getattr(pkg.internals, series.series_id, None)
+        if function is None:
+            continue
+        accepted = set(inspect.signature(function).parameters)
+        got = function(**{key: value for key, value in kwargs.items() if key in accepted})
+        kwargs[series.series_id] = got
+        if series.layout == "scalar":
+            pairs = [(series.cells[0], got)]
+        else:
+            cells_by_coordinate = series.coordinate_cells
+            pairs = [(cells_by_coordinate[coord], got[coord]) for coord in got.domain]
+        for cell, value in pairs:
+            want = expected[cell]
+            if isinstance(want, float) and isinstance(value, float):
+                assert value == pytest.approx(want), f"{series.series_id} {cell}"
+            else:
+                assert value == want, f"{series.series_id} {cell}: {value!r} != {want!r}"
+    return pkg

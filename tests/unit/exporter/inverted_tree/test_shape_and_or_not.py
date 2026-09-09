@@ -154,9 +154,8 @@ def test_and_range_window_takes_only_the_range(tmp_path: Path) -> None:
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output", dtype="bool"),
     )
     modules = generate_inverted(workbook, document)
-    assert "flags[2024]" in modules["internals.py"]
-    assert "flags[2025]" in modules["internals.py"]
-    assert "flags[2026]" not in modules["internals.py"]
+    assert "view(flags, cols=span(data.TIME_PERIOD_AXIS, 2024, 2025))" in modules["internals.py"]
+    assert "2026" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="and_window")
     assert pkg.compute_out(flags=pkg.data.FLAGS_DEFAULT) is True
     _package_matches_output(tmp_path, workbook, document, "and_window_eval", "Outputs!Z1")

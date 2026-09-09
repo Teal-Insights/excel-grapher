@@ -2,15 +2,16 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
+    assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
@@ -220,10 +221,10 @@ def test_other_series_lag_matches_formula_evaluator(
     assert (got[2010], got[2011]) == pytest.approx(tuple(expected[cell] for cell in dir_cells))
 
 
-def test_non_adjacent_two_positions_still_fail_closed(tmp_path: Path) -> None:
+def test_non_adjacent_two_positions_read_by_coordinate(tmp_path: Path) -> None:
     workbook = _non_lag_workbook(tmp_path)
-    with pytest.raises(InvertedTreeExportError, match="Engine!A2"):
-        generate_inverted(workbook, _non_lag_bindings())
+    pkg = assert_package_matches_evaluator(workbook, _non_lag_bindings(), tmp_path, "a10_non_lag")
+    assert "debt[time_period - 1]" in inspect.getsource(pkg.internals)
 
 
 def _stride_two_lag_workbook(tmp_path: Path) -> Path:

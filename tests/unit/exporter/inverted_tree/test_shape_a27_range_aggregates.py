@@ -122,9 +122,8 @@ def test_sum_of_series_window_takes_only_the_range(tmp_path: Path) -> None:
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
     )
     modules = generate_inverted(workbook, document)
-    assert "src[2024]" in modules["internals.py"]
-    assert "src[2025]" in modules["internals.py"]
-    assert "src[2026]" not in modules["internals.py"]
+    assert "view(src, cols=span(data.TIME_PERIOD_AXIS, 2024, 2025))" in modules["internals.py"]
+    assert "2026" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_window")
     assert pkg.compute_out(
         src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0, 100.0))

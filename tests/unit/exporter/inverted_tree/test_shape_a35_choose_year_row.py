@@ -24,9 +24,9 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     call_compute,
     generate_inverted,
@@ -322,10 +322,6 @@ def test_choose_year_row_emits_and_matches_evaluator(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "cumulative" in deps["post_grace"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["_kernels.py"]
-    assert "cumulative[i + 1]" not in internals
-    assert "cumulative[0]" in internals
-    assert "cumulative[4]" in internals
     pkg = load_package(modules, tmp_path, name="a35_eval")
     cells = [f"PV!{col}{row}" for row in (4, 9) for col in "DEFG"]
     expected = _eval_cells(workbook, cells)
@@ -410,12 +406,11 @@ def test_choose_year_row_ragged_widths_emits_and_matches_evaluator(tmp_path: Pat
     assert _unwrap(call_compute(pkg, "result", kwargs)) == pytest.approx(20.0)
 
 
-def test_choose_year_row_fail_closed_when_year_sets_differ_within_instrument(
+def test_choose_year_row_reads_literal_years_when_year_sets_differ(
     tmp_path: Path,
 ) -> None:
     sheets = _mcve_sheets()
     # E4 lists three years while the rest of IMF lists four — not a lookup axis.
     sheets["PV"]["E4"] = "=IF(E3=0,0,CHOOSE(E3,D5,E5,F5))"
     workbook = write_workbook(tmp_path / "a35_mismatch.xlsx", sheets)
-    with pytest.raises(InvertedTreeExportError, match="more than two positions"):
-        generate_inverted(workbook, _mcve_bindings())
+    assert_package_matches_evaluator(workbook, _mcve_bindings(), tmp_path, "a35_mismatch")

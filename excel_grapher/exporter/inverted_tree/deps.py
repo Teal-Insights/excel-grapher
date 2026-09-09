@@ -656,24 +656,6 @@ def covering_series_for_index_window(
     return covering_series(catalog, addresses) if addresses else None
 
 
-def range_column_addresses(start: str, end: str, col_index: int) -> list[CanonicalAddress]:
-    """Return the 1-based column `col_index` of the rectangle `start:end`."""
-    sheet1, row1, col1 = parse_cell_coords(start)
-    sheet2, row2, col2 = parse_cell_coords(end)
-    if sheet1 != sheet2:
-        raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported")
-    r1, r2 = min(row1, row2), max(row1, row2)
-    c1, c2 = min(col1, col2), max(col1, col2)
-    width = c2 - c1 + 1
-    if col_index < 1 or col_index > width:
-        raise InvertedTreeExportError(f"INDEX column {col_index} is outside range {start}:{end}")
-    col = c1 + col_index - 1
-    return [
-        as_canonical(format_cell_key(sheet1, get_column_letter(col), row))
-        for row in range(r1, r2 + 1)
-    ]
-
-
 def try_formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode | None:
     """Return the formula AST for `address`, or `None` when the cell is a hole."""
     node = graph.get_node(address)
@@ -1534,40 +1516,6 @@ def collect_all_dependence_edges(
     return collect_catalog_edges(catalog, graph).edges
 
 
-def _member_key_label(series: BoundSeries, index: int) -> str:
-    """Return `Sheet!A1 (FIELD=value, ...)` for catalog member `index`."""
-    cell = series.cells[index]
-    if index >= len(series.domain) or not series.key_fields:
-        return f"{cell} (catalog {index})"
-    point = series.domain[index]
-    parts: list[str] = []
-    for key_name in series.key_fields:
-        try:
-            parts.append(f"{key_name}={point[key_name]!r}")
-        except KeyError:
-            continue
-    if not parts:
-        return f"{cell} (catalog {index})"
-    return f"{cell} ({', '.join(parts)})"
-
-
-def _dual_read_error(
-    host: BoundSeries,
-    host_index: int,
-    producer: BoundSeries,
-    indices: set[int],
-) -> str:
-    """Name producer cells and keys for an unclassifiable multi-slot read."""
-    reads = ", ".join(_member_key_label(producer, index) for index in sorted(indices))
-    host_cell = host.cells[host_index]
-    if len(indices) > 2:
-        return (
-            f"series {host.series_id!r} cell {host_cell} "
-            f"reads {producer.series_id!r} at more than two positions {reads}"
-        )
-    return f"series {host.series_id!r} cell {host_cell} reads {producer.series_id!r} at {reads}"
-
-
 def _int_key(value: object) -> int | None:
     """Return `value` when it is a non-bool integer year or offset."""
     if isinstance(value, bool) or not isinstance(value, int):
@@ -2397,8 +2345,10 @@ def series_deps_from_edges(
             # or a mixed absolute + relative read of one producer (#681).
             continue
         if multi:
-            host_i, indices = next(iter(multi.items()))
-            raise InvertedTreeExportError(_dual_read_error(host, host_i, dep, indices))
+            # Several literal producer coordinates read by one member. Named
+            # bodies spell each coordinate out; no positional class is needed.
+            keyed.add(series_id)
+            continue
         for host_i, indices in per_host.items():
             slots[host_i] = next(iter(indices))
         joined = identity_join_indices(host, dep, catalog)
@@ -2445,21 +2395,6 @@ def series_deps_from_edges(
         affine_maps=affine_maps,
         scan_direction=scan_direction,
         edges=tuple(edge for edge in edges if edge.consumer_id == host.series_id),
-    )
-
-
-def collect_series_deps(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    graph: DependencyGraph,
-) -> SeriesDeps:
-    """Collect first-level bound-series dependencies of `series`."""
-    return series_deps_from_edges(
-        series,
-        collect_series_edges(series, catalog=catalog, graph=graph),
-        catalog,
-        graph,
     )
 
 

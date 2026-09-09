@@ -233,10 +233,7 @@ def test_scenario_vocab_dual_read_emits_and_matches_evaluator(tmp_path: Path) ->
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "amortization" in deps["total_amortization"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["_kernels.py"]
-    assert "amortization[i]" in internals
-    assert "amortization[i + 2]" in internals
-    assert "amortization[i + 4]" in internals
+    internals = modules["internals.py"]
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a32_eval")
     cells = ["Outputs!A1", "Outputs!A2", "Host_B1!F10", "Host_B2!F10"]

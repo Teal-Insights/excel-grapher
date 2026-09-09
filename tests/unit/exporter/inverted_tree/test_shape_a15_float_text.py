@@ -94,7 +94,7 @@ def test_imf_sentinels_stay_strings_in_float_constant(tmp_path: Path) -> None:
     assert "'..'" in data
     assert "'--'" in data
     assert "3.5" in data
-    assert "STORE = Store[float | str | None].from_legacy(" in data
+    assert "STORE = Store[float | str | None](STORE_DOMAIN, " in data
     pkg = load_package(modules, tmp_path, name="a15_sentinels")
     store = pkg.data.STORE
     assert store[1] == pytest.approx(1000.0)

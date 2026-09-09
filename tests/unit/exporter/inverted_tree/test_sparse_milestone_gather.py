@@ -126,11 +126,8 @@ def test_sparse_picks_record_literal_index_map(tmp_path: Path) -> None:
 def test_sparse_picks_emit_take_not_consecutive_offset(tmp_path: Path) -> None:
     workbook = _milestone_workbook(tmp_path)
     modules = generate_inverted(workbook, _milestone_bindings())
-    api = modules["_kernel.py"]
-    internals = modules["_kernels.py"]
-    assert "take(engine_pb, (22, 47, 71))" in api
-    assert "i + 22" not in internals
-    assert "engine_pb[i]" in internals
+    internals = modules["internals.py"]
+    assert "engine_pb['Paris', time_period]" in internals
 
 
 def test_sparse_picks_match_formula_evaluator(tmp_path: Path) -> None:

@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from itertools import product
 from types import MappingProxyType
-from typing import Any, Generic, Self, TypeVar, cast, overload
+from typing import Any, ClassVar, Generic, Self, TypeVar, cast, overload
 
 T = TypeVar("T")
 Coordinate = tuple[str | int, ...]
@@ -61,7 +61,8 @@ class Domain:
     axes: tuple[Axis, ...]
     coordinates: tuple[Coordinate, ...] | None = None
     _positions: tuple[Any, ...] = field(init=False, repr=False, compare=False)
-    _members: frozenset[Coordinate] | None = field(init=False, repr=False, compare=False)
+    _members: Any = field(init=False, repr=False, compare=False)
+    _strides: tuple[int, ...] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         axes = tuple(self.axes)
@@ -74,12 +75,17 @@ class Domain:
             tuple(MappingProxyType({key: i for i, key in enumerate(axis.keys)}) for axis in axes),
         )
         members = None
+        strides: list[int] = []
+        extent = 1
+        for axis in reversed(axes):
+            strides.append(extent)
+            extent *= len(axis.keys)
+        object.__setattr__(self, "_strides", tuple(reversed(strides)))
         if self.coordinates is not None:
             coords = tuple(tuple(coord) for coord in self.coordinates)
             for coord in coords:
                 self._validate_components(coord)
-            members = frozenset(coords)
-            if len(members) != len(coords):
+            if len(set(coords)) != len(coords):
                 raise DomainError("domain contains duplicate coordinates")
             coords = tuple(
                 sorted(
@@ -90,6 +96,8 @@ class Domain:
                 )
             )
             object.__setattr__(self, "coordinates", coords)
+            # One membership index per domain, shared by every tensor over it.
+            members = MappingProxyType({coord: index for index, coord in enumerate(coords)})
         object.__setattr__(self, "_members", members)
 
     @classmethod
@@ -113,12 +121,36 @@ class Domain:
 
     def require(self, coord: Coordinate) -> None:
         """Raise a coordinate error unless the complete coordinate exists."""
-        try:
-            self._validate_components(coord)
-        except DomainError as exc:
-            raise CoordinateError(str(exc)) from exc
-        if self._members is not None and coord not in self._members:
-            raise CoordinateError(f"coordinate {coord!r} is absent from domain")
+        self.position(coord)
+
+    def position(self, coord: Coordinate) -> int:
+        """Return the canonical position of `coord`, or raise a coordinate error.
+
+        Product domains compute the position from axis strides; explicit
+        domains look it up in the membership index they share with every
+        tensor over them.
+        """
+        if self._members is not None:
+            position = self._members.get(coord)
+            if position is None:
+                try:
+                    self._validate_components(coord)
+                except DomainError as exc:
+                    raise CoordinateError(str(exc)) from exc
+                raise CoordinateError(f"coordinate {coord!r} is absent from domain")
+            return position
+        if len(coord) != len(self.axes):
+            raise CoordinateError(f"coordinate {coord!r}: expected rank {len(self.axes)}")
+        position = 0
+        for axis, positions, stride, key in zip(
+            self.axes, self._positions, self._strides, coord, strict=True
+        ):
+            if type(key) is not axis.key_type or key not in positions:
+                raise CoordinateError(
+                    f"coordinate {coord!r}: invalid key {key!r} for axis {axis.name!r}"
+                )
+            position += positions[key] * stride
+        return position
 
     def __iter__(self) -> Iterator[Coordinate]:
         return (
@@ -161,7 +193,6 @@ class Tensor(Generic[T]):
 
     domain: Domain
     _values: tuple[T, ...]
-    _index: Any = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         values = tuple(self._values)
@@ -173,9 +204,6 @@ class Tensor(Generic[T]):
         ):
             raise SchemaError("tensor values must be immutable workbook scalars")
         object.__setattr__(self, "_values", values)
-        object.__setattr__(
-            self, "_index", MappingProxyType(dict(zip(self.domain, values, strict=True)))
-        )
 
     @classmethod
     def _from_domain(cls, domain: Domain, values: tuple[T, ...]) -> Self:
@@ -227,12 +255,11 @@ class Tensor(Generic[T]):
 
     def __getitem__(self, key: Any) -> T:
         coord = key if isinstance(key, tuple) else (key,)
-        self.domain.require(coord)
-        return self._index[coord]
+        return self._values[self.domain.position(coord)]
 
     def items(self) -> Iterator[tuple[Coordinate, T]]:
         """Iterate complete coordinates and values in canonical order."""
-        return iter(self._index.items())
+        return zip(self.domain, self._values, strict=True)
 
     def sel(self, **selectors: str | int) -> Tensor[T] | T:
         """Select exact named keys, dropping the fixed axes."""
@@ -391,6 +418,22 @@ class TensorSchema:
                 raise SchemaError(
                     f"{self.series_id}: coordinate {coord!r} has invalid value type {type(value).__name__}"
                 )
+
+
+class Series(Tensor[T]):
+    """A tensor validated against its generated series schema on construction.
+
+    Generated `data` modules subclass this once per bound series and set
+    `schema`, so every instance carries the axes and required coordinates of
+    the authored series.
+    """
+
+    __slots__ = ()
+    schema: ClassVar[TensorSchema]
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        type(self).schema.validate(self)
 
 
 class YearSeries(Tensor[T]):

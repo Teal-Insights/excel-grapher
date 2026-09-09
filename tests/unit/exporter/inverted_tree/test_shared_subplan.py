@@ -143,7 +143,7 @@ def _naive_api_size(api: str) -> int:
 
 def test_long_shared_prefix_is_factored_once(tmp_path: Path) -> None:
     modules = generate_inverted(_prefix_workbook(tmp_path), _prefix_bindings())
-    api = modules["_kernel.py"]
+    api = modules["api.py"]
     assert "def _shared_" in api
     for index in range(_PREFIX_LEN):
         assert api.count(f"internals.step_{index}(") == 1

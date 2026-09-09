@@ -14,9 +14,9 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
@@ -276,13 +276,6 @@ def test_multi_scenario_host_keyed_dual_read_matches_evaluator(tmp_path: Path) -
     )
 
 
-def test_unclassifiable_two_positions_name_cells_and_keys(tmp_path: Path) -> None:
+def test_unclassifiable_two_positions_read_by_coordinate(tmp_path: Path) -> None:
     workbook = _non_lag_workbook(tmp_path)
-    with pytest.raises(InvertedTreeExportError, match=r"Engine!A2.*TIME_PERIOD=2009") as exc:
-        generate_inverted(workbook, _non_lag_bindings())
-    message = str(exc.value)
-    assert "Engine!C2" in message
-    assert "TIME_PERIOD=2011" in message
-    assert "direction" in message
-    assert "debt" in message
-    assert "(2, 0)" not in message
+    assert_package_matches_evaluator(workbook, _non_lag_bindings(), tmp_path, "a29_two_positions")

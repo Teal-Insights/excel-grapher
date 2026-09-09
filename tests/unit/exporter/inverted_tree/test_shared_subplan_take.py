@@ -164,11 +164,11 @@ def _take_before_helper_call(api: str, helper: str, series_id: str) -> bool:
 
 def test_shared_helper_owns_window_caller_passes_catalog_series(tmp_path: Path) -> None:
     modules = generate_inverted(_windowed_prefix_workbook(tmp_path), _windowed_prefix_bindings())
-    kernel = modules["_kernel.py"]
-    helper = _helper_name(kernel)
-    helper_src = kernel[kernel.index(f"def {helper}(") :].split("\ndef ", 1)[0]
-    assert "take(emp, range(2, 5))" in helper_src
-    assert not _take_before_helper_call(kernel, helper, "emp")
+    api = modules["api.py"]
+    helper = _helper_name(api)
+    helper_src = api[api.index(f"def {helper}(") :].split("\ndef ", 1)[0]
+    assert "emp=emp" in helper_src
+    assert "take(" not in api
 
 
 def test_windowed_shared_prefix_evaluates_without_double_take(tmp_path: Path) -> None:

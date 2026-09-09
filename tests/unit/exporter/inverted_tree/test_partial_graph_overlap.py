@@ -448,8 +448,8 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
 
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
-    assert "Profile!C2" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="matrix_blank")
+    assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
     helper = pkg.internals.profile_table
     assert tuple(helper.__domain__) == (
         ("France", 2020),
@@ -483,8 +483,8 @@ def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> Non
     )
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
-    assert "Profile!C2" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="matrix_off_closure")
+    assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
     got = pkg.internals.profile_table()
     assert got["France", 2020] == pytest.approx(1.0)
     assert len(pkg.data.PROFILE_TABLE_DOMAIN) == 4
@@ -520,7 +520,7 @@ def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
 
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
-    assert "99.0" in modules["_kernels.py"]
+    assert "99.0" in modules["internals.py"] + modules["data.py"]
     pkg = load_package(modules, tmp_path, name="matrix_literal")
     got = pkg.internals.profile_table()
     assert got["France", 2021] == pytest.approx(99.0)

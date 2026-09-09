@@ -6,10 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from excel_grapher.core.formula_ast import FunctionCallNode, NumberNode
 from excel_grapher.exporter.inverted_tree.access import (
     classify_producer_access,
-    refine_access_with_selectors,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -19,43 +17,14 @@ from tests.unit.exporter.inverted_tree.helpers import (
 )
 from tests.unit.exporter.inverted_tree.test_shape_a26_index_block import (
     _literal_bindings,
-    _literal_sheets,
     _offset_bindings,
     _offset_sheets,
-    _slide_bindings,
-    _slide_sheets,
 )
 
 
 def _parts(tmp_path: Path, sheets, document, stem: str):
     workbook = write_oriented_workbook(tmp_path / f"{stem}.xlsx", sheets, orientation="horizontal")
     return inverted_graph_parts(workbook, oriented_document(document, "horizontal"))
-
-
-def test_sliding_index_col_is_static_row_is_dynamic(tmp_path: Path) -> None:
-    catalog, _deps, graph = _parts(tmp_path, _slide_sheets(), _slide_bindings(), "af_slide")
-    access = refine_access_with_selectors(
-        classify_producer_access(catalog.get("picked"), catalog.get("block"), catalog, graph),
-        row_arg=FunctionCallNode("MATCH", ()),
-        col_arg=NumberNode(1),
-    )
-    assert access.row.kind == "dynamic"
-    assert access.col.kind in {"static", "dynamic"}
-    assert access.col.coeff == 1
-    assert access.width == catalog.get("block").block_width
-    assert access.flat_index_expr("row", "col") == f"row * {access.width} + col"
-
-
-def test_literal_index_column_is_static_affine(tmp_path: Path) -> None:
-    catalog, _deps, graph = _parts(tmp_path, _literal_sheets(), _literal_bindings(), "af_lit")
-    access = refine_access_with_selectors(
-        classify_producer_access(catalog.get("picked"), catalog.get("block"), catalog, graph),
-        row_arg=FunctionCallNode("MATCH", ()),
-        col_arg=NumberNode(1),
-    )
-    assert access.row.kind == "dynamic"
-    assert access.col.kind in {"static", "dynamic"}
-    assert access.col.coeff in {0, 1}
 
 
 def test_offset_into_matrix_classifies_axes(tmp_path: Path) -> None:

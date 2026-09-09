@@ -75,7 +75,7 @@ def test_unmapped_value_raises_domain_error_naming_clean_keys(tmp_path: Path) ->
 
 def test_map_runs_on_orchestrator_after_domain_not_in_internals(tmp_path: Path) -> None:
     modules = generate_inverted(_selector_workbook(tmp_path), _selector_bindings())
-    api = modules["_kernel.py"]
+    api = modules["api.py"]
     assert "apply_input_value_map(selector" in api
     assert "require_input_domain(selector" in api
     assert api.index("require_input_domain(selector") < api.index("apply_input_value_map(selector")
@@ -111,7 +111,7 @@ def test_shared_runner_maps_once_in_evaluation_body(tmp_path: Path) -> None:
         schema_version="1.15.0",
     )
     modules = generate_inverted(workbook, document)
-    api = modules["_kernel.py"]
+    api = modules["api.py"]
     assert "def _run_0" in api
     assert api.count("apply_input_value_map(selector") == 1
     pkg = load_package(modules, tmp_path, name="value_map_shared")

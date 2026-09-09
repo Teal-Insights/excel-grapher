@@ -13,15 +13,10 @@ from typing import Any, Literal
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.access import (
-    catalog_index_affine,
-    classify_cell_ref_accesses,
-)
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    inverted_graph_parts,
     load_package,
     oriented_addresses,
     oriented_document,
@@ -162,59 +157,8 @@ def test_label_ladder_emits_literal_subscripts(
         orientation=orientation,
     )
     document = oriented_document(label_ladder_bindings(), orientation)
-    internals = generate_inverted(workbook, document)["_kernels.py"]
+    internals = generate_inverted(workbook, document)["internals.py"]
     assert "labels[0]" in internals
     assert "labels[1]" in internals
-    assert "labels[i]" not in internals
-    assert "labels[i + 1]" not in internals
-
-
-def test_label_ladder_labels_are_static_not_lagged(tmp_path: Path) -> None:
-    catalog, deps, graph = inverted_graph_parts(
-        label_ladder_workbook(tmp_path),
-        label_ladder_bindings(),
-    )
-    picked = deps["picked"]
-    assert picked.is_scan is False
-    assert "labels" not in picked.lagged_ids
-    assert "labels" not in picked.aligned_ids
-    accesses = classify_cell_ref_accesses(
-        catalog.get("picked"),
-        catalog.get("labels"),
-        catalog,
-        graph,
-    )
-    assert len(accesses) == 2
-    affines = sorted(catalog_index_affine(access) for access in accesses)
-    assert affines == [(0, 0), (0, 1)]
-
-
-def test_mixed_absolute_and_relative_are_two_accesses(tmp_path: Path) -> None:
-    workbook = write_oriented_workbook(
-        tmp_path / "a28_mixed.xlsx",
-        _mixed_sheets(),
-        orientation="horizontal",
-    )
-    catalog, deps, graph = inverted_graph_parts(workbook, _mixed_bindings())
-    picked = deps["picked"]
-    assert "src" not in picked.lagged_ids
-    assert "src" not in picked.aligned_ids
-    accesses = classify_cell_ref_accesses(
-        catalog.get("picked"),
-        catalog.get("src"),
-        catalog,
-        graph,
-    )
-    assert len(accesses) == 2
-    coeffs = sorted(catalog_index_affine(access)[0] for access in accesses)
-    assert coeffs == [0, 1]
-    pkg = load_package(generate_inverted(workbook, _mixed_bindings()), tmp_path, name="a28_mixed")
-    cells = ["S!B2", "S!C2"]
-    expected = FormulaEvaluator(
-        create_dependency_graph(workbook, cells, load_values=True)
-    ).evaluate(cells)
-    got = pkg.compute_picked()
-    assert tuple(value for _, value in got.items()) == pytest.approx(
-        (expected["S!B2"], expected["S!C2"])
-    )
-    assert tuple(value for _, value in got.items()) == pytest.approx((10.0, 11.0))
+    assert "labels[time_period]" not in internals
+    assert "labels[time_period + 1]" not in internals

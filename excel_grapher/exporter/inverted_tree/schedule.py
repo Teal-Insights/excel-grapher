@@ -10,7 +10,7 @@ the distance-zero residual to be a DAG per outer-key partition
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -416,24 +416,6 @@ _INDEX_INTERN: ContextVar[IndexSourceIntern | None] = ContextVar(
     "excel_grapher_inverted_tree_index_intern",
     default=None,
 )
-
-
-def bind_index_intern(intern: IndexSourceIntern) -> Token[IndexSourceIntern | None]:
-    """Install `intern` for the current inverted-tree emit walk."""
-    return _INDEX_INTERN.set(intern)
-
-
-def reset_index_intern(token: Token[IndexSourceIntern | None]) -> None:
-    """Restore the index intern installed by `bind_index_intern`."""
-    _INDEX_INTERN.reset(token)
-
-
-def index_mapping_source(indices: Sequence[int]) -> str:
-    """Return a compact, possibly interned, expression for `indices`."""
-    intern = _INDEX_INTERN.get()
-    if intern is None:
-        return indices_to_source(indices)
-    return intern.expr(indices)
 
 
 _REPEAT_MIN = 3

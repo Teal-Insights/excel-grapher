@@ -172,14 +172,25 @@ def test_workbook_date_values_serialize_without_coercion() -> None:
     assert type(restored[2026]) is datetime
 
 
-@pytest.mark.parametrize(
-    "operation,expected",
-    [("xl_sum", 6), ("xl_average", 3), ("xl_min", 2), ("xl_max", 4), ("xl_sumproduct", 6)],
-)
-def test_private_coordinate_view_preserves_aggregate_values(operation, expected) -> None:
-    from excel_grapher.exporter.export_runtime.tensor_lowering import CoordinateBuffer
-    from excel_grapher.exporter.inverted_tree import runtime
+def test_domain_positions_are_shared_and_tensors_hold_only_values() -> None:
+    import tracemalloc
 
-    tensor = Tensor.from_nested(domain=Domain.product(years(2025, 2026)), values=(2.0, 4.0))
-    view = CoordinateBuffer(tensor, ((2026,), (2025,)))
-    assert getattr(runtime, operation)(view) == expected
+    from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
+
+    years = Axis("year", tuple(range(2000, 2100)), int)
+    countries = Axis("country", tuple(f"c{i}" for i in range(100)), str)
+    product = Domain.product(countries, years)
+    assert product.position(("c1", 2000)) == 100
+    assert product.position(("c99", 2099)) == 9999
+    sparse = Domain.explicit(axes=(countries, years), coordinates=[("c3", 2001), ("c1", 2005)])
+    assert sparse.position(("c1", 2005)) == 0
+    assert sparse.position(("c3", 2001)) == 1
+    values = tuple(float(i) for i in range(len(product)))
+    first = Tensor(product, values)
+    tracemalloc.start()
+    second = Tensor(product, values)
+    _current, peak = tracemalloc.get_traced_memory()
+    tracemalloc.stop()
+    assert second[("c1", 2000)] == 100.0
+    assert first.domain is second.domain
+    assert peak < 40 * len(product), peak

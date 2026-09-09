@@ -17,21 +17,47 @@ from datetime import date, datetime
 from types import MappingProxyType
 from typing import Any, Generic, Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
-from excel_grapher.core import operators as _core_ops
 from excel_grapher.core.grid import Range
 from excel_grapher.core.logic_funcs import logical_and, logical_if, logical_not, logical_or
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
 from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, min_cells, sum_cells
+from excel_grapher.core.operators import xl_add as _core_add
+from excel_grapher.core.operators import xl_concat as _core_concat
+from excel_grapher.core.operators import xl_div as _core_div
+from excel_grapher.core.operators import xl_eq as _core_eq
+from excel_grapher.core.operators import xl_ge as _core_ge
+from excel_grapher.core.operators import xl_gt as _core_gt
+from excel_grapher.core.operators import xl_le as _core_le
+from excel_grapher.core.operators import xl_lt as _core_lt
+from excel_grapher.core.operators import xl_mul as _core_mul
+from excel_grapher.core.operators import xl_ne as _core_ne
+from excel_grapher.core.operators import xl_neg as _core_neg
+from excel_grapher.core.operators import xl_pos as _core_pos
+from excel_grapher.core.operators import xl_pow as _core_pow
+from excel_grapher.core.operators import xl_sub as _core_sub
 from excel_grapher.core.sumproduct import sumproduct_cells
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
 from excel_grapher.core.types import XlErrorException as SharedXlError
-from excel_grapher.exporter.export_runtime import error_funcs as _shared_errors
-from excel_grapher.exporter.export_runtime import lookup as _shared_lookup
-from excel_grapher.exporter.export_runtime import math as _shared_math
-from excel_grapher.exporter.export_runtime import text as _shared_text
-from excel_grapher.exporter.export_runtime.tensor import Domain, Tensor
-from excel_grapher.runtime.info import xl_isnumber as _info_isnumber
+from excel_grapher.exporter.export_runtime.error_funcs import xl_iferror as _shared_iferror
+from excel_grapher.exporter.export_runtime.error_funcs import xl_ifna as _shared_ifna
+from excel_grapher.exporter.export_runtime.error_funcs import xl_isblank as _shared_isblank
+from excel_grapher.exporter.export_runtime.error_funcs import xl_iserror as _shared_iserror
+from excel_grapher.exporter.export_runtime.error_funcs import xl_isna as _shared_isna
+from excel_grapher.exporter.export_runtime.error_funcs import xl_isnumber as _shared_isnumber
+from excel_grapher.exporter.export_runtime.lookup import xl_hlookup as _shared_hlookup
+from excel_grapher.exporter.export_runtime.lookup import xl_lookup as _shared_lookup
+from excel_grapher.exporter.export_runtime.lookup import xl_xlookup as _shared_xlookup
+from excel_grapher.exporter.export_runtime.math import xl_countif as _shared_countif
+from excel_grapher.exporter.export_runtime.math import xl_large as _shared_large
+from excel_grapher.exporter.export_runtime.math import xl_npv as _shared_npv
+from excel_grapher.exporter.export_runtime.math import xl_rank as _shared_rank
+from excel_grapher.exporter.export_runtime.math import xl_round as _shared_round
+from excel_grapher.exporter.export_runtime.math import xl_rounddown as _shared_rounddown
+from excel_grapher.exporter.export_runtime.math import xl_stdev as _shared_stdev
+from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
+from excel_grapher.exporter.export_runtime.text import xl_left as _shared_left
+from excel_grapher.exporter.export_runtime.text import xl_numbervalue as _shared_numbervalue
 from excel_grapher.series_bindings.input_coerce import (
     apply_input_value_map as apply_input_value_map,
 )
@@ -84,7 +110,7 @@ def publish(
         target.__domain__ = domain
         target.__holes__ = holes
         if cells is not None:
-            target.__cells__ = MappingProxyType(dict(cells))
+            target.__cells__ = MappingProxyType(dict(cells)) if isinstance(cells, dict) else cells
         if constants is not None:
             target.__constants__ = constants
         return fn
@@ -177,7 +203,11 @@ def _raise_stored_error(value: object) -> None:
 
 
 def _raise_stored_errors_in(value: object) -> None:
-    """Re-raise stored error-code measures in scalars and nested sequences."""
+    """Re-raise stored error-code measures in scalars, sequences, and views."""
+    if isinstance(value, Range):
+        for item in value.iter_values():
+            _raise_stored_error(item)
+        return
     if isinstance(value, str) or not isinstance(value, Sequence):
         _raise_stored_error(value)
         return
@@ -227,86 +257,86 @@ def _as_number(value: object) -> float:
 
 def xl_add(left: object, right: object) -> object:
     """Excel `+` via `core.operators.xl_add`."""
-    return _adapt_core(_core_ops.xl_add(_arith_operand(left), _arith_operand(right)))
+    return _adapt_core(_core_add(_arith_operand(left), _arith_operand(right)))
 
 
 def xl_concat(left: object, right: object) -> object:
     """Excel `&` with shared blank, boolean, number, and error semantics."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_concat(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_concat(_as_formula(left), _as_formula(right)))
 
 
 def xl_sub(left: object, right: object) -> object:
     """Excel `-` via `core.operators.xl_sub`."""
-    return _adapt_core(_core_ops.xl_sub(_arith_operand(left), _arith_operand(right)))
+    return _adapt_core(_core_sub(_arith_operand(left), _arith_operand(right)))
 
 
 def xl_mul(left: object, right: object) -> object:
     """Excel `*` via `core.operators.xl_mul`."""
-    return _adapt_core(_core_ops.xl_mul(_arith_operand(left), _arith_operand(right)))
+    return _adapt_core(_core_mul(_arith_operand(left), _arith_operand(right)))
 
 
 def xl_div(numerator: object, denominator: object) -> object:
     """Excel `/` via `core.operators.xl_div`."""
-    return _adapt_core(_core_ops.xl_div(_arith_operand(numerator), _arith_operand(denominator)))
+    return _adapt_core(_core_div(_arith_operand(numerator), _arith_operand(denominator)))
 
 
 def xl_pow(left: object, right: object) -> object:
     """Excel `^` via `core.operators.xl_pow`."""
-    return _adapt_core(_core_ops.xl_pow(_arith_operand(left), _arith_operand(right)))
+    return _adapt_core(_core_pow(_arith_operand(left), _arith_operand(right)))
 
 
 def xl_neg(value: object) -> object:
     """Excel unary `-` via `core.operators.xl_neg`."""
-    return _adapt_core(_core_ops.xl_neg(_arith_operand(value)))
+    return _adapt_core(_core_neg(_arith_operand(value)))
 
 
 def xl_pos(value: object) -> object:
     """Excel unary `+` via `core.operators.xl_pos`."""
-    return _adapt_core(_core_ops.xl_pos(_arith_operand(value)))
+    return _adapt_core(_core_pos(_arith_operand(value)))
 
 
 def xl_eq(left: object, right: object) -> object:
     """Excel `=` via `core.operators.xl_eq`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_eq(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_eq(_as_formula(left), _as_formula(right)))
 
 
 def xl_ne(left: object, right: object) -> object:
     """Excel `<>` via `core.operators.xl_ne`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_ne(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_ne(_as_formula(left), _as_formula(right)))
 
 
 def xl_lt(left: object, right: object) -> object:
     """Excel `<` via `core.operators.xl_lt`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_lt(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_lt(_as_formula(left), _as_formula(right)))
 
 
 def xl_gt(left: object, right: object) -> object:
     """Excel `>` via `core.operators.xl_gt`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_gt(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_gt(_as_formula(left), _as_formula(right)))
 
 
 def xl_le(left: object, right: object) -> object:
     """Excel `<=` via `core.operators.xl_le`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_le(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_le(_as_formula(left), _as_formula(right)))
 
 
 def xl_ge(left: object, right: object) -> object:
     """Excel `>=` via `core.operators.xl_ge`."""
     _raise_stored_error(left)
     _raise_stored_error(right)
-    return _adapt_core(_core_ops.xl_ge(_as_formula(left), _as_formula(right)))
+    return _adapt_core(_core_ge(_as_formula(left), _as_formula(right)))
 
 
 OPERATOR_TABLE = {
@@ -434,7 +464,7 @@ def xl_isnumber(value: object) -> bool:
     """Excel `ISNUMBER`: True only for non-bool numbers; False for blanks and errors."""
     if isinstance(value, str) and is_error(value):
         return False
-    return _info_isnumber(cast(CellValue, value))
+    return not isinstance(value, bool) and isinstance(value, int | float)
 
 
 def _call_shared(function: Callable[..., object], *args: object) -> object:
@@ -475,92 +505,92 @@ def _shared_thunk(value: Callable[[], object]) -> Callable[[], object]:
 
 def xl_iferror(value: Callable[[], object], fallback: Callable[[], object]) -> object:
     """Evaluate IFERROR lazily with shared error-consumer semantics."""
-    return _call_shared(_shared_errors.xl_iferror, _shared_thunk(value), _shared_thunk(fallback))
+    return _call_shared(_shared_iferror, _shared_thunk(value), _shared_thunk(fallback))
 
 
 def xl_ifna(value: Callable[[], object], fallback: Callable[[], object]) -> object:
     """Evaluate IFNA lazily, catching only NA errors."""
-    return _call_shared(_shared_errors.xl_ifna, _shared_thunk(value), _shared_thunk(fallback))
+    return _call_shared(_shared_ifna, _shared_thunk(value), _shared_thunk(fallback))
 
 
 def xl_iserror(value: Callable[[], object]) -> object:
     """Inspect an expression for errors without propagating them."""
-    return _call_shared(_shared_errors.xl_iserror, _shared_thunk(value))
+    return _call_shared(_shared_iserror, _shared_thunk(value))
 
 
 def xl_isna(value: Callable[[], object]) -> object:
     """Inspect an expression for an NA error."""
-    return _call_shared(_shared_errors.xl_isna, _shared_thunk(value))
+    return _call_shared(_shared_isna, _shared_thunk(value))
 
 
 def xl_isblank(value: Callable[[], object]) -> object:
     """Inspect an expression for a blank using shared semantics."""
-    return _call_shared(_shared_errors.xl_isblank, _shared_thunk(value))
+    return _call_shared(_shared_isblank, _shared_thunk(value))
 
 
 def xl_isnumber_lazy(value: Callable[[], object]) -> object:
     """Inspect a possibly failing expression for a numeric value."""
-    return _call_shared(_shared_errors.xl_isnumber, _shared_thunk(value))
+    return _call_shared(_shared_isnumber, _shared_thunk(value))
 
 
 def xl_npv(*args: object) -> object:
     """Compute NPV with the shared financial implementation."""
-    return _shared_value(_shared_math.xl_npv, *args)
+    return _shared_value(_shared_npv, *args)
 
 
 def xl_rank(*args: object) -> object:
     """Compute RANK with the shared statistical implementation."""
-    return _shared_value(_shared_math.xl_rank, *args)
+    return _shared_value(_shared_rank, *args)
 
 
 def xl_large(*args: object) -> object:
     """Compute LARGE with the shared statistical implementation."""
-    return _shared_value(_shared_math.xl_large, *args)
+    return _shared_value(_shared_large, *args)
 
 
 def xl_stdev(*args: object) -> object:
     """Compute STDEV with the shared statistical implementation."""
-    return _shared_value(_shared_math.xl_stdev, *args)
+    return _shared_value(_shared_stdev, *args)
 
 
 def xl_countif(*args: object) -> object:
     """Compute COUNTIF with the shared criteria implementation."""
-    return _shared_value(_shared_math.xl_countif, *args)
+    return _shared_value(_shared_countif, *args)
 
 
 def xl_round(*args: object) -> object:
     """Round numbers with the shared Excel implementation."""
-    return _shared_value(_shared_math.xl_round, *args)
+    return _shared_value(_shared_round, *args)
 
 
 def xl_rounddown(*args: object) -> object:
     """Round toward zero with the shared Excel implementation."""
-    return _shared_value(_shared_math.xl_rounddown, *args)
+    return _shared_value(_shared_rounddown, *args)
 
 
 def xl_numbervalue(*args: object) -> object:
     """Parse numeric text with the shared Excel implementation."""
-    return _shared_value(_shared_text.xl_numbervalue, *args)
+    return _shared_value(_shared_numbervalue, *args)
 
 
 def xl_left(*args: object) -> object:
     """Extract leading text with the shared Excel implementation."""
-    return _shared_value(_shared_text.xl_left, *args)
+    return _shared_value(_shared_left, *args)
 
 
 def xl_hlookup(*args: object) -> object:
     """Look up a horizontal table with shared Excel semantics."""
-    return _shared_value(_shared_lookup.xl_hlookup, *args)
+    return _shared_value(_shared_hlookup, *args)
 
 
 def xl_lookup(*args: object) -> object:
     """Look up a vector or table with shared Excel semantics."""
-    return _shared_value(_shared_lookup.xl_lookup, *args)
+    return _shared_value(_shared_lookup, *args)
 
 
 def xl_xlookup(*args: object) -> object:
     """Look up corresponding arrays with shared Excel semantics."""
-    return _shared_value(_shared_lookup.xl_xlookup, *args)
+    return _shared_value(_shared_xlookup, *args)
 
 
 def xl_at(values: Sequence[T], index: object) -> T:
@@ -572,6 +602,89 @@ def xl_at(values: Sequence[T], index: object) -> T:
     if position < 0 or position >= len(values):
         raise XlError("#VALUE!")
     return values[position]
+
+
+def span(axis: Axis, first: object, last: object) -> tuple[str | int, ...]:
+    """Return the keys of `axis` from `first` through `last`, inclusive.
+
+    Lowers a worksheet range along one semantic axis. A key outside the axis
+    raises `#REF!`.
+    """
+    try:
+        start = axis.keys.index(cast(Any, first))
+        stop = axis.keys.index(cast(Any, last))
+    except ValueError as exc:
+        raise XlError("#REF!") from exc
+    if start > stop:
+        raise XlError("#REF!")
+    return axis.keys[start : stop + 1]
+
+
+def view(
+    values: Any,
+    rows: Sequence[object] | None = None,
+    cols: Sequence[object] | None = None,
+    *,
+    cols_first: bool = False,
+) -> Range:
+    """Expose a worksheet rectangle of one series without copying it.
+
+    Each cell resolves `values[coordinate]` on access, so lookups evaluate
+    only the cells they select and recurrence readers stay demand-driven.
+    The coordinate is the row key followed by the column key; `cols_first`
+    reverses that order, and an absent axis contributes no key.
+    """
+    row_keys: Sequence[object] = (None,) if rows is None else rows
+    col_keys: Sequence[object] = (None,) if cols is None else cols
+
+    def resolve(row: int, column: int) -> FormulaValue:
+        parts = [row_keys[row - 1], col_keys[column - 1]]
+        if cols_first:
+            parts.reverse()
+        coordinate = tuple(
+            part
+            for part, present in zip(
+                parts, (rows, cols) if not cols_first else (cols, rows), strict=True
+            )
+            if present is not None
+        )
+        return cast(FormulaValue, values[coordinate])
+
+    return Range(
+        "",
+        1,
+        1,
+        len(row_keys),
+        len(col_keys),
+        lambda address: None,
+        _coord_resolver=resolve,
+    )
+
+
+def at_anchor(value: T, rows: object, cols: object) -> T:
+    """Return a scalar `OFFSET` anchor when both displacements are zero.
+
+    A scalar series has no other bound cells to move to, so a non-zero
+    displacement raises `#VALUE!` like a positional read past the series.
+    """
+    if int(_as_number(rows)) != 0 or int(_as_number(cols)) != 0:
+        raise XlError("#VALUE!")
+    return value
+
+
+def axis_step(axis: Axis, key: object, steps: object) -> str | int:
+    """Return the key `steps` positions after `key` along `axis`.
+
+    Lowers `OFFSET` moves along one worksheet axis. A position outside the
+    bound series raises `#VALUE!`, matching positional `xl_at` selection.
+    """
+    try:
+        position = axis.keys.index(cast(Any, key)) + int(_as_number(steps))
+    except ValueError as exc:
+        raise XlError("#VALUE!") from exc
+    if position < 0 or position >= len(axis.keys):
+        raise XlError("#VALUE!")
+    return axis.keys[position]
 
 
 def xl_raise(code: str) -> NoReturn:

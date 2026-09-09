@@ -319,7 +319,7 @@ def test_offset_index_provably_oob_emits_ref_under_constraint_extraction(
         _row_select_bindings(include_labels=True),
         dynamic_refs=_constraint_refs(),
     )
-    assert "xl_raise('#REF!')" in modules["_kernels.py"]
+    assert "xl_raise('#REF!')" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="offset_index_oob")
     result = pkg.compute_selected()
     assert (result[1], result[2]) == ("#REF!", "#REF!")

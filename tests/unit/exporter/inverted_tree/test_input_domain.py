@@ -137,7 +137,8 @@ def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document)
     api = modules["api.py"]
-    assert api.count("require_input_domain(flag") == 2
+    assert api.count("require_input_domain(flag") == 1
+    assert "require_input_domain" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="domain_shared")
     assert pkg.compute_out_a(flag=0) == 0
     with pytest.raises(ValueError, match=r"flag out of domain"):

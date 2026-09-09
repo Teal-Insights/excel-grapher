@@ -31,9 +31,9 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     build_schedule_index,
 )
 from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     call_compute,
     generate_inverted,
@@ -202,10 +202,7 @@ def test_scenario_pair_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> 
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["_kernels.py"]
-    assert "paths[i]" in internals
-    assert "paths[i + 2]" in internals
-    assert "paths[i + 4]" in internals
+    internals = modules["internals.py"]
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a34_eval")
     cells = ["Engine!C10", "Engine!D10", "Engine!C11", "Engine!D11"]
@@ -269,7 +266,7 @@ def test_scenario_pair_dual_read_per_row_if_condition(tmp_path: Path) -> None:
     ) == pytest.approx((20.0, 21.0, 30.0, 31.0))
 
 
-def test_scenario_pair_sum_without_if_is_unclassifiable(tmp_path: Path) -> None:
+def test_scenario_pair_sum_without_if_reads_both_scenarios(tmp_path: Path) -> None:
     sheets = _mcve_sheets(
         c10="=C3+C4",
         d10="=D3+D4",
@@ -277,12 +274,7 @@ def test_scenario_pair_sum_without_if_is_unclassifiable(tmp_path: Path) -> None:
         d11="=D5+D6",
     )
     workbook = write_workbook(tmp_path / "a34_sum.xlsx", sheets)
-    with pytest.raises(InvertedTreeExportError, match=r"Engine!C10.*B2\.1 Market") as exc:
-        inverted_graph_parts(workbook, _mcve_bindings())
-    message = str(exc.value)
-    assert "Engine!C3" in message
-    assert "Engine!C4" in message
-    assert "B2.2 Non-Market" in message
+    assert_package_matches_evaluator(workbook, _mcve_bindings(), tmp_path, "a34_sum")
 
 
 def test_pair_key_value_expr_omits_unpaired_baseline_statement() -> None:
@@ -395,10 +387,7 @@ def test_direct_baseline_plus_scenario_pairs_emits(
     assert all(point["SCENARIO"] == "Baseline" for point in host.statements[0].domain)
     assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document, force_rung=force_rung)
-    internals = modules["_kernels.py"]
-    assert "paths[i]" in internals
-    assert "paths[i + 2]" in internals
-    assert "paths[i + 4]" in internals
+    internals = modules["internals.py"]
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name=f"a34_baseline_{force_rung}")
     cells = [

@@ -12,7 +12,6 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import emit_rung3_scc
 from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
 from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher import create_dependency_graph
@@ -370,17 +369,6 @@ def test_differential_oracle_runs_over_both_directions(tmp_path: Path) -> None:
     assert dict(fused_rev.compute_value().items()) == pytest.approx(
         dict(demand_rev.compute_value().items())
     )
-
-
-def test_rung3_reverse_drive_warms_memo_then_builds_forward(tmp_path: Path) -> None:
-    catalog, deps, graph = inverted_graph_parts(
-        _lookahead_zipper_workbook(tmp_path), _lookahead_zipper_bindings()
-    )
-    demand, _used = emit_rung3_scc(("value", "flow"), catalog=catalog, deps=deps, graph=graph)
-    source = "\n".join(demand)
-    assert "for i in reversed(range(" in source
-    assert "[::-1]" not in source
-    assert "for i in range(" in source
 
 
 # ---------------------------------------------------------------------------

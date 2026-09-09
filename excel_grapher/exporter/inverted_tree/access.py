@@ -21,7 +21,6 @@ from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
-    NumberNode,
     UnaryOpNode,
     resolve_cell_ref,
 )
@@ -223,42 +222,6 @@ def _classify_axis(
     return AxisAccess("dynamic", coeff=origin[0], offset=origin[1])
 
 
-def _is_runtime_selector(node: AstNode | None) -> bool:
-    return not (node is None or isinstance(node, NumberNode))
-
-
-def refine_access_with_selectors(
-    access: AccessFunction,
-    *,
-    row_arg: AstNode | None = None,
-    col_arg: AstNode | None = None,
-) -> AccessFunction:
-    """Upgrade a whole/static axis to `dynamic` when the AST selects at runtime."""
-    row = access.row
-    col = access.col
-    if (
-        row.kind == "whole"
-        and row_arg is not None
-        or _is_runtime_selector(row_arg)
-        and row.kind == "static"
-    ):
-        row = AxisAccess("dynamic", 0, 0)
-    if (
-        col.kind == "whole"
-        and col_arg is not None
-        or _is_runtime_selector(col_arg)
-        and col.kind == "static"
-    ):
-        col = AxisAccess("dynamic", 0, 0)
-    return AccessFunction(
-        host_id=access.host_id,
-        producer_id=access.producer_id,
-        row=row,
-        col=col,
-        width=access.width,
-    )
-
-
 def classify_producer_access(
     host: BoundSeries,
     producer: BoundSeries,
@@ -416,41 +379,6 @@ def cell_ref_catalog_pairs(
     return _catalog_pairs_for_slot(host, producer, graph, members, slot)
 
 
-def classify_cell_ref_accesses(
-    host: BoundSeries,
-    producer: BoundSeries,
-    catalog: SeriesCatalog,
-    graph: DependencyGraph,
-    *,
-    cells: Sequence[CanonicalAddress] | None = None,
-) -> tuple[AccessFunction, ...]:
-    """Return one access function per `CellRefNode` site of `producer`.
-
-    Sites are matched by walk order. A mixed relative and absolute read of
-    the same producer is two accesses, not one merged edge set.
-
-    Raises:
-        InvertedTreeExportError: A site is not an affine static catalog map.
-    """
-    del catalog
-    members = tuple(host.cells if cells is None else cells)
-    if not members:
-        return ()
-    found: list[AccessFunction] = []
-    for slot, ref in enumerate(_iter_direct_cell_refs(_formula_ast(graph, members[0]))):
-        address = as_canonical(resolve_cell_ref(ref, members[0]))
-        if producer.index_of(address) is None:
-            continue
-        found.append(
-            _access_from_catalog_pairs(
-                host,
-                producer,
-                _catalog_pairs_for_slot(host, producer, graph, members, slot),
-            )
-        )
-    return tuple(found)
-
-
 def classify_cell_ref_access(
     host: BoundSeries,
     producer: BoundSeries,
@@ -595,31 +523,3 @@ def unique_seed_or_none(
     if len(adjacent) == 1:
         return adjacent[0]
     return None
-
-
-def seed_address(
-    host: BoundSeries,
-    index: int,
-    catalog: SeriesCatalog,
-    graph: DependencyGraph | None,
-    *,
-    delta: int,
-) -> CanonicalAddress | None:
-    """Return the unique seed/terminal cell at `host` index, if any.
-
-    Several keyed cells at `host ± 1` are not a unique seed; the probe
-    degrades to `None` with a `UserWarning` (#745).
-    """
-    if graph is None or index < 0 or index >= len(host.cells):
-        return None
-    host_cell = host.cells[index]
-    matched: list[CanonicalAddress] = []
-    for dep in graph.get_dependencies(host_cell):
-        address = _canonical(str(dep))
-        owner = catalog.series_for(address)
-        if owner is None or owner.series_id == host.series_id:
-            continue
-        if not is_seed_access(host, owner, address, host_cell, catalog, delta=delta):
-            continue
-        matched.append(address)
-    return unique_seed_or_none(host, host_cell, catalog, matched, delta=delta)

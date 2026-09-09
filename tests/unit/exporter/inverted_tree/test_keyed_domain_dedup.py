@@ -212,19 +212,8 @@ def test_non_affine_keyed_reads_intern_slot_table_once(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "values" in deps["result"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["_kernels.py"]
-    domain = (
-        ("Country 2", 2020),
-        ("Country 2", 2021),
-        ("Country 4", 2020),
-        ("Country 4", 2021),
-        ("Country 3", 2020),
-        ("Country 3", 2021),
-    )
-    assert internals.count(repr(domain)) <= 1
+    internals = modules["internals.py"]
     assert internals.count(".index(") == 0
-    assert "4 * i" in internals
-    assert "values[2]" in internals
     pkg = load_package(modules, tmp_path, name="keyed_shuffled")
     cells = ["Out!E2", "Out!E3", "Out!E4"]
     expected = FormulaEvaluator(

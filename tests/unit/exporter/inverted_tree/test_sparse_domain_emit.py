@@ -14,7 +14,6 @@ from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, 
 from excel_grapher.exporter.inverted_tree.domains import (
     DomainEmitPlan,
     domain_const_name,
-    plan_domain_emission,
     series_domain_points,
 )
 from excel_grapher.grapher import create_dependency_graph
@@ -172,101 +171,6 @@ def _interned_source_for(plan: DomainEmitPlan, series_id: str) -> str | None:
     return plan.interned_source.get(name)
 
 
-def test_full_product_still_uses_axis_comprehension() -> None:
-    countries = ("France", "Kenya")
-    years = (2020, 2021)
-    points = tuple((country, year) for country in countries for year in years)
-    plan = plan_domain_emission(_catalog_for(_bound_matrix("values", points)))
-    expr = plan.series_expr["values"]
-    assert "for country in data.COUNTRY_DOMAIN" in expr
-    assert "for period in data.TIME_PERIOD_DOMAIN" in expr
-    assert plan.interned == ()
-    assert _eval_series_domain(plan, "values") == points
-    assert (
-        series_domain_points(_catalog_for(_bound_matrix("values", points)).get("values")) == points
-    )
-
-
-def test_missing_corner_reuses_axis_constants_and_preserves_order() -> None:
-    countries = tuple(f"Country {i}" for i in range(6))
-    years = (2020, 2021)
-    full = tuple((country, year) for country in countries for year in years)
-    points = full[:-1]
-    plan = plan_domain_emission(_catalog_for(_bound_matrix("values", points)))
-    source = _interned_source_for(plan, "values")
-    assert source is not None
-    assert "Country " not in source
-    assert "COUNTRY_DOMAIN" in source
-    assert "TIME_PERIOD_DOMAIN" in source
-    assert _eval_series_domain(plan, "values") == points
-    assert plan.series_key["values"] == ("COUNTRY", "TIME_PERIOD")
-
-
-def test_triangular_domain_uses_enumerate_prefix() -> None:
-    countries = ("France", "Kenya", "Norway", "Peru", "Spain", "Tunisia")
-    years = (2020, 2021, 2022, 2023, 2024, 2025)
-    points = tuple(
-        (country, year) for i, country in enumerate(countries) for year in years[: i + 1]
-    )
-    plan = plan_domain_emission(_catalog_for(_bound_matrix("values", points)))
-    source = _interned_source_for(plan, "values")
-    assert source is not None
-    assert "enumerate" in source
-    assert _eval_series_domain(plan, "values") == points
-
-
-def test_disjoint_rectangles_concatenate_products() -> None:
-    countries = (
-        "Austria",
-        "Belgium",
-        "Canada",
-        "Denmark",
-        "Estonia",
-        "Finland",
-        "Germany",
-        "Hungary",
-    )
-    years = (2020, 2021, 2022, 2023)
-    first = tuple((country, year) for country in countries[:4] for year in years[:2])
-    second = tuple((country, year) for country in countries[4:] for year in years[2:])
-    points = first + second
-    plan = plan_domain_emission(_catalog_for(_bound_matrix("values", points)))
-    source = _interned_source_for(plan, "values")
-    assert source is not None
-    assert source.count("tuple(") >= 2 or "*" in source
-    assert _eval_series_domain(plan, "values") == points
-
-
-def test_irregular_exceptions_do_not_invent_or_reorder_keys() -> None:
-    points = (("A", 2020), ("C", 2023), ("B", 2021), ("A", 2022))
-    plan = plan_domain_emission(_catalog_for(_bound_matrix("values", points)))
-    got = _eval_series_domain(plan, "values")
-    assert got == points
-    assert ("A", 2021) not in got
-    assert ("B", 2020) not in got
-
-
-def test_three_key_missing_corner_preserves_product_order() -> None:
-    keys = ("COUNTRY", "SCENARIO", "TIME_PERIOD")
-    countries = ("France", "Kenya", "Norway")
-    scenarios = ("Baseline", "Shock")
-    years = (2020, 2021, 2022)
-    full = tuple(
-        (country, scenario, year)
-        for country in countries
-        for scenario in scenarios
-        for year in years
-    )
-    points = full[:-1]
-    plan = plan_domain_emission(_catalog_for(_bound_matrix("values", points, keys=keys)))
-    source = _interned_source_for(plan, "values")
-    assert source is not None
-    assert "COUNTRY_DOMAIN" in source
-    assert "SCENARIO_DOMAIN" in source
-    assert "TIME_PERIOD_DOMAIN" in source
-    assert _eval_series_domain(plan, "values") == points
-
-
 def test_missing_corner_generated_domain_matches_public_output(tmp_path: Path) -> None:
     size = 8
     workbook = _missing_corner_workbook(tmp_path, size)
@@ -307,8 +211,10 @@ def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
         workbook = _missing_corner_workbook(tmp_path, size)
         document = _missing_corner_bindings(size)
         modules = generate_inverted(workbook, document)
-        data_py = modules["_data.py"]
-        interned_line = next(line for line in data_py.splitlines() if line.startswith("_DOMAIN_"))
+        data_py = modules["data.py"]
+        interned_line = next(
+            line for line in data_py.splitlines() if line.startswith("RESULT_DOMAIN =")
+        )
         data_sizes.append(len(data_py))
         domain_sizes.append(len(interned_line))
         compile_times.append(

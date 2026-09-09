@@ -5,12 +5,6 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-from excel_grapher.exporter.inverted_tree.ast_emit import (
-    _python_param_inner,
-    python_annotation,
-    python_data_annotation,
-    python_measure_type,
-)
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, Statement
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -35,42 +29,6 @@ def _make(direction: str, dtype: str, *, layout: str = "series", n: int = 2) -> 
         domain=domain,
         statements=(Statement("demo", "demo", None, 0, n, cells, domain),),
     )
-
-
-def test_python_param_inner_uses_measure_type_for_numeric_leaves() -> None:
-    series = _make("input", "float")
-    constant = _make("constant", "float")
-    scalar = _make("input", "int", layout="scalar", n=1)
-    labels = _make("constant", "int")
-    text = _make("input", "str")
-    assert _python_param_inner(series) == python_measure_type(series) == "float | str | None"
-    assert _python_param_inner(constant) == "float | str | None"
-    assert _python_param_inner(scalar) == "int | str"
-    assert _python_param_inner(labels) == "int | str | None"
-    assert _python_param_inner(text) == "str | None"
-
-
-def test_python_annotation_uses_measure_type_for_non_formula_series() -> None:
-    series = _make("input", "float")
-    scalar = _make("input", "int", layout="scalar", n=1)
-    assert python_annotation(series) == "Sequence[float | str | None]"
-    assert python_measure_type(series) == "float | str | None"
-    assert python_annotation(scalar) == "int | str"
-    assert python_measure_type(scalar) == "int | str"
-
-
-def test_python_data_annotation_matches_compute_param_inner_type() -> None:
-    series = _make("input", "float")
-    scalar = _make("input", "int", layout="scalar", n=1)
-    constant = _make("constant", "float")
-    formula = _make("output", "float")
-    assert python_data_annotation(series) == "tuple[float | str | None, ...]"
-    assert python_data_annotation(scalar) == "int | str"
-    assert python_data_annotation(constant) == "tuple[float | str | None, ...]"
-    assert python_data_annotation(formula) == "tuple[float | str | None, ...]"
-    assert python_annotation(formula) == "Sequence[float | str | None]"
-    assert python_annotation(series) == "Sequence[float | str | None]"
-    assert python_annotation(constant) == "Sequence[float | str | None]"
 
 
 def _annotation_workbook(tmp_path: Path) -> Path:
@@ -128,9 +86,9 @@ def test_emit_data_module_uses_param_inner_types(tmp_path: Path) -> None:
     modules = generate_inverted(_annotation_workbook(tmp_path), _annotation_bindings())
     data = modules["data.py"]
     api = modules["api.py"]
-    assert "GROWTH_DEFAULT = Growth[float | str | None].from_legacy(" in data
+    assert "GROWTH_DEFAULT = Growth[float | str | None](GROWTH_DOMAIN, " in data
     assert "COUNT_DEFAULT = 3" in data
-    assert "LABELS = Labels[int | str | None].from_legacy(" in data
+    assert "LABELS = Labels[int | str | None](LABELS_DOMAIN, " in data
     assert "growth: data.Growth[float | str | None]" in api
     assert "count: int | str" in api
 
@@ -169,7 +127,7 @@ def test_cached_text_constant_emits_measure_tensor(tmp_path: Path) -> None:
     modules = generate_inverted(_cached_text_workbook(tmp_path), _cached_text_bindings())
     data = modules["data.py"]
     internals = modules["internals.py"]
-    assert "STORE = Store[float | str | None].from_legacy(" in data
+    assert "STORE = Store[float | str | None](STORE_DOMAIN, " in data
     assert "'n/a'" in data
     assert "store: data.Store[float | str | None]" in internals
     assert "Sequence[" not in internals

@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import ast
 import re
-from collections.abc import Iterator, Mapping, Sequence
-from contextlib import contextmanager
-from contextvars import ContextVar, Token
+from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_cell_coords
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     AstNode,
     BinaryOpNode,
     BoolNode,
@@ -42,6 +41,7 @@ from excel_grapher.exporter.inverted_tree.access import (
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
+    KeyPoint,
     SeriesCatalog,
     Statement,
     covering_series,
@@ -53,7 +53,6 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     schedule_partition,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
-    DependenceEdge,
     PositionalRangeCell,
     SeriesDeps,
     _field_binding,
@@ -68,6 +67,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     current_blank_rects,
     index_call_is_ref,
     index_window_corners,
+    iter_range_addresses,
     iter_ref_addresses,
     node_formula_ast,
     offset_index_destination,
@@ -86,11 +86,8 @@ from excel_grapher.exporter.inverted_tree.domains import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
     FusedPlan,
-    FusedRegion,
     IndexSourceIntern,
-    collect_dependence_edges,
     indices_to_source,
-    plan_fused_scc,
     slot_table_needs_intern,
     slot_table_to_source,
     wrap_slot_table_source,
@@ -99,6 +96,7 @@ from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_
 from excel_grapher.series_bindings.types import Scalar
 
 if TYPE_CHECKING:
+    from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes
     from excel_grapher.grapher.graph import DependencyGraph
 
 _ARITHMETIC_HELPERS = {
@@ -236,16 +234,6 @@ _KEYED_INTERN: ContextVar[KeyedReadIntern | None] = ContextVar(
 )
 
 
-def bind_keyed_intern(intern: KeyedReadIntern) -> Token[KeyedReadIntern | None]:
-    """Install `intern` for the current inverted-tree emit walk."""
-    return _KEYED_INTERN.set(intern)
-
-
-def reset_keyed_intern(token: Token[KeyedReadIntern | None]) -> None:
-    """Restore the keyed-read intern installed by `bind_keyed_intern`."""
-    _KEYED_INTERN.reset(token)
-
-
 def current_keyed_intern() -> KeyedReadIntern | None:
     """Keyed-read intern for the current emit walk, if any."""
     return _KEYED_INTERN.get()
@@ -333,43 +321,14 @@ _LOOKUP_REUSE: ContextVar[LookupReuse | None] = ContextVar(
 )
 
 
-def bind_lookup_reuse(reuse: LookupReuse) -> Token[LookupReuse | None]:
-    """Install `reuse` for the current inverted-tree helper emit."""
-    return _LOOKUP_REUSE.set(reuse)
-
-
-def reset_lookup_reuse(token: Token[LookupReuse | None]) -> None:
-    """Restore the lookup intern installed by `bind_lookup_reuse`."""
-    _LOOKUP_REUSE.reset(token)
-
-
 def current_lookup_reuse() -> LookupReuse | None:
     """Lookup intern for the current helper emit, if any."""
     return _LOOKUP_REUSE.get()
 
 
-@contextmanager
-def lookup_reuse_scope() -> Iterator[LookupReuse]:
-    """Bind a fresh `LookupReuse` for one internals helper."""
-    reuse = LookupReuse()
-    token = bind_lookup_reuse(reuse)
-    try:
-        yield reuse
-    finally:
-        reset_lookup_reuse(token)
-
-
 def _replace_ident(text: str, name: str, replacement: str) -> str:
     """Replace identifier `name` in `text` with `replacement`."""
     return re.sub(rf"\b{re.escape(name)}\b", lambda _match: replacement, text)
-
-
-def _start_formula() -> LookupReuse | None:
-    """Reset per-formula lookup CSE and return the helper intern, if any."""
-    reuse = current_lookup_reuse()
-    if reuse is not None:
-        reuse.begin_formula()
-    return reuse
 
 
 def _reuse_lookup(expr: str, ctx: EmitContext) -> str:
@@ -407,6 +366,7 @@ class EmitContext:
     array_context: bool = False
     eager: bool = True
     coordinate_vars: dict[str, str] | None = None
+    named_axes: NamedAxes | None = None
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -422,55 +382,6 @@ def python_measure_type(series: BoundSeries) -> str:
     if series.has_none_holes or series.layout != "scalar":
         return f"{base} | None"
     return base
-
-
-def _python_param_inner(series: BoundSeries) -> str:
-    """Inner type of a helper parameter for `series`.
-
-    Numeric leaves use the measure type (`float | str` / `int | str`) so
-    cached text and error-code strings in `data.py` stay assignable.
-    """
-    return python_measure_type(series)
-
-
-def python_annotation(series: BoundSeries) -> str:
-    """Return a typing annotation for a helper parameter."""
-    inner = _python_param_inner(series)
-    if series.is_scalar:
-        return inner
-    return f"Sequence[{inner}]"
-
-
-def python_data_annotation(series: BoundSeries) -> str:
-    """Return a typing annotation for a `data.py` constant or default.
-
-    Uses the same inner type as `python_annotation` so workbook defaults are
-    assignable to `compute_*` parameters. Sequence leaves are stored as tuples.
-    """
-    inner = _python_param_inner(series)
-    if series.is_scalar:
-        return inner
-    return f"tuple[{inner}, ...]"
-
-
-def python_return_annotation(series: BoundSeries) -> str:
-    """Return a typing annotation for a helper result."""
-    inner = python_measure_type(series)
-    if series.is_scalar:
-        return inner
-    return f"tuple[{inner}, ...]"
-
-
-def _cast_scalar(expr: str, dtype: str) -> str:
-    if dtype == "float":
-        return f"float({expr})"
-    if dtype == "int":
-        return f"int({expr})"
-    if dtype == "str":
-        return f"str({expr})"
-    if dtype == "bool":
-        return f"bool({expr})"
-    return expr
 
 
 def _number_literal(value: float) -> str:
@@ -995,37 +906,7 @@ def _emit_address(
     if address_in_blank_ranges(address, ctx.blank_rects):
         return "None"
     if ctx.coordinate_vars is not None:
-        owner = ctx.catalog.require_series_for(address)
-        name = ctx.param(owner.series_id)
-        if owner.layout == "scalar":
-            return name
-        index = owner.index_of(address)
-        if index is None:
-            raise InvertedTreeExportError(
-                f"series {owner.series_id!r}: no coordinate for {address}"
-            )
-        point = owner.domain[index]
-        host_point = ctx.host.domain[ctx.host_index].as_mapping()
-        keys = []
-        for field in owner.key_fields:
-            variable = ctx.coordinate_vars.get(field)
-            current = host_point.get(field)
-            target = point[field]
-            if variable is not None and current == target:
-                keys.append(variable)
-            elif (
-                variable is not None
-                and field == "TIME_PERIOD"
-                and type(current) is int
-                and type(target) is int
-            ):
-                # Formula-family grouping verifies this same authored year
-                # difference at every coordinate sharing the expression.
-                difference = target - current
-                keys.append(f"{variable} {'+' if difference > 0 else '-'} {abs(difference)}")
-            else:
-                keys.append(repr(target))
-        return f"{name}[{', '.join(keys)}]"
+        return _emit_named_address(address, ctx, ref=ref)
     if ctx.fused_mode:
         return _emit_fused_ref(address, ctx, ref=ref)
     if ctx.instance_mode:
@@ -1068,6 +949,77 @@ def _emit_address(
     if owner.series_id in ctx.deps.lookup_ids:
         return name
     return name
+
+
+def _emit_named_address(
+    address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
+) -> str:
+    """Read a producer by semantic coordinate relative to the host coordinate."""
+    owner = ctx.catalog.require_series_for(address)
+    name = ctx.param(owner.series_id)
+    if owner.layout == "scalar":
+        # A scalar member of the recurrence group is a demand-driven reader.
+        return f"{name}[()]" if owner.series_id in ctx.scc_ids else name
+    index = owner.index_of(address)
+    if index is None:
+        raise InvertedTreeExportError(f"series {owner.series_id!r}: no coordinate for {address}")
+    return f"{name}[{', '.join(_named_keys(owner, owner.domain[index], ctx, ref=ref))}]"
+
+
+def _pinned_axes(ref: CellRefNode | None, host_cell: CanonicalAddress) -> set[str]:
+    """Worksheet axes on which `ref` is absolute and differs from the host."""
+    if ref is None:
+        return set()
+    address = resolve_cell_ref(ref, host_cell)
+    _host_sheet, host_row, host_col = parse_cell_coords(host_cell)
+    _sheet, row, col = parse_cell_coords(address)
+    pinned: set[str] = set()
+    if col != host_col and isinstance(ref.ref.col, AbsoluteAxis):
+        pinned.add("col")
+    if row != host_row and isinstance(ref.ref.row, AbsoluteAxis):
+        pinned.add("row")
+    return pinned
+
+
+def _named_keys(
+    owner: BoundSeries,
+    point: KeyPoint,
+    ctx: EmitContext,
+    *,
+    ref: CellRefNode | None = None,
+) -> list[str]:
+    """Express each key of `point` relative to the host loop variables.
+
+    A key equal to the host's own key is the loop variable. An integer
+    `TIME_PERIOD` reached through a relative reference is the loop variable
+    plus the authored difference; formula-family grouping then verifies the
+    same difference at every coordinate sharing the expression. Keys reached
+    through an absolute (`$`) reference, or on other axes, stay literal.
+    """
+    from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
+
+    assert ctx.coordinate_vars is not None
+    host_point = ctx.host.domain[ctx.host_index].as_mapping()
+    pinned = _pinned_axes(ref, ctx.host_cell)
+    keys = []
+    for key_field in owner.key_fields:
+        variable = ctx.coordinate_vars.get(key_field)
+        current = host_point.get(key_field)
+        target = point[key_field]
+        if variable is not None and current == target:
+            keys.append(variable)
+        elif (
+            variable is not None
+            and key_field == "TIME_PERIOD"
+            and type(current) is int
+            and type(target) is int
+            and _key_field_axis(owner, key_field) not in pinned
+        ):
+            difference = target - current
+            keys.append(f"{variable} {'+' if difference > 0 else '-'} {abs(difference)}")
+        else:
+            keys.append(repr(target))
+    return keys
 
 
 def _aligned_taken_index(producer_id: str, catalog_idx: int, ctx: EmitContext) -> int:
@@ -1401,38 +1353,6 @@ def _emit_instance_ref(
     return f"{name}[{index_expr}]"
 
 
-def formula_shape_runs(
-    series: BoundSeries,
-    graph: DependencyGraph,
-) -> list[tuple[str, int, int]]:
-    """Return consecutive `(shape_key, start, stop)` runs over `series.cells`."""
-    statements = series.statements
-    if len(statements) > 1 or (statements and statements[0].shape_key is not None):
-        return [(stmt.shape_key or "", stmt.start, stmt.stop) for stmt in statements]
-    runs: list[tuple[str, int, int]] = []
-    for index, address in enumerate(series.cells):
-        ast = try_formula_ast(graph, address)
-        key = fingerprint_formula_shape(ast).shape_key if ast is not None else ""
-        if runs and runs[-1][0] == key:
-            runs[-1] = (key, runs[-1][1], index + 1)
-        else:
-            runs.append((key, index, index + 1))
-    return runs
-
-
-def member_peel_stop(series: BoundSeries, graph: DependencyGraph) -> int:
-    """Return the exclusive end of a peeled prefix, or 0 if the series is uniform."""
-    runs = formula_shape_runs(series, graph)
-    if len(runs) <= 1:
-        return 0
-    if len(runs) == 2 and runs[0][1] == 0:
-        return runs[0][2]
-    raise InvertedTreeExportError(
-        f"series {series.series_id!r} has {len({run[0] for run in runs})} formula "
-        "shapes; members must share one shape or a peeled prefix"
-    )
-
-
 def _emit_value_or_range(node: AstNode, ctx: EmitContext) -> str:
     """Emit a scalar expression or a positional range table."""
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
@@ -1690,6 +1610,9 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
     if not addresses:
         return "()"
     if ctx.coordinate_vars is not None:
+        named_view = _named_range_view(node, ctx)
+        if named_view is not None:
+            return named_view
         return _python_tuple([_emit_address(address, ctx) for address in addresses])
     covered = covering_series(ctx.catalog, addresses)
     if covered is not None:
@@ -2066,8 +1989,80 @@ def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
     return f"{name}[{cell.catalog_index}]"
 
 
+def _named_range_view(node: AstNode, ctx: EmitContext) -> str | None:
+    """Emit a lazy `view` when a range lies inside one series' dense block.
+
+    Each worksheet axis of the range maps onto the key field that enumerates
+    that axis. A whole axis reads its keys; a partial run is a `span` between
+    the corner keys, expressed relative to the host coordinate so sliding and
+    growing windows share one formula family.
+    """
+    if not isinstance(node, RangeNode) or ctx.coordinate_vars is None or ctx.named_axes is None:
+        return None
+    start = as_canonical(resolve_cell_ref(node.start_ref, ctx.host_cell))
+    end = as_canonical(resolve_cell_ref(node.end_ref, ctx.host_cell))
+    sheet_start, row_start, col_start = parse_cell_coords(start)
+    sheet_end, row_end, col_end = parse_cell_coords(end)
+    if sheet_start != sheet_end:
+        return None
+    first_row, last_row = sorted((row_start, row_end))
+    first_col, last_col = sorted((col_start, col_end))
+    addresses = iter_range_addresses(start, end)
+    if any(address_in_blank_ranges(address, ctx.blank_rects) for address in addresses):
+        return None
+    owner = covering_series(ctx.catalog, addresses)
+    if owner is None or owner.is_scalar or owner.layout == "scalar" or owner.rect is None:
+        return None
+    try:
+        field_axes = _axis_positions_are_worksheet_positions(owner)
+    except InvertedTreeExportError:
+        return None
+    if set(field_axes) != set(owner.key_fields):
+        return None
+    start_index = owner.index_of(start)
+    end_index = owner.index_of(end)
+    if start_index is None or end_index is None:
+        return None
+    start_keys = _named_keys(owner, owner.domain[start_index], ctx, ref=CellRefNode(node.start_ref))
+    end_keys = _named_keys(owner, owner.domain[end_index], ctx, ref=CellRefNode(node.end_ref))
+    _sheet, owner_row, owner_col, _row2, _col2 = owner.rect
+    domain = owner.tensor_domain
+    row_expr = col_expr = None
+    for position, key_field in enumerate(owner.key_fields):
+        axis = field_axes[key_field]
+        keys = domain.axes[position].keys
+        constant = ctx.named_axes.constant(domain.axes[position])
+        if axis == "row":
+            first, last = first_row - owner_row, last_row - owner_row
+        else:
+            first, last = first_col - owner_col, last_col - owner_col
+        start_key, end_key = start_keys[position], end_keys[position]
+        literal_corners = start_key == repr(keys[first]) and end_key == repr(keys[last])
+        if literal_corners and first == 0 and last == len(keys) - 1:
+            expr = f"data.{constant}.keys"
+        elif start_key == end_key:
+            expr = f"({start_key},)"
+        else:
+            expr = f"{ctx.use('span')}(data.{constant}, {start_key}, {end_key})"
+        if axis == "row":
+            row_expr = expr
+        else:
+            col_expr = expr
+    args = [ctx.param(owner.series_id)]
+    if row_expr is not None:
+        args.append(f"rows={row_expr}")
+    if col_expr is not None:
+        args.append(f"cols={col_expr}")
+    if len(owner.key_fields) == 2 and field_axes[owner.key_fields[0]] == "col":
+        args.append("cols_first=True")
+    return f"{ctx.use('view')}({', '.join(args)})"
+
+
 def _emit_range_table(node: AstNode, ctx: EmitContext) -> str:
     """Emit a nested-tuple grid, filling declared blanks with `None`."""
+    named_view = _named_range_view(node, ctx)
+    if named_view is not None:
+        return named_view
     addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
     if not addresses:
         raise _host_export_error(ctx, "range is empty")
@@ -2266,6 +2261,8 @@ def _access_or_fail(producer: BoundSeries, ctx: EmitContext) -> AccessFunction:
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
         raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
+    if ctx.coordinate_vars is not None:
+        return _emit_named_offset(node, ctx)
     if isinstance(node.args[0], FunctionCallNode):
         return _emit_offset_from_expr(node, ctx)
     table = _series_for_ref(node.args[0], ctx)
@@ -2301,6 +2298,113 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
         )
     index = f"({cols})" if anchor_expr == "0" else f"({cols}) + ({anchor_expr})"
     return f"{ctx.use('xl_at')}({name}, {index})"
+
+
+def _axis_positions_are_worksheet_positions(table: BoundSeries) -> dict[str, str]:
+    """Map each key field of `table` to `"row"` or `"col"` when positions coincide.
+
+    `OFFSET` moves along worksheet rows and columns. The move is expressed on
+    a semantic axis only when the authored cells form a dense row-major block
+    whose row positions enumerate one key field and whose column positions
+    enumerate another, in axis order.
+    """
+    from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
+
+    width = table.block_width
+    cells = table.cells
+    height = max(1, (len(cells) + width - 1) // width)
+    if height * width != len(cells):
+        raise InvertedTreeExportError(
+            f"series {table.series_id!r}: OFFSET requires a dense rectangular block"
+        )
+    axes: dict[str, str] = {}
+    for key_field in table.key_fields:
+        keys = tuple(dict.fromkeys(point[key_field] for point in table.domain))
+        axis = _key_field_axis(table, key_field)
+        if axis == "row" and len(keys) == height:
+            expected = [keys[index // width] for index in range(len(cells))]
+        elif axis == "col" and len(keys) == width:
+            expected = [keys[index % width] for index in range(len(cells))]
+        elif len(keys) == 1:
+            continue
+        else:
+            raise InvertedTreeExportError(
+                f"series {table.series_id!r}: key {key_field!r} does not enumerate a worksheet axis"
+            )
+        if [point[key_field] for point in table.domain] != expected:
+            raise InvertedTreeExportError(
+                f"series {table.series_id!r}: key {key_field!r} order differs from worksheet order"
+            )
+        axes[key_field] = axis
+    return axes
+
+
+def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
+    """Emit `OFFSET(anchor, rows, cols)` as a step along the producer's axes."""
+    if isinstance(node.args[0], FunctionCallNode):
+        return _emit_named_offset_index(node, ctx)
+    table = _series_for_ref(node.args[0], ctx)
+    rows = emit_expr(node.args[1], ctx)
+    cols = emit_expr(node.args[2], ctx)
+    name = ctx.param(table.series_id)
+    anchor = _ref_anchor_address(node.args[0], ctx.host_cell)
+    if anchor is None:
+        raise _host_export_error(ctx, "OFFSET anchor must be a cell or range")
+    steps = {"row": rows, "col": cols}
+    static = {axis for axis, step in steps.items() if step in {"0", "0.0"}}
+    if table.layout == "scalar" or table.is_scalar:
+        if static == {"row", "col"}:
+            return name
+        # The constrained reference set is this one cell; any other
+        # displacement is outside the bound model, as `xl_at` reports.
+        return f"{ctx.use('at_anchor')}({name}, {rows}, {cols})"
+    index = table.index_of(anchor)
+    if index is None:
+        raise _host_export_error(ctx, f"OFFSET anchor {anchor} is not in {table.series_id!r}")
+    field_axes = _axis_positions_are_worksheet_positions(table)
+    moved = {axis for axis in ("row", "col") if axis not in static}
+    if moved - set(field_axes.values()):
+        raise _host_export_error(
+            ctx,
+            f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported"
+            if "row" in moved
+            else f"OFFSET column offset into series {table.series_id!r} is not supported",
+        )
+    if ctx.named_axes is None:
+        raise _host_export_error(ctx, "OFFSET needs named axis constants")
+    keys = _named_keys(table, table.domain[index], ctx)
+    domain = table.tensor_domain
+    for position, key_field in enumerate(table.key_fields):
+        axis = field_axes.get(key_field)
+        if axis is None or axis in static:
+            continue
+        constant = ctx.named_axes.constant(domain.axes[position])
+        keys[position] = f"{ctx.use('axis_step')}(data.{constant}, {keys[position]}, {steps[axis]})"
+    return f"{name}[{', '.join(keys)}]"
+
+
+def _emit_named_offset_index(node: FunctionCallNode, ctx: EmitContext) -> str:
+    """Emit `OFFSET(INDEX(range, row, col), rows, cols)` as INDEX over the moved range.
+
+    Literal row and column displacements move the whole INDEX array; the
+    INDEX selectors then pick from the destination cells. A selector that is
+    `#REF!` on every host cell emits `xl_raise('#REF!')`.
+    """
+    base = node.args[0]
+    if not (
+        isinstance(base, FunctionCallNode)
+        and normalize_excel_function_name(base.name) == "INDEX"
+        and len(base.args) >= 2
+    ):
+        raise _host_export_error(ctx, "OFFSET from a computed reference must wrap INDEX")
+    if _offset_index_provably_ref(base, ctx):
+        return f"{ctx.use('xl_raise')}('#REF!')"
+    destination = offset_index_destination(node, ctx.host_cell)
+    if destination is None:
+        raise _host_export_error(ctx, "OFFSET of INDEX needs literal row and column moves")
+    start, end = destination
+    moved = FunctionCallNode(base.name, (RangeNode(start, end), *base.args[1:]))
+    return _emit_index(moved, ctx)
 
 
 def _emit_offset_from_expr(node: FunctionCallNode, ctx: EmitContext) -> str:
@@ -2453,6 +2557,10 @@ def _emit_indirect(node: FunctionCallNode, ctx: EmitContext) -> str:
     targets = indirect_target_addresses(ctx.graph, ctx.host_cell, exclude=tuple(exclude))
     if not targets:
         raise _host_export_error(ctx, "INDIRECT has no resolved edges")
+    if ctx.coordinate_vars is not None:
+        if len(targets) != 1:
+            raise _host_export_error(ctx, "INDIRECT resolves to more than one cell")
+        return _emit_address(targets[0], ctx)
     covered = covering_series(ctx.catalog, targets)
     if covered is None:
         raise _host_export_error(ctx, "INDIRECT targets are not one bound series")
@@ -2521,6 +2629,9 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
             if selected:
                 # A proven column selection must not introduce dependencies on
                 # other columns excluded by the extracted graph.
+                column_view = _named_range_view(RangeNode(selected[0], selected[-1]), ctx)
+                if column_view is not None:
+                    return f"{ctx.use('xl_index')}({column_view}, {row_expr}, 1)"
                 cells, missing = resolve_positional_range(
                     selected, ctx.catalog, ctx.blank_rects, ctx.graph
                 )
@@ -2646,922 +2757,7 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
     raise _host_export_error(ctx, "OFFSET/MATCH base must be a cell or range")
 
 
-def _emit_hole_expr(
-    series: BoundSeries,
-    host_index: int,
-    graph: DependencyGraph,
-    catalog: SeriesCatalog | None = None,
-) -> str:
-    """Return a Python literal or claimant lookup for a retained hole cell."""
-    from excel_grapher.exporter.inverted_tree.emit import (
-        _cell_value,
-        _coerce_cached_value,
-        _py_literal,
-    )
-
-    hole = series.hole_at(host_index)
-    address = series.cells[host_index]
-    if hole is None or hole.kind in {"blank", "off_closure"}:
-        return "None"
-    if hole.kind == "bound_leaf":
-        if catalog is None or hole.claimant_id is None:
-            raise InvertedTreeExportError(
-                f"series {series.series_id!r} cell {address}: bound leaf has no claimant"
-            )
-        claimant = catalog.get(hole.claimant_id)
-        name = claimant.series_id
-        if claimant.is_scalar:
-            return name
-        index = claimant.index_of(address)
-        if index is None:
-            raise InvertedTreeExportError(
-                f"series {series.series_id!r} cell {address}: "
-                f"bound leaf is not in claimant {claimant.series_id!r}"
-            )
-        return f"{name}[{index}]"
-    if hole.kind == "graph_leaf":
-        node = graph.get_node(address)
-        if node is None or node.value is None:
-            raise InvertedTreeExportError(
-                f"series {series.series_id!r} cell {address}: graph leaf has no cached value"
-            )
-        return _py_literal(_cell_value(graph, address, series.dtype))
-    if hole.literal is None:
-        raise InvertedTreeExportError(
-            f"series {series.series_id!r} cell {address}: cached value is unavailable"
-        )
-    return _py_literal(_coerce_cached_value(hole.literal, series.dtype, address))
-
-
-def _region_measure(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: SeriesDeps,
-    graph: DependencyGraph,
-    host_index: int,
-    index_var: str | None,
-    prior_var: str | None,
-) -> tuple[str, set[str], tuple[tuple[str, str], ...]]:
-    if try_formula_ast(graph, series.cells[host_index]) is None:
-        return _emit_hole_expr(series, host_index, graph, catalog), set(), ()
-    ctx = EmitContext(
-        host=series,
-        catalog=catalog,
-        deps=deps,
-        host_index=host_index,
-        host_cell=series.cells[host_index],
-        index_var=index_var,
-        prior_var=prior_var,
-        graph=graph,
-    )
-    reuse = _start_formula()
-    expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
-    if reuse is not None:
-        expr, assigns = reuse.finish_formula(expr)
-    else:
-        assigns = ()
-    return _as_measure_call(expr, series), set(ctx.used_runtime), assigns
-
-
-def _coalesce_adjacent_bodies(
-    runs: Sequence[tuple[str, int, int]],
-    bodies: Sequence[str],
-    assigns: Sequence[tuple[tuple[str, str], ...]] | None = None,
-) -> list[tuple[int, int, str, tuple[tuple[str, str], ...]]]:
-    """Merge adjacent shape-runs whose emitted bodies are identical.
-
-    Each run is `(shape_key, start, stop)` over catalog indexes. The result
-    keeps the first start and last stop of each identical span so slot
-    boundaries stay exact. Shape keys are ignored: equal Excel shapes can
-    still lower to different index expressions. Lookup CSE assignments are
-    part of the body identity.
-    """
-    if not runs:
-        return []
-    if len(runs) != len(bodies):
-        raise ValueError("runs and bodies must have the same length")
-    extras = tuple(assigns) if assigns is not None else tuple(() for _ in bodies)
-    if len(extras) != len(bodies):
-        raise ValueError("runs, bodies, and assigns must have the same length")
-    coalesced: list[tuple[int, int, str, tuple[tuple[str, str], ...]]] = [
-        (runs[0][1], runs[0][2], bodies[0], extras[0])
-    ]
-    for (_key, start, stop), body, extra in zip(runs[1:], bodies[1:], extras[1:], strict=True):
-        last_start, _last_stop, last_body, last_assigns = coalesced[-1]
-        if body == last_body and extra == last_assigns:
-            coalesced[-1] = (last_start, stop, last_body, last_assigns)
-        else:
-            coalesced.append((start, stop, body, extra))
-    return coalesced
-
-
-def _cannot_raise_xl_error(expr: str) -> bool:
-    """True when evaluating `expr` cannot raise `XlError`."""
-    text = expr.strip()
-    inner = _as_measure_literal(text)
-    candidate = inner.split(",", 1)[0].strip() if inner is not None else text
-    try:
-        ast.literal_eval(candidate)
-    except (ValueError, SyntaxError):
-        return False
-    return True
-
-
-def _emit_assign_prefix(assigns: Sequence[tuple[str, str]], indent: str) -> list[str]:
-    """Return assignment lines for interned eager lookups."""
-    return [f"{indent}{name} = {expr}" for name, expr in assigns]
-
-
-def _emit_region_chain(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: SeriesDeps,
-    graph: DependencyGraph,
-    runs: list[tuple[str, int, int]],
-    prior_var: str | None,
-    prefix: str,
-    suffix: str,
-    indent: str,
-) -> tuple[list[str], set[str]]:
-    """Emit an if/elif chain that assigns each shape-run formula."""
-    used: set[str] = set()
-    bodies: list[str] = []
-    assigns_list: list[tuple[tuple[str, str], ...]] = []
-    for _key, start, _stop in runs:
-        coerce, expr_used, assigns = _region_measure(
-            series,
-            catalog=catalog,
-            deps=deps,
-            graph=graph,
-            host_index=start,
-            index_var="i",
-            prior_var=prior_var,
-        )
-        used |= expr_used
-        bodies.append(coerce)
-        assigns_list.append(assigns)
-    regions = _coalesce_adjacent_bodies(runs, bodies, assigns_list)
-    lines: list[str] = []
-    for run_index, (_start, stop, coerce, assigns) in enumerate(regions):
-        statement = f"{prefix}{coerce}{suffix}"
-        if run_index < len(regions) - 1:
-            keyword = "if" if run_index == 0 else "elif"
-            lines.append(f"{indent}{keyword} i < {stop}:")
-            body_indent = f"{indent}    "
-            lines.extend(_emit_assign_prefix(assigns, body_indent))
-            lines.append(f"{body_indent}{statement}")
-        elif run_index == 0:
-            lines.extend(_emit_assign_prefix(assigns, indent))
-            lines.append(f"{indent}{statement}")
-        else:
-            lines.append(f"{indent}else:")
-            body_indent = f"{indent}    "
-            lines.extend(_emit_assign_prefix(assigns, body_indent))
-            lines.append(f"{body_indent}{statement}")
-    return lines, used
-
-
-def _is_identity_aligned(deps: SeriesDeps, param_id: str, host_n: int) -> bool:
-    """True when `param_id` is identity-aligned to a `host_n`-long walk."""
-    if param_id not in deps.aligned_ids:
-        return False
-    if param_id in deps.affine_maps:
-        return False
-    index_map = deps.index_maps.get(param_id)
-    return index_map is None or index_map == tuple(range(host_n))
-
-
-def emit_sequence_length_guards(
-    series: BoundSeries,
-    deps: SeriesDeps,
-    catalog: SeriesCatalog,
-    *,
-    emit_n: bool = True,
-) -> tuple[list[str], set[str]]:
-    """Emit length guards so helpers reject producer arrays of the wrong size.
-
-    Identity-aligned params use `require_aligned` so scan helpers still accept
-    a shorter working buffer. Affine and index-mapped params are taken to the
-    host walk at the call site, so the helper requires host length. Other
-    sequence params (lags, lookups, mixed reads) must be dense over the
-    producer's `__domain__`.
-    """
-    host_n = len(series.cells)
-    used: set[str] = set()
-    lines: list[str] = []
-    identity: list[str] = []
-    for param_id in deps.param_ids:
-        producer = catalog.get(param_id)
-        if not producer.is_sequence:
-            continue
-        if param_id in deps.aligned_ids and _is_identity_aligned(deps, param_id, host_n):
-            identity.append(param_id)
-            continue
-        if param_id in deps.aligned_ids:
-            used.add("require_length")
-            lines.append(f"    require_length({param_id}, {host_n})")
-            continue
-        used.add("require_length")
-        lines.append(f"    require_length({param_id}, {len(producer.cells)})")
-    if identity:
-        used.add("require_aligned")
-        if emit_n:
-            lines.append(f"    n = require_aligned({', '.join(identity)})")
-        else:
-            used.add("require_length")
-            for param_id in identity:
-                lines.append(f"    require_length({param_id}, {host_n})")
-    elif emit_n:
-        lines.append(f"    n = {host_n}")
-    return lines, used
-
-
-def emit_helper_body(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: SeriesDeps,
-    graph: DependencyGraph,
-) -> tuple[list[str], set[str]]:
-    """Return indented body lines and the runtime symbols they use."""
-    used: set[str] = set()
-    if series.is_scalar:
-        with lookup_reuse_scope() as reuse:
-            guard_lines, guard_used = emit_sequence_length_guards(
-                series, deps, catalog, emit_n=False
-            )
-            used |= guard_used
-            ctx = EmitContext(
-                host=series,
-                catalog=catalog,
-                deps=deps,
-                host_index=0,
-                host_cell=series.cells[0],
-                index_var=None,
-                prior_var=None,
-                graph=graph,
-            )
-            reuse.begin_formula()
-            formula = node_formula_ast(graph, series.cells[0])
-            expr = emit_expr(formula, ctx)
-            expr, assigns = reuse.finish_formula(expr)
-            used |= ctx.used_runtime
-            used.add("as_measure")
-            used.add("XlError")
-            prelude = [
-                *guard_lines,
-                *reuse.emit_table_lines(),
-                *_emit_assign_prefix(assigns, "    "),
-            ]
-            if series.python_dtype in {"float", "int"}:
-                coerce = (
-                    f"as_measure({expr})"
-                    if series.python_dtype == "float"
-                    else f"as_measure({expr}, {series.python_dtype!r})"
-                )
-                return [
-                    *prelude,
-                    "    try:",
-                    f"        return {coerce}",
-                    "    except XlError as err:",
-                    "        return err.code",
-                ], used
-            return [
-                *prelude,
-                "    try:",
-                f"        return {_cast_scalar(expr, series.python_dtype)}",
-                "    except XlError as err:",
-                "        return err.code",
-            ], used
-
-    if deps.is_scan:
-        return _emit_scan_body(series, catalog=catalog, deps=deps, graph=graph)
-
-    runs = formula_shape_runs(series, graph)
-    used.add("as_measure")
-    used.add("XlError")
-    with lookup_reuse_scope() as reuse:
-        guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog)
-        used |= guard_used
-        measure = python_measure_type(series)
-        loop: list[str] = ["    for i in range(n):", "        try:"]
-        if len(runs) <= 1:
-            coerce, expr_used, assigns = _region_measure(
-                series,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                host_index=0,
-                index_var="i",
-                prior_var=None,
-            )
-            used |= expr_used
-            loop.extend(_emit_assign_prefix(assigns, "            "))
-            loop.append(f"            out.append({coerce})")
-        else:
-            region_lines, region_used = _emit_region_chain(
-                series,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                runs=runs,
-                prior_var=None,
-                prefix="out.append(",
-                suffix=")",
-                indent="            ",
-            )
-            used |= region_used
-            loop.extend(region_lines)
-        loop.append("        except XlError as err:")
-        loop.append("            out.append(err.code)")
-        loop.append("    return tuple(out)")
-        return [
-            *guard_lines,
-            *reuse.emit_table_lines(),
-            f"    out: list[{measure}] = []",
-            *loop,
-        ], used
-
-
-def _emit_scan_body(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: SeriesDeps,
-    graph: DependencyGraph,
-) -> tuple[list[str], set[str]]:
-    runs = formula_shape_runs(series, graph)
-    seed = deps.seed_id
-    used: set[str] = {"as_measure", "XlError", "is_error"}
-    with lookup_reuse_scope() as reuse:
-        guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog)
-        used |= guard_used
-        seed_expr = seed if seed is not None and catalog.get(seed).is_scalar else "0"
-        measure = python_measure_type(series)
-        region_lines, region_used = _emit_region_chain(
-            series,
-            catalog=catalog,
-            deps=deps,
-            graph=graph,
-            runs=runs or [("", 0, len(series.cells))],
-            prior_var="prior",
-            prefix="prior = ",
-            suffix="",
-            indent="            ",
-        )
-        used |= region_used
-        lines: list[str] = [
-            *guard_lines,
-            *reuse.emit_table_lines(),
-            f"    path: list[{measure}] = []",
-            f"    prior: {measure} = {seed_expr}",
-        ]
-        if deps.scan_direction == "reversed":
-            lines.append("    for i in reversed(range(n)):")
-        else:
-            lines.append("    for i in range(n):")
-        lines.append("        try:")
-        lines.extend(region_lines)
-        lines.append("        except XlError as err:")
-        lines.append("            prior = err.code")
-        lines.append("        path.append(prior)")
-        if deps.scan_direction == "reversed":
-            lines.append("    return tuple(reversed(path))")
-        else:
-            lines.append("    return tuple(path)")
-        return lines, used
-
-
 def _as_measure_call(expr: str, series: BoundSeries) -> str:
     if series.python_dtype == "float":
         return f"as_measure({expr})"
     return f"as_measure({expr}, {series.python_dtype!r})"
-
-
-def _compute_fn_name(series_id: str) -> str:
-    return f"{series_id}_compute"
-
-
-def _emit_region_return(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    graph: DependencyGraph,
-    host_index: int,
-    scc_ids: frozenset[str],
-    compute_names: dict[str, str],
-) -> tuple[str, set[str], tuple[tuple[str, str], ...]]:
-    ctx = EmitContext(
-        host=series,
-        catalog=catalog,
-        deps=deps[series.series_id],
-        host_index=host_index,
-        host_cell=series.cells[host_index],
-        index_var="i",
-        prior_var=None,
-        scc_ids=scc_ids,
-        instance_mode=True,
-        compute_names=compute_names,
-        graph=graph,
-    )
-    if try_formula_ast(graph, series.cells[host_index]) is None:
-        return _emit_hole_expr(series, host_index, graph, catalog), set(), ()
-    reuse = _start_formula()
-    expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
-    if reuse is not None:
-        expr, assigns = reuse.finish_formula(expr)
-    else:
-        assigns = ()
-    return _as_measure_call(expr, series), set(ctx.used_runtime), assigns
-
-
-def _body_can_raise(expr: str, assigns: Sequence[tuple[str, str]]) -> bool:
-    """True when a demand-dispatch body can raise `XlError`."""
-    if assigns:
-        return True
-    return not _cannot_raise_xl_error(expr)
-
-
-def _emit_demand_dispatch(
-    regions: Sequence[tuple[int, int, str, tuple[tuple[str, str], ...]]],
-    *,
-    indent: str = "        ",
-) -> tuple[list[str], bool]:
-    """Emit a coalesced `if i < stop` return ladder.
-
-    Literal bodies that cannot raise `XlError` are returned directly.
-    Consecutive raising bodies share one `try/except XlError`.
-    """
-    lines: list[str] = []
-    catches_error = False
-    count = len(regions)
-    index = 0
-    while index < count:
-        can_raise = _body_can_raise(regions[index][2], regions[index][3])
-        end = index + 1
-        while end < count and _body_can_raise(regions[end][2], regions[end][3]) == can_raise:
-            end += 1
-        group = regions[index:end]
-        body_indent = indent
-        if can_raise:
-            catches_error = True
-            lines.append(f"{indent}try:")
-            body_indent = f"{indent}    "
-        for offset, (_start, stop, expr, assigns) in enumerate(group):
-            guarded = index + offset < count - 1
-            if guarded:
-                lines.append(f"{body_indent}if i < {stop}:")
-                inner = f"{body_indent}    "
-                lines.extend(_emit_assign_prefix(assigns, inner))
-                lines.append(f"{inner}return {expr}")
-            else:
-                lines.extend(_emit_assign_prefix(assigns, body_indent))
-                lines.append(f"{body_indent}return {expr}")
-        if can_raise:
-            lines.append(f"{indent}except XlError as err:")
-            lines.append(f"{indent}    return err.code")
-        index = end
-    return lines, catches_error
-
-
-def emit_rung3_scc(
-    scc: tuple[str, ...],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    graph: DependencyGraph,
-    edges: Sequence[DependenceEdge] | None = None,
-) -> tuple[list[str], set[str]]:
-    """Emit demand-driven instance evaluation for an SCC (the rung-3 floor)."""
-    used: set[str] = {"as_measure", "eval_instance"}
-    scc_ids = frozenset(scc)
-    compute_names = {sid: _compute_fn_name(sid) for sid in scc}
-    with lookup_reuse_scope() as reuse:
-        compute_lines: list[str] = []
-        for sid in scc:
-            series = catalog.get(sid)
-            runs = formula_shape_runs(series, graph)
-            if not runs:
-                raise InvertedTreeExportError(f"series {sid!r} has no members to evaluate")
-            fn = compute_names[sid]
-            compute_lines.append(f"    def {fn}(i: int) -> {python_measure_type(series)}:")
-            bodies: list[str] = []
-            assigns_list: list[tuple[tuple[str, str], ...]] = []
-            for _key, start, _stop in runs:
-                expr, expr_used, assigns = _emit_region_return(
-                    series,
-                    catalog=catalog,
-                    deps=deps,
-                    graph=graph,
-                    host_index=start,
-                    scc_ids=scc_ids,
-                    compute_names=compute_names,
-                )
-                used |= expr_used
-                bodies.append(expr)
-                assigns_list.append(assigns)
-            regions = _coalesce_adjacent_bodies(runs, bodies, assigns_list)
-            dispatch, catches_error = _emit_demand_dispatch(regions)
-            if catches_error:
-                used.add("XlError")
-            compute_lines.extend(dispatch)
-            compute_lines.append("")
-        table_lines = reuse.emit_table_lines()
-        lines: list[str] = [
-            "    memo: dict[tuple[str, int], object] = {}",
-            "    stack: set[tuple[str, int]] = set()",
-            "",
-        ]
-        if table_lines:
-            lines.extend([*table_lines, ""])
-        lines.extend(compute_lines)
-        edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
-        intra = [
-            edge for edge in edges if edge.consumer_id in scc_ids and edge.producer_id in scc_ids
-        ]
-        reverse_drive = (
-            bool(intra)
-            and all(edge.distance <= 0 for edge in intra)
-            and any(edge.distance < 0 for edge in intra)
-        )
-        returned: list[str] = []
-        for sid in scc:
-            series = catalog.get(sid)
-            n = len(series.cells)
-            fn = compute_names[sid]
-            if series.is_scalar:
-                lines.append(f"    {sid} = eval_instance({sid!r}, 0, {fn}, memo, stack)")
-            elif reverse_drive:
-                lines.append(f"    for i in reversed(range({n})):")
-                lines.append(f"        eval_instance({sid!r}, i, {fn}, memo, stack)")
-                lines.append(
-                    f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) "
-                    f"for i in range({n}))"
-                )
-            else:
-                lines.append(
-                    f"    {sid} = tuple(eval_instance({sid!r}, i, {fn}, memo, stack) "
-                    f"for i in range({n}))"
-                )
-            returned.append(sid)
-        lines.append(f"    return {', '.join(returned)}")
-        return lines, used
-
-
-def _indented(lines: list[str], spaces: int) -> list[str]:
-    pad = " " * spaces
-    return [f"{pad}{line}" if line else line for line in lines]
-
-
-def _fused_template_index(
-    series: BoundSeries,
-    plan: FusedPlan,
-    region: FusedRegion,
-    catalog: SeriesCatalog,
-    partition: tuple[Scalar, ...] | None = None,
-) -> int:
-    start, stop = plan.domain[series.series_id]
-    union_t = max(region.start, start)
-    if union_t >= min(region.stop, stop):
-        union_t = max(0, stop - start - 1)
-    target_coord = plan.schedule[union_t]
-    for i, cell in enumerate(series.cells):
-        if schedule_axis_coord(cell, catalog) != target_coord:
-            continue
-        if partition is not None and schedule_partition(cell, catalog) != partition:
-            continue
-        return i
-    return max(0, stop - start - 1)
-
-
-def _region_guard(region: FusedRegion) -> str:
-    if region.stop == region.start + 1:
-        return f"t == {region.start}"
-    return f"{region.start} <= t < {region.stop}"
-
-
-def _emit_fused_expr(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    graph: DependencyGraph,
-    host_index: int,
-    plan: FusedPlan,
-    ready: set[str],
-    suffix: str = "",
-    partition: tuple[Scalar, ...] | None = None,
-    use_area_var: bool = False,
-) -> tuple[str, set[str], tuple[tuple[str, str], ...]]:
-    ctx = EmitContext(
-        host=series,
-        catalog=catalog,
-        deps=deps[series.series_id],
-        host_index=host_index,
-        host_cell=series.cells[host_index],
-        index_var="t",
-        prior_var=None,
-        scc_ids=frozenset(plan.scc),
-        fused_mode=True,
-        fused_plan=plan,
-        fused_ready=frozenset(ready),
-        fused_buffer_suffix=suffix,
-        fused_partition=partition,
-        fused_use_area=use_area_var,
-        graph=graph,
-    )
-    if try_formula_ast(graph, series.cells[host_index]) is None:
-        return _emit_hole_expr(series, host_index, graph, catalog), set(), ()
-    reuse = _start_formula()
-    expr = emit_expr(node_formula_ast(graph, series.cells[host_index]), ctx)
-    if reuse is not None:
-        expr, assigns = reuse.finish_formula(expr)
-    else:
-        assigns = ()
-    return _as_measure_call(expr, series), set(ctx.used_runtime), assigns
-
-
-def _as_measure_literal(expr: str) -> str | None:
-    """Return the inner literal of `as_measure(<literal>)`, if that is all it is."""
-    prefix = "as_measure("
-    if not expr.startswith(prefix) or not expr.endswith(")"):
-        return None
-    inner = expr[len(prefix) : -1]
-    if not inner or inner[0] in {"(", "["} or "live_measure" in inner or "(" in inner:
-        return None
-    return inner
-
-
-def _unify_area_exprs(exprs: Sequence[str]) -> str:
-    """Return one expression, or an `_area`-indexed literal tuple.
-
-    Structurally different expressions are joined with a short-circuiting
-    `if/else` so side-effecting reads are not evaluated for every area.
-    """
-    if len(exprs) == 1 or len(set(exprs)) == 1:
-        return exprs[0]
-    literals = [_as_measure_literal(expr) for expr in exprs]
-    if all(item is not None for item in literals):
-        return f"as_measure(({', '.join(item for item in literals if item is not None)})[_area])"
-    chain = exprs[0]
-    for index, expr in enumerate(exprs[1:], start=1):
-        chain = f"{chain} if _area == {index - 1} else {expr}"
-    return chain
-
-
-def _emit_fused_assign(
-    series: BoundSeries,
-    expr: str,
-    suffix: str = "",
-    assigns: Sequence[tuple[str, str]] = (),
-) -> list[str]:
-    sid = f"{series.series_id}{suffix}"
-    return [
-        "try:",
-        *_emit_assign_prefix(assigns, "    "),
-        f"    {sid}_t = {expr}",
-        "except XlError as err:",
-        f"    {sid}_t = err.code",
-        f"{sid}.append({sid}_t)",
-    ]
-
-
-def _emit_fused_region(
-    plan: FusedPlan,
-    region: FusedRegion,
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    graph: DependencyGraph,
-    suffix: str = "",
-    partition: tuple[Scalar, ...] | None = None,
-    area_partitions: Sequence[tuple[Scalar, ...]] = (),
-) -> tuple[list[str], set[str]]:
-    used: set[str] = set()
-    lines: list[str] = []
-    ready: set[str] = set()
-    for sid in region.body_order:
-        start, stop = plan.domain[sid]
-        if stop <= region.start or start >= region.stop:
-            continue
-        series = catalog.get(sid)
-        assigns: tuple[tuple[str, str], ...] = ()
-        if area_partitions:
-            exprs: list[str] = []
-            for part in area_partitions:
-                expr, expr_used, _part_assigns = _emit_fused_expr(
-                    series,
-                    catalog=catalog,
-                    deps=deps,
-                    graph=graph,
-                    host_index=_fused_template_index(series, plan, region, catalog, part),
-                    plan=plan,
-                    ready=ready,
-                    suffix=suffix,
-                    partition=part,
-                    use_area_var=True,
-                )
-                used |= expr_used
-                exprs.append(expr)
-            expr = _unify_area_exprs(exprs)
-        else:
-            expr, expr_used, assigns = _emit_fused_expr(
-                series,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                host_index=_fused_template_index(series, plan, region, catalog, partition),
-                plan=plan,
-                ready=ready,
-                suffix=suffix,
-                partition=partition,
-            )
-            used |= expr_used
-        assign = _emit_fused_assign(series, expr, suffix, assigns)
-        if start <= region.start and stop >= region.stop:
-            lines.extend(assign)
-        else:
-            lines.append(f"if {start} <= t < {stop}:")
-            lines.extend(_indented(assign, 4))
-        ready.add(sid)
-    return lines, used
-
-
-def _emit_fused_loop(
-    plan: FusedPlan,
-    regions: Sequence[FusedRegion],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    graph: DependencyGraph,
-    n: int,
-    t_header: str,
-    suffix: str = "",
-    partition: tuple[Scalar, ...] | None = None,
-    area_partitions: Sequence[tuple[Scalar, ...]] = (),
-    indent: int = 4,
-) -> tuple[list[str], set[str]]:
-    """Emit `for t in ...` plus region bodies at `indent` spaces."""
-    used: set[str] = set()
-    lines = [t_header]
-    multi = len(regions) > 1
-    inner_indent = indent + 4
-    for index, region in enumerate(regions):
-        body, body_used = _emit_fused_region(
-            plan,
-            region,
-            catalog=catalog,
-            deps=deps,
-            graph=graph,
-            suffix=suffix,
-            partition=partition,
-            area_partitions=area_partitions,
-        )
-        used |= body_used
-        if multi:
-            if index == 0:
-                lines.append(f"{' ' * inner_indent}if {_region_guard(region)}:")
-            elif index + 1 == len(regions):
-                lines.append(f"{' ' * inner_indent}else:")
-            else:
-                lines.append(f"{' ' * inner_indent}elif {_region_guard(region)}:")
-            lines.extend(_indented(body, inner_indent + 4))
-        else:
-            lines.extend(_indented(body, inner_indent))
-    return lines, used
-
-
-def emit_rung2_scc(
-    scc: tuple[str, ...],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    graph: DependencyGraph,
-    plan: FusedPlan | None = None,
-    edges: Sequence[DependenceEdge] | None = None,
-) -> tuple[list[str], set[str]]:
-    """Emit a fused union-domain loop for a fusible zipper SCC.
-
-    Each `FusedRegion` is one residual-order / access-class span. The union
-    schedule is the loop; look-ahead or non-contiguous domains must use
-    `emit_rung3_scc`. A singleton SCC reuses this body as the rung-1 scan:
-    self-lags index the growing buffer at compile-time offsets. A matrix
-    nest wraps that body in `for _area in range(n)` (or unrolls when
-    partitions are not isomorphic).
-
-    Raises:
-        InvertedTreeExportError: The SCC is not fusible, or the residual is a
-            real same-index cycle.
-    """
-    if plan is None:
-        plan = plan_fused_scc(scc, catalog=catalog, graph=graph, edges=edges)
-    if plan is None:
-        raise InvertedTreeExportError(
-            f"zipper series {list(scc)!r} is not fusible; use demand-driven evaluation"
-        )
-    used: set[str] = {"as_measure", "XlError"}
-    with lookup_reuse_scope() as reuse:
-        prefix: list[str] = []
-        for sid in scc:
-            series = catalog.get(sid)
-            prefix.append(f"    {sid}: list[{python_measure_type(series)}] = []")
-        n = len(plan.schedule)
-        seq_params: list[str] = []
-        if len(scc) == 1 and not plan.is_nested:
-            guard_lines, guard_used = emit_sequence_length_guards(
-                catalog.get(scc[0]), deps[scc[0]], catalog
-            )
-            used |= guard_used
-            prefix.extend(guard_lines)
-            seq_params = ["n"]
-            t_header = "    for t in range(n):"
-        else:
-            t_header = f"    for t in range({n}):"
-
-        def _part_locals(indent: str) -> list[str]:
-            return [
-                f"{indent}{sid}_p: list[{python_measure_type(catalog.get(sid))}] = []"
-                for sid in scc
-            ]
-
-        def _part_extend(indent: str) -> list[str]:
-            return [f"{indent}{sid}.extend({sid}_p)" for sid in scc]
-
-        loop_lines: list[str] = []
-        if plan.unroll and plan.is_nested:
-            for part, regions in zip(plan.partitions, plan.partition_regions, strict=True):
-                loop_lines.extend(_part_locals("    "))
-                loop, loop_used = _emit_fused_loop(
-                    plan,
-                    regions,
-                    catalog=catalog,
-                    deps=deps,
-                    graph=graph,
-                    n=n,
-                    t_header=t_header,
-                    suffix="_p",
-                    partition=part,
-                )
-                used |= loop_used
-                loop_lines.extend(loop)
-                loop_lines.extend(_part_extend("    "))
-        elif plan.is_nested:
-            loop_lines.append(f"    for _area in range({len(plan.partitions)}):")
-            loop_lines.extend(_part_locals("        "))
-            loop, loop_used = _emit_fused_loop(
-                plan,
-                plan.regions,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                n=n,
-                t_header="        for t in range(n):"
-                if seq_params
-                else f"        for t in range({n}):",
-                suffix="_p",
-                partition=plan.partitions[0],
-                area_partitions=plan.partitions,
-                indent=8,
-            )
-            used |= loop_used
-            loop_lines.extend(loop)
-            loop_lines.extend(_part_extend("        "))
-        else:
-            loop, loop_used = _emit_fused_loop(
-                plan,
-                plan.regions,
-                catalog=catalog,
-                deps=deps,
-                graph=graph,
-                n=n,
-                t_header=t_header,
-            )
-            used |= loop_used
-            loop_lines.extend(loop)
-        lines = [*prefix, *reuse.emit_table_lines(), *loop_lines]
-        returned_items: list[str] = []
-        for sid in scc:
-            series = catalog.get(sid)
-            if len(series.cells) > 1:
-                partition_order = {part: index for index, part in enumerate(plan.partitions)}
-                emitted_cells = sorted(
-                    series.cells,
-                    key=lambda cell: (
-                        partition_order[schedule_partition(cell, catalog)] if plan.is_nested else 0,
-                        plan.coord_to_t[schedule_axis_coord(cell, catalog)],
-                    ),
-                )
-                if emitted_cells != list(series.cells):
-                    emitted_slots = {cell: index for index, cell in enumerate(emitted_cells)}
-                    order = tuple(emitted_slots[cell] for cell in series.cells)
-                    lines.append(f"    {sid} = [{sid}[slot] for slot in {order!r}]")
-            if series.is_scalar:
-                returned_items.append(f"{sid}[0]")
-                continue
-            returned_items.append(f"tuple({sid})")
-        returned = ", ".join(returned_items)
-        lines.append(f"    return {returned}")
-        return lines, used
