@@ -25,7 +25,6 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
     python_measure_type,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
-    formula_closure,
     leaf_closure,
     node_formula_ast,
     try_formula_ast,
@@ -42,7 +41,6 @@ from excel_grapher.series_bindings.resolve import _WorkbookValues
 if TYPE_CHECKING:
     from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
     from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
-    from excel_grapher.exporter.inverted_tree.emit import _SharedSubplan
     from excel_grapher.grapher.graph import DependencyGraph
 
 _RESERVED_NAMES = frozenset(
@@ -458,11 +456,11 @@ def _schema_checks(params: Sequence[BoundSeries]) -> list[str]:
     ]
 
 
-def _publish_line(series: BoundSeries, constants: Sequence[str] = ()) -> str:
+def _publish_line(series: BoundSeries, constants: str = "()") -> str:
     domain = "None" if series.layout == "scalar" else f"data.{series.series_id.upper()}_REQUIRED"
     return (
         f"@publish(key={series.key_fields!r}, domain={domain}, "
-        f"constants={tuple(constants)!r}, cells=data.{series.series_id.upper()}_CELLS)"
+        f"constants={constants}, cells=data.{series.series_id.upper()}_CELLS)"
     )
 
 
@@ -581,106 +579,78 @@ def _emit_recurrence_group(
 
 def _argument_source(series_id: str, catalog: SeriesCatalog) -> str:
     series = catalog.get(series_id)
-    return f"data.{series_id.upper()}" if series.direction == "constant" else series_id
+    if series.direction == "constant":
+        return f"data.{series_id.upper()}"
+    return f"self.{series_id}"
 
 
-def _named_walk(
-    formula_ids: Sequence[str],
-    *,
-    catalog: SeriesCatalog,
-    deps: Mapping[str, SeriesDeps],
-    scc_map: Mapping[str, tuple[str, ...]],
-    subplans: Sequence[_SharedSubplan],
-    bound: set[str],
-) -> list[str]:
-    """Call named functions in dependency order, splicing shared prefixes when ready."""
-    lines: list[str] = []
-    formula_set = set(formula_ids)
-    applicable = [plan for plan in subplans if set(plan.formula_ids) <= formula_set]
-    owned = {sid for plan in applicable for sid in plan.formula_ids}
-    spliced: set[str] = set()
-    covered: set[str] = set()
-
-    def flush() -> None:
-        for plan in applicable:
-            if plan.name in spliced:
-                continue
-            if not all(sid in bound for sid in plan.param_ids):
-                continue
-            args = ", ".join(f"{sid}={sid}" for sid in plan.param_ids)
-            targets = ", ".join(plan.returns)
-            lines.append(f"    {targets} = {plan.name}({args})")
-            bound.update(plan.returns)
-            covered.update(plan.formula_ids)
-            spliced.add(plan.name)
-
-    emitted_groups: set[tuple[str, ...]] = set()
-    for series_id in formula_ids:
-        flush()
-        if series_id in covered or series_id in owned:
-            continue
-        if catalog.get(series_id).graph_cells == frozenset():
-            continue
-        scc = scc_map.get(series_id, (series_id,))
-        if len(scc) > 1:
-            if scc in emitted_groups:
-                continue
-            emitted_groups.add(scc)
-            params = scc_external_params(scc, deps, catalog.order)
-            args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in params)
-            result = f"{scan_function_name(scc)}_result"
-            lines.append(f"    {result} = internals.{scan_function_name(scc)}({args})")
-            for sid in scc:
-                lines.append(f"    {sid} = {result}.{sid}")
-                bound.add(sid)
-            continue
-        params = deps[series_id].param_ids
-        args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in params)
-        lines.append(f"    {series_id} = internals.{series_id}({args})")
-        bound.add(series_id)
-    flush()
-    missing = [plan.name for plan in applicable if plan.name not in spliced]
-    if missing:
-        raise InvertedTreeExportError(f"shared prefixes could not be spliced: {missing}")
-    return lines
-
-
-def _input_checks(leaves: Sequence[str], catalog: SeriesCatalog) -> tuple[list[str], set[str]]:
-    """Validate schemas and declared domains, then apply scalar value maps."""
+def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
+    """Validate one input's schema and declared domain, then apply its value map."""
     lines: list[str] = []
     used: set[str] = set()
-    for series_id in leaves:
-        series = catalog.get(series_id)
-        if series.direction != "input":
-            continue
-        if series.layout != "scalar":
-            lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
-        domain = measure_domain_from_series(series.raw)
-        if domain is not None:
-            used.add("require_input_domain")
-            if series.layout == "scalar":
-                lines.append(
-                    f"    require_input_domain({series_id}, {domain!r}, series_id={series_id!r})"
-                )
-            else:
-                # Restrict validation to this extraction's required domain;
-                # wider source tensors retain their off-graph observations.
-                coord = "_input_coordinate"
-                while coord in catalog.series:
-                    coord += "_"
-                lines.extend(
-                    [
-                        f"    for {coord} in data.{series_id.upper()}_REQUIRED:",
-                        f"        require_input_domain({series_id}[{coord}], {domain!r}, series_id={series_id!r} + repr({coord}))",
-                    ]
-                )
-        mapping = input_value_map_from_series(series.raw)
-        if mapping is not None:
-            used.add("apply_input_value_map")
+    series_id = series.series_id
+    if series.layout != "scalar":
+        lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
+    domain = measure_domain_from_series(series.raw)
+    if domain is not None:
+        used.add("require_input_domain")
+        if series.layout == "scalar":
             lines.append(
-                f"    {series_id} = apply_input_value_map({series_id}, {mapping!r}, series_id={series_id!r})"
+                f"    require_input_domain({series_id}, {domain!r}, series_id={series_id!r})"
             )
+        else:
+            # Restrict validation to this extraction's required domain;
+            # wider source tensors retain their off-graph observations.
+            lines.extend(
+                [
+                    f"    for coordinate in data.{series_id.upper()}_REQUIRED:",
+                    f"        require_input_domain({series_id}[coordinate], {domain!r}, series_id={series_id!r} + repr(coordinate))",
+                ]
+            )
+    mapping = input_value_map_from_series(series.raw)
+    if mapping is not None:
+        used.add("apply_input_value_map")
+        lines.append(
+            f"    return apply_input_value_map({series_id}, {mapping!r}, series_id={series_id!r})"
+        )
+    else:
+        lines.append(f"    return {series_id}")
     return lines, used
+
+
+def _model_attribute(
+    series: BoundSeries, deps: Mapping[str, SeriesDeps], catalog: SeriesCatalog
+) -> list[str]:
+    series_id = series.series_id
+    args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids)
+    return [
+        "    @cached_property",
+        f"    def {series_id}(self) -> {_annotation(series)}:",
+        f"        return internals.{series_id}({args})",
+    ]
+
+
+def _model_recurrence_group(
+    scc: tuple[str, ...], deps: Mapping[str, SeriesDeps], catalog: SeriesCatalog
+) -> list[str]:
+    name = scan_function_name(scc)
+    params = scc_external_params(scc, deps, catalog.order)
+    args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in params)
+    lines = [
+        "    @cached_property",
+        f"    def _{name}(self) -> internals.{_result_type(scc)}:",
+        f"        return internals.{name}({args})",
+    ]
+    for sid in scc:
+        lines.extend(
+            [
+                "",
+                "    @cached_property",
+                f"    def {sid}(self) -> {_annotation(catalog.get(sid))}:",
+                f"        return self._{name}.{sid}",
+            ]
+        )
+    return lines
 
 
 def emit_named_api(
@@ -688,119 +658,92 @@ def emit_named_api(
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
-    """Emit public `compute_*` orchestrators over the named calculation functions."""
-    from excel_grapher.exporter.inverted_tree.emit import (
-        _group_key,
-        _plan_shared_subplans,
-        _union_formula_ids,
-        _union_leaves,
-    )
-
-    deps_map = dict(deps)
-    scc_dict = dict(scc_map)
-    subplans = _plan_shared_subplans(catalog, deps_map, scc_dict)
-    functions: list[str] = []
+    """Emit the memoized `Model` and the public `compute_*` functions over it."""
     used: set[str] = {"publish"}
-    for plan in subplans:
-        params = [catalog.get(sid) for sid in plan.param_ids]
-        returns = (
-            _annotation(catalog.get(plan.returns[0]))
-            if len(plan.returns) == 1
-            else "tuple[" + ", ".join(_annotation(catalog.get(sid)) for sid in plan.returns) + "]"
-        )
-        body = _named_walk(
-            plan.formula_ids,
-            catalog=catalog,
-            deps=deps_map,
-            scc_map=scc_dict,
-            subplans=(),
-            bound=set(plan.param_ids),
-        )
-        consumers = ", ".join(f"`{sid}`" for sid in sorted(plan.consumers))
-        functions.append(
-            "\n".join(
-                [
-                    _signature(plan.name, params, returns),
-                    f'    """Evaluate the shared formula prefix of {consumers}."""',
-                    *body,
-                    f"    return {', '.join(plan.returns)}",
-                ]
-            )
-        )
-    groups: dict[tuple[str, ...], list[BoundSeries]] = {}
-    for output in catalog.output_series():
-        groups.setdefault(_group_key(output, catalog=catalog, deps=deps_map), []).append(output)
-    compute_names: list[str] = []
-    runner_index = 0
-    for members in groups.values():
-        if len(members) == 1:
-            output = members[0]
-            leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps_map)
-            checks, check_used = _input_checks(leaves, catalog)
-            used |= check_used
-            body = _named_walk(
-                formula_closure(output.series_id, catalog=catalog, deps=deps_map, scc_map=scc_dict),
-                catalog=catalog,
-                deps=deps_map,
-                scc_map=scc_dict,
-                subplans=subplans,
-                bound={sid for sid in leaves if catalog.get(sid).direction == "input"},
-            )
-            source, name = _public_function(
-                output, leaves, catalog, [*checks, *body, f"    return {output.series_id}"]
-            )
-            functions.append(source)
-            compute_names.append(name)
+    inputs = [s for s in _retained(catalog) if s.direction == "input"]
+    checks: list[str] = []
+    checked: list[str] = []
+    for series in inputs:
+        body, check_used = _input_check(series)
+        if len(body) == 1 and body[0] == f"    return {series.series_id}":
             continue
-        runner = f"_run_{runner_index}"
-        runner_index += 1
-        leaves = _union_leaves(members, catalog=catalog, deps=deps_map)
-        inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
-        checks, check_used = _input_checks(leaves, catalog)
         used |= check_used
-        body = _named_walk(
-            _union_formula_ids(members, catalog=catalog, deps=deps_map, scc_map=scc_dict),
-            catalog=catalog,
-            deps=deps_map,
-            scc_map=scc_dict,
-            subplans=subplans,
-            bound={series.series_id for series in inputs},
-        )
-        returns = "tuple[" + ", ".join(_annotation(output) for output in members) + "]"
-        joined = ", ".join(f"`{output.series_id}`" for output in members)
-        functions.append(
+        checked.append(series.series_id)
+        checks.append(
             "\n".join(
                 [
-                    _signature(runner, inputs, returns),
-                    f'    """Evaluate the shared formula closure of {joined}."""',
-                    *checks,
+                    f"def _check_{series.series_id}({series.series_id}: {_annotation(series)}) -> {_annotation(series)}:",
+                    f'    """Validate `{series.series_id}` before the model reads it."""',
                     *body,
-                    f"    return {', '.join(output.series_id for output in members)}",
                 ]
             )
         )
-        for output in members:
-            output_leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps_map)
-            unpack = ", ".join(member.series_id if member is output else "_" for member in members)
-            args = ", ".join(f"{series.series_id}={series.series_id}" for series in inputs)
-            source, name = _public_function(
-                output,
-                output_leaves,
-                catalog,
-                [f"    {unpack} = {runner}({args})", f"    return {output.series_id}"],
-            )
-            functions.append(source)
-            compute_names.append(name)
+    model = [
+        "class Model:",
+        '    """Formula series of the workbook, evaluated on demand from bound inputs.',
+        "",
+        "    Each attribute evaluates its named formula once per model. Only the",
+        "    inputs bound at construction are available, so a public function",
+        "    supplies exactly the leaves of its output.",
+        '    """',
+        "",
+    ]
+    for series in inputs:
+        model.append(f"    {series.series_id}: {_annotation(series)}")
+    model.extend(
+        [
+            "",
+            "    def __init__(self, **inputs: object) -> None:",
+            "        for name, value in inputs.items():",
+            "            check = _CHECKS.get(name)",
+            "            setattr(self, name, value if check is None else check(value))",
+        ]
+    )
+    emitted_groups: set[tuple[str, ...]] = set()
+    for series in _retained_formula_series(catalog):
+        scc = scc_map.get(series.series_id, (series.series_id,))
+        model.append("")
+        if len(scc) > 1:
+            if scc in emitted_groups:
+                model.pop()
+                continue
+            emitted_groups.add(scc)
+            model.extend(_model_recurrence_group(scc, deps, catalog))
+            continue
+        model.extend(_model_attribute(series, deps, catalog))
+    constant_sets: dict[tuple[str, ...], str] = {}
+    functions: list[str] = []
+    compute_names: list[str] = []
+    for output in catalog.output_series():
+        leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
+        constants = tuple(sid for sid in leaves if catalog.get(sid).direction == "constant")
+        if constants not in constant_sets:
+            constant_sets[constants] = f"_CONSTANTS_{len(constant_sets)}"
+        source, name = _public_function(output, leaves, catalog, constant_sets[constants])
+        functions.append(source)
+        compute_names.append(name)
     lines = [
         '"""Generated functions accepting and returning named-coordinate values."""',
         "from __future__ import annotations",
         "from datetime import datetime",
+        "from functools import cached_property",
         "from . import data, internals",
         f"from .runtime import {', '.join(sorted(used))}",
+        "",
+        *checks,
+        "",
+        "_CHECKS = {",
+        *(f"    {sid!r}: _check_{sid}," for sid in checked),
+        "}",
+        "",
+        *(f"{name} = {constants!r}" for constants, name in constant_sets.items()),
+        "",
+        "\n".join(model),
         "",
         "\n\n".join(functions),
         "",
         "__all__ = [",
+        "    'Model',",
         *(f"    {name!r}," for name in compute_names),
         "]",
         "",
@@ -812,17 +755,16 @@ def _public_function(
     output: BoundSeries,
     leaves: Sequence[str],
     catalog: SeriesCatalog,
-    body: Sequence[str],
+    constants: str,
 ) -> tuple[str, str]:
     inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
-    constants = [sid for sid in leaves if catalog.get(sid).direction == "constant"]
     name = output.compute_name or f"compute_{output.series_id}"
     source = "\n".join(
         [
             _publish_line(output, constants),
             _signature(name, inputs, _annotation(output)),
             f'    """Compute `{output.series_id}` using authored coordinate identities."""',
-            *body,
+            f"    return Model(**locals()).{output.series_id}",
         ]
     )
     return source, name

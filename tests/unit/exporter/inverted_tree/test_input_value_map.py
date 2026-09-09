@@ -112,7 +112,6 @@ def test_shared_runner_maps_once_in_evaluation_body(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document)
     api = modules["api.py"]
-    assert "def _run_0" in api
     assert api.count("apply_input_value_map(selector") == 1
     pkg = load_package(modules, tmp_path, name="value_map_shared")
     assert pkg.compute_out_a(selector="High") == 10

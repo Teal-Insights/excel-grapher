@@ -423,8 +423,8 @@ _FAMILY_MIN = 3
 
 
 def scan_function_name(scc: tuple[str, ...]) -> str:
-    """Return the internals helper name for a fused or demand-driven SCC."""
-    return "scan_" + "_".join(scc)
+    """Return the internals helper name for a recurrence group, after its first member."""
+    return "scan_" + scc[0]
 
 
 def scc_external_params(

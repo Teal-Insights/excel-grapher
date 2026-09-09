@@ -276,11 +276,11 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     pkg = load_package(modules, tmp_path, name=f"a11_zip_{orientation[:1]}")
     got = pkg.compute_debt()
     assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx((100.0, 102.0, 104.04))
-    assert "scan_debt_adjustment" in internals
+    assert "scan_debt(" in internals
     assert "data.Debt[" in api
     assert not hasattr(pkg.internals, "debt")
     assert not hasattr(pkg.internals, "adjustment")
-    assert "class ScanDebtAdjustmentResult:" in internals
+    assert "class ScanDebtResult:" in internals
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
@@ -297,10 +297,10 @@ def test_lag_zipper_matches_formula_evaluator(tmp_path: Path, orientation: str) 
     assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx(
         tuple(expected[cell] for cell in debt_cells)
     )
-    result = pkg.internals.scan_debt_adjustment()
+    result = pkg.internals.scan_debt()
     assert "debt[time_period - 1]" in modules["internals.py"]
     assert "adjustment[time_period]" in modules["internals.py"]
-    assert "_kernels.scan_debt_adjustment" not in modules["internals.py"]
+    assert "_kernels.scan_debt" not in modules["internals.py"]
     assert tuple(result.adjustment[year] for year in (2010, 2011)) == pytest.approx(
         tuple(expected[cell] for cell in adj_cells)
     )

@@ -159,7 +159,7 @@ def test_lookup_table_demands_in_scc_producer_before_materialization(
         generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="lookup_scc"
     )
     assert dict(pkg.compute_result().items()) == {(2020,): 2.0, (2021,): 1.0, (2022,): 0.0}
-    named = pkg.internals.scan_values_result(years=pkg.data.YEARS)
+    named = pkg.internals.scan_values(years=pkg.data.YEARS)
     assert dict(named.result.items()) == {(2020,): 2.0, (2021,): 1.0, (2022,): 0.0}
 
 

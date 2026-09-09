@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Sequence
+from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, build_catalog
+from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog, build_catalog
 from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
     all_formula_root_cells,
@@ -16,9 +16,6 @@ from excel_grapher.exporter.inverted_tree.deps import (
     bind_blank_rects,
     collect_all_deps,
     collect_catalog_edges,
-    formula_closure,
-    leaf_closure,
-    plan_indices,
     reset_blank_rects,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -145,211 +142,6 @@ _HOLE_DOC_LABELS = {
     "graph_leaf": "cached literal",
     "bound_leaf": "bound leaf",
 }
-
-
-def _group_key(
-    output: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-) -> tuple[str, ...]:
-    """Return required input ids so baseline never shares a shocked runner."""
-    leaves = leaf_closure(output.series_id, catalog=catalog, deps=deps)
-    return tuple(sid for sid in leaves if catalog.get(sid).direction == "input")
-
-
-def _union_leaves(
-    outputs: Sequence[BoundSeries],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-) -> tuple[str, ...]:
-    seen: set[str] = set()
-    for output in outputs:
-        seen.update(leaf_closure(output.series_id, catalog=catalog, deps=deps))
-    return tuple(sid for sid in catalog.order if sid in seen)
-
-
-def _union_formula_ids(
-    outputs: Sequence[BoundSeries],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    scc_map: dict[str, tuple[str, ...]] | None,
-) -> tuple[str, ...]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for output in outputs:
-        for series_id in formula_closure(
-            output.series_id, catalog=catalog, deps=deps, scc_map=scc_map
-        ):
-            if series_id not in seen:
-                seen.add(series_id)
-                ordered.append(series_id)
-    return tuple(ordered)
-
-
-def _union_plan_indices(
-    outputs: Sequence[BoundSeries],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    scc_map: dict[str, tuple[str, ...]] | None,
-) -> tuple[dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
-    result: dict[str, tuple[int, ...]] = {}
-    call: dict[str, tuple[int, ...]] = {}
-    for output in outputs:
-        got_result, got_call = plan_indices(output, catalog=catalog, deps=deps, scc_map=scc_map)
-        for series_id, indices in got_result.items():
-            previous = result.get(series_id)
-            result[series_id] = tuple(
-                sorted(set(indices) if previous is None else set(previous) | set(indices))
-            )
-        for series_id, indices in got_call.items():
-            previous = call.get(series_id)
-            call[series_id] = tuple(
-                sorted(set(indices) if previous is None else set(previous) | set(indices))
-            )
-    return result, call
-
-
-_MIN_SHARED_FORMULAS = 2
-
-
-@dataclass(slots=True)
-class _SharedSubplan:
-    """A formula prefix shared by outputs with different input closures."""
-
-    name: str
-    formula_ids: tuple[str, ...]
-    consumers: frozenset[str]
-    returns: tuple[str, ...]
-    param_ids: tuple[str, ...]
-    result_indices: dict[str, tuple[int, ...]]
-    call_indices: dict[str, tuple[int, ...]]
-
-
-def _subplan_signature_params(
-    formula_ids: Sequence[str],
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-) -> tuple[str, ...]:
-    """Return input and external-formula params a shared helper must receive."""
-    inside = set(formula_ids)
-    needed: set[str] = set()
-    for series_id in formula_ids:
-        info = deps.get(series_id)
-        if info is None:
-            continue
-        for param_id in info.param_ids:
-            if param_id in inside:
-                continue
-            series = catalog.get(param_id)
-            if series.direction == "constant":
-                continue
-            needed.add(param_id)
-    return tuple(sid for sid in catalog.order if sid in needed)
-
-
-def _subplan_frontier(
-    formula_ids: Sequence[str],
-    *,
-    consumers: frozenset[str],
-    closures: Mapping[str, tuple[str, ...]],
-    deps: dict[str, SeriesDeps],
-) -> tuple[str, ...]:
-    """Return series the helper must hand back to private tails."""
-    inside = set(formula_ids)
-    needed: set[str] = set()
-    for output_id in consumers:
-        for series_id in closures[output_id]:
-            if series_id in inside:
-                if series_id == output_id:
-                    needed.add(series_id)
-                continue
-            info = deps.get(series_id)
-            if info is None:
-                continue
-            for param_id in info.param_ids:
-                if param_id in inside:
-                    needed.add(param_id)
-    if not needed and formula_ids:
-        needed.add(formula_ids[-1])
-    return tuple(sid for sid in formula_ids if sid in needed)
-
-
-def _plan_shared_subplans(
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    scc_map: dict[str, tuple[str, ...]] | None,
-) -> tuple[_SharedSubplan, ...]:
-    """Extract sufficiently large prefixes shared across distinct input closures.
-
-    Outputs that already share a runner (identical required inputs) are one
-    emission site. A helper is emitted only when the same formula series appear
-    in two or more input-closure groups, so baseline/shocked splits stay apart
-    unless they truly share internals. Helpers may interleave with other
-    consumer groups; `_emit_evaluation_body` delays each call until every
-    formula `param_id` is bound.
-    """
-    outputs = list(catalog.output_series())
-    closures: dict[str, tuple[str, ...]] = {}
-    group_keys: dict[str, tuple[str, ...]] = {}
-    for output in outputs:
-        closures[output.series_id] = formula_closure(
-            output.series_id, catalog=catalog, deps=deps, scc_map=scc_map
-        )
-        group_keys[output.series_id] = _group_key(output, catalog=catalog, deps=deps)
-    consumers: dict[str, set[str]] = {}
-    for output_id, formula_ids in closures.items():
-        for series_id in formula_ids:
-            if series_id == output_id:
-                continue
-            consumers.setdefault(series_id, set()).add(output_id)
-    mapping = scc_map or {}
-    dropped: set[str] = set()
-    seen_units: set[tuple[str, ...]] = set()
-    for unit in mapping.values():
-        if len(unit) <= 1 or unit in seen_units:
-            continue
-        seen_units.add(unit)
-        member_consumers = [consumers.get(member, set()) for member in unit]
-        if any(group != member_consumers[0] for group in member_consumers):
-            dropped.update(unit)
-    by_consumers: dict[frozenset[str], list[str]] = {}
-    for series_id, group in consumers.items():
-        if series_id in dropped or len(group) < 2:
-            continue
-        keys = {group_keys[output_id] for output_id in group}
-        if len(keys) < 2:
-            continue
-        by_consumers.setdefault(frozenset(group), []).append(series_id)
-    subplans: list[_SharedSubplan] = []
-    index = 0
-    for group in sorted(by_consumers, key=lambda item: (-len(item), tuple(sorted(item)))):
-        series_ids = set(by_consumers[group])
-        sample = min(group)
-        ordered = tuple(sid for sid in closures[sample] if sid in series_ids)
-        if len(ordered) < _MIN_SHARED_FORMULAS:
-            continue
-        members = [catalog.get(output_id) for output_id in sorted(group)]
-        result_indices, call_indices = _union_plan_indices(
-            members, catalog=catalog, deps=deps, scc_map=scc_map
-        )
-        subplans.append(
-            _SharedSubplan(
-                name=f"_shared_{index}",
-                formula_ids=ordered,
-                consumers=group,
-                returns=_subplan_frontier(ordered, consumers=group, closures=closures, deps=deps),
-                param_ids=_subplan_signature_params(ordered, catalog=catalog, deps=deps),
-                result_indices=result_indices,
-                call_indices=call_indices,
-            )
-        )
-        index += 1
-    return tuple(subplans)
 
 
 def emit_init_module(catalog: SeriesCatalog) -> str:

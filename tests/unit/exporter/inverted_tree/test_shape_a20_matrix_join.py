@@ -217,7 +217,7 @@ def test_matrix_zipper_emits_rung_2_and_matches_evaluator(tmp_path: Path, orient
     assert adj_coords != list(range(min(adj_coords), max(adj_coords) + 1))
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "scan_debt_adjustment" in internals or "scan_adjustment_debt" in internals
+    assert "scan_debt(" in internals or "scan_adjustment(" in internals
     pkg = load_package(modules, tmp_path, name=f"a20_zip_{orientation[:1]}")
     addresses = list(oriented_addresses(_zipper_debt_addresses(), orientation))
     expected = _evaluator_values(workbook, addresses)

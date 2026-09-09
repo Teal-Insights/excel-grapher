@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import inspect
-import re
 from pathlib import Path
 
 import pytest
@@ -33,7 +32,6 @@ def test_shared_engine_emits_one_runner(tmp_path: Path) -> None:
     api = modules["api.py"]
     assert api.count("internals.engine_path(") == 1
     assert api.count("internals.engine_year0(") == 1
-    assert "def _run_" in api
     pkg = load_package(modules, tmp_path, name="a14_a1")
     assert set(required_param_names(pkg.compute_output_path)) == {
         "initial_debt",
@@ -60,11 +58,6 @@ def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:
     baseline_src = inspect.getsource(pkg.compute_output_baseline)
     assert "shocked_path" not in baseline_src
     assert "shock_year" not in baseline_src
-    runner = re.search(r"_run_\d+", baseline_src)
-    if runner is not None:
-        runner_src = inspect.getsource(getattr(pkg.api, runner.group()))
-        assert "shocked_path" not in runner_src
-        assert "shock_year" not in runner_src
     baseline = pkg.compute_output_baseline(value=10.0)
     shocked = pkg.compute_output_shocked(value=10.0, shock_year=1)
     assert (baseline[1], baseline[2]) == pytest.approx((10.0, 10.0))

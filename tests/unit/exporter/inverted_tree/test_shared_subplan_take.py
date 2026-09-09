@@ -8,7 +8,6 @@ slice raises. The helper keeps the window; callers pass the unsliced series.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -111,12 +110,6 @@ def _windowed_prefix_bindings() -> dict:
     )
 
 
-def _helper_name(source: str) -> str:
-    match = re.search(r"^def (_shared_\d+)\(", source, re.MULTILINE)
-    assert match is not None, "expected a shared helper in _kernel.py"
-    return match.group(1)
-
-
 def _source(pkg, name: str, values: tuple[float, ...]):
     domain = getattr(pkg.data, name.upper() + "_DOMAIN")
     return pkg.Tensor.from_records(
@@ -165,9 +158,7 @@ def _take_before_helper_call(api: str, helper: str, series_id: str) -> bool:
 def test_shared_helper_owns_window_caller_passes_catalog_series(tmp_path: Path) -> None:
     modules = generate_inverted(_windowed_prefix_workbook(tmp_path), _windowed_prefix_bindings())
     api = modules["api.py"]
-    helper = _helper_name(api)
-    helper_src = api[api.index(f"def {helper}(") :].split("\ndef ", 1)[0]
-    assert "emp=emp" in helper_src
+    assert "emp=self.emp" in api
     assert "take(" not in api
 
 

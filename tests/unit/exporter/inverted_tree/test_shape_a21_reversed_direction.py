@@ -261,7 +261,7 @@ def test_lookahead_zipper_emits_fused_reversed_loop_and_matches_evaluator(
     assert [value for _, value in got_value.items()] == pytest.approx(
         tuple(expected[c] for c in value_cells)
     )
-    got_flow = pkg.internals.scan_value_flow().flow
+    got_flow = pkg.internals.scan_value().flow
     assert [value for _, value in got_flow.items()] == pytest.approx(
         tuple(expected[c] for c in flow_cells)
     )

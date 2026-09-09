@@ -156,7 +156,7 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
         tuple(expected[cell] for cell in cells[:2])
     )
     assert [value for _, value in got.items()] == pytest.approx((102.0, 104.04))
-    adj = pkg.internals.scan_debt_adj(
+    adj = pkg.internals.scan_debt(
         seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
     ).adj
     assert [value for _, value in adj.items()] == pytest.approx(
@@ -226,7 +226,7 @@ def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> No
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[:3])
     )
-    flow = pkg.internals.scan_value_flow(rate=rate).flow
+    flow = pkg.internals.scan_value(rate=rate).flow
     assert [value for _, value in flow.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[3:])
     )
