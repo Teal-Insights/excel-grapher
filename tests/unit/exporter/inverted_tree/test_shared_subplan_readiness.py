@@ -45,8 +45,9 @@ def test_shared_subplan_waits_for_external_formula_inputs(tmp_path: Path) -> Non
         subplans=(plan,),
     )
     source = "\n".join(body)
-    assert "_shared(" not in source
-    assert source.index("early =") < source.index("middle =") < source.index("late =")
+    assert source.index("middle =") < source.index("_shared(")
+    assert "early =" not in source
+    assert "late = _shared(" in source
 
 
 def test_shared_subplan_does_not_gather_leaves_behind_supplied_formula(tmp_path: Path) -> None:
@@ -90,7 +91,7 @@ def test_shared_subplan_does_not_gather_leaves_behind_supplied_formula(tmp_path:
     assert namespace["_shared"](upstream=6.0) == 7.0
 
 
-def test_shared_subplan_requires_its_declared_producer_window(tmp_path: Path) -> None:
+def test_shared_subplan_splices_when_producer_window_is_bound(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "shared_windows.xlsx",
         {
@@ -141,4 +142,6 @@ def test_shared_subplan_requires_its_declared_producer_window(tmp_path: Path) ->
         subplans=(plan,),
         bound_windows={"upstream": (1, 3)},
     )
-    assert "_shared(" not in "\n".join(body)
+    source = "\n".join(body)
+    assert "late = _shared(" in source
+    assert "take(upstream" not in source
