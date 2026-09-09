@@ -719,7 +719,9 @@ def _plan_shared_subplans(
     Outputs that already share a runner (identical required inputs) are one
     emission site. A helper is emitted only when the same formula series appear
     in two or more input-closure groups, so baseline/shocked splits stay apart
-    unless they truly share internals.
+    unless they truly share internals. Helpers may interleave with other
+    consumer groups; `_emit_evaluation_body` delays each call until every
+    formula `param_id` is bound.
     """
     outputs = list(catalog.output_series())
     closures: dict[str, tuple[str, ...]] = {}
@@ -869,6 +871,119 @@ def _emit_result_return(output: BoundSeries) -> str:
     return f"    return tuple({output.series_id})"
 
 
+def _subplan_unbound_params(plan: _SharedSubplan, locals_bound: set[str]) -> tuple[str, ...]:
+    """Return `plan.param_ids` that are not yet assigned in the evaluation body."""
+    return tuple(param_id for param_id in plan.param_ids if param_id not in locals_bound)
+
+
+def _ready_subplans(
+    applicable: Sequence[_SharedSubplan],
+    *,
+    covered: set[str],
+    locals_bound: set[str],
+) -> list[_SharedSubplan]:
+    """Return unspliced helpers whose parameters are all bound."""
+    ready: list[_SharedSubplan] = []
+    for plan in applicable:
+        if not plan.formula_ids or not covered.isdisjoint(plan.formula_ids):
+            continue
+        if _subplan_unbound_params(plan, locals_bound):
+            continue
+        ready.append(plan)
+    return ready
+
+
+def _owning_subplan(
+    series_id: str,
+    *,
+    applicable: Sequence[_SharedSubplan],
+    covered: set[str],
+) -> _SharedSubplan | None:
+    """Return the unspliced helper that owns `series_id`, if any."""
+    return next(
+        (
+            plan
+            for plan in applicable
+            if plan.formula_ids
+            and series_id in plan.formula_ids
+            and covered.isdisjoint(plan.formula_ids)
+        ),
+        None,
+    )
+
+
+def _splice_subplan(
+    plan: _SharedSubplan,
+    *,
+    body: list[str],
+    covered: set[str],
+    locals_bound: set[str],
+    leaf_source: dict[str, str],
+    local_indices: dict[str, tuple[int, ...]],
+    catalog: SeriesCatalog,
+) -> None:
+    """Append a helper call and mark its formula series as covered.
+
+    Raises:
+        InvertedTreeExportError: A parameter is not in `locals_bound`.
+    """
+    unbound = _subplan_unbound_params(plan, locals_bound)
+    if unbound:
+        raise InvertedTreeExportError(f"{plan.name} would read unbound names {', '.join(unbound)}")
+    args = ", ".join(f"{sid}={leaf_source.get(sid, sid)}" for sid in plan.param_ids)
+    if len(plan.returns) == 1:
+        body.append(f"    {plan.returns[0]} = {plan.name}({args})")
+    else:
+        unpack = ", ".join(plan.returns)
+        body.append(f"    {unpack} = {plan.name}({args})")
+    covered.update(plan.formula_ids)
+    for sid in plan.returns:
+        locals_bound.add(sid)
+        leaf_source[sid] = sid
+        local_indices[sid] = plan.result_indices.get(sid, _identity_indices(catalog.get(sid)))
+
+
+def _assert_subplans_spliced(
+    applicable: Sequence[_SharedSubplan],
+    *,
+    covered: set[str],
+    locals_bound: set[str],
+) -> None:
+    """Fail closed when an applicable helper was never emitted."""
+    for plan in applicable:
+        if not plan.formula_ids or set(plan.formula_ids) <= covered:
+            continue
+        unbound = _subplan_unbound_params(plan, locals_bound)
+        detail = f"unbound params: {', '.join(unbound)}" if unbound else "params were bound"
+        raise InvertedTreeExportError(f"{plan.name} was not spliced ({detail})")
+
+
+def _flush_ready_subplans(
+    applicable: Sequence[_SharedSubplan],
+    *,
+    body: list[str],
+    covered: set[str],
+    locals_bound: set[str],
+    leaf_source: dict[str, str],
+    local_indices: dict[str, tuple[int, ...]],
+    catalog: SeriesCatalog,
+) -> None:
+    """Splice every helper whose parameters are currently bound."""
+    while True:
+        ready = _ready_subplans(applicable, covered=covered, locals_bound=locals_bound)
+        if not ready:
+            return
+        _splice_subplan(
+            ready[0],
+            body=body,
+            covered=covered,
+            locals_bound=locals_bound,
+            leaf_source=leaf_source,
+            local_indices=local_indices,
+            catalog=catalog,
+        )
+
+
 def _emit_evaluation_body(
     *,
     leaves: Sequence[str],
@@ -884,7 +999,12 @@ def _emit_evaluation_body(
     subplans: Sequence[_SharedSubplan] = (),
     bound_windows: Mapping[str, tuple[int, ...]] | None = None,
 ) -> tuple[list[str], set[str], set[str]]:
-    """Emit domain/map guards, length checks, takes, and internals calls."""
+    """Emit domain/map guards, length checks, takes, internals, and helpers.
+
+    Shared `_shared_*` helpers are spliced only after every `param_id` is in
+    `locals_bound`. A helper that owns a series is never inlined, and emit
+    fails closed if an applicable helper cannot be spliced.
+    """
     runtime: set[str] = set()
     body: list[str] = []
     if emit_guards:
@@ -940,32 +1060,18 @@ def _emit_evaluation_body(
     applicable = [plan for plan in subplans if set(plan.formula_ids) <= formula_set]
     covered: set[str] = set()
     for series_id in formula_ids:
+        _flush_ready_subplans(
+            applicable,
+            body=body,
+            covered=covered,
+            locals_bound=locals_bound,
+            leaf_source=leaf_source,
+            local_indices=local_indices,
+            catalog=catalog,
+        )
         if series_id in covered:
             continue
-        matched = next(
-            (
-                plan
-                for plan in applicable
-                if plan.formula_ids
-                and plan.formula_ids[0] == series_id
-                and covered.isdisjoint(plan.formula_ids)
-            ),
-            None,
-        )
-        if matched is not None:
-            args = ", ".join(f"{sid}={leaf_source.get(sid, sid)}" for sid in matched.param_ids)
-            if len(matched.returns) == 1:
-                body.append(f"    {matched.returns[0]} = {matched.name}({args})")
-            else:
-                unpack = ", ".join(matched.returns)
-                body.append(f"    {unpack} = {matched.name}({args})")
-            covered.update(matched.formula_ids)
-            for sid in matched.returns:
-                locals_bound.add(sid)
-                leaf_source[sid] = sid
-                local_indices[sid] = matched.result_indices.get(
-                    sid, _identity_indices(catalog.get(sid))
-                )
+        if _owning_subplan(series_id, applicable=applicable, covered=covered) is not None:
             continue
         scc = mapping.get(series_id, (series_id,))
         if len(scc) > 1:
@@ -1037,6 +1143,16 @@ def _emit_evaluation_body(
             wanted = result_indices.get(series_id)
             if wanted is not None:
                 local_indices[series_id] = wanted
+    _flush_ready_subplans(
+        applicable,
+        body=body,
+        covered=covered,
+        locals_bound=locals_bound,
+        leaf_source=leaf_source,
+        local_indices=local_indices,
+        catalog=catalog,
+    )
+    _assert_subplans_spliced(applicable, covered=covered, locals_bound=locals_bound)
     return body, runtime, locals_bound
 
 
