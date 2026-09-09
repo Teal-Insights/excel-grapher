@@ -413,6 +413,17 @@ def test_set_node_value_does_not_change_other_fields() -> None:
     assert view.is_leaf is False
 
 
+def test_set_node_value_bumps_value_generation() -> None:
+    g = DependencyGraph()
+    g.add_node(_leaf("S", "A", 1, value=10))
+    assert g._value_generation == 0
+
+    g.set_node_value("S!A1", 42)
+    assert g._value_generation == 1
+    g.set_node_value("S!A1", 42)
+    assert g._value_generation == 2
+
+
 # -------------------------------------------------------------------
 # set_node_metadata: durable mutation of metadata
 # -------------------------------------------------------------------
