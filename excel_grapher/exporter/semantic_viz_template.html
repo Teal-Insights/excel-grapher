@@ -1,0 +1,393 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>__TITLE__</title>
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #e8eaed; color: #24292f; }
+    #toolbar {
+      display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+      padding: 8px 12px; background: #f0f2f5; border-bottom: 1px solid #d0d7de;
+      font-size: 13px;
+    }
+    #toolbar label { display: flex; gap: 4px; align-items: center; user-select: none; }
+    #wrap { position: relative; width: 100%; height: calc(100% - 48px); background: #fff; overflow: hidden; }
+    svg { width: 100%; height: 100%; display: block; cursor: grab; }
+    svg.dragging { cursor: grabbing; }
+    .node rect { stroke: #1f2328; stroke-width: 1.2; cursor: pointer; }
+    .node text { font-size: 12px; pointer-events: none; fill: #1f2328; }
+    .bundle { fill: none; stroke-width: 1.8; }
+    .bundle.identity { stroke: #0969da; }
+    .bundle.shift, .bundle.discharged { stroke: #8250df; stroke-dasharray: 6 4; }
+    .bundle.affine { stroke: #1a7f37; }
+    .bundle.gather, .bundle.whole, .bundle.dynamic, .bundle.cross_partition { stroke: #9a6700; }
+    .bundle.guarded { opacity: 0.55; }
+    .dim { opacity: 0.18; }
+    #tip {
+      position: fixed; z-index: 20; pointer-events: none; display: none;
+      max-width: 360px; padding: 8px 10px; background: #fff; border: 1px solid #d0d7de;
+      border-radius: 8px; font-size: 12px; line-height: 1.45; box-shadow: 0 4px 24px rgba(0,0,0,.12);
+    }
+    #stats { margin-left: auto; opacity: 0.8; font-size: 12px; }
+    #banner { color: #9a6700; font-weight: 600; }
+    #search { min-width: 160px; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; }
+    button { font: inherit; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="toolbar">
+    <strong id="docTitle">__TITLE__</strong>
+    <label><input type="checkbox" data-dir="constant" checked /> Constants</label>
+    <label><input type="checkbox" data-dir="input" checked /> Inputs</label>
+    <label><input type="checkbox" data-dir="internal" checked /> Internals</label>
+    <label><input type="checkbox" data-dir="output" checked /> Outputs</label>
+    <input id="search" type="search" placeholder="Highlight series…" />
+    <button id="fit" type="button">Fit</button>
+    <span id="banner"></span>
+    <span id="stats"></span>
+  </div>
+  <div id="wrap">
+    <svg id="canvas" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 920 640" preserveAspectRatio="xMidYMid meet">
+      <defs id="markers"></defs>
+      <g id="viewport"></g>
+    </svg>
+  </div>
+  <div id="tip"></div>
+  <script>
+    /*__BOOTSTRAP__*/
+    /*__SIDECAR__*/
+  </script>
+  <script>
+(function () {
+  'use strict';
+
+  function seriesColor(seriesId, seriesIds) {
+    var i = seriesIds.indexOf(seriesId);
+    if (i < 0) i = 0;
+    var h = (i * 47 + 13) % 360;
+    return 'hsl(' + h + ', 62%, 78%)';
+  }
+
+  async function loadData() {
+    if (window.__VIZ_DATA__) return window.__VIZ_DATA__;
+    var url = window.__VIZ_DATA_URL__;
+    if (!url) throw new Error('No visualization data');
+    var r = await fetch(url);
+    if (!r.ok) throw new Error('Failed to load ' + url);
+    return r.json();
+  }
+
+  function esc(s) {
+    return String(s).replace(/[&<>]/g, function (c) {
+      return ({'&':'&amp;','<':'&lt;','>':'&gt;'})[c];
+    });
+  }
+
+  var MARKER_COLORS = {
+    identity: '#0969da',
+    shift: '#8250df',
+    affine: '#1a7f37',
+    gather: '#9a6700',
+    whole: '#9a6700',
+    dynamic: '#9a6700',
+    cross_partition: '#9a6700'
+  };
+
+  function addArrowMarker(defs, id, color) {
+    var marker = document.createElementNS('http://www.w3.org/2000/svg', 'marker');
+    marker.setAttribute('id', id);
+    marker.setAttribute('viewBox', '0 0 12 12');
+    marker.setAttribute('refX', '12');
+    marker.setAttribute('refY', '6');
+    marker.setAttribute('markerWidth', '16');
+    marker.setAttribute('markerHeight', '16');
+    marker.setAttribute('markerUnits', 'userSpaceOnUse');
+    marker.setAttribute('orient', 'auto');
+    marker.setAttribute('overflow', 'visible');
+    var tip = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    tip.setAttribute('d', 'M 0 1 L 12 6 L 0 11 z');
+    tip.setAttribute('fill', color);
+    marker.appendChild(tip);
+    defs.appendChild(marker);
+  }
+
+  function nodeLabel(n) {
+    if (n.is_remainder) return 'unbound (' + n.cell_count + ')';
+    if (n.id !== n.series_id) return n.series_id + ' [' + n.start + ':' + n.stop + ']';
+    return n.series_id;
+  }
+
+  function boxPoint(fromX, fromY, node) {
+    var dx = node._x - fromX;
+    var dy = node._y - fromY;
+    if (dx === 0 && dy === 0) return {x: node._x, y: node._y};
+    var hw = node._w / 2 + 4;
+    var hh = node._h / 2 + 4;
+    var t = Math.min(hw / Math.abs(dx), hh / Math.abs(dy));
+    return {x: node._x - dx * t, y: node._y - dy * t};
+  }
+
+  function markerFor(b) {
+    var access = b.access || 'identity';
+    if (b.discharged && access === 'identity') return 'arrow-shift';
+    return 'arrow-' + (MARKER_COLORS[access] ? access : 'identity');
+  }
+
+  var DIR_ORDER = {output: 0, internal: 1, input: 2, constant: 3, remainder: 4};
+
+  function dirRank(n) {
+    if (n.is_remainder) return 4;
+    return DIR_ORDER[n.direction] == null ? 1 : DIR_ORDER[n.direction];
+  }
+
+  function layoutByRank(nodes) {
+    var pad = 48;
+    var rankGap = 72;
+    var nodeGap = 16;
+    var byRank = {};
+    nodes.forEach(function (n) {
+      if (n._hidden) return;
+      var rank = n.rank || 0;
+      (byRank[rank] || (byRank[rank] = [])).push(n);
+    });
+    var ranks = Object.keys(byRank).map(Number).sort(function (a, b) { return a - b; });
+    var maxW = 920;
+    ranks.forEach(function (rank, row) {
+      var rowNodes = byRank[rank];
+      rowNodes.sort(function (a, b) {
+        var da = dirRank(a) - dirRank(b);
+        if (da !== 0) return da;
+        if (a.series_id < b.series_id) return -1;
+        if (a.series_id > b.series_id) return 1;
+        return a.start - b.start;
+      });
+      var x = pad;
+      var y = pad + row * rankGap;
+      rowNodes.forEach(function (n) {
+        n._w = Math.max(72, n._label.length * 7 + 16);
+        n._h = 28;
+        n._x = x + n._w / 2;
+        n._y = y;
+        x += n._w + nodeGap;
+      });
+      maxW = Math.max(maxW, x + pad);
+    });
+    var height = Math.max(640, pad + Math.max(ranks.length, 1) * rankGap + pad);
+    return {width: maxW, height: height};
+  }
+
+  function cameraFor(size) {
+    var maxW = 2800;
+    return {
+      x: 0,
+      y: 0,
+      w: Math.min(size.width, maxW),
+      h: size.height
+    };
+  }
+
+  loadData().then(function (data) {
+    var stats = data.stats || {};
+    document.getElementById('stats').textContent =
+      (stats.statement_count || 0) + ' statements · ' +
+      (stats.bundle_count || 0) + ' bundles · ' +
+      (stats.instance_edge_count || 0) + ' instance edges · ' +
+      (stats.cell_count || 0) + ' bound cells';
+    if ((data.heterogeneous_pairs || []).length) {
+      document.getElementById('banner').textContent =
+        'Heterogeneous partitions: ' + data.heterogeneous_pairs.map(function (p) { return p.join(' ⇄ '); }).join(', ');
+    }
+
+    var svg = document.getElementById('canvas');
+    var viewport = document.getElementById('viewport');
+    var defs = document.getElementById('markers');
+    Object.keys(MARKER_COLORS).forEach(function (access) {
+      addArrowMarker(defs, 'arrow-' + access, MARKER_COLORS[access]);
+    });
+    var nodes = data.nodes || [];
+    var bundles = data.bundles || [];
+    var seriesIds = [];
+    nodes.forEach(function (n) {
+      if (seriesIds.indexOf(n.series_id) < 0) seriesIds.push(n.series_id);
+      n._label = nodeLabel(n);
+    });
+    var constantCount = nodes.filter(function (n) { return n.direction === 'constant'; }).length;
+    if (constantCount >= 24) {
+      var constBox = document.querySelector('#toolbar input[data-dir="constant"]');
+      if (constBox) constBox.checked = false;
+    }
+
+    var vb = {x: 0, y: 0, w: 920, h: 640};
+    function setViewBox() {
+      svg.setAttribute('viewBox', vb.x + ' ' + vb.y + ' ' + vb.w + ' ' + vb.h);
+    }
+
+    function enabledDirs() {
+      var dirs = {};
+      document.querySelectorAll('#toolbar input[data-dir]').forEach(function (el) {
+        dirs[el.getAttribute('data-dir')] = el.checked;
+      });
+      return dirs;
+    }
+
+    function query() {
+      return (document.getElementById('search').value || '').trim().toLowerCase();
+    }
+
+    function draw(resetView) {
+      var dirs = enabledDirs();
+      var q = query();
+      nodes.forEach(function (n) {
+        var dir = n.is_remainder ? 'internal' : (n.direction || 'internal');
+        n._hidden = dirs[dir] === false;
+        n._match = !q || String(n.series_id).toLowerCase().indexOf(q) >= 0 || String(n.id).toLowerCase().indexOf(q) >= 0;
+      });
+      var size = layoutByRank(nodes);
+      if (resetView !== false) {
+        vb = cameraFor(size);
+        setViewBox();
+      }
+      while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
+      var byId = {};
+      nodes.forEach(function (n) { byId[n.id] = n; });
+
+      bundles.forEach(function (b) {
+        var a = byId[b.consumer_id];
+        var c = byId[b.producer_id];
+        if (!a || !c || a._hidden || c._hidden) return;
+        var path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        var cls = 'bundle ' + (b.access || 'identity');
+        if (b.discharged) cls += ' discharged';
+        if (b.guarded) cls += ' guarded';
+        if (q && (!a._match || !c._match)) cls += ' dim';
+        path.setAttribute('class', cls);
+        var d;
+        if (a === c) {
+          var r = Math.max(a._w, 56) * 0.45;
+          d = 'M ' + (a._x + 12) + ' ' + (a._y - a._h / 2) +
+            ' C ' + (a._x + r) + ' ' + (a._y - r - 18) + ' ' +
+            (a._x - r) + ' ' + (a._y - r - 18) + ' ' +
+            (a._x - 12) + ' ' + (a._y - a._h / 2);
+        } else {
+          var start = boxPoint(c._x, c._y, a);
+          var end = boxPoint(a._x, a._y, c);
+          var dx = end.x - start.x;
+          var bend = (b.discharged ? 36 : 0) * (dx >= 0 ? 1 : -1);
+          d = 'M ' + start.x + ' ' + start.y +
+            ' Q ' + ((start.x + end.x) / 2 + bend) + ' ' + ((start.y + end.y) / 2) +
+            ' ' + end.x + ' ' + end.y;
+        }
+        path.setAttribute('d', d);
+        path.dataset.tip = [
+          b.consumer_id + ' → ' + b.producer_id,
+          'access=' + b.access + ' distance=' + b.distance + (b.guarded ? ' guarded' : ''),
+          b.instance_edge_count + ' instance edges',
+          'cells ' + b.representative_consumer_cell + ' → ' + b.representative_producer_cell
+        ].join('\n');
+        viewport.appendChild(path);
+        var arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        arrow.setAttribute('d', d);
+        arrow.setAttribute('fill', 'none');
+        arrow.setAttribute('stroke', MARKER_COLORS[b.discharged ? 'shift' : (b.access || 'identity')] || MARKER_COLORS.identity);
+        arrow.setAttribute('stroke-width', '1.8');
+        arrow.setAttribute('stroke-opacity', '0');
+        arrow.setAttribute('marker-end', 'url(#' + markerFor(b) + ')');
+        arrow.setAttribute('pointer-events', 'none');
+        viewport.appendChild(arrow);
+      });
+
+      var showLabels = 12 * (svg.getBoundingClientRect().width / Math.max(vb.w, 1)) >= 7;
+      nodes.forEach(function (n) {
+        if (n._hidden) return;
+        var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+        g.setAttribute('class', 'node' + (q && !n._match ? ' dim' : ''));
+        var rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+        rect.setAttribute('x', n._x - n._w / 2);
+        rect.setAttribute('y', n._y - n._h / 2);
+        rect.setAttribute('width', n._w);
+        rect.setAttribute('height', n._h);
+        rect.setAttribute('rx', 6);
+        rect.setAttribute('fill', n.is_remainder ? '#d0d7de' : seriesColor(n.series_id, seriesIds));
+        if (q && n._match) rect.setAttribute('stroke-width', '2.4');
+        g.appendChild(rect);
+        if (showLabels) {
+          var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('x', n._x);
+          text.setAttribute('y', n._y + 4);
+          text.setAttribute('text-anchor', 'middle');
+          text.textContent = n._label;
+          g.appendChild(text);
+        }
+        g.dataset.tip = [
+          n.id,
+          'series ' + n.series_id + '  direction ' + n.direction,
+          'rank ' + n.rank + '  cells ' + n.cell_count,
+          (n.cells || []).slice(0, 8).join(', ')
+        ].join('\n');
+        viewport.appendChild(g);
+      });
+    }
+
+    draw();
+
+    document.querySelectorAll('#toolbar input[data-dir]').forEach(function (el) {
+      el.addEventListener('change', function () { draw(true); });
+    });
+    document.getElementById('search').addEventListener('input', function () { draw(false); });
+    document.getElementById('fit').addEventListener('click', function () { draw(true); });
+
+    var dragging = false;
+    var last = null;
+    svg.addEventListener('pointerdown', function (ev) {
+      if (ev.button !== 0) return;
+      dragging = true;
+      last = {x: ev.clientX, y: ev.clientY};
+      svg.classList.add('dragging');
+      svg.setPointerCapture(ev.pointerId);
+    });
+    svg.addEventListener('pointerup', function () {
+      dragging = false;
+      last = null;
+      svg.classList.remove('dragging');
+    });
+    svg.addEventListener('pointermove', function (ev) {
+      if (!dragging || !last) return;
+      var rect = svg.getBoundingClientRect();
+      var dx = (ev.clientX - last.x) * (vb.w / rect.width);
+      var dy = (ev.clientY - last.y) * (vb.h / rect.height);
+      vb.x -= dx;
+      vb.y -= dy;
+      last = {x: ev.clientX, y: ev.clientY};
+      setViewBox();
+    });
+    svg.addEventListener('wheel', function (ev) {
+      ev.preventDefault();
+      var rect = svg.getBoundingClientRect();
+      var mx = vb.x + (ev.clientX - rect.left) * (vb.w / rect.width);
+      var my = vb.y + (ev.clientY - rect.top) * (vb.h / rect.height);
+      var factor = ev.deltaY < 0 ? 0.9 : 1.1;
+      vb.w *= factor;
+      vb.h *= factor;
+      vb.x = mx - (ev.clientX - rect.left) * (vb.w / rect.width);
+      vb.y = my - (ev.clientY - rect.top) * (vb.h / rect.height);
+      setViewBox();
+    }, {passive: false});
+
+    var tip = document.getElementById('tip');
+    svg.addEventListener('mousemove', function (ev) {
+      var t = ev.target.closest('[data-tip]');
+      if (!t) { tip.style.display = 'none'; return; }
+      tip.style.display = 'block';
+      tip.style.left = (ev.clientX + 12) + 'px';
+      tip.style.top = (ev.clientY + 12) + 'px';
+      tip.innerHTML = esc(t.dataset.tip).replace(/\n/g, '<br/>');
+    });
+  }).catch(function (err) {
+    document.getElementById('stats').textContent = String(err);
+  });
+})();
+  </script>
+</body>
+</html>

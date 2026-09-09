@@ -31,7 +31,7 @@ focused = select_path_induced_subgraph(
     source_keys=["Sheet1!F1"],
     target_keys=["Sheet1!A1"],
     max_path_length=10,  # optional safety cutoff
-    max_paths=1000,      # optional safety cutoff
+    max_paths=1000,  # optional safety cutoff
 )
 dot = to_graphviz(focused, rankdir="LR")
 ```
@@ -112,8 +112,8 @@ from excel_grapher.grapher import write_web_viz_html
 payload = to_web_viz_payload(
     G,
     layout="stratified_multipartite",  # default
-    layout_config=None,                # plugin-specific options
-    include_module_overlay=True,       # include Louvain partition overlay
+    layout_config=None,  # plugin-specific options
+    include_module_overlay=True,  # include Louvain partition overlay
 )
 write_web_viz_html(payload, "model-web.html", data_mode="auto")
 ```
@@ -127,6 +127,39 @@ This layout is partly intended to inform refactoring and modularization of gener
 - **Rank** in tooltip is node rank metadata and may differ from visual layering for force-directed layouts.
 
 `excel_grapher.exporter.to_web_viz_payload(...)` includes the partition overlay by default and is the canonical payload entrypoint for this visualization workflow. Open the exported HTML directly in a browser. The interface supports panning, zooming, hover tooltips, and a local force-layout mode for inspecting a neighborhood around a selected node.
+
+### Statement graph (series bindings)
+
+Cell-level visualization does not scale to million-edge workbooks. When series bindings exist, build a **statement graph**: one node per formula-shape run, with instance edges deduplicated by access class and schedule distance. Instance partitions stay on the bundles as metadata. Ranks use the distance-zero residual (same legality test as inverted-tree scheduling), not Louvain modules.
+
+```python
+from pathlib import Path
+
+from excel_grapher.exporter import to_semantic_viz_payload, write_semantic_viz_html
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.series_bindings import load_series_bindings
+from excel_grapher.series_bindings.workflow import all_series_targets
+
+bindings = load_series_bindings("bindings.yaml")
+g = create_dependency_graph(
+    "model.xlsx", all_series_targets(bindings, workbook=Path("model.xlsx")), load_values=True
+)
+payload = to_semantic_viz_payload(g, bindings, workbook="model.xlsx")
+write_semantic_viz_html(payload, Path("model-statements.html"))
+```
+
+CLI:
+
+```bash
+uv run excel-grapher bindings viz model.xlsx --bindings bindings.yaml --output model-statements.html
+```
+
+Cell-level `to_web_viz_payload` is unchanged and does not require bindings.
+
+The HTML viewer lays statements out by schedule rank without overlapping labels, starts the camera on a readable window (not the full leaf-rank width), supports pan/zoom, and can hide constant/input/internal/output nodes. Large catalogs uncheck Constants on first paint. Inline HTML samples up to eight cell addresses per node; `payload.to_dict()` and `excel-grapher bindings viz --json` keep the full lists.
+
+On the Q-CRAFT extraction-pipeline workbook (`Teal-Insights/qcraft-extraction-pipeline`, 260,027 bound cells / 489,651 graph edges), catalog analysis plus the statement quotient finished in about 16s and emitted 715 statements / 5,725 bundles (no unbound remainder). That is the heavy-duty check for this overlay; do not vendor that private workbook into excel-grapher.
+
 
 ### Validation via `calcChain.xml`
 
