@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.4.1 (2026-09-09)
+
+### Bug Fixes
+
+- **export**: Splice shared helpers only after params are bound
+  ([#814](https://github.com/Teal-Insights/excel-grapher/pull/814),
+  [`02c5a76`](https://github.com/Teal-Insights/excel-grapher/commit/02c5a76b8ee450be7ba42e26af994d279ee155ae))
+
+
 ## v15.4.0 (2026-09-09)
 
 ### Features
