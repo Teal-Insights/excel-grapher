@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v15.7.0 (2026-09-09)
+
+### Bug Fixes
+
+- **viz**: Size the canvas backing store and cull offscreen edges
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+### Features
+
+- **viz**: Canvas boxes at Q-CRAFT scale, dots on large graphs
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+- **viz**: Canvas painter for large statement graphs
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+- **viz**: Paint large statement graphs on canvas
+  ([#819](https://github.com/Teal-Insights/excel-grapher/pull/819),
+  [`fc37cd4`](https://github.com/Teal-Insights/excel-grapher/commit/fc37cd427b263480d0639835888998d94b501b83))
+
+
 ## v15.6.0 (2026-09-09)
 
 ### Features
