@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Callable
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
-from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.lightweight_viz import VizLimits
+from excel_grapher.grapher.lightweight_viz import VizGraph, VizLimits
 
 LAYOUT_STRATIFIED_MULTIPARTITE = "stratified_multipartite"
 LAYOUT_SPRING = "spring"
@@ -26,10 +26,42 @@ _NX_SUBMODES: tuple[WebVizNxSubmode, ...] = (
 WebVizNxSubmode = Literal["spring", "forceatlas2", "multipartite", "graphviz_dot", "graphviz_sfdp"]
 
 
+class _NxGraphSlot:
+    """Hold a caller-supplied NetworkX graph or build one on first access."""
+
+    __slots__ = ("_value", "_factory")
+
+    def __init__(
+        self,
+        value: Any | None = None,
+        *,
+        factory: Callable[[], Any] | None = None,
+    ) -> None:
+        self._value = value
+        self._factory = factory
+
+    def peek(self) -> Any | None:
+        """Return the graph if it already exists, without building one."""
+        return self._value
+
+    def get(self) -> Any:
+        """Return the NetworkX graph, materializing it if needed."""
+        if self._value is None:
+            if self._factory is None:
+                raise ImportError("networkx is required for this web viz layout")
+            self._value = self._factory()
+        return self._value
+
+
 @dataclass(frozen=True, slots=True)
 class WebVizLayoutContext:
-    dep_graph: DependencyGraph
-    nx_graph: Any
+    """Inputs shared by web layout plugins.
+
+    `nx_graph` is lazy when the payload was built from a `GraphReadView`.
+    Built-in layouts that can run from `dep_graph` must not read `nx_graph`.
+    """
+
+    dep_graph: VizGraph
     keys: list[str]
     limits: VizLimits
     include_guarded_edges: bool
@@ -39,6 +71,21 @@ class WebVizLayoutContext:
     max_formula_length: int | None
     seed: int
     weight_attr: str | None
+    _nx: _NxGraphSlot = field(repr=False, compare=False)
+
+    @property
+    def nx_graph(self) -> Any:
+        """NetworkX DiGraph for plugins that need it.
+
+        When the caller passed a `DiGraph`, this is that object. When the caller
+        passed a `GraphReadView`, the first access runs `to_networkx`.
+        """
+        return self._nx.get()
+
+    @property
+    def provided_nx_graph(self) -> Any | None:
+        """Caller-supplied NetworkX graph, or `None` if input was a graph view."""
+        return self._nx.peek()
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,11 +183,12 @@ def _stratified_multipartite(
     if not ctx.include_module_overlay:
         from excel_grapher.exporter import lightweight_viz as lv
 
-        layout_graph = lv._layout_graph_from_networkx(
-            ctx.nx_graph,
+        layout_graph = lv._layout_work_graph(
+            ctx.dep_graph,
             keys=ctx.keys,
             include_guarded_edges=ctx.include_guarded_edges,
             weight_attr=ctx.weight_attr,
+            nx_graph=ctx.provided_nx_graph,
         )
         from excel_grapher.grapher.lightweight_viz import build_lightweight_viz_core
 
@@ -172,10 +220,11 @@ def _stratified_multipartite(
 
     ma = lv._analyze_modules_directed_louvain_for_viz(
         ctx.dep_graph,
-        ctx.nx_graph,
+        keys=ctx.keys,
         include_guarded_edges_for_partition=ctx.include_guarded_edges_for_partition,
         seed=ctx.seed,
         weight_attr=ctx.weight_attr,
+        nx_graph=ctx.provided_nx_graph,
     )
     pos = _positions_stratified_scc_louvain(ctx.keys, ma)
     return WebVizLayoutResult(
@@ -194,20 +243,22 @@ def _nx_submode(
         from excel_grapher.exporter import lightweight_viz as lv
         from excel_grapher.grapher.lightweight_viz import build_lightweight_viz_core
 
-        work = lv._layout_graph_from_networkx(
-            ctx.nx_graph,
+        work = lv._layout_work_graph(
+            ctx.dep_graph,
             keys=ctx.keys,
             include_guarded_edges=ctx.include_guarded_edges,
             weight_attr=ctx.weight_attr,
+            nx_graph=ctx.provided_nx_graph,
         )
         ma: Any | None
         if ctx.include_module_overlay:
             ma = lv._analyze_modules_directed_louvain_for_viz(
                 ctx.dep_graph,
-                ctx.nx_graph,
+                keys=ctx.keys,
                 include_guarded_edges_for_partition=ctx.include_guarded_edges_for_partition,
                 seed=ctx.seed,
                 weight_attr=ctx.weight_attr,
+                nx_graph=ctx.provided_nx_graph,
             )
             node_rank: tuple[int, ...] = ma.node_rank
         else:

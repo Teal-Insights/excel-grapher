@@ -281,10 +281,9 @@ resolving) from **collapse lineage** (`retained_to_collapsed_sources`,
 `formula_rewrites`) for audit and refactoring. Visualization can use the same facade:
 
 ```python
-from excel_grapher.grapher import to_networkx
 from excel_grapher.exporter import to_web_viz_payload
 
-payload = to_web_viz_payload(to_networkx(projection))
+payload = to_web_viz_payload(projection)
 ```
 
 Projection is an extension point: implement the `ProjectionStep` protocol to build your own

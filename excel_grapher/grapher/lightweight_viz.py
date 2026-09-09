@@ -9,7 +9,7 @@ from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeAlias
 
 from excel_grapher.core.address_keys import (
     CellKey,
@@ -22,8 +22,10 @@ from .formula_label import (
     truncate_formula_display,
     validate_max_formula_length,
 )
-from .graph import DependencyGraph
-from .node import NodeKey, NodeView
+from .graph import DependencyGraph, GraphReadView
+from .node import Node, NodeKey, NodeView, make_cell_node
+
+VizGraph: TypeAlias = GraphReadView | DependencyGraph
 
 # --- Constants ----------------------------------------------------------------
 
@@ -40,7 +42,7 @@ BFS_HORIZONTAL_MIN_SLOT_GAP = 1.0
 # --- CSR / edge extraction ----------------------------------------------------
 
 
-def _resolve_viz_endpoint(graph: DependencyGraph, dep: NodeKey) -> NodeKey | None:
+def _resolve_viz_endpoint(graph: VizGraph, dep: NodeKey) -> NodeKey | None:
     """Map an edge endpoint to a stored graph key when present."""
     nk = normalize_key(dep)
     if nk in graph:
@@ -64,7 +66,7 @@ def _node_sheets(node: NodeView) -> set[str]:
 
 
 def _build_int_adjacencies(
-    graph: DependencyGraph, keys: list[NodeKey], key_id: dict[NodeKey, int]
+    graph: VizGraph, keys: list[NodeKey], key_id: dict[NodeKey, int]
 ) -> tuple[list[list[int]], list[list[int]]]:
     n = len(keys)
     uncond: list[list[int]] = [[] for _ in range(n)]
@@ -92,7 +94,7 @@ def _reverse_adj(adj: list[list[int]], n: int) -> list[list[int]]:
 
 
 def _edge_list_filtered(
-    graph: DependencyGraph,
+    graph: VizGraph,
     keys: list[NodeKey],
     key_id: dict[NodeKey, int],
     *,
@@ -236,7 +238,7 @@ class LightweightVizCore:
 
 
 def _build_out_adj_guarded(
-    graph: DependencyGraph,
+    graph: VizGraph,
     keys: list[NodeKey],
     key_id: dict[NodeKey, int],
     *,
@@ -769,8 +771,31 @@ def _bfs_distances_from_seed_ids(
     return dist
 
 
+def _node_for_viz_subgraph(graph: VizGraph, key: NodeKey) -> Node | None:
+    """Return a `Node` for an induced viz subgraph, copying when needed."""
+    if isinstance(graph, DependencyGraph):
+        return graph._get_internal_node(key)
+    view = graph.get_node(key)
+    if view is None or view.sheet is None or view.column is None or view.row is None:
+        return None
+    return make_cell_node(
+        view.sheet,
+        view.column,
+        view.row,
+        formula=view.formula,
+        normalized_formula=view.normalized_formula,
+        value=view.value,
+        is_leaf=view.is_leaf,
+        is_target=view.is_target,
+        metadata=dict(view.metadata),
+        formula_ast=view.formula_ast,
+        is_array_formula=view.is_array_formula,
+        array_formula_ref=view.array_formula_ref,
+    )
+
+
 def _induced_dependency_subgraph(
-    graph: DependencyGraph,
+    graph: VizGraph,
     keep_keys: set[NodeKey],
 ) -> DependencyGraph:
     sub = DependencyGraph()
@@ -778,7 +803,7 @@ def _induced_dependency_subgraph(
         sub.sheet_order = list(graph.sheet_order)
     sub.leaf_classification = graph.leaf_classification
     for k in graph.keys(order="workbook", source=keep_keys):
-        node = graph._get_internal_node(k)
+        node = _node_for_viz_subgraph(graph, k)
         if node is None:
             continue
         sub.add_node(node)
@@ -796,7 +821,7 @@ def _induced_dependency_subgraph(
 
 
 def build_lightweight_viz_core(
-    graph: DependencyGraph,
+    graph: VizGraph,
     *,
     limits: VizLimits | None = None,
     layout_input: LightweightVizLayoutInput | None = None,

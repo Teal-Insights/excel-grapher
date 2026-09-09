@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 import fastpyxl.utils.cell
 
 from excel_grapher.core.address_keys import normalize_key, parse_address
-from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.graph import DependencyGraph, GraphReadView
 from excel_grapher.grapher.lightweight_viz import (
     WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID,
     LightweightVizCore,
@@ -20,9 +20,11 @@ from excel_grapher.grapher.lightweight_viz import (
     LightweightVizModuleEdge,
     LightweightVizOverlay,
     LightweightVizPayload,
+    VizGraph,
     VizLimits,
     _build_int_adjacencies,
     _edge_list_filtered,
+    _resolve_viz_endpoint,
     assemble_lightweight_viz_payload,
     build_lightweight_viz_core,
     derive_partition_modules_table,
@@ -144,35 +146,96 @@ def _dependency_graph_from_networkx(nx_graph: Any) -> DependencyGraph:
     return dep_graph
 
 
+def _is_nx_digraph(obj: object) -> bool:
+    try:
+        import networkx as nx
+    except Exception:
+        return False
+    return isinstance(obj, nx.DiGraph)
+
+
+def _nx_graph_slot_for_source(
+    graph: VizGraph | Any,
+    *,
+    include_formula_on_nodes: bool,
+    max_formula_length: int | None,
+):
+    from excel_grapher.exporter.web_viz_layout import _NxGraphSlot
+
+    if isinstance(graph, (DependencyGraph, GraphReadView)):
+
+        def _build() -> Any:
+            from excel_grapher.grapher.export import to_networkx
+
+            return to_networkx(
+                graph,
+                include_formula_on_nodes=include_formula_on_nodes,
+                max_formula_length=max_formula_length,
+            )
+
+        return graph, _NxGraphSlot(factory=_build)
+    if _is_nx_digraph(graph):
+        return _dependency_graph_from_networkx(graph), _NxGraphSlot(value=graph)
+    raise TypeError(
+        "to_web_viz_payload expects a DependencyGraph, GraphReadView, or networkx.DiGraph"
+    )
+
+
+def _iter_work_edges(
+    graph: VizGraph,
+    *,
+    keys: list[str],
+    include_guarded_edges: bool,
+    nx_graph: Any | None = None,
+):
+    allowed = set(keys)
+    if nx_graph is not None:
+        for raw_u, raw_v, attrs in nx_graph.edges(data=True):
+            if not isinstance(raw_u, str) or not isinstance(raw_v, str):
+                continue
+            u = normalize_key(raw_u)
+            v = normalize_key(raw_v)
+            if u not in allowed or v not in allowed:
+                continue
+            if not include_guarded_edges and attrs.get("guard") is not None:
+                continue
+            yield u, v, attrs
+        return
+    for u in keys:
+        for dep in graph.get_dependencies(u):
+            resolved = _resolve_viz_endpoint(graph, dep)
+            if resolved is None or resolved not in allowed:
+                continue
+            edge = graph.get_edge_attrs(u, dep)
+            if not include_guarded_edges and edge.guard is not None:
+                continue
+            attrs: dict[str, Any] = {}
+            if edge.guard is not None:
+                attrs["guard"] = edge.guard
+            yield u, resolved, attrs
+
+
 def _module_assignment_directed_louvain(
-    nx_graph: Any,
+    graph: VizGraph,
     *,
     keys: list[str],
     include_guarded_edges: bool,
     seed: int,
     weight_attr: str | None,
+    nx_graph: Any | None = None,
 ) -> tuple[int, ...]:
     try:
         import networkx as nx
     except Exception as e:  # pragma: no cover
         raise ImportError("networkx is required for to_web_viz_payload()") from e
 
-    work = nx.DiGraph()
-    work.add_nodes_from(keys)
-    allowed = set(keys)
-    for raw_u, raw_v, attrs in nx_graph.edges(data=True):
-        if not isinstance(raw_u, str) or not isinstance(raw_v, str):
-            continue
-        u = normalize_key(raw_u)
-        v = normalize_key(raw_v)
-        if u not in allowed or v not in allowed:
-            continue
-        if not include_guarded_edges and attrs.get("guard") is not None:
-            continue
-        if weight_attr is not None and weight_attr in attrs:
-            work.add_edge(u, v, **{weight_attr: attrs[weight_attr]})
-        else:
-            work.add_edge(u, v)
+    work = _layout_work_graph(
+        graph,
+        keys=keys,
+        include_guarded_edges=include_guarded_edges,
+        weight_attr=weight_attr,
+        nx_graph=nx_graph,
+    )
 
     communities = nx.community.louvain_communities(work, seed=seed, weight=weight_attr)
     key_id = {k: i for i, k in enumerate(keys)}
@@ -192,14 +255,14 @@ def _module_assignment_directed_louvain(
 
 
 def _analyze_modules_directed_louvain_for_viz(
-    dep_graph: DependencyGraph,
-    nx_graph: Any,
+    dep_graph: VizGraph,
     *,
+    keys: list[str],
     include_guarded_edges_for_partition: bool,
     seed: int,
     weight_attr: str | None,
+    nx_graph: Any | None = None,
 ) -> ModuleAnalysisResult:
-    keys = sorted(dep_graph)
     n = len(keys)
     if n == 0:
         return ModuleAnalysisResult(
@@ -216,11 +279,12 @@ def _analyze_modules_directed_louvain_for_viz(
     node_rank = tuple(ranks)
 
     module_of = _module_assignment_directed_louvain(
-        nx_graph,
+        dep_graph,
         keys=keys,
         include_guarded_edges=include_guarded_edges_for_partition,
         seed=seed,
         weight_attr=weight_attr,
+        nx_graph=nx_graph,
     )
 
     all_edges = _edge_list_filtered(dep_graph, keys, key_id, include_guarded=True)
@@ -252,27 +316,24 @@ def _analyze_modules_directed_louvain_for_viz(
     )
 
 
-def _layout_graph_from_networkx(
-    nx_graph: Any,
+def _layout_work_graph(
+    graph: VizGraph,
     *,
     keys: list[str],
     include_guarded_edges: bool,
     weight_attr: str | None,
+    nx_graph: Any | None = None,
 ):
     import networkx as nx
 
     work = nx.DiGraph()
     work.add_nodes_from(keys)
-    allowed = set(keys)
-    for raw_u, raw_v, attrs in nx_graph.edges(data=True):
-        if not isinstance(raw_u, str) or not isinstance(raw_v, str):
-            continue
-        u = normalize_key(raw_u)
-        v = normalize_key(raw_v)
-        if u not in allowed or v not in allowed:
-            continue
-        if not include_guarded_edges and attrs.get("guard") is not None:
-            continue
+    for u, v, attrs in _iter_work_edges(
+        graph,
+        keys=keys,
+        include_guarded_edges=include_guarded_edges,
+        nx_graph=nx_graph,
+    ):
         if weight_attr is not None and weight_attr in attrs:
             work.add_edge(u, v, **{weight_attr: attrs[weight_attr]})
         else:
@@ -369,7 +430,7 @@ WebVizPayload = LightweightVizPayload
 
 
 def to_web_viz_payload(
-    nx_graph: Any,
+    graph: VizGraph | Any,
     *,
     max_local_nodes: int | None = None,
     max_local_edges: int | None = None,
@@ -383,11 +444,18 @@ def to_web_viz_payload(
     weight_attr: str | None = None,
     include_module_overlay: bool = True,
 ) -> WebVizPayload:
-    """Build a web-visualization payload from a NetworkX DiGraph.
+    """Build a web-visualization payload from a dependency graph.
+
+    Accepts `DependencyGraph`, any `GraphReadView` (including projections), or a
+    NetworkX `DiGraph` for compatibility. A graph-view caller does not reconstruct
+    the graph from NetworkX. NetworkX is materialized only when the selected
+    layout or partition needs it, or when a plugin reads `ctx.nx_graph`.
 
     Layout is selected by `layout` (registered web layout plugin id or a direct
-    `WebVizLayoutPlugin` callable). The default `stratified_multipartite` uses SCC-condensation longest-path rank on the vertical axis and
-    Louvain community ordering on the horizontal axis when `include_module_overlay` is true.
+    `WebVizLayoutPlugin` callable). The default `stratified_multipartite` uses
+    SCC-condensation longest-path rank on the vertical axis and Louvain
+    community ordering on the horizontal axis when `include_module_overlay`
+    is true.
     Other built-in ids include `spring`, `forceatlas2`, `multipartite` (NetworkX
     `multipartite_layout`), `graphviz_dot`, and `graphviz_sfdp`.
 
@@ -399,12 +467,15 @@ def to_web_viz_payload(
         run_web_viz_layout,
     )
 
-    dep_graph = _dependency_graph_from_networkx(nx_graph)
-    keys = sorted(dep_graph)
+    dep_graph, nx_slot = _nx_graph_slot_for_source(
+        graph,
+        include_formula_on_nodes=include_formula_on_nodes,
+        max_formula_length=max_formula_length,
+    )
+    keys = dep_graph.keys(order="workbook")
     limits = VizLimits(max_local_nodes=max_local_nodes, max_local_edges=max_local_edges)
     ctx = WebVizLayoutContext(
         dep_graph=dep_graph,
-        nx_graph=nx_graph,
         keys=keys,
         limits=limits,
         include_guarded_edges=include_guarded_edges,
@@ -414,6 +485,7 @@ def to_web_viz_payload(
         max_formula_length=max_formula_length,
         seed=seed,
         weight_attr=weight_attr,
+        _nx=nx_slot,
     )
     lay = run_web_viz_layout(ctx, layout, layout_config)
     li: LightweightVizLayoutInput | None
