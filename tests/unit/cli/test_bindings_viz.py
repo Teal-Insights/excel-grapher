@@ -43,6 +43,39 @@ def test_main_bindings_viz_writes_html(tmp_path: Path, capsys: pytest.CaptureFix
     assert "statements=" in captured.out
 
 
+def test_main_bindings_viz_forwards_blank_ranges(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from tests.unit.exporter.inverted_tree.test_blank_ranges import (
+        _mcve_bindings,
+        _mcve_workbook,
+    )
+
+    workbook = _mcve_workbook(tmp_path)
+    bindings_path = tmp_path / "blank.bindings.yaml"
+    bindings_path.write_text(yaml.safe_dump(_mcve_bindings(), sort_keys=False), encoding="utf-8")
+    blanks = tmp_path / "blank_ranges.py"
+    blanks.write_text('BLANK_RANGES = ("Lookup!A1:C3",)\n', encoding="utf-8")
+    out = tmp_path / "blank.html"
+    exit_code = main(
+        [
+            "bindings",
+            "viz",
+            str(workbook),
+            "--bindings",
+            str(bindings_path),
+            "--blank-ranges",
+            str(blanks),
+            "--output",
+            str(out),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert out.is_file()
+    assert "statements=" in captured.out
+
+
 def test_main_bindings_viz_missing_workbook(tmp_path: Path) -> None:
     exit_code = main(
         [

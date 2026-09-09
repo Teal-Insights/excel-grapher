@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
@@ -222,6 +222,7 @@ def validate_bindings_workbook(
     *,
     dynamic_refs: DynamicRefConfig | None = None,
     use_cached_dynamic_refs: bool = True,
+    blank_ranges: Sequence[str] | None = None,
 ) -> BindingsCheckResult:
     """Load bindings, build the graph, and validate against the workbook.
 
@@ -232,6 +233,7 @@ def validate_bindings_workbook(
             when `use_cached_dynamic_refs` is True.
         use_cached_dynamic_refs: Resolve dynamic refs from cached workbook
             values. Default True preserves the previous library behavior.
+        blank_ranges: Sheet-qualified rectangles omitted from the graph.
     """
     bindings = load_series_bindings(bindings_path)
     targets = all_series_targets(bindings, workbook=workbook)
@@ -241,6 +243,7 @@ def validate_bindings_workbook(
         load_values=True,
         use_cached_dynamic_refs=use_cached_dynamic_refs,
         dynamic_refs=dynamic_refs,
+        blank_ranges=blank_ranges,
     )
     report = validate_series_bindings(graph, bindings, workbook=workbook)
     return {

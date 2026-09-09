@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import importlib.util
 from collections.abc import Iterable, Sequence
+from pathlib import Path
 from typing import TypeAlias
 
 import fastpyxl.utils.cell
@@ -64,3 +66,48 @@ def address_in_blank_ranges(address: str, rects: Sequence[BlankRangeRect]) -> bo
     col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
     col = fastpyxl.utils.cell.column_index_from_string(col_str)
     return cell_in_blank_ranges(sheet, int(row), col, rects)
+
+
+class BlankRangesLoadError(ValueError):
+    """Raised when a `BLANK_RANGES` module cannot be loaded."""
+
+
+def load_blank_ranges_module(path: Path | str) -> tuple[str, ...]:
+    """Import a module exposing `BLANK_RANGES: Sequence[str]`.
+
+    Args:
+        path: Filesystem path to a Python module.
+
+    Returns:
+        The module's `BLANK_RANGES` sequence as strings.
+
+    Raises:
+        BlankRangesLoadError: When the file is missing, cannot be imported, or
+            does not expose `BLANK_RANGES` as a sequence of strings.
+    """
+    resolved = Path(path).resolve()
+    if not resolved.is_file():
+        raise BlankRangesLoadError(f"Blank-ranges module not found: {resolved}")
+    spec = importlib.util.spec_from_file_location(
+        f"excel_grapher_blank_ranges_{resolved.stem}",
+        resolved,
+    )
+    if spec is None or spec.loader is None:
+        raise BlankRangesLoadError(f"Cannot load blank-ranges module: {resolved}")
+    module = importlib.util.module_from_spec(spec)
+    try:
+        spec.loader.exec_module(module)
+    except Exception as exc:
+        raise BlankRangesLoadError(
+            f"Failed to import blank-ranges module {resolved}: {exc}"
+        ) from exc
+    table = getattr(module, "BLANK_RANGES", None)
+    if table is None:
+        raise BlankRangesLoadError(
+            f"Blank-ranges module {resolved} must define BLANK_RANGES: Sequence[str]"
+        )
+    if isinstance(table, (str, bytes)) or not isinstance(table, Sequence):
+        raise BlankRangesLoadError(
+            f"BLANK_RANGES in {resolved} must be a sequence of strings, not {type(table).__name__}"
+        )
+    return tuple(str(item) for item in table)

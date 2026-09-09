@@ -144,7 +144,9 @@ bindings = load_series_bindings("bindings.yaml")
 g = create_dependency_graph(
     "model.xlsx", all_series_targets(bindings, workbook=Path("model.xlsx")), load_values=True
 )
-payload = to_semantic_viz_payload(g, bindings, workbook="model.xlsx")
+payload = to_semantic_viz_payload(
+    g, bindings, workbook="model.xlsx", blank_ranges=["Lookup!A1:C3"]
+)
 write_semantic_viz_html(payload, Path("model-statements.html"))
 ```
 
@@ -152,13 +154,14 @@ CLI:
 
 ```bash
 uv run excel-grapher bindings viz model.xlsx --bindings bindings.yaml --output model-statements.html
+uv run excel-grapher bindings viz model.xlsx --bindings bindings --blank-ranges blank_ranges.py --output model-statements.html
 ```
 
 Cell-level `to_web_viz_payload` is unchanged and does not require bindings.
 
 The HTML viewer lays statements out by schedule rank without overlapping labels, starts the camera on a readable window (not the full leaf-rank width), supports pan/zoom, and can hide constant/input/internal/output nodes. Large catalogs uncheck Constants on first paint. Inline HTML samples up to eight cell addresses per node; `payload.to_dict()` and `excel-grapher bindings viz --json` keep the full lists.
 
-On the Q-CRAFT extraction-pipeline workbook (`Teal-Insights/qcraft-extraction-pipeline`, 260,027 bound cells / 489,651 graph edges), catalog analysis plus the statement quotient finished in about 16s and emitted 715 statements / 5,725 bundles (no unbound remainder). That is the heavy-duty check for this overlay; do not vendor that private workbook into excel-grapher.
+On the Q-CRAFT extraction-pipeline workbook (`Teal-Insights/qcraft-extraction-pipeline`, 260,027 bound cells / 489,651 graph edges), catalog analysis plus the statement quotient finished in about 16s and emitted 715 statements / 5,725 bundles (no unbound remainder). Workbooks that declare `BLANK_RANGES` (LIC-DSF) must pass the same list into catalog analysis; otherwise range walks fail-closed on those spacer cells.
 
 
 ### Validation via `calcChain.xml`

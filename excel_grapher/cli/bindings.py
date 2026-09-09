@@ -13,6 +13,7 @@ from typing import Any
 from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
 from excel_grapher.exporter.semantic_viz import to_semantic_viz_payload, write_semantic_viz_html
+from excel_grapher.grapher.blank_ranges import BlankRangesLoadError, load_blank_ranges_module
 from excel_grapher.grapher.constraints import (
     ConstraintsLoadError,
     dynamic_refs_from_path,
@@ -125,6 +126,13 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Also write the statement-graph payload next to --output as .viz.json",
     )
+    viz_parser.add_argument(
+        "--blank-ranges",
+        type=Path,
+        default=None,
+        help="Python module exposing BLANK_RANGES: Sequence[str] "
+        "(sheet-qualified rectangles omitted from the graph)",
+    )
 
 
 def dispatch(args: argparse.Namespace) -> int:
@@ -150,15 +158,21 @@ def cmd_viz(args: argparse.Namespace) -> int:
         return 1
     try:
         dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
-        graph_kwargs = {
-            "dynamic_refs": dynamic_refs,
-            "use_cached_dynamic_refs": args.use_cached_dynamic_refs,
-        }
-        result = validate_bindings_workbook(workbook, bindings_path, **graph_kwargs)
+        blank_ranges = (
+            load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
+        )
+        result = validate_bindings_workbook(
+            workbook,
+            bindings_path,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+            blank_ranges=blank_ranges,
+        )
         payload = to_semantic_viz_payload(
             result["graph"],
             result["bindings"],
             workbook=workbook,
+            blank_ranges=blank_ranges,
         )
         write_semantic_viz_html(payload, args.output, title=workbook.name)
         if args.json:
@@ -185,6 +199,9 @@ def cmd_viz(args: argparse.Namespace) -> int:
     except ConstraintsLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
+    except BlankRangesLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
     except (SemanticCatalogError, InvertedTreeExportError) as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -208,11 +225,12 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     try:
         dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
-        graph_kwargs = {
-            "dynamic_refs": dynamic_refs,
-            "use_cached_dynamic_refs": args.use_cached_dynamic_refs,
-        }
-        result = validate_bindings_workbook(workbook, bindings_path, **graph_kwargs)
+        result = validate_bindings_workbook(
+            workbook,
+            bindings_path,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+        )
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -250,7 +268,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                         module_dir=module_dir,
                         package_name=args.package_name,
                         smoke_test=True,
-                        **graph_kwargs,
+                        dynamic_refs=dynamic_refs,
+                        use_cached_dynamic_refs=args.use_cached_dynamic_refs,
                     )
             else:
                 module_dir = _module_dir(args.emit_dir, args.package_name)
@@ -260,7 +279,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
                     module_dir=module_dir,
                     package_name=args.package_name,
                     smoke_test=True,
-                    **graph_kwargs,
+                    dynamic_refs=dynamic_refs,
+                    use_cached_dynamic_refs=args.use_cached_dynamic_refs,
                 )
                 if not args.json:
                     _write_generated_files(check_result, module_dir)
