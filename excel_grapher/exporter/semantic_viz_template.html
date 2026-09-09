@@ -135,9 +135,16 @@
     return 'arrow-' + (MARKER_COLORS[access] ? access : 'identity');
   }
 
+  var DIR_ORDER = {output: 0, internal: 1, input: 2, constant: 3, remainder: 4};
+
+  function dirRank(n) {
+    if (n.is_remainder) return 4;
+    return DIR_ORDER[n.direction] == null ? 1 : DIR_ORDER[n.direction];
+  }
+
   function layoutByRank(nodes) {
     var pad = 48;
-    var rankGap = 96;
+    var rankGap = 72;
     var nodeGap = 16;
     var byRank = {};
     nodes.forEach(function (n) {
@@ -149,6 +156,13 @@
     var maxW = 920;
     ranks.forEach(function (rank, row) {
       var rowNodes = byRank[rank];
+      rowNodes.sort(function (a, b) {
+        var da = dirRank(a) - dirRank(b);
+        if (da !== 0) return da;
+        if (a.series_id < b.series_id) return -1;
+        if (a.series_id > b.series_id) return 1;
+        return a.start - b.start;
+      });
       var x = pad;
       var y = pad + row * rankGap;
       rowNodes.forEach(function (n) {
@@ -162,6 +176,16 @@
     });
     var height = Math.max(640, pad + Math.max(ranks.length, 1) * rankGap + pad);
     return {width: maxW, height: height};
+  }
+
+  function cameraFor(size) {
+    var maxW = 2800;
+    return {
+      x: 0,
+      y: 0,
+      w: Math.min(size.width, maxW),
+      h: size.height
+    };
   }
 
   loadData().then(function (data) {
@@ -189,6 +213,11 @@
       if (seriesIds.indexOf(n.series_id) < 0) seriesIds.push(n.series_id);
       n._label = nodeLabel(n);
     });
+    var constantCount = nodes.filter(function (n) { return n.direction === 'constant'; }).length;
+    if (constantCount >= 24) {
+      var constBox = document.querySelector('#toolbar input[data-dir="constant"]');
+      if (constBox) constBox.checked = false;
+    }
 
     var vb = {x: 0, y: 0, w: 920, h: 640};
     function setViewBox() {
@@ -217,7 +246,7 @@
       });
       var size = layoutByRank(nodes);
       if (resetView !== false) {
-        vb = {x: 0, y: 0, w: size.width, h: size.height};
+        vb = cameraFor(size);
         setViewBox();
       }
       while (viewport.firstChild) viewport.removeChild(viewport.firstChild);
@@ -269,6 +298,7 @@
         viewport.appendChild(arrow);
       });
 
+      var showLabels = 12 * (svg.getBoundingClientRect().width / Math.max(vb.w, 1)) >= 7;
       nodes.forEach(function (n) {
         if (n._hidden) return;
         var g = document.createElementNS('http://www.w3.org/2000/svg', 'g');
@@ -281,13 +311,15 @@
         rect.setAttribute('rx', 6);
         rect.setAttribute('fill', n.is_remainder ? '#d0d7de' : seriesColor(n.series_id, seriesIds));
         if (q && n._match) rect.setAttribute('stroke-width', '2.4');
-        var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        text.setAttribute('x', n._x);
-        text.setAttribute('y', n._y + 4);
-        text.setAttribute('text-anchor', 'middle');
-        text.textContent = n._label;
         g.appendChild(rect);
-        g.appendChild(text);
+        if (showLabels) {
+          var text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+          text.setAttribute('x', n._x);
+          text.setAttribute('y', n._y + 4);
+          text.setAttribute('text-anchor', 'middle');
+          text.textContent = n._label;
+          g.appendChild(text);
+        }
         g.dataset.tip = [
           n.id,
           'series ' + n.series_id + '  direction ' + n.direction,

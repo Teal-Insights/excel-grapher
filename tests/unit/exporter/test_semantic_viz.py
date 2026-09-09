@@ -175,6 +175,7 @@ def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     assert "addEventListener('wheel'" in html or 'addEventListener("wheel"' in html
     assert 'data-dir="constant"' in html
     assert "layoutByRank" in html
+    assert "cameraFor" in html
 
 
 def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
