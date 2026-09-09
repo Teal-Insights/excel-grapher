@@ -69,29 +69,31 @@ G = to_networkx(g)
 
 For `to_graphviz`, `to_mermaid`, and `to_networkx`, formula cells get a **second line** in the node label (cell address, then the formula). This is on by default (`include_formula_on_nodes=True`). Set `include_formula_on_nodes=False` to use only the cell address. Long formulas are truncated for display: `max_formula_length` defaults to `120` characters; use `None` for no limit. Truncated text ends with `...`.
 
-### Large graphs and module inference: NetworkX visualization
+### Large graphs and module inference
 
 For graphs that are too large for Graphviz or Mermaid, the current recommended workflow is:
 
-- `DependencyGraph` -> `to_networkx(...)` -> `to_web_viz_payload(...)`
+- `DependencyGraph` (or any `GraphReadView`) -> `to_web_viz_payload(...)`
 - `write_web_viz_html(...)` for rendering
 
-This builds a NetworkX graph, converts it to a visualization payload, generates a static HTML viewer that wraps the payload, and opens the generated HTML in a browser. The payload stores node coordinates, module/rank metadata, and edge columns; the browser viewer consumes those directly.
+Pass the graph (or a projection) directly. NetworkX is built only when the chosen layout or partition needs it (Louvain, `spring`, `forceatlas2`, `multipartite`, Graphviz layouts). Custom layout plugins that ignore `ctx.nx_graph` do not force a conversion. `to_networkx` remains available when you want a NetworkX object.
+
+The payload stores node coordinates, module/rank metadata, and edge columns; the browser viewer consumes those directly.
 
 ```python
 from pathlib import Path
 
 from excel_grapher.exporter import to_web_viz_payload
-from excel_grapher.grapher import create_dependency_graph, to_networkx, write_web_viz_html
+from excel_grapher.grapher import create_dependency_graph, write_web_viz_html
 
 g = create_dependency_graph("model.xlsx", ["Sheet1!A1"], load_values=False)
-payload = to_web_viz_payload(to_networkx(g))
+payload = to_web_viz_payload(g)
 write_web_viz_html(payload, Path("model.html"), data_mode="auto")
 ```
 
 ![Lightweight visualization overview](_files/lightweight_viewer.png)
 
-#### Customizing NetworkX visualization
+#### Customizing visualization
 
 The payload builder (`to_web_viz_payload`) and the viewer (`write_web_viz_html`) are powered by plugins. A single default plugin is provided for each, but you are encouraged to write your own. Configure `to_web_viz_payload(...)` via:
 
@@ -110,7 +112,7 @@ from excel_grapher.exporter import to_web_viz_payload, list_web_viz_layouts
 from excel_grapher.grapher import write_web_viz_html
 
 payload = to_web_viz_payload(
-    G,
+    g,
     layout="stratified_multipartite",  # default
     layout_config=None,  # plugin-specific options
     include_module_overlay=True,  # include Louvain partition overlay

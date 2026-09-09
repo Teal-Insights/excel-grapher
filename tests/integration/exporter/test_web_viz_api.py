@@ -1,4 +1,4 @@
-"""NetworkX-first web viz API coverage (integration)."""
+"""Graph-first web viz API coverage (integration)."""
 
 from __future__ import annotations
 
@@ -20,7 +20,9 @@ from excel_grapher.exporter.web_viz_layout import (
     register_web_viz_layout,
     unregister_web_viz_layout,
 )
+from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import lightweight_viz_flat
+from excel_grapher.grapher.node import Node
 
 
 def _build_two_component_digraph():
@@ -50,6 +52,43 @@ def _build_chain_digraph(n: int):
     for r in range(2, n + 1):
         g.add_edge(f"S!A{r}", f"S!A{r - 1}")
     return g
+
+
+def _build_two_component_graph() -> DependencyGraph:
+    graph = DependencyGraph()
+    for col, rows in (("A", (1, 2)), ("B", (1, 2))):
+        graph.add_node(
+            Node(
+                sheet="S",
+                column=col,
+                row=rows[0],
+                formula=None,
+                value=1,
+                is_leaf=True,
+            )
+        )
+        graph.add_node(
+            Node(
+                sheet="S",
+                column=col,
+                row=rows[1],
+                formula=f"={col}1",
+                value=None,
+                is_leaf=False,
+            )
+        )
+        graph.add_edge(f"S!{col}2", f"S!{col}1")
+    return graph
+
+
+def _zero_layout(ctx: WebVizLayoutContext, layout_config: dict[str, object]) -> WebVizLayoutResult:
+    del layout_config
+    return WebVizLayoutResult(
+        positions={key: (0.0, 0.0) for key in ctx.keys},
+        module_analysis=None,
+        annotations={"custom_layout": "direct"},
+        viewer_hints={},
+    )
 
 
 def test_to_web_viz_payload_default_layout_is_stratified_multipartite() -> None:
@@ -121,6 +160,38 @@ def test_to_web_viz_payload_unknown_layout_raises() -> None:
         to_web_viz_payload(g, layout="not.a.registered.id", seed=0)
 
 
+def test_to_web_viz_payload_rejects_unsupported_type() -> None:
+    with pytest.raises(TypeError, match="DependencyGraph"):
+        to_web_viz_payload(object())
+
+
+def test_nx_layouts_do_not_call_to_networkx_for_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    pytest.importorskip("numpy")
+
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("NetworkX layouts must build a work graph from GraphReadView")
+
+    monkeypatch.setattr("excel_grapher.grapher.export.to_networkx", boom)
+    payload = to_web_viz_payload(_build_two_component_graph(), layout="spring", seed=11)
+    assert lightweight_viz_flat(payload).stats.node_count == 4
+
+
+def test_digraph_compat_path_still_reconstructs(monkeypatch: pytest.MonkeyPatch) -> None:
+    import excel_grapher.exporter.lightweight_viz as lv
+
+    calls: list[int] = []
+    real = lv._dependency_graph_from_networkx
+
+    def counted(nx_graph: object) -> object:
+        calls.append(1)
+        return real(nx_graph)
+
+    monkeypatch.setattr(lv, "_dependency_graph_from_networkx", counted)
+    payload = to_web_viz_payload(_build_two_component_digraph(), seed=7)
+    assert calls == [1]
+    assert lightweight_viz_flat(payload).stats.node_count == 4
+
+
 def test_to_web_viz_payload_includes_annotations() -> None:
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, seed=7, layout=LAYOUT_STRATIFIED_MULTIPARTITE)
@@ -143,6 +214,88 @@ def test_to_web_viz_payload_accepts_networkx_digraph() -> None:
     assert flat.stats.module_count == 2
     assert payload.overlays[0].display_name == "Directed Louvain modules"
     assert payload.overlays[0].overlay_id == "webviz.louvain_directed"
+
+
+def test_to_web_viz_payload_accepts_dependency_graph() -> None:
+    graph = _build_two_component_graph()
+    payload = to_web_viz_payload(graph, seed=7)
+    flat = lightweight_viz_flat(payload)
+
+    assert flat.stats.node_count == 4
+    assert flat.stats.module_count == 2
+    assert payload.overlays[0].overlay_id == "webviz.louvain_directed"
+
+
+def test_to_web_viz_payload_skips_nx_reconstruction_for_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("DependencyGraph must not round-trip through NetworkX")
+
+    monkeypatch.setattr(
+        "excel_grapher.exporter.lightweight_viz._dependency_graph_from_networkx",
+        boom,
+    )
+    payload = to_web_viz_payload(_build_two_component_graph(), seed=7)
+    assert lightweight_viz_flat(payload).stats.node_count == 4
+
+
+def test_default_layout_does_not_call_to_networkx_for_graph(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("stratified_multipartite must not force to_networkx()")
+
+    monkeypatch.setattr("excel_grapher.grapher.export.to_networkx", boom)
+    payload = to_web_viz_payload(_build_two_component_graph(), seed=7)
+    assert lightweight_viz_flat(payload).stats.node_count == 4
+
+
+def test_custom_layout_does_not_materialize_networkx(monkeypatch: pytest.MonkeyPatch) -> None:
+    def boom(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("custom layouts that ignore ctx.nx_graph must not convert")
+
+    monkeypatch.setattr("excel_grapher.grapher.export.to_networkx", boom)
+    payload = to_web_viz_payload(
+        _build_two_component_graph(),
+        layout=_zero_layout,
+        include_module_overlay=False,
+    )
+    assert payload.annotations is not None
+    assert payload.annotations["custom_layout"] == "direct"
+
+
+def test_layout_plugin_can_opt_into_nx_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    import excel_grapher.grapher.export as export_mod
+
+    calls: list[int] = []
+    real_to_networkx = export_mod.to_networkx
+
+    def counted_to_networkx(graph: object, **kwargs: object) -> object:
+        calls.append(1)
+        return real_to_networkx(graph, **kwargs)
+
+    monkeypatch.setattr(export_mod, "to_networkx", counted_to_networkx)
+
+    def uses_nx(ctx: WebVizLayoutContext, layout_config: dict[str, object]) -> WebVizLayoutResult:
+        del layout_config
+        nx_graph = ctx.nx_graph
+        assert nx_graph is not None
+        return WebVizLayoutResult(
+            positions={key: (0.0, 0.0) for key in ctx.keys},
+            module_analysis=None,
+            annotations={"nx_nodes": nx_graph.number_of_nodes()},
+            viewer_hints={},
+        )
+
+    payload = to_web_viz_payload(
+        _build_two_component_graph(),
+        layout=uses_nx,
+        include_module_overlay=False,
+    )
+    assert calls == [1]
+    assert payload.annotations is not None
+    assert payload.annotations["nx_nodes"] == 4
 
 
 def test_to_web_viz_payload_is_deterministic_with_seed() -> None:

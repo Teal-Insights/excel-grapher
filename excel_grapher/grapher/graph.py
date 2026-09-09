@@ -113,11 +113,12 @@ class GraphReadView(Protocol):
     """Read-only dependency-graph surface shared by graphs and projected views.
 
     Consumers that only read a graph (for example `to_networkx`,
-    `CodeGenerator`, and `write_workbook`) can accept any object satisfying
-    this protocol, including projected facades such as `ProjectionResult`,
-    without depending on the concrete `DependencyGraph` type. It captures
-    node iteration, node and edge lookups, key listings, leaf/formula/target
-    classification, and evaluation order; mutation is intentionally excluded.
+    `to_web_viz_payload`, `CodeGenerator`, and `write_workbook`) can accept any
+    object satisfying this protocol, including projected facades such as
+    `ProjectionResult`, without depending on the concrete `DependencyGraph`
+    type. It captures node iteration, node and edge lookups, key listings,
+    leaf/formula/target classification, and evaluation order; mutation is
+    intentionally excluded.
     """
 
     leaf_classification: dict[str, str] | None
