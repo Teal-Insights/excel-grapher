@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING
+from itertools import product
+from typing import TYPE_CHECKING, Any, cast
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_cell_coords
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
@@ -528,7 +529,7 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
     )
     if not addresses:
         return "()"
-    named_view = _named_range_view(node, ctx)
+    named_view = _named_range_view(node, ctx, addresses)
     if named_view is not None:
         return named_view
     return _python_tuple([_emit_address(address, ctx) for address in addresses])
@@ -592,72 +593,126 @@ def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
     return _emit_address(cell.address, ctx)
 
 
-def _named_range_view(node: AstNode, ctx: EmitContext) -> str | None:
-    """Emit a lazy `view` when a range lies inside one series' dense block.
+def _named_range_view(
+    node: AstNode,
+    ctx: EmitContext,
+    addresses: Sequence[CanonicalAddress] | None = None,
+) -> str | None:
+    """Emit a lazy `view` when a range enumerates a product of one series' keys.
 
-    Each worksheet axis of the range maps onto the key field that enumerates
-    that axis. A whole axis reads its keys; a partial run is a `span` between
-    the corner keys, expressed relative to the host coordinate so sliding and
-    growing windows share one formula family.
+    Every key field of the owning series selects a run of its axis: the
+    whole axis, a `span` between the corner keys expressed relative to the
+    host coordinate, or one key. Fields that vary down the worksheet form
+    the row product and fields that vary across it the column product; the
+    range lowers only when that product reproduces the cells in worksheet
+    order. Nested layouts select keys per field name.
     """
+    from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
+
     if not isinstance(node, RangeNode) or ctx.coordinate_vars is None or ctx.named_axes is None:
         return None
     start = as_canonical(resolve_cell_ref(node.start_ref, ctx.host_cell))
     end = as_canonical(resolve_cell_ref(node.end_ref, ctx.host_cell))
-    sheet_start, row_start, col_start = parse_cell_coords(start)
-    sheet_end, row_end, col_end = parse_cell_coords(end)
-    if sheet_start != sheet_end:
+    if parse_cell_coords(start)[0] != parse_cell_coords(end)[0]:
         return None
-    first_row, last_row = sorted((row_start, row_end))
-    first_col, last_col = sorted((col_start, col_end))
-    addresses = iter_range_addresses(start, end)
-    if any(address_in_blank_ranges(address, ctx.blank_rects) for address in addresses):
+    if addresses is None:
+        addresses = iter_range_addresses(start, end)
+        if any(address_in_blank_ranges(address, ctx.blank_rects) for address in addresses):
+            return None
+    if not addresses:
         return None
     owner = covering_series(ctx.catalog, addresses)
-    if owner is None or owner.is_scalar or owner.layout == "scalar" or owner.rect is None:
+    if owner is None or owner.is_scalar or owner.layout == "scalar":
         return None
-    try:
-        field_axes = _axis_positions_are_worksheet_positions(owner)
-    except InvertedTreeExportError:
+    indices = [owner.index_of(address) for address in addresses]
+    if any(index is None for index in indices):
         return None
-    if set(field_axes) != set(owner.key_fields):
-        return None
-    start_index = owner.index_of(start)
-    end_index = owner.index_of(end)
-    if start_index is None or end_index is None:
-        return None
-    start_keys = _named_keys(owner, owner.domain[start_index], ctx, ref=CellRefNode(node.start_ref))
-    end_keys = _named_keys(owner, owner.domain[end_index], ctx, ref=CellRefNode(node.end_ref))
-    _sheet, owner_row, owner_col, _row2, _col2 = owner.rect
+    points = [owner.domain[cast(int, index)] for index in indices]
+    first_keys = _named_keys(owner, points[0], ctx, ref=CellRefNode(node.start_ref))
+    last_keys = _named_keys(owner, points[-1], ctx, ref=CellRefNode(node.end_ref))
+    positions = [parse_cell_coords(address)[1:] for address in addresses]
     domain = owner.tensor_domain
-    row_expr = col_expr = None
+    selections: dict[str, str] = {}
+    seen_keys: dict[str, tuple[Any, ...]] = {}
+    row_fields: list[str] = []
+    col_fields: list[str] = []
     for position, key_field in enumerate(owner.key_fields):
-        axis = field_axes[key_field]
-        keys = domain.axes[position].keys
-        constant = ctx.named_axes.constant(domain.axes[position])
-        if axis == "row":
-            first, last = first_row - owner_row, last_row - owner_row
-        else:
-            first, last = first_col - owner_col, last_col - owner_col
-        start_key, end_key = start_keys[position], end_keys[position]
+        axis = domain.axes[position]
+        keys = axis.keys
+        seen = tuple(dict.fromkeys(point[key_field] for point in points))
+        first, last = keys.index(seen[0]), keys.index(seen[-1])
+        if seen != keys[first : last + 1]:
+            return None
+        constant = ctx.named_axes.constant(axis)
+        start_key, end_key = first_keys[position], last_keys[position]
         literal_corners = start_key == repr(keys[first]) and end_key == repr(keys[last])
         if literal_corners and first == 0 and last == len(keys) - 1:
             expr = f"data.{constant}.keys"
-        elif start_key == end_key:
+        elif len(seen) == 1:
             expr = f"({start_key},)"
         else:
             expr = f"{ctx.use('span')}(data.{constant}, {start_key}, {end_key})"
-        if axis == "row":
-            row_expr = expr
+        selections[key_field] = expr
+        seen_keys[key_field] = seen
+        by_row: dict[int, set[Any]] = {}
+        by_col: dict[int, set[Any]] = {}
+        for point, (row, col) in zip(points, positions, strict=True):
+            by_row.setdefault(row, set()).add(point[key_field])
+            by_col.setdefault(col, set()).add(point[key_field])
+        varies_in_row = any(len(values) > 1 for values in by_row.values())
+        varies_in_col = any(len(values) > 1 for values in by_col.values())
+        if varies_in_row and not varies_in_col:
+            col_fields.append(key_field)
+        elif varies_in_col and not varies_in_row:
+            row_fields.append(key_field)
+        elif not varies_in_row and not varies_in_col:
+            (row_fields if _key_field_axis(owner, key_field) == "row" else col_fields).append(
+                key_field
+            )
         else:
-            col_expr = expr
+            return None
+
+    def runs(key_field: str) -> int:
+        return sum(
+            1
+            for before, after in zip(points, points[1:], strict=False)
+            if before[key_field] != after[key_field]
+        )
+
+    row_fields.sort(key=runs)
+    col_fields.sort(key=runs)
+    expected = [
+        {
+            **dict(zip(row_fields, row_keys, strict=True)),
+            **dict(zip(col_fields, col_keys, strict=True)),
+        }
+        for row_keys in product(*(seen_keys[field] for field in row_fields))
+        for col_keys in product(*(seen_keys[field] for field in col_fields))
+    ]
+    actual = [{field: point[field] for field in owner.key_fields} for point in points]
+    if expected != actual:
+        return None
     args = [ctx.param(owner.series_id)]
-    if row_expr is not None:
-        args.append(f"rows={row_expr}")
-    if col_expr is not None:
-        args.append(f"cols={col_expr}")
-    if len(owner.key_fields) == 2 and field_axes[owner.key_fields[0]] == "col":
-        args.append("cols_first=True")
+    if len(row_fields) <= 1 and len(col_fields) <= 1:
+        if row_fields:
+            args.append(f"rows={selections[row_fields[0]]}")
+        if col_fields:
+            args.append(f"cols={selections[col_fields[0]]}")
+        if row_fields and col_fields and owner.key_fields[0] == col_fields[0]:
+            args.append("cols_first=True")
+    else:
+        if row_fields:
+            args.append(
+                "rows={"
+                + ", ".join(f"{field!r}: {selections[field]}" for field in row_fields)
+                + "}"
+            )
+        if col_fields:
+            args.append(
+                "cols={"
+                + ", ".join(f"{field!r}: {selections[field]}" for field in col_fields)
+                + "}"
+            )
     return f"{ctx.use('view')}({', '.join(args)})"
 
 

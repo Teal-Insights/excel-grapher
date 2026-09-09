@@ -14,6 +14,7 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
+from itertools import product
 from types import MappingProxyType
 from typing import Any, Generic, Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
@@ -622,8 +623,8 @@ def span(axis: Axis, first: object, last: object) -> tuple[str | int, ...]:
 
 def view(
     values: Any,
-    rows: Sequence[object] | None = None,
-    cols: Sequence[object] | None = None,
+    rows: Sequence[object] | Mapping[str, Sequence[object]] | None = None,
+    cols: Sequence[object] | Mapping[str, Sequence[object]] | None = None,
     *,
     cols_first: bool = False,
 ) -> Range:
@@ -633,7 +634,20 @@ def view(
     only the cells they select and recurrence readers stay demand-driven.
     The coordinate is the row key followed by the column key; `cols_first`
     reverses that order, and an absent axis contributes no key.
+
+    A block whose rows or columns nest several key fields selects keys per
+    field name: `rows={"COUNTRY": keys, "SCENARIO": keys}` enumerates the
+    product of those selections in worksheet order, and the coordinate is
+    assembled in the order of the series' axes.
     """
+    if isinstance(rows, Mapping) or isinstance(cols, Mapping):
+        if not isinstance(rows, Mapping) or not isinstance(cols, Mapping):
+            raise TypeError("view selects rows and columns by field name together")
+        return _product_view(
+            values,
+            cast(Mapping[str, Sequence[object]], rows),
+            cast(Mapping[str, Sequence[object]], cols),
+        )
     row_keys: Sequence[object] = (None,) if rows is None else rows
     col_keys: Sequence[object] = (None,) if cols is None else cols
 
@@ -656,6 +670,35 @@ def view(
         1,
         len(row_keys),
         len(col_keys),
+        lambda address: None,
+        _coord_resolver=resolve,
+    )
+
+
+def _product_view(
+    values: Any,
+    rows: Mapping[str, Sequence[object]],
+    cols: Mapping[str, Sequence[object]],
+) -> Range:
+    """Lazy block over the product of per-field key selections."""
+    names = tuple(axis.name for axis in values.domain.axes)
+    if set(rows) | set(cols) != set(names) or set(rows) & set(cols):
+        raise ValueError(f"view selections must cover the axes {names!r} once each")
+    fields = (*rows, *cols)
+    row_products: list[tuple[object, ...]] = list(product(*[tuple(keys) for keys in rows.values()]))
+    col_products: list[tuple[object, ...]] = list(product(*[tuple(keys) for keys in cols.values()]))
+
+    def resolve(row: int, column: int) -> FormulaValue:
+        selected = (*row_products[row - 1], *col_products[column - 1])
+        keys = dict(zip(fields, selected, strict=True))
+        return cast(FormulaValue, values[tuple(keys[name] for name in names)])
+
+    return Range(
+        "",
+        1,
+        1,
+        len(row_products),
+        len(col_products),
         lambda address: None,
         _coord_resolver=resolve,
     )
@@ -795,6 +838,11 @@ class CoordinateReader(Generic[T]):
         self._compute = compute
         self._memo: dict[tuple[str, tuple[str | int, ...]], T] = {}
         self._active: set[tuple[str, tuple[str | int, ...]]] = set()
+
+    @property
+    def domain(self) -> Domain:
+        """Coordinates this reader can compute."""
+        return self._domain
 
     def __getitem__(self, key: str | int | tuple[str | int, ...]) -> T:
         coordinate = key if isinstance(key, tuple) else (key,)

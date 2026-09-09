@@ -381,6 +381,24 @@ def _statement_prefix(node: ast.stmt) -> str:
     return type(node).__name__
 
 
+def _body_text(source: str, node: ast.FunctionDef) -> str:
+    """Source of a function body, without the docstring or the signature."""
+    statements = node.body
+    if (
+        statements
+        and isinstance(statements[0], ast.Expr)
+        and isinstance(statements[0].value, ast.Constant)
+        and isinstance(statements[0].value.value, str)
+    ):
+        statements = statements[1:]
+    if not statements:
+        return ""
+    lines = source.splitlines(keepends=True)
+    first, last = statements[0], statements[-1]
+    assert last.end_lineno is not None
+    return "".join(lines[first.lineno - 1 : last.end_lineno])
+
+
 def measure_module(path: Path) -> dict[str, Any]:
     """Attribute a generated module's bytes to statement categories."""
     source = path.read_text(encoding="utf-8")
@@ -394,10 +412,7 @@ def measure_module(path: Path) -> dict[str, Any]:
             counts["functions"] += 1
             for decorator in node.decorator_list:
                 categories["@publish"] += _segment_bytes(source, decorator)
-            body = ast.dump(
-                ast.Module(body=node.body, type_ignores=[]),
-                annotate_fields=False,
-            ).replace(node.name, "<self>")
+            body = _body_text(source, node).replace(node.name, "<self>")
             body_hashes[hashlib.sha256(body.encode()).hexdigest()].append(node.name)
         if isinstance(node, ast.Assign) and _statement_prefix(node) == "_CELLS":
             value = node.value

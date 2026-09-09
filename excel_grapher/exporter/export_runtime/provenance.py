@@ -11,7 +11,9 @@ from __future__ import annotations
 from collections.abc import Iterator, Mapping
 from typing import Any
 
-from .tensor import Axis, Coordinate
+from .tensor import Axis, Coordinate, CoordinateError, Domain
+
+AxisGroup = tuple[tuple[str, ...], Mapping[Any, Any]]
 
 
 def _quote_sheet(sheet: str) -> str:
@@ -158,3 +160,80 @@ def block_cells(
         cols_first=cols_first,
         exceptions=exceptions,
     )
+
+
+class GridCells(Mapping[Coordinate, str]):
+    """Authored cells of a series whose sheet, row, and column each follow a key group.
+
+    Each worksheet position is either fixed or a mapping from the keys of a
+    group of fields to that position. A group with one field maps bare keys;
+    wider groups map key tuples. Coordinates enumerate `domain`, so a sparse
+    domain lists only its authored cells.
+    """
+
+    __slots__ = ("_cols", "_domain", "_exceptions", "_rows", "_sheet")
+
+    def __init__(
+        self,
+        sheet: str | AxisGroup,
+        domain: Domain,
+        *,
+        rows: int | AxisGroup,
+        cols: str | AxisGroup,
+        exceptions: Mapping[Coordinate, str] | None = None,
+    ) -> None:
+        names = tuple(axis.name for axis in domain.axes)
+        self._domain = domain
+        self._sheet = self._group(sheet, names)
+        self._rows = self._group(rows, names)
+        self._cols = self._group(cols, names)
+        self._exceptions = dict(exceptions or {})
+
+    @staticmethod
+    def _group(
+        spec: str | int | AxisGroup, names: tuple[str, ...]
+    ) -> tuple[tuple[int, ...], Mapping[Any, Any]]:
+        if isinstance(spec, tuple):
+            fields, mapping = spec
+            return tuple(names.index(field) for field in fields), mapping
+        return (), {(): spec}
+
+    @staticmethod
+    def _lookup(group: tuple[tuple[int, ...], Mapping[Any, Any]], coordinate: Coordinate) -> Any:
+        positions, mapping = group
+        if len(positions) == 1:
+            return mapping[coordinate[positions[0]]]
+        return mapping[tuple(coordinate[position] for position in positions)]
+
+    def __getitem__(self, coordinate: Coordinate) -> str:
+        if coordinate in self._exceptions:
+            return self._exceptions[coordinate]
+        try:
+            self._domain.position(coordinate)
+            sheet = self._lookup(self._sheet, coordinate)
+            row = self._lookup(self._rows, coordinate)
+            col = self._lookup(self._cols, coordinate)
+        except (CoordinateError, KeyError):
+            raise KeyError(coordinate) from None
+        return f"{_quote_sheet(sheet)}!{col}{row}"
+
+    def __iter__(self) -> Iterator[Coordinate]:
+        return iter(self._domain)
+
+    def __len__(self) -> int:
+        return len(self._domain)
+
+    def __repr__(self) -> str:
+        return f"GridCells({dict(self)!r})"
+
+
+def grid_cells(
+    sheet: str | AxisGroup,
+    domain: Domain,
+    *,
+    rows: int | AxisGroup,
+    cols: str | AxisGroup,
+    exceptions: Mapping[Coordinate, str] | None = None,
+) -> GridCells:
+    """Cells of a series whose worksheet positions follow groups of its key fields."""
+    return GridCells(sheet, domain, rows=rows, cols=cols, exceptions=exceptions)

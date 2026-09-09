@@ -884,7 +884,68 @@ def _provenance_source(series: BoundSeries, named_axes: NamedAxes) -> str:
             if exceptions:
                 arguments.append(f"exceptions={exceptions!r}")
             return f"block_cells({', '.join(arguments)})"
+    grid = _grid_source(series, dict(cells))
+    if grid is not None and len(grid) < len(literal):
+        return grid
     return literal
+
+
+def _grid_source(series: BoundSeries, cells: dict[tuple[Any, ...], str]) -> str | None:
+    """Describe cells whose sheet, row, and column each follow a group of key fields."""
+    from itertools import product
+
+    from excel_grapher.core.address_keys import parse_cell_coords
+    from excel_grapher.exporter.export_runtime.provenance import column_letter
+
+    fields = series.key_fields
+    if not fields:
+        return None
+    parsed = {coord: parse_cell_coords(address) for coord, address in cells.items()}
+    best: tuple[int, list[list[int]], list[dict[Any, Any]], dict[Any, str]] | None = None
+    for assignment in product(range(3), repeat=len(fields)):
+        groups: list[list[int]] = [[], [], []]
+        for position, group in enumerate(assignment):
+            groups[group].append(position)
+        mappings: list[dict[Any, Any]] = [{}, {}, {}]
+        exceptions: dict[Any, str] = {}
+        for coord, located in parsed.items():
+            consistent = True
+            for group, value in enumerate(located):
+                key = tuple(coord[position] for position in groups[group])
+                if mappings[group].setdefault(key, value) != value:
+                    consistent = False
+            if not consistent:
+                exceptions[coord] = cells[coord]
+        if len(exceptions) * 4 > len(cells):
+            continue
+        size = sum(len(mapping) for mapping in mappings) + 4 * len(exceptions)
+        if best is None or size < best[0]:
+            best = (size, groups, mappings, exceptions)
+    if best is None:
+        return None
+    _size, groups, mappings, exceptions = best
+
+    def render(group: int, value: Any) -> str:
+        positions = groups[group]
+        mapping = mappings[group]
+        if not positions:
+            return repr(value(mapping[()]))
+        names = tuple(fields[position] for position in positions)
+        entries = {
+            (key[0] if len(positions) == 1 else key): value(target)
+            for key, target in mapping.items()
+        }
+        return f"({names!r}, {entries!r})"
+
+    arguments = [
+        render(0, str),
+        f"{series.series_id.upper()}_DOMAIN",
+        f"rows={render(1, int)}",
+        f"cols={render(2, column_letter)}",
+    ]
+    if exceptions:
+        arguments.append(f"exceptions={exceptions!r}")
+    return f"grid_cells({', '.join(arguments)})"
 
 
 def _domain_source(series: BoundSeries, named_axes: NamedAxes) -> str:
@@ -913,7 +974,7 @@ def emit_named_data(
         "from contextlib import contextmanager",
         "from datetime import datetime",
         "from typing import TypeVar",
-        "from .provenance import block_cells, column_cells, row_cells",
+        "from .provenance import block_cells, column_cells, grid_cells, row_cells",
         "from .tensor import Axis, Domain, Series, TensorSchema",
         "T = TypeVar('T')",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
@@ -927,10 +988,10 @@ def emit_named_data(
     constant_series: list[BoundSeries] = []
     for series in retained:
         name = series.series_id.upper()
-        lines.append(f"{name}_CELLS = {_provenance_source(series, named_axes)}")
         if series.direction == "constant":
             constant_series.append(series)
         if series.layout == "scalar":
+            lines.append(f"{name}_CELLS = {_provenance_source(series, named_axes)}")
             if series.direction in {"input", "constant"}:
                 constant = name + ("_DEFAULT" if series.direction == "input" else "")
                 value = next(iter(defaults[series.series_id].values()), None)
@@ -952,6 +1013,7 @@ def emit_named_data(
             [
                 f"{name}_DOMAIN = {domain_source}",
                 f"{name}_REQUIRED = {required_source}",
+                f"{name}_CELLS = {_provenance_source(series, named_axes)}",
                 f"{name}_SCHEMA = TensorSchema({series.series_id!r}, {name}_REQUIRED, {_schema_types(series)})",
                 f"class {_facade(series)}(Series[T]):",
                 f'    """`{series.series_id}` by {keyed_by}."""',
