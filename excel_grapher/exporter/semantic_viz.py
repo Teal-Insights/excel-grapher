@@ -25,19 +25,19 @@ SEMANTIC_VIZ_PAYLOAD_VERSION = 1
 SEMANTIC_VIZ_OVERLAY_ID = "webviz.statement_graph"
 SEMANTIC_VIZ_CELL_SAMPLE = 8
 SEMANTIC_VIZ_CAMERA_MAX_WIDTH = 2800
-# One rect per statement plus two SVG paths per bundle (stroke + arrow overlay).
-# Q-CRAFT is ~12k (SVG); LIC-DSF is ~260k (canvas).
-SEMANTIC_VIZ_SVG_MAX_PRIMITIVES = 20_000
+# Boxes while the graph is in the Q-CRAFT neighborhood (~12k primitives).
+# LIC-DSF is ~260k and uses dots and lines on the same canvas.
+SEMANTIC_VIZ_BOX_MAX_PRIMITIVES = 20_000
 
 __all__ = [
+    "SEMANTIC_VIZ_BOX_MAX_PRIMITIVES",
     "SEMANTIC_VIZ_CAMERA_MAX_WIDTH",
     "SEMANTIC_VIZ_CELL_SAMPLE",
     "SEMANTIC_VIZ_OVERLAY_ID",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
-    "SEMANTIC_VIZ_SVG_MAX_PRIMITIVES",
     "SemanticVizPayload",
+    "semantic_viz_primitive_count",
     "semantic_viz_renderer",
-    "semantic_viz_svg_primitive_count",
     "serialize_semantic_viz_json",
     "spread_rank_centers",
     "to_semantic_viz_payload",
@@ -45,26 +45,21 @@ __all__ = [
 ]
 
 
-def semantic_viz_svg_primitive_count(*, statement_count: int, bundle_count: int) -> int:
-    """Return estimated SVG DOM nodes for a statement graph.
-
-    Each bundle currently paints two `path` elements (stroke + arrow overlay)
-    and each statement paints one `rect`.
-    """
+def semantic_viz_primitive_count(*, statement_count: int, bundle_count: int) -> int:
+    """Return statement + twice-bundle size used to pick boxes vs dots."""
     return statement_count + 2 * bundle_count
 
 
-def semantic_viz_renderer(*, statement_count: int, bundle_count: int) -> Literal["svg", "canvas"]:
-    """Choose SVG or canvas from estimated DOM size.
+def semantic_viz_renderer(*, statement_count: int, bundle_count: int) -> Literal["boxes", "dots"]:
+    """Choose labeled boxes or dots-and-lines on the canvas viewer.
 
-    SVG keeps labeled boxes and native hit-testing. Above
-    `SEMANTIC_VIZ_SVG_MAX_PRIMITIVES` the same shapes are painted to a canvas
-    so the browser is not asked to composite hundreds of thousands of elements.
+    Both modes paint to one `<canvas>`. Boxes match the Q-CRAFT labeled-rect
+    look. Above `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES` (LIC-DSF-scale) the same
+    ranks draw as dots and lines so a 5-million-pixel row of labeled boxes is
+    not the default overview.
     """
-    count = semantic_viz_svg_primitive_count(
-        statement_count=statement_count, bundle_count=bundle_count
-    )
-    return "canvas" if count > SEMANTIC_VIZ_SVG_MAX_PRIMITIVES else "svg"
+    count = semantic_viz_primitive_count(statement_count=statement_count, bundle_count=bundle_count)
+    return "dots" if count > SEMANTIC_VIZ_BOX_MAX_PRIMITIVES else "boxes"
 
 
 def spread_rank_centers(
@@ -279,7 +274,7 @@ def write_semantic_viz_html(
         tpl.replace("__TITLE__", title)
         .replace("/*__BOOTSTRAP__*/", bootstrap)
         .replace("/*__SIDECAR__*/", sidecar_js)
-        .replace("__SVG_MAX_PRIMITIVES__", str(SEMANTIC_VIZ_SVG_MAX_PRIMITIVES))
+        .replace("__BOX_MAX_PRIMITIVES__", str(SEMANTIC_VIZ_BOX_MAX_PRIMITIVES))
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

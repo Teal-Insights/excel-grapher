@@ -15,11 +15,11 @@ from excel_grapher.exporter.semantic_graph import (
     build_statement_graph,
 )
 from excel_grapher.exporter.semantic_viz import (
+    SEMANTIC_VIZ_BOX_MAX_PRIMITIVES,
     SEMANTIC_VIZ_CELL_SAMPLE,
     SEMANTIC_VIZ_PAYLOAD_VERSION,
-    SEMANTIC_VIZ_SVG_MAX_PRIMITIVES,
+    semantic_viz_primitive_count,
     semantic_viz_renderer,
-    semantic_viz_svg_primitive_count,
     serialize_semantic_viz_json,
     spread_rank_centers,
     to_semantic_viz_payload,
@@ -174,14 +174,13 @@ def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     html = html_path.read_text(encoding="utf-8")
     assert "debt" in html
     assert "statement_graph" in html or "adjustment" in html
-    assert "marker-end" in html
-    assert "orient', 'auto'" in html or 'orient", "auto"' in html
-    assert "auto-start-reverse" not in html
-    assert "stroke-opacity" in html
+    assert "getContext('2d')" in html
     assert "addEventListener('wheel'" in html or 'addEventListener("wheel"' in html
     assert 'data-dir="constant"' in html
     assert "layoutByRank" in html
     assert "cameraFor" in html
+    assert "roundRect" in html
+    assert "arc(" in html
 
 
 def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
@@ -245,19 +244,19 @@ def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:
     assert "Engine!Z99" in catalog.address_to_id or "Engine!Z99" in statement_graph.remainder_sample
 
 
-def test_qcraft_scale_stays_on_svg() -> None:
-    # Q-CRAFT: 715 statements / 5,725 bundles. SVG first paint was usable.
-    count = semantic_viz_svg_primitive_count(statement_count=715, bundle_count=5725)
-    assert count < SEMANTIC_VIZ_SVG_MAX_PRIMITIVES
-    assert semantic_viz_renderer(statement_count=715, bundle_count=5725) == "svg"
+def test_qcraft_scale_uses_boxes() -> None:
+    # Q-CRAFT: 715 statements / 5,725 bundles. Labeled boxes stay readable.
+    count = semantic_viz_primitive_count(statement_count=715, bundle_count=5725)
+    assert count < SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
+    assert semantic_viz_renderer(statement_count=715, bundle_count=5725) == "boxes"
 
 
-def test_lic_dsf_scale_uses_canvas() -> None:
-    # LIC-DSF statement grain: ~20k statements / ~120k bundles. SVG paint hung.
-    assert semantic_viz_svg_primitive_count(statement_count=20020, bundle_count=119808) > (
-        SEMANTIC_VIZ_SVG_MAX_PRIMITIVES
+def test_lic_dsf_scale_uses_dots() -> None:
+    # LIC-DSF statement grain: ~20k statements / ~120k bundles.
+    assert semantic_viz_primitive_count(statement_count=20020, bundle_count=119808) > (
+        SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
     )
-    assert semantic_viz_renderer(statement_count=20020, bundle_count=119808) == "canvas"
+    assert semantic_viz_renderer(statement_count=20020, bundle_count=119808) == "dots"
 
 
 def test_spread_rank_centers_fills_camera_not_left_edge() -> None:
@@ -291,9 +290,11 @@ def test_html_ships_canvas_painter_and_rank_spread(tmp_path: Path) -> None:
     html = html_path.read_text(encoding="utf-8")
     assert "getContext('2d')" in html
     assert "spreadRank" in html
-    assert "position: absolute" in html
-    assert str(SEMANTIC_VIZ_SVG_MAX_PRIMITIVES) in html
-    assert "roundRect" in html or "quadraticCurveTo" in html
+    assert "paintDots" in html
+    assert "markStyle" in html or "BOX_MAX_PRIMITIVES" in html
+    assert str(SEMANTIC_VIZ_BOX_MAX_PRIMITIVES) in html
+    assert "roundRect" in html
+    assert "arc(" in html
     assert payload.graph.stats.statement_count + 2 * payload.graph.stats.bundle_count < (
-        SEMANTIC_VIZ_SVG_MAX_PRIMITIVES
+        SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
     )
