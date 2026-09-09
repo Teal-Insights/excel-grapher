@@ -11,71 +11,28 @@ Anything else fails closed.
 from __future__ import annotations
 
 import warnings
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+from collections.abc import Sequence
 from typing import TYPE_CHECKING, Literal
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
 from excel_grapher.core.formula_ast import (
-    AstNode,
-    BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
-    UnaryOpNode,
     resolve_cell_ref,
 )
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
-    fit_affine_map,
     preferred_fields,
     schedule_axis_coord,
     schedule_coord,
 )
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
 
 AxisKind = Literal["static", "dynamic", "whole"]
-
-
-@dataclass(frozen=True, slots=True)
-class AxisAccess:
-    """One producer-axis classification.
-
-    `coeff` / `offset` map the host index to the origin (minimum coordinate)
-    of the candidate set on this axis. A static singleton's origin is the
-    member itself. A sliding window stores the window start.
-    """
-
-    kind: AxisKind
-    coeff: int = 0
-    offset: int = 0
-
-    def linear_terms(self) -> tuple[int, int]:
-        """Return `(coeff, offset)` for the candidate-set origin."""
-        return self.coeff, self.offset
-
-
-@dataclass(frozen=True, slots=True)
-class AccessFunction:
-    """Row/column access of `producer_id` from `host_id`."""
-
-    host_id: str
-    producer_id: str
-    row: AxisAccess
-    col: AxisAccess
-    width: int
-
-    def flat_index_expr(self, row_expr: str, col_expr: str) -> str:
-        """Return `row_expr * W + col_expr` for a row-major block."""
-        if self.width <= 1:
-            return row_expr if col_expr in {"0", "0.0"} else f"{row_expr} + {col_expr}"
-        if col_expr in {"0", "0.0"}:
-            return f"{row_expr} * {self.width}"
-        return f"{row_expr} * {self.width} + {col_expr}"
 
 
 def _canonical(address: str) -> CanonicalAddress:
@@ -144,264 +101,6 @@ def offset_target_addresses(
         if DependencyCause.dynamic_offset in provenance.causes:
             found.append(addr)
     return found
-
-
-def _producer_hits(
-    host: BoundSeries,
-    producer: BoundSeries,
-    graph: DependencyGraph,
-    cells: Sequence[CanonicalAddress] | None = None,
-) -> list[set[int]]:
-    """Return catalog indices of `producer` read by each host member in `cells`."""
-    hits: list[set[int]] = []
-    for cell in host.cells if cells is None else cells:
-        found: set[int] = set()
-        for dep in graph.get_dependencies(cell):
-            idx = producer.index_of(_canonical(str(dep)))
-            if idx is not None:
-                found.add(idx)
-        hits.append(found)
-    return hits
-
-
-def _axis_sets(
-    hits: Sequence[set[int]],
-    width: int,
-    *,
-    axis: Literal["row", "col"],
-) -> list[set[int]]:
-    sets: list[set[int]] = []
-    for indices in hits:
-        coords: set[int] = set()
-        for idx in indices:
-            row, col = divmod(idx, width)
-            coords.add(row if axis == "row" else col)
-        sets.append(coords)
-    return sets
-
-
-def _classify_axis(
-    sets: Sequence[set[int]],
-    full_size: int,
-    *,
-    host: BoundSeries,
-    producer: BoundSeries,
-    axis: str,
-) -> AxisAccess:
-    if all(len(item) == 0 for item in sets):
-        raise InvertedTreeExportError(
-            f"series {host.series_id!r} cell {host.cells[0]}: "
-            f"no resolved edges into producer {producer.series_id!r} on {axis}"
-        )
-    if any(len(item) == 0 for item in sets):
-        empty_at = next(index for index, item in enumerate(sets) if not item)
-        raise InvertedTreeExportError(
-            f"series {host.series_id!r} cell {host.cells[empty_at]}: "
-            f"producer {producer.series_id!r} {axis} is not static, dynamic, or whole"
-        )
-    mins = [min(item) for item in sets]
-    origin_pairs = list(enumerate(mins))
-    origin_values = set(mins)
-    origin = (
-        (0, next(iter(origin_values))) if len(origin_values) == 1 else fit_affine_map(origin_pairs)
-    )
-    if full_size > 0 and all(item == set(range(full_size)) for item in sets):
-        return AxisAccess("whole", 0, 0)
-    if all(len(item) == 1 for item in sets):
-        if origin is None:
-            raise InvertedTreeExportError(
-                f"series {host.series_id!r} cell {host.cells[0]}: "
-                f"producer {producer.series_id!r} {axis} is not an affine static map"
-            )
-        return AxisAccess("static", coeff=origin[0], offset=origin[1])
-    if origin is None:
-        raise InvertedTreeExportError(
-            f"series {host.series_id!r} cell {host.cells[0]}: "
-            f"producer {producer.series_id!r} {axis} window is not an affine origin"
-        )
-    return AxisAccess("dynamic", coeff=origin[0], offset=origin[1])
-
-
-def classify_producer_access(
-    host: BoundSeries,
-    producer: BoundSeries,
-    catalog: SeriesCatalog,
-    graph: DependencyGraph,
-    *,
-    cells: Sequence[CanonicalAddress] | None = None,
-) -> AccessFunction:
-    """Classify each producer axis from resolved host→producer edge sets.
-
-    One access function per `(statement, producer)`: pass the statement's
-    `cells` so members of another statement (a recurrence after an `INDEX`
-    seed, say) do not contribute empty hit-sets. Defaults to every member.
-
-    Raises:
-        InvertedTreeExportError: An axis is not `static`, `dynamic`, or `whole`.
-            The message names the host cell and producer.
-    """
-    del catalog
-    width = producer.block_width
-    hits = _producer_hits(host, producer, graph, cells)
-    n_rows = max(1, (len(producer.cells) + width - 1) // width)
-    n_cols = width
-    row = _classify_axis(
-        _axis_sets(hits, width, axis="row"), n_rows, host=host, producer=producer, axis="row"
-    )
-    col = _classify_axis(
-        _axis_sets(hits, width, axis="col"), n_cols, host=host, producer=producer, axis="col"
-    )
-    return AccessFunction(
-        host_id=host.series_id,
-        producer_id=producer.series_id,
-        row=row,
-        col=col,
-        width=width,
-    )
-
-
-def _formula_ast(graph: DependencyGraph, address: CanonicalAddress) -> AstNode:
-    node = graph.get_node(address)
-    ast = getattr(node, "formula_ast", None) if node is not None else None
-    if ast is None:
-        raise InvertedTreeExportError(
-            f"bound cell {address} has no formula AST (cannot classify cell-ref access)"
-        )
-    return ast
-
-
-def _iter_direct_cell_refs(node: AstNode) -> Iterator[CellRefNode]:
-    """Yield each `CellRefNode` in `node` (not range endpoints)."""
-    match node:
-        case CellRefNode():
-            yield node
-        case BinaryOpNode(left=left, right=right):
-            yield from _iter_direct_cell_refs(left)
-            yield from _iter_direct_cell_refs(right)
-        case UnaryOpNode(operand=operand):
-            yield from _iter_direct_cell_refs(operand)
-        case FunctionCallNode(args=args):
-            for arg in args:
-                yield from _iter_direct_cell_refs(arg)
-        case _:
-            return
-
-
-def _cell_ref_walk_slot(ast: AstNode, ref: CellRefNode) -> int:
-    for index, node in enumerate(_iter_direct_cell_refs(ast)):
-        if node is ref:
-            return index
-    for index, node in enumerate(_iter_direct_cell_refs(ast)):
-        if node == ref:
-            return index
-    raise InvertedTreeExportError("cell reference is not a leaf of the host formula")
-
-
-def catalog_index_affine(access: AccessFunction) -> tuple[int, int]:
-    """Return `(coeff, offset)` of the flat catalog index `a*i + b`.
-
-    A cell-ref site is one catalog slot, stored as a static column affine
-    with a static zero row so `row.coeff * width + col.coeff` reconstructs
-    the catalog map.
-    """
-    if access.row.kind != "static" or access.col.kind != "static":
-        raise InvertedTreeExportError(
-            f"series {access.host_id!r}: producer {access.producer_id!r} "
-            "cell-ref access is not static on both axes"
-        )
-    return (
-        access.row.coeff * access.width + access.col.coeff,
-        access.row.offset * access.width + access.col.offset,
-    )
-
-
-def _access_from_catalog_pairs(
-    host: BoundSeries,
-    producer: BoundSeries,
-    pairs: Sequence[tuple[int, int]],
-) -> AccessFunction:
-    if not pairs:
-        raise InvertedTreeExportError(
-            f"series {host.series_id!r}: no resolved cell-ref edges into {producer.series_id!r}"
-        )
-    fitted = fit_affine_map(pairs)
-    if fitted is None:
-        raise InvertedTreeExportError(
-            f"series {host.series_id!r}: producer {producer.series_id!r} "
-            "cell-ref site is not an affine static map"
-        )
-    coeff, offset = fitted
-    return AccessFunction(
-        host_id=host.series_id,
-        producer_id=producer.series_id,
-        row=AxisAccess("static", 0, 0),
-        col=AxisAccess("static", coeff, offset),
-        width=producer.block_width,
-    )
-
-
-def _catalog_pairs_for_slot(
-    host: BoundSeries,
-    producer: BoundSeries,
-    graph: DependencyGraph,
-    cells: Sequence[CanonicalAddress],
-    slot: int,
-) -> list[tuple[int, int]]:
-    pairs: list[tuple[int, int]] = []
-    for cell in cells:
-        refs = list(_iter_direct_cell_refs(_formula_ast(graph, cell)))
-        if slot >= len(refs):
-            continue
-        host_index = host.index_of(cell)
-        prod_index = producer.index_of(as_canonical(resolve_cell_ref(refs[slot], cell)))
-        if host_index is None or prod_index is None:
-            continue
-        pairs.append((host_index, prod_index))
-    return pairs
-
-
-def cell_ref_catalog_pairs(
-    host: BoundSeries,
-    producer: BoundSeries,
-    graph: DependencyGraph,
-    *,
-    host_cell: CanonicalAddress,
-    ref: CellRefNode,
-    cells: Sequence[CanonicalAddress] | None = None,
-) -> list[tuple[int, int]]:
-    """Return `(host_index, producer_index)` for one `CellRefNode` site.
-
-    Sites are matched by walk order over `cells` (the host statement, or
-    every host member when `cells` is omitted).
-    """
-    members = tuple(host.cells if cells is None else cells)
-    slot = _cell_ref_walk_slot(_formula_ast(graph, host_cell), ref)
-    return _catalog_pairs_for_slot(host, producer, graph, members, slot)
-
-
-def classify_cell_ref_access(
-    host: BoundSeries,
-    producer: BoundSeries,
-    catalog: SeriesCatalog,
-    graph: DependencyGraph,
-    *,
-    host_cell: CanonicalAddress,
-    ref: CellRefNode,
-    cells: Sequence[CanonicalAddress] | None = None,
-) -> AccessFunction:
-    """Classify the catalog-index map of one `CellRefNode` site.
-
-    Raises:
-        InvertedTreeExportError: The site is not an affine static catalog map.
-    """
-    del catalog
-    members = tuple(host.cells if cells is None else cells)
-    slot = _cell_ref_walk_slot(_formula_ast(graph, host_cell), ref)
-    return _access_from_catalog_pairs(
-        host,
-        producer,
-        _catalog_pairs_for_slot(host, producer, graph, members, slot),
-    )
 
 
 def _has_schedule_axis(series: BoundSeries, catalog: SeriesCatalog) -> bool:

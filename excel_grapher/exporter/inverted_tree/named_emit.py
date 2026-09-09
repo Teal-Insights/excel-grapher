@@ -238,8 +238,6 @@ def _semantic_body(
             deps=deps,
             host_index=index,
             host_cell=cell,
-            index_var=None,
-            prior_var=None,
             coordinate_vars=names,
             scc_ids=scc_ids | {series.series_id},
             graph=graph,

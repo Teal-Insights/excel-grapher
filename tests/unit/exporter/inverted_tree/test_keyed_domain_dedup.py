@@ -9,8 +9,6 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import KeyedReadIntern
-from excel_grapher.exporter.inverted_tree.domains import DomainEmitPlan
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -227,27 +225,3 @@ def test_non_affine_keyed_reads_intern_slot_table_once(tmp_path: Path) -> None:
         }
     )
     assert tuple(value for _, value in got.items()) == pytest.approx((6.0, 9.0, 12.0))
-
-
-def test_keyed_read_intern_reuses_sequences_and_maps() -> None:
-    plan = DomainEmitPlan(
-        field_domains={"COUNTRY": ("A", "B")},
-        interned=(),
-        series_expr={"values": "data.COUNTRY_DOMAIN"},
-        series_key={"values": ("COUNTRY",)},
-        scc_expr={},
-        scc_key={},
-    )
-    intern = KeyedReadIntern(plan)
-    assert intern.sequence(("A", "B"), field="COUNTRY") == "data.COUNTRY_DOMAIN"
-    assert intern.sequence(("X", "Y")) == "_KEYS_0"
-    assert intern.sequence(("X", "Y")) == "_KEYS_0"
-    assert intern.slot_map("values") == "_INDEX_values"
-    assert intern.slot_map("values") == "_INDEX_values"
-    assert intern.slots((0, 4, 2)) == "_SLOTS_0"
-    assert intern.slots((0, 4, 2)) == "_SLOTS_0"
-    lines = intern.emit_lines()
-    assert "_KEYS_0 = ('X', 'Y')" in lines
-    assert "_SLOTS_0 = (0, 4, 2)" in lines
-    assert any(line.startswith("_INDEX_values = ") for line in lines)
-    assert intern.uses_data

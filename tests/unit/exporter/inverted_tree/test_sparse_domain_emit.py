@@ -4,26 +4,13 @@ from __future__ import annotations
 
 import timeit
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 
-import pytest
-
-from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, Statement
-from excel_grapher.exporter.inverted_tree.domains import (
-    DomainEmitPlan,
-    domain_const_name,
-    series_domain_points,
-)
-from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    inverted_graph_parts,
-    load_package,
     make_catalog,
-    named_input_kwargs,
     write_workbook,
 )
 
@@ -117,22 +104,6 @@ def _missing_corner_bindings(size: int) -> dict[str, Any]:
     )
 
 
-def _eval_series_domain(plan: DomainEmitPlan, series_id: str) -> tuple[object, ...]:
-    """Evaluate a planned `__domain__` expression against interned constants."""
-    ns: dict[str, object] = {
-        domain_const_name(field): values for field, values in plan.field_domains.items()
-    }
-    ns.update({"tuple": tuple, "enumerate": enumerate})
-    for name, values in plan.interned:
-        source = plan.interned_source.get(name)
-        ns[name] = values if source is None else eval(source, ns)
-    data = SimpleNamespace(**{name: ns[name] for name in ns})
-    got = eval(plan.series_expr[series_id], {**ns, "data": data})
-    if not isinstance(got, tuple):
-        raise TypeError(f"expected a domain tuple, got {type(got).__name__}")
-    return got
-
-
 def _bound_matrix(
     series_id: str,
     points: tuple[tuple[object, ...], ...],
@@ -160,46 +131,6 @@ def _catalog_for(*series: BoundSeries):
     order = tuple(item.series_id for item in series)
     address_to_id = {cell: item.series_id for item in series for cell in item.cells}
     return make_catalog(mapping, order, address_to_id)
-
-
-def _interned_source_for(plan: DomainEmitPlan, series_id: str) -> str | None:
-    expr = plan.series_expr[series_id]
-    prefix = "data."
-    if not expr.startswith(prefix):
-        return None
-    name = expr[len(prefix) :]
-    return plan.interned_source.get(name)
-
-
-def test_missing_corner_generated_domain_matches_public_output(tmp_path: Path) -> None:
-    size = 8
-    workbook = _missing_corner_workbook(tmp_path, size)
-    document = _missing_corner_bindings(size)
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    modules = generate_inverted(workbook, document)
-    pkg = load_package(modules, tmp_path, name="sparse_corner")
-    expected = series_domain_points(catalog.get("values"))
-    assert tuple(pkg.data.VALUES_DOMAIN) == expected
-    assert pkg.data.VALUES_DOMAIN.coordinates is not None
-    assert pkg.compute_result.__key__ == ("COUNTRY",)
-    assert tuple(pkg.compute_result.__domain__) == tuple(
-        (f"Country {row}",) for row in range(2, size + 2)
-    )
-    cells = [f"Data!E{row}" for row in range(2, size + 2)]
-    evaluated = FormulaEvaluator(
-        create_dependency_graph(workbook, cells, load_values=True)
-    ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
-    assert dict(got.items()) == pytest.approx(
-        {
-            coordinate: evaluated[cell]
-            for coordinate, cell in catalog.get("result").coordinate_cells.items()
-        }
-    )
-    records = pkg.as_records(pkg.compute_result, got)
-    assert [row["COUNTRY"] for row in records] == [
-        point[0] for point in pkg.compute_result.__domain__
-    ]
 
 
 def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:

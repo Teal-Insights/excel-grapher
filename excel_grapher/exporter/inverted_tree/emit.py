@@ -473,9 +473,8 @@ def generate_inverted_tree_modules(
         graph: Dependency graph covering the binding closure.
         series_bindings: Bindings catalog (inputs, constants, internals, outputs).
         bindings_workbook: Workbook path used to expand `data_range`s.
-        force_rung: Pin every formula SCC to rung 3 (demand-driven), or
-            fuse wherever legal (`2`) and fall through to the auto rung
-            otherwise. `None` selects the strongest legal rung.
+        force_rung: Accepted for compatibility and ignored. Every series is
+            emitted as named coordinate code; recurrences are demand-driven.
         blank_ranges: Sheet-qualified rectangles omitted from the graph that
             resolve as empty (`None`) rather than unbound catalog cells.
             Must match the specs passed to `create_dependency_graph` and

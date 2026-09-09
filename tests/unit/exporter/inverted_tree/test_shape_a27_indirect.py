@@ -8,7 +8,6 @@ from typing import Any, Literal
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.access import classify_producer_access
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -142,14 +141,6 @@ def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
             domain=pkg.data.SRC_DOMAIN, records=(((1,), 10.0), ((2,), 20.0), ((3,), 30.0))
         )
     ) == pytest.approx(expected)
-
-
-def test_literal_access_is_static(tmp_path: Path) -> None:
-    workbook = _literal_workbook(tmp_path)
-    catalog, _deps, graph = inverted_graph_parts(workbook, _literal_bindings())
-    access = classify_producer_access(catalog.get("out"), catalog.get("src"), catalog, graph)
-    assert access.row.kind == "whole"
-    assert access.col.kind == "whole"
 
 
 def test_unbound_indirect_target_fails_closed_naming_host(tmp_path: Path) -> None:

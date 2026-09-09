@@ -1756,24 +1756,6 @@ def _host_slot_pinned_fields(
 _HOST_FOLLOW_UNSET = object()
 
 
-def _host_producer_slots(
-    host: BoundSeries,
-    producer: BoundSeries,
-    edges: Sequence[DependenceEdge],
-) -> dict[int, set[int]]:
-    """Group producer catalog slots by the host member that reads them."""
-    per_host: dict[int, set[int]] = {}
-    for edge in edges:
-        if edge.consumer_id != host.series_id or edge.producer_id != producer.series_id:
-            continue
-        host_index = host.index_of(edge.consumer_cell)
-        producer_index = producer.index_of(edge.producer_cell)
-        if host_index is None or producer_index is None:
-            continue
-        per_host.setdefault(host_index, set()).add(producer_index)
-    return per_host
-
-
 def _host_follow_key_maps(
     host: BoundSeries,
     producer: BoundSeries,

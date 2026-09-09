@@ -87,40 +87,9 @@ def test_row_uses_workbook_geometry_in_categorical_schedule(tmp_path: Path, forc
     for row, label in enumerate(("Cameroon", "Cabo Verde", "Cambodia"), 2):
         assert result[label] == row * 10.0
 
-    from excel_grapher.exporter.inverted_tree.ast_emit import EmitContext, _host_coord_expr
-    from excel_grapher.exporter.inverted_tree.catalog import schedule_axis_coord
-    from excel_grapher.exporter.inverted_tree.schedule import FusedPlan
-    from tests.unit.exporter.inverted_tree.helpers import inverted_graph_parts
-
-    catalog, deps, graph = inverted_graph_parts(workbook, bindings_document(*entries))
-    host = catalog.get("result")
-    schedule = tuple(sorted(schedule_axis_coord(cell, catalog) for cell in host.cells))
-    plan = FusedPlan(scc=("result",), schedule=schedule, domain={"result": (0, 3)}, regions=())
-    ctx = EmitContext(
-        host,
-        catalog,
-        deps["result"],
-        0,
-        host.cells[0],
-        "t",
-        None,
-        fused_mode=True,
-        fused_plan=plan,
-        graph=graph,
-    )
-    expression = _host_coord_expr(ctx, axis="row")
-    for cell in host.cells:
-        t = plan.coord_to_t[schedule_axis_coord(cell, catalog)]
-        assert eval(expression, {"t": t}) == int(cell.rsplit("B", 1)[1])
-
 
 @pytest.mark.parametrize("area,row", [("a", 2), ("b", 3)])
 def test_row_geometry_respects_active_group(tmp_path: Path, area, row) -> None:
-    from excel_grapher.exporter.inverted_tree.ast_emit import EmitContext, _host_coord_expr
-    from excel_grapher.exporter.inverted_tree.catalog import schedule_axis_coord
-    from excel_grapher.exporter.inverted_tree.schedule import FusedPlan
-    from tests.unit.exporter.inverted_tree.helpers import inverted_graph_parts
-
     workbook = write_workbook(
         tmp_path / "group_rows.xlsx",
         {
@@ -139,23 +108,6 @@ def test_row_geometry_respects_active_group(tmp_path: Path, area, row) -> None:
     document = bindings_document(
         _matrix_entry("result", "M!B2:C3", header_row=1, direction="output")
     )
-    catalog, deps, graph = inverted_graph_parts(workbook, document)
-    host = catalog.get("result")
-    schedule = tuple(dict.fromkeys(schedule_axis_coord(cell, catalog) for cell in host.cells))
-    plan = FusedPlan(scc=("result",), schedule=schedule, domain={"result": (0, 2)}, regions=())
-    index = (row - 2) * 2
-    ctx = EmitContext(
-        host,
-        catalog,
-        deps["result"],
-        index,
-        host.cells[index],
-        "t",
-        None,
-        fused_mode=True,
-        fused_plan=plan,
-        fused_partition=(area,),
-        graph=graph,
-    )
-    expression = _host_coord_expr(ctx, axis="row")
-    assert [eval(expression, {"t": t}) for t in range(2)] == [row, row]
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name=f"group_rows_{area}")
+    result = pkg.compute_result()
+    assert [result[area, year] for year in (2025, 2026)] == [row, row]

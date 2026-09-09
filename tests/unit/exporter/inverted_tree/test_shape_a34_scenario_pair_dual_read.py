@@ -22,15 +22,6 @@ from typing import Any, Literal
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import EmitContext, _pair_key_value_expr
-from excel_grapher.exporter.inverted_tree.catalog import (
-    BoundSeries,
-    KeyPoint,
-    SeriesCatalog,
-    Statement,
-    build_schedule_index,
-)
-from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
@@ -275,48 +266,6 @@ def test_scenario_pair_sum_without_if_reads_both_scenarios(tmp_path: Path) -> No
     )
     workbook = write_workbook(tmp_path / "a34_sum.xlsx", sheets)
     assert_package_matches_evaluator(workbook, _mcve_bindings(), tmp_path, "a34_sum")
-
-
-def test_pair_key_value_expr_omits_unpaired_baseline_statement() -> None:
-    """Pair tables cover the current IF statement, not a Baseline direct read (#777)."""
-    cells = ("Engine!A1", "Engine!A2")
-    points = (KeyPoint((("SCENARIO", "Baseline"),)), KeyPoint((("SCENARIO", "B2"),)))
-    host = BoundSeries(
-        "selected",
-        "series",
-        "output",
-        cells,
-        ("SCENARIO",),
-        "float",
-        "compute_selected",
-        {},
-        points,
-        (
-            Statement("direct", "selected", "direct", 0, 1, cells[:1], points[:1]),
-            Statement("paired", "selected", "if", 1, 2, cells[1:], points[1:]),
-        ),
-    )
-    catalog = SeriesCatalog(
-        {"selected": host},
-        ("selected",),
-        {cell: "selected" for cell in cells},
-        build_schedule_index({"selected": host}),
-    )
-    deps = SeriesDeps(
-        "selected",
-        (),
-        False,
-        None,
-        frozenset(),
-        frozenset(),
-        frozenset(),
-        frozenset(),
-        {},
-        {},
-    )
-    ctx = EmitContext(host, catalog, deps, 1, cells[1], "i", None)
-    expression = _pair_key_value_expr("SCENARIO", 0, ctx, {"SCENARIO": {"B2": ("B2.1", "B2.2")}})
-    assert eval(expression, {}, {"i": 1}) == "B2.1"
 
 
 def _baseline_pair_path_scenario() -> dict[str, Any]:
