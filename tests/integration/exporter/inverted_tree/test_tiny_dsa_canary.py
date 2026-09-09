@@ -92,7 +92,7 @@ def test_helper_inventory_matches_bound_formula_series(tiny_dsa_pkg) -> None:
     assert "def make_context" not in inspect.getsource(tiny_dsa_pkg.api)
     assert "def set_" not in inspect.getsource(tiny_dsa_pkg.api)
     api_src = inspect.getsource(tiny_dsa_pkg.api)
-    assert api_src.count("internals.shocked_path_internal(") == 1
+    assert "data.OutputShocked" in api_src
 
 
 def test_baseline_leaf_closure_excludes_shock_args(tiny_dsa_pkg) -> None:
@@ -178,8 +178,10 @@ def test_default_borvelia_numeric_parity(tiny_dsa_pkg) -> None:
         shock_type=data.SHOCK_TYPE_DEFAULT,
         shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
     )
-    assert baseline == pytest.approx(_DEFAULT_BASELINE, abs=1e-9)
-    assert shocked == pytest.approx(_DEFAULT_SHOCKED, abs=1e-9)
+    assert tuple(baseline[year] for year in range(1, 6)) == pytest.approx(
+        _DEFAULT_BASELINE, abs=1e-9
+    )
+    assert tuple(shocked[year] for year in range(1, 6)) == pytest.approx(_DEFAULT_SHOCKED, abs=1e-9)
 
 
 def test_formula_evaluator_parity_still_holds() -> None:
@@ -199,7 +201,7 @@ def test_time_period_domain_matches_output_header(tiny_dsa_pkg) -> None:
 
     book = load_workbook(_WORKBOOK, data_only=True)
     header = tuple(book["Outputs"][f"{col}11"].value for col in "BCDEF")
-    assert header == tiny_dsa_pkg.data.TIME_PERIOD_DOMAIN
+    assert header == tiny_dsa_pkg.data.OUTPUT_BASELINE_DOMAIN.axes[0].keys
     data = tiny_dsa_pkg.data
     computes = (
         tiny_dsa_pkg.compute_output_baseline,
@@ -220,12 +222,12 @@ def test_time_period_domain_matches_output_header(tiny_dsa_pkg) -> None:
     }
     for compute in computes:
         assert compute.__key__ == ("TIME_PERIOD",)
-        assert compute.__domain__ == header
+        assert compute.__domain__.axes[0].keys == header
         args = kwargs if compute is tiny_dsa_pkg.compute_output_baseline else {**kwargs, **shock}
         result = compute(**args)
-        assert len(compute.__domain__) == len(result)
+        assert compute.__domain__ == result.domain
         last_year = header[-1]
-        assert result[data.TIME_PERIOD_DOMAIN.index(last_year)] == result[-1]
+        assert result[last_year] == result.isel(TIME_PERIOD=len(header) - 1)
 
 
 def test_internals_helpers_publish_key_domains(tiny_dsa_pkg) -> None:
@@ -242,18 +244,22 @@ def test_internals_helpers_publish_key_domains(tiny_dsa_pkg) -> None:
         assert len(helper.__domain__) > 0
 
 
-def test_public_computes_require_catalog_order_arrays(tiny_dsa_pkg) -> None:
+def test_public_computes_require_semantic_coordinate_coverage(tiny_dsa_pkg) -> None:
     source = inspect.getsource(tiny_dsa_pkg.api)
     assert "trim(" not in source
     assert "take(" not in source
     data = tiny_dsa_pkg.data
-    with pytest.raises(ValueError, match="expected length"):
+    short = tiny_dsa_pkg.Tensor.from_nested(
+        domain=tiny_dsa_pkg.Domain.product(tiny_dsa_pkg.Axis("TIME_PERIOD", (1,), int)),
+        values=(0.03,),
+    )
+    with pytest.raises(ValueError, match="growth_baseline.*required coordinate"):
         tiny_dsa_pkg.compute_output_shocked(
             country_name=data.COUNTRY_NAME_DEFAULT,
             country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-            growth_baseline=data.GROWTH_BASELINE_DEFAULT[:1],
-            interest_baseline=data.INTEREST_BASELINE_DEFAULT[:1],
-            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT[:1],
+            growth_baseline=short,
+            interest_baseline=data.INTEREST_BASELINE_DEFAULT,
+            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
             shock_year=data.SHOCK_YEAR_DEFAULT,
             shock_type=data.SHOCK_TYPE_DEFAULT,
             shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,

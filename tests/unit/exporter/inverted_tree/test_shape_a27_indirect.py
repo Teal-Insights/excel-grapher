@@ -112,7 +112,7 @@ def test_literal_address_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_lit")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert pkg.compute_out(src=42.0) == (pytest.approx(expected),)
+    assert pkg.compute_out(src=42.0) == pytest.approx(expected)
     assert "src" in all_param_names(pkg.compute_out)
 
 
@@ -125,7 +125,7 @@ def test_bound_cell_address_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_cell")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document, dynamic_refs=refs)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert pkg.compute_out(src=42.0) == (pytest.approx(expected),)
+    assert pkg.compute_out(src=42.0) == pytest.approx(expected)
 
 
 def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
@@ -133,12 +133,16 @@ def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
     document = _series_member_bindings()
     modules = generate_inverted(workbook, document)
     _assert_no_xl_indirect(modules)
-    assert "xl_at(" in modules["internals.py"]
-    assert "xl_at(src, 1)" in modules["internals.py"]
+    assert "xl_at(" in modules["_kernels.py"]
+    assert "xl_at(src, 1)" in modules["_kernels.py"]
     pkg = load_package(modules, tmp_path, name="a27_series")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert pkg.compute_out(src=(10.0, 20.0, 30.0)) == (pytest.approx(expected),)
+    assert pkg.compute_out(
+        src=pkg.data.Src.from_records(
+            domain=pkg.data.SRC_DOMAIN, records=(((1,), 10.0), ((2,), 20.0), ((3,), 30.0))
+        )
+    ) == pytest.approx(expected)
 
 
 def test_literal_access_is_static(tmp_path: Path) -> None:

@@ -310,9 +310,9 @@ evaluation.
 ### Package export (`generate_modules`)
 
 Series I/O is an inverted-tree **package**. Package `compute_*`
-functions take catalog-order input tuples and return measure tuples;
-`as_records` zips the published domain into a Records view. There is no
-bindings-free `generate()` path.
+functions take validated named-coordinate tensors and return tensors;
+scalar bindings remain scalars. `as_records` exposes coordinate/value
+dictionaries. There is no bindings-free `generate()` path.
 
 The input row `F5:J5` is values, so export adds identity formulas on
 `F6:J6` as the output series:
@@ -372,20 +372,23 @@ assert "def list_setters(" not in modules["api.py"]
 ```
 
 ``` text
-compute_borvelia_primary_balance_out(*, borvelia_primary_balance: 'Sequence[float | str]') -> 'tuple[float | str, ...]'
+compute_borvelia_primary_balance_out(*, borvelia_primary_balance: 'data.BorveliaPrimaryBalance[float | str | None]') -> 'data.BorveliaPrimaryBalanceOut[float | str | None]'
 ```
 
 ### Calling `compute_*`
 
-Pass the input series in catalog order (periods 1..5). Convert a tidy
-DataFrame to that tuple yourself — see
+Supply explicit period coordinates (1..5 here). Convert a tidy DataFrame
+to coordinate records — see
 [setter_dataframe_example.py](setter_dataframe_example.py).
 
 ``` python
-from generated import as_records, compute_borvelia_primary_balance_out
+from generated import as_records, compute_borvelia_primary_balance_out, data
 
 result = compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=(-1.0, -0.5, 0.0, 7.5, 8.0),
+    borvelia_primary_balance=data.BorveliaPrimaryBalance.from_records(
+        domain=data.BORVELIA_PRIMARY_BALANCE_DOMAIN,
+        records=(((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+    ),
 )
 records = as_records(compute_borvelia_primary_balance_out, result)
 ```
@@ -399,8 +402,9 @@ records = as_records(compute_borvelia_primary_balance_out, result)
 | 5           | 8.0       |
 
 Period **4** and **5** values (`7.5` and `8.0`) are the measures you
-passed; `as_records` attaches `TIME_PERIOD` from `__domain__`. Package
-discovery is `exported.__all__` (compute names). Docstring callbacks
+passed; `as_records` attaches `TIME_PERIOD` from `__domain__`. Read them
+directly as `result[4]` and `result[5]`. Package discovery is
+`exported.__all__` (compute names and tensor types). Docstring callbacks
 apply to `emit_setter_function` / `emit_compute_function`, not
 `generate_modules()`.
 
@@ -449,7 +453,8 @@ manifests.
 
 Example fixture:
 [internal_engine_row.yaml](../../tests/fixtures/series_bindings/internal_engine_row.yaml)
-(uses [formula_override.xlsx](formula_override.xlsx)).
+(the following cell creates a small workbook in the temporary export
+directory).
 
 ``` yaml
 schema_version: "1.7.0"
@@ -485,15 +490,27 @@ internal_fixture = Path("../../tests/fixtures/series_bindings/internal_engine_ro
 internal_bindings = load_series_bindings(internal_fixture)
 validate_bindings_document(internal_bindings)
 
+from fastpyxl import Workbook
+
+override_workbook = export_dir / "formula_override.xlsx"
+override_book = Workbook()
+engine = override_book.active
+engine.title = "Engine"
+for period, column in enumerate("BCD", start=1):
+    engine[f"{column}1"] = period
+    engine[f"{column}3"] = period
+    engine[f"{column}2"] = f"={column}3*2"
+override_book.save(override_workbook)
+
 override_graph = create_dependency_graph(
-    Path("formula_override.xlsx"),
+    override_workbook,
     ["Engine!B2", "Engine!C2", "Engine!D2"],
     load_values=True,
 )
 internal_series = derive_internal_series(
     override_graph,
     internal_bindings,
-    workbook=Path("formula_override.xlsx"),
+    workbook=override_workbook,
 )
 print(pformat(internal_series[0]["cells"][:2]))
 ```
@@ -505,13 +522,14 @@ print(pformat(internal_series[0]["cells"][:2]))
 {‘INDICATOR’: ‘Primary balance’, ‘OBS_VALUE’: None, ‘TIME_PERIOD’: 2}}\]
 
 Internal bindings intersect `data_range` with **formula graph nodes**
-(default). They emit **no codegen**; validate first, then derive:
+(default). They provide intermediate tensor helpers in the generated
+package. Validate first, then derive:
 
 ``` python
 report = validate_series_bindings(
     override_graph,
     internal_bindings,
-    workbook=Path("formula_override.xlsx"),
+    workbook=override_workbook,
 )
 assert report["ok"]
 ```

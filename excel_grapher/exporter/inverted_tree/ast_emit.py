@@ -406,6 +406,7 @@ class EmitContext:
     blank_rects: tuple[BlankRangeRect, ...] = field(default_factory=current_blank_rects)
     array_context: bool = False
     eager: bool = True
+    coordinate_vars: dict[str, str] | None = None
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -417,11 +418,8 @@ class EmitContext:
 
 def python_measure_type(series: BoundSeries) -> str:
     """Return the Python type of one observation (`float | str` for numbers)."""
-    if series.python_dtype in {"float", "int"}:
-        base = f"{series.python_dtype} | str"
-    else:
-        base = series.python_dtype
-    if series.has_none_holes:
+    base = f"{series.python_dtype} | str" if series.python_dtype != "str" else series.python_dtype
+    if series.has_none_holes or series.layout != "scalar":
         return f"{base} | None"
     return base
 
@@ -515,24 +513,18 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
 
 
 def _is_scan_prior_ref(address: CanonicalAddress, ctx: EmitContext) -> bool:
-    """True when `address` is the scan accumulator, not a shared selector.
+    """Return whether an address is the preceding self observation.
 
-    Index 0 (or the last member of a reversed scan) may sit next to a bound
-    scalar. That neighbor is `prior` only when `SeriesDeps` classified it as
-    the seed. An absolute selector read by every member stays a parameter.
+    External seeds retain their producer-coordinate reads. Substituting
+    `prior` for an external read would turn a formula family over several
+    producer coordinates into a recurrence.
     """
     pred = predecessor_address(ctx.host, ctx.host_index, ctx.catalog, ctx.graph)
     if pred is not None and address == pred:
-        if ctx.host_index > 0:
-            return True
-        owner = ctx.catalog.series_for(address)
-        return owner is not None and owner.series_id == ctx.deps.seed_id
+        return ctx.host_index > 0
     succ = successor_address(ctx.host, ctx.host_index, ctx.catalog, ctx.graph)
     if succ is not None and address == succ:
-        if ctx.host_index < len(ctx.host.cells) - 1:
-            return True
-        owner = ctx.catalog.series_for(address)
-        return owner is not None and owner.series_id == ctx.deps.seed_id
+        return ctx.host_index < len(ctx.host.cells) - 1
     return False
 
 
@@ -595,7 +587,7 @@ def _static_catalog_literal(
 
 
 def _host_follow_for(owner: BoundSeries, ctx: EmitContext) -> dict[str, dict[object, object]]:
-    """Return host→producer key maps for `owner` from resolved host edges."""
+    """Return hostâ†’producer key maps for `owner` from resolved host edges."""
     return _host_follow_key_maps(
         ctx.host, owner, _host_producer_slots(ctx.host, owner, ctx.deps.edges)
     )
@@ -650,7 +642,7 @@ def _host_key_value_expr(
     """Return a Python expr for `host[field]` as `index_var` walks the host.
 
     When `host_follow` remaps this field onto a distinct producer vocabulary
-    (`B1` -> `Bounds Test 1: …`), emit the producer values in host order.
+    (`B1` -> `Bounds Test 1: â€¦`), emit the producer values in host order.
     """
     follow = host_follow or {}
 
@@ -1002,6 +994,38 @@ def _emit_address(
 ) -> str:
     if address_in_blank_ranges(address, ctx.blank_rects):
         return "None"
+    if ctx.coordinate_vars is not None:
+        owner = ctx.catalog.require_series_for(address)
+        name = ctx.param(owner.series_id)
+        if owner.layout == "scalar":
+            return name
+        index = owner.index_of(address)
+        if index is None:
+            raise InvertedTreeExportError(
+                f"series {owner.series_id!r}: no coordinate for {address}"
+            )
+        point = owner.domain[index]
+        host_point = ctx.host.domain[ctx.host_index].as_mapping()
+        keys = []
+        for field in owner.key_fields:
+            variable = ctx.coordinate_vars.get(field)
+            current = host_point.get(field)
+            target = point[field]
+            if variable is not None and current == target:
+                keys.append(variable)
+            elif (
+                variable is not None
+                and field == "TIME_PERIOD"
+                and type(current) is int
+                and type(target) is int
+            ):
+                # Formula-family grouping verifies this same authored year
+                # difference at every coordinate sharing the expression.
+                difference = target - current
+                keys.append(f"{variable} {'+' if difference > 0 else '-'} {abs(difference)}")
+            else:
+                keys.append(repr(target))
+        return f"{name}[{', '.join(keys)}]"
     if ctx.fused_mode:
         return _emit_fused_ref(address, ctx, ref=ref)
     if ctx.instance_mode:
@@ -1038,7 +1062,7 @@ def _emit_address(
             return f"{name}[{_aligned_taken_index(owner.series_id, idx, ctx)}]"
         return name
     if idx is not None and ctx.index_var is not None and owner.is_sequence:
-        return f"{name}[{_index_expr(idx - ctx.host_index, ctx.index_var)}]"
+        return f"{name}[{_instance_index_expr(owner, idx, ctx, ref)}]"
     if idx is not None and ctx.index_var is None:
         return f"{name}[{idx}]" if not owner.is_scalar else name
     if owner.series_id in ctx.deps.lookup_ids:
@@ -1133,8 +1157,8 @@ def _aligned_area_index(
 ) -> tuple[int, int] | None:
     """Return `(area_index, stride)` when `address` lines up with `plan.partitions`.
 
-    A producer keyed by the outer partition fields — with or without
-    `TIME_PERIOD` — has one block per area. Uniform block length is the
+    A producer keyed by the outer partition fields â€” with or without
+    `TIME_PERIOD` â€” has one block per area. Uniform block length is the
     catalog stride so `_area * stride + t` is identical across partitions.
     """
     host_outer = _host_outer_fields(ctx.host, ctx.catalog)
@@ -1187,7 +1211,17 @@ def _emit_fused_ref(
         return f"live_measure({ctx.param(owner.series_id)}[{literal}])"
     if owner.series_id in ctx.deps.keyed_ids and owner.series_id not in ctx.scc_ids:
         ctx.use("live_measure")
-        return f"live_measure({ctx.param(owner.series_id)}[{_keyed_catalog_index_expr(owner, address, ctx, ref=ref)}])"
+        keyed_ctx = ctx
+        if ctx.fused_plan is not None:
+            # Keyed maps consume a host catalog slot. The fused loop variable
+            # is a local schedule slot, including in an unrolled partition.
+            step = -1 if ctx.fused_plan.direction == "reversed" else 1
+            host_union = _union_t(ctx.fused_plan, ctx.host_cell, ctx)
+            catalog_index = _affine_index_expr(
+                ctx.host_index - step * host_union, ctx.index_var or "t", step=step
+            )
+            keyed_ctx = replace(ctx, index_var=f"({catalog_index})")
+        return f"live_measure({ctx.param(owner.series_id)}[{_keyed_catalog_index_expr(owner, address, keyed_ctx, ref=ref)}])"
     idx = owner.index_of(address)
     if idx is None or ctx.fused_plan is None:
         raise InvertedTreeExportError(
@@ -1223,8 +1257,42 @@ def _emit_fused_ref(
     name = ctx.param(owner.series_id)
     if owner.is_scalar:
         return f"live_measure({name})"
+    if "TIME_PERIOD" not in ctx.host.key_fields and ref is not None:
+        # Categorical schedule order need not advance through producer slots
+        # in either catalog direction. Resolve each authored reference site.
+        pairs = _instance_ref_index_pairs(owner, ctx, ref)
+        schedule_pairs = [
+            (plan.coord_to_t[schedule_axis_coord(ctx.host.cells[host_i], ctx.catalog)], producer_i)
+            for host_i, producer_i in pairs
+        ]
+        if schedule_pairs:
+            fitted = fit_affine_map(schedule_pairs)
+            if fitted is not None:
+                index_expr = _linear_index_expr(fitted[0], fitted[1], index_var)
+            else:
+                slots = [idx] * len(plan.coord_to_t)
+                for position, producer_i in schedule_pairs:
+                    slots[position] = producer_i
+                index_expr = f"{_catalog_indices_expr(slots)}[{index_var}]"
+            return f"live_measure({name}[{index_expr}])"
     host_union = _union_t(plan, ctx.host_cell, ctx)
     step = -1 if plan.direction == "reversed" else 1
+    pinned = _ref_pinned_fields(ref, ctx.host_cell, owner) if ref is not None else frozenset()
+    if ref is not None and ctx.graph is not None and "TIME_PERIOD" not in pinned:
+        host_partition = schedule_partition(ctx.host_cell, ctx.catalog)
+        members = tuple(
+            cell
+            for cell in ctx.host.cells
+            if schedule_partition(cell, ctx.catalog) == host_partition
+            and try_formula_ast(ctx.graph, cell) is not None
+        )
+        pairs = cell_ref_catalog_pairs(
+            ctx.host, owner, ctx.graph, host_cell=ctx.host_cell, ref=ref, cells=members
+        )
+        if len(pairs) > 1 and {producer for _, producer in pairs} == {idx}:
+            # Authored formulas can repeat a fixed reference without `$`.
+            # Only the resolved dependencies establish that it stays fixed.
+            pinned = pinned | {"TIME_PERIOD"}
     if ctx.fused_use_area:
         aligned = _aligned_area_index(owner, address, ctx, plan)
         if aligned is not None:
@@ -1232,7 +1300,7 @@ def _emit_fused_ref(
             host_part = schedule_partition(ctx.host_cell, ctx.catalog)
             host_i = plan.partitions.index(host_part) if host_part in plan.partitions else 0
             fields = preferred_fields(owner, ctx.catalog) or ()
-            if "TIME_PERIOD" in fields:
+            if "TIME_PERIOD" in fields and "TIME_PERIOD" not in pinned:
                 local = idx - step * host_union - area_i * stride
                 inner = _affine_index_expr(local, index_var, step=step)
             else:
@@ -1240,7 +1308,11 @@ def _emit_fused_ref(
                 inner = str(local)
             index_expr = _combine_area_index(_area_stride_expr(stride, area_i - host_i), inner)
             return f"live_measure({name}[{index_expr}])"
-    index_expr = _affine_index_expr(idx - step * host_union, index_var, step=step)
+    index_expr = (
+        str(idx)
+        if "TIME_PERIOD" in pinned
+        else _affine_index_expr(idx - step * host_union, index_var, step=step)
+    )
     return f"live_measure({name}[{index_expr}])"
 
 
@@ -1373,7 +1445,7 @@ def _emit_binary(node: BinaryOpNode, ctx: EmitContext) -> str:
     if op == "&":
         left = emit_expr(node.left, ctx)
         right = emit_expr(node.right, ctx)
-        return f"(str({left}) + str({right}))"
+        return f"{ctx.use('xl_concat')}({left}, {right})"
     helper = _ARITHMETIC_HELPERS.get(op) or _COMPARE_HELPERS.get(op)
     if helper is not None:
         left = _emit_value_or_range(node.left, ctx)
@@ -1507,7 +1579,7 @@ def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:
 def _contains_array_if_operand(node: AstNode) -> bool:
     """True when `node` has a range in element-wise IF/operator position.
 
-    Ranges consumed by lookups or aggregates (`VLOOKUP`, `INDEX`, `SUM`, …)
+    Ranges consumed by lookups or aggregates (`VLOOKUP`, `INDEX`, `SUM`, â€¦)
     are not array-`IF` operands; those functions keep their own lowering.
     """
     match node:
@@ -1584,12 +1656,13 @@ def _emit_choose(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         return f"{ctx.use('xl_raise')}('#VALUE!')"
     index = emit_expr(node.args[0], ctx)
-    choices = ", ".join(emit_expr(arg, ctx) for arg in node.args[1:])
-    return f"{ctx.use('xl_choose')}({index}, {choices})"
+    lazy = replace(ctx, eager=False)
+    choices = ", ".join(f"lambda: {emit_expr(arg, lazy)}" for arg in node.args[1:])
+    return f"{ctx.use('xl_choose_lazy')}({index}, {choices})"
 
 
 def _emit_aggregate(node: FunctionCallNode, ctx: EmitContext) -> str:
-    """Emit a range-reducing call (`SUM`, `AND`, …) with bound range arguments."""
+    """Emit a range-reducing call (`SUM`, `AND`, â€¦) with bound range arguments."""
     name = normalize_excel_function_name(node.name)
     func = f"xl_{name.lower()}"
     if func not in _RUNTIME_FUNCTIONS:
@@ -1616,16 +1689,55 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
     )
     if not addresses:
         return "()"
+    if ctx.coordinate_vars is not None:
+        return _python_tuple([_emit_address(address, ctx) for address in addresses])
     covered = covering_series(ctx.catalog, addresses)
     if covered is not None:
         return _emit_aggregate_covering(covered, node, addresses, ctx)
     missing = [addr for addr in addresses if ctx.catalog.series_id_for(addr) is None]
     if missing:
         raise _host_export_error(ctx, f"range is not a bound series (unbound cells: {missing[:8]})")
+    if ctx.graph is not None and ctx.index_var is not None:
+        return _emit_mixed_aggregate_members(node, ctx)
     parts = [_emit_address(addr, ctx) for addr in addresses]
     if len(parts) == 1:
         return parts[0]
     return f"({', '.join(parts)})"
+
+
+def _emit_mixed_aggregate_members(node: AstNode, ctx: EmitContext) -> str:
+    """Resolve each mixed-owner window independently, preserving Excel order.
+
+    A relative range can cross different binding owners in adjacent periods.
+    Deferred rows avoid reading unused rows or unevaluated SCC members.
+    """
+    assert ctx.graph is not None and ctx.index_var is not None
+    range_slot = _range_nodes(node_formula_ast(ctx.graph, ctx.host_cell)).index(node)
+    statement = _current_statement(ctx)
+    members = statement.cells if statement is not None else ctx.host.cells
+    origin = statement.start if statement is not None else 0
+    rows = []
+    for member in members:
+        ranges = _range_nodes(node_formula_ast(ctx.graph, member))
+        addresses = addresses_outside_blank_ranges(
+            iter_ref_addresses(ranges[range_slot], member, ctx.graph), ctx.blank_rects
+        )
+        values = []
+        for address in addresses:
+            owner = ctx.catalog.require_series_for(address)
+            index = owner.index_of(address)
+            assert index is not None
+            if owner.series_id in ctx.scc_ids:
+                values.append(f"{_emit_demanded_slots(owner, repr((index,)), ctx)}[0]")
+            elif owner.is_scalar:
+                values.append(ctx.param(owner.series_id))
+            else:
+                values.append(f"{ctx.param(owner.series_id)}[{index}]")
+        rows.append(_python_tuple(values))
+    if len(set(rows)) == 1:
+        return rows[0]
+    readers = _python_tuple([f"lambda: {row}" for row in rows])
+    return f"{readers}[{_index_expr(-origin, ctx.index_var)}]()"
 
 
 def _catalog_slots(
@@ -1911,7 +2023,18 @@ def _compact_zip_table(
 def _positional_table_source(cells: Sequence[PositionalRangeCell], ctx: EmitContext) -> str:
     """Emit a nested-tuple grid, using `zip` when rows are regular slices."""
     rows = _group_positional_rows(cells)
-    compact = _compact_zip_table(rows, ctx)
+    if ctx.coordinate_vars is not None or (
+        ctx.instance_mode and any(cell.series_id in ctx.scc_ids for cell in cells)
+    ):
+        table_ctx = replace(ctx, coordinate_vars={}) if ctx.coordinate_vars is not None else ctx
+        callbacks = _python_tuple(
+            [
+                _python_tuple([f"lambda: {_emit_positional_cell(cell, table_ctx)}" for cell in row])
+                for row in rows
+            ]
+        )
+        return f"{ctx.use('lazy_table')}({callbacks})"
+    compact = None if ctx.coordinate_vars is not None else _compact_zip_table(rows, ctx)
     if compact is not None:
         return compact
     return _python_tuple(
@@ -1923,10 +2046,17 @@ def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
     """Emit one MATCH/INDEX window cell by catalog slot, not host index."""
     if cell.blank:
         return "None"
+    if ctx.coordinate_vars is not None:
+        return _emit_address(cell.address, ctx)
     if cell.series_id is None:
         raise _host_export_error(ctx, f"range cell {cell.address} is not a bound series")
     owner = ctx.catalog.get(cell.series_id)
     name = ctx.param(owner.series_id)
+    if ctx.instance_mode and owner.series_id in ctx.scc_ids:
+        index = cell.catalog_index
+        if index is None:
+            raise _host_export_error(ctx, f"range cell {cell.address} has no catalog index")
+        return f"{ctx.use('demand_instance')}({owner.series_id!r}, {index}, {ctx.compute_names[owner.series_id]}, memo, stack)"
     if owner.is_scalar:
         return name
     if cell.catalog_index is None:
@@ -2151,6 +2281,8 @@ def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     rows = emit_expr(node.args[1], ctx)
     cols = emit_expr(node.args[2], ctx)
     name = ctx.param(table.series_id)
+    if table.is_scalar:
+        name = f"({name},)"
     anchor = _ref_anchor_address(node.args[0], ctx.host_cell)
     if anchor is None:
         raise _host_export_error(ctx, "OFFSET anchor must be a cell or range")
@@ -2233,7 +2365,7 @@ def _row_column_args_omitted(node: FunctionCallNode) -> bool:
 
 
 def _host_coord_expr(ctx: EmitContext, *, axis: str) -> str:
-    """Return the host cell's row or column as an affine expression of `index_var`."""
+    """Return workbook geometry using the active evaluation order."""
     _sheet, row, col = parse_cell_coords(ctx.host_cell)
     current = row if axis == "row" else col
     if ctx.index_var is None:
@@ -2241,18 +2373,23 @@ def _host_coord_expr(ctx: EmitContext, *, axis: str) -> str:
     cells = _statement_cells(ctx) or ctx.host.cells
     pairs: list[tuple[int, int]] = []
     for cell in cells:
+        if (
+            ctx.fused_partition is not None
+            and schedule_partition(cell, ctx.catalog) != ctx.fused_partition
+        ):
+            continue
         idx = ctx.host.index_of(cell)
         if idx is None:
             continue
+        if ctx.fused_plan is not None:
+            idx = _union_t(ctx.fused_plan, cell, ctx)
         _cell_sheet, cell_row, cell_col = parse_cell_coords(cell)
         pairs.append((idx, cell_row if axis == "row" else cell_col))
     if len(pairs) < 2:
         return str(current)
     fit = fit_affine_map(pairs)
     if fit is None:
-        raise _host_export_error(
-            ctx, f"{axis.upper()}() is not an affine function of the host index"
-        )
+        return f"{dict(pairs)!r}[{ctx.index_var}]"
     return _linear_index_expr(fit[0], fit[1], ctx.index_var)
 
 
@@ -2347,7 +2484,7 @@ def _emit_index_into_block(
 
 def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[str, int | None]:
     if col_arg is None or isinstance(col_arg, EmptyArgNode):
-        return "1", 1
+        return "None", None
     col_literal = int(col_arg.value) if isinstance(col_arg, NumberNode) else None
     try:
         return emit_expr(col_arg, ctx), col_literal
@@ -2360,8 +2497,45 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
         raise _host_export_error(ctx, "INDEX expects a range and row")
     row_arg = node.args[1]
     col_arg = node.args[2] if len(node.args) > 2 else None
-    row_expr = emit_expr(row_arg, ctx)
+    row_expr = "None" if isinstance(row_arg, EmptyArgNode) else emit_expr(row_arg, ctx)
     col_expr, col_literal = _emit_index_column_arg(col_arg, ctx)
+    if row_expr in {"None", "0", "0.0"} or col_expr in {"None", "0", "0.0"}:
+        # Omitted and zero selectors request vectors. Flat block indexing
+        # cannot preserve their shape or Excel's single-row special case.
+        table = (
+            _emit_range_table(node.args[0], ctx)
+            if isinstance(node.args[0], RangeNode)
+            else _emit_value_or_range(node.args[0], ctx)
+        )
+        return _reuse_lookup(f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})", ctx)
+    if ctx.coordinate_vars is not None:
+        if isinstance(node.args[0], RangeNode) and col_literal is not None and col_literal > 0:
+            start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
+            end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
+            first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
+            selected = [
+                address
+                for address in iter_ref_addresses(node.args[0], ctx.host_cell, ctx.graph)
+                if parse_cell_coords(address)[2] == first_col + col_literal - 1
+            ]
+            if selected:
+                # A proven column selection must not introduce dependencies on
+                # other columns excluded by the extracted graph.
+                cells, missing = resolve_positional_range(
+                    selected, ctx.catalog, ctx.blank_rects, ctx.graph
+                )
+                if missing:
+                    raise _host_export_error(
+                        ctx, f"INDEX selected column has unbound cells: {list(missing[:8])}"
+                    )
+                table = (
+                    "("
+                    + ", ".join(f"({_emit_positional_cell(cell, ctx)},)" for cell in cells)
+                    + ",)"
+                )
+                return f"{ctx.use('xl_index')}({table}, {row_expr}, 1)"
+        table = _emit_value_or_range(node.args[0], ctx)
+        return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
     if isinstance(node.args[0], RangeNode):
         start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
         end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
@@ -2396,6 +2570,8 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
 
 def _emit_match_array(node: AstNode, ctx: EmitContext) -> str:
     """Emit a MATCH lookup vector that preserves Excel positions."""
+    if ctx.coordinate_vars is not None:
+        return _emit_value_or_range(node, ctx)
     if isinstance(node, CellRefNode):
         series = _series_for_ref(node, ctx)
         name = ctx.param(series.series_id)
@@ -2731,7 +2907,13 @@ def emit_helper_body(
                     "    except XlError as err:",
                     "        return err.code",
                 ], used
-            return [*prelude, f"    return {_cast_scalar(expr, series.python_dtype)}"], used
+            return [
+                *prelude,
+                "    try:",
+                f"        return {_cast_scalar(expr, series.python_dtype)}",
+                "    except XlError as err:",
+                "        return err.code",
+            ], used
 
     if deps.is_scan:
         return _emit_scan_body(series, catalog=catalog, deps=deps, graph=graph)
@@ -2795,7 +2977,7 @@ def _emit_scan_body(
     with lookup_reuse_scope() as reuse:
         guard_lines, guard_used = emit_sequence_length_guards(series, deps, catalog)
         used |= guard_used
-        seed_expr = seed if seed is not None else "0"
+        seed_expr = seed if seed is not None and catalog.get(seed).is_scalar else "0"
         measure = python_measure_type(series)
         region_lines, region_used = _emit_region_chain(
             series,
@@ -2819,9 +3001,6 @@ def _emit_scan_body(
             lines.append("    for i in reversed(range(n)):")
         else:
             lines.append("    for i in range(n):")
-        lines.append("        if is_error(prior):")
-        lines.append("            path.append(prior)")
-        lines.append("            continue")
         lines.append("        try:")
         lines.extend(region_lines)
         lines.append("        except XlError as err:")
@@ -3345,15 +3524,22 @@ def emit_rung2_scc(
         returned_items: list[str] = []
         for sid in scc:
             series = catalog.get(sid)
+            if len(series.cells) > 1:
+                partition_order = {part: index for index, part in enumerate(plan.partitions)}
+                emitted_cells = sorted(
+                    series.cells,
+                    key=lambda cell: (
+                        partition_order[schedule_partition(cell, catalog)] if plan.is_nested else 0,
+                        plan.coord_to_t[schedule_axis_coord(cell, catalog)],
+                    ),
+                )
+                if emitted_cells != list(series.cells):
+                    emitted_slots = {cell: index for index, cell in enumerate(emitted_cells)}
+                    order = tuple(emitted_slots[cell] for cell in series.cells)
+                    lines.append(f"    {sid} = [{sid}[slot] for slot in {order!r}]")
             if series.is_scalar:
                 returned_items.append(f"{sid}[0]")
                 continue
-            if len(series.cells) > 1 and not plan.is_nested:
-                u_first = plan.coord_to_t[schedule_axis_coord(series.cells[0], catalog)]
-                u_last = plan.coord_to_t[schedule_axis_coord(series.cells[-1], catalog)]
-                if u_first > u_last:
-                    returned_items.append(f"tuple(reversed({sid}))")
-                    continue
             returned_items.append(f"tuple({sid})")
         returned = ", ".join(returned_items)
         lines.append(f"    return {returned}")

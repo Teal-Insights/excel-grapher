@@ -16,9 +16,9 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -125,14 +125,16 @@ def test_statement_local_member_table_drops_host_padding(
     size = 10
     workbook = _holes_workbook(tmp_path, size)
     modules = generate_inverted(workbook, _holes_bindings(size), force_rung=force_rung)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     assert "(), (), ()" not in internals
     assert "((),) *" not in internals
     assert "range(0, 2)" in internals
     assert "range(1, 3)" in internals
     assert "[i - 8]" in internals
     pkg = load_package(modules, tmp_path, name=f"holes_local_{force_rung}")
-    assert pkg.compute_result() == pytest.approx(_expected_holes(size))
+    assert [pkg.compute_result()[2000 + row] for row in range(1, size + 1)] == pytest.approx(
+        _expected_holes(size)
+    )
 
 
 def test_padded_member_tables_scale_with_source_and_import_cost(tmp_path: Path) -> None:
@@ -142,13 +144,15 @@ def test_padded_member_tables_scale_with_source_and_import_cost(tmp_path: Path) 
     for size in sizes:
         workbook = _holes_workbook(tmp_path, size)
         modules = generate_inverted(workbook, _holes_bindings(size), force_rung=3)
-        internals = modules["internals.py"]
+        internals = modules["_kernels.py"]
         internals_sizes.append(len(internals.encode()))
         compile_times.append(
             timeit.timeit(lambda src=internals: compile(src, "<internals>", "exec"), number=20)
         )
         pkg = load_package(modules, tmp_path, name=f"holes_scale_{size}")
-        assert pkg.compute_result() == pytest.approx(_expected_holes(size))
+        assert [pkg.compute_result()[2000 + row] for row in range(1, size + 1)] == pytest.approx(
+            _expected_holes(size)
+        )
         assert "(), (), ()" not in internals
     assert internals_sizes[-1] / internals_sizes[0] < 2.5
     assert compile_times[-1] / compile_times[0] < 3.0
@@ -168,9 +172,11 @@ def test_statement_local_member_table_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_expected_holes(size))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx(_expected_holes(size))
 
 
 def _dense_columns_workbook(tmp_path: Path, columns: int, *, punch: int | None) -> Path:
@@ -255,11 +261,13 @@ def test_regular_member_rows_use_range_comprehension(tmp_path: Path) -> None:
     columns = 11
     workbook = _dense_columns_workbook(tmp_path, columns, punch=None)
     modules = generate_inverted(workbook, _dense_bindings(columns), force_rung=3)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     assert "for k in range(11)" in internals
     assert "range(0, 9, 3), range(1, 10, 3)" not in internals
     pkg = load_package(modules, tmp_path, name="dense_family")
-    assert pkg.compute_totals() == pytest.approx(_dense_expected(columns, punch=None))
+    assert [pkg.compute_totals()[2020 + col] for col in range(columns)] == pytest.approx(
+        _dense_expected(columns, punch=None)
+    )
 
 
 def test_irregular_exception_in_member_table_keeps_value_parity(tmp_path: Path) -> None:
@@ -268,14 +276,18 @@ def test_irregular_exception_in_member_table_keeps_value_parity(tmp_path: Path) 
     workbook = _dense_columns_workbook(tmp_path, columns, punch=punch)
     document = _dense_bindings(columns)
     modules = generate_inverted(workbook, document, force_rung=3)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     pkg = load_package(modules, tmp_path, name="dense_irregular")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     cells = [f"Engine!{chr(ord('B') + col)}6" for col in range(columns)]
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_totals(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_dense_expected(columns, punch=punch))
+    got = pkg.compute_totals(**named_input_kwargs(pkg, catalog, graph))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx(
+        _dense_expected(columns, punch=punch)
+    )
     assert "(), (), ()" not in internals

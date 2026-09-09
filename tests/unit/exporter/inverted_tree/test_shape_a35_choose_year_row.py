@@ -30,9 +30,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     write_workbook,
 )
 
@@ -322,17 +322,19 @@ def test_choose_year_row_emits_and_matches_evaluator(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "cumulative" in deps["post_grace"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     assert "cumulative[i + 1]" not in internals
     assert "cumulative[0]" in internals
     assert "cumulative[4]" in internals
     pkg = load_package(modules, tmp_path, name="a35_eval")
     cells = [f"PV!{col}{row}" for row in (4, 9) for col in "DEFG"]
     expected = _eval_cells(workbook, cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = call_compute(pkg, "post_grace", kwargs)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_choose_expected())
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(_choose_expected())
     assert _unwrap(call_compute(pkg, "result", kwargs)) == pytest.approx(20.0)
 
 
@@ -345,9 +347,13 @@ def test_choose_year_row_one_instrument_matches_evaluator(tmp_path: Path) -> Non
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_one")
     cells = [f"PV!{col}4" for col in "DEFG"]
     expected = _eval_cells(workbook, cells)
-    got = call_compute(pkg, "post_grace", input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(tuple(_IMF_CUMULATIVE[i - 1] for i in _IMF_INDEX))
+    got = call_compute(pkg, "post_grace", named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(_IMF_CUMULATIVE[i - 1] for i in _IMF_INDEX)
+    )
 
 
 def test_year_row_sum_is_keyed_and_matches_evaluator(tmp_path: Path) -> None:
@@ -359,9 +365,11 @@ def test_year_row_sum_is_keyed_and_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_sum")
     cells = [f"PV!{col}{row}" for row in (4, 9) for col in "DEFG"]
     expected = _eval_cells(workbook, cells)
-    got = call_compute(pkg, "post_grace", input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_sum_expected())
+    got = call_compute(pkg, "post_grace", named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(_sum_expected())
 
 
 def test_choose_year_row_ragged_widths_is_keyed(tmp_path: Path) -> None:
@@ -393,10 +401,12 @@ def test_choose_year_row_ragged_widths_emits_and_matches_evaluator(tmp_path: Pat
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_ragged")
     cells = [f"PV!{col}4" for col in "DEFG"] + [f"PV!{col}9" for col in "DEFGH"]
     expected = _eval_cells(workbook, cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = call_compute(pkg, "post_grace", kwargs)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_ragged_expected())
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(_ragged_expected())
     assert _unwrap(call_compute(pkg, "result", kwargs)) == pytest.approx(20.0)
 
 

@@ -258,13 +258,12 @@ def test_data_module_emits_one_tuple_per_distinct_field(tmp_path: Path) -> None:
         _years_workbook(tmp_path, years, extra_outputs=6),
         _years_bindings(years, extra_outputs=6),
     )
-    assert small["data.py"].count("TIME_PERIOD_DOMAIN") == large["data.py"].count(
-        "TIME_PERIOD_DOMAIN"
-    )
-    assert small["data.py"].count("TIME_PERIOD_DOMAIN:") == 1
-    assert large["data.py"].count("TIME_PERIOD_DOMAIN:") == 1
-    assert "TIME_PERIOD_DOMAIN: tuple[int, ...] = (2008, 2009, 2010)" in small["data.py"]
-    assert "TIME_PERIOD_DOMAIN: tuple[int, ...] = (2008, 2009, 2010)" in large["data.py"]
+    axis = "Axis('TIME_PERIOD', (2008, 2009, 2010), int)"
+    assert small["data.py"].count(axis) == 1
+    assert large["data.py"].count(axis) == 1
+    pkg = load_package(large, tmp_path, name="shared_named_domains")
+    assert pkg.data.PATH_DOMAIN is pkg.data.GROWTH_DOMAIN
+    assert pkg.data.PATH_5_DOMAIN is pkg.data.GROWTH_DOMAIN
 
 
 def test_compute_key_and_domain_match_result_length(tmp_path: Path) -> None:
@@ -274,13 +273,13 @@ def test_compute_key_and_domain_match_result_length(tmp_path: Path) -> None:
         generate_inverted(workbook, _years_bindings(years)), tmp_path, name="key_years"
     )
     assert pkg.compute_path.__key__ == ("TIME_PERIOD",)
-    assert pkg.compute_path.__domain__ == years
-    assert pkg.compute_path.__domain__ is pkg.data.TIME_PERIOD_DOMAIN
+    assert tuple(pkg.compute_path.__domain__) == tuple((year,) for year in years)
+    assert pkg.compute_path.__domain__ is pkg.data.GROWTH_DOMAIN
     result = pkg.compute_path(growth=pkg.data.GROWTH_DEFAULT)
-    assert len(pkg.compute_path.__domain__) == len(result)
-    assert result[pkg.data.TIME_PERIOD_DOMAIN.index(2009)] == pytest.approx(2.0)
+    assert len(pkg.compute_path.__domain__) == len(result.domain)
+    assert result[2009] == pytest.approx(2.0)
     assert pkg.internals.path.__key__ == ("TIME_PERIOD",)
-    assert pkg.internals.path.__domain__ == years
+    assert tuple(pkg.internals.path.__domain__) == tuple((year,) for year in years)
 
 
 def test_scalar_compute_publishes_empty_key_and_unit_domain(tmp_path: Path) -> None:
@@ -294,15 +293,15 @@ def test_scalar_compute_publishes_empty_key_and_unit_domain(tmp_path: Path) -> N
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="key_scalar")
     assert pkg.compute_result.__key__ == ()
-    assert pkg.compute_result.__domain__ == ((),)
-    assert len(pkg.compute_result.__domain__) == len(pkg.compute_result(value=4.0))
+    assert pkg.compute_result.__domain__ is None
+    assert pkg.compute_result(value=4.0) == 4.0
 
 
 def test_matrix_domain_is_row_major_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = _matrix_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _matrix_bindings()), tmp_path, name="key_matrix")
-    assert pkg.data.REF_AREA_DOMAIN == ("France", "Kenya")
-    assert pkg.data.TIME_PERIOD_DOMAIN == (2020, 2021)
+    assert pkg.data.RATIO_DOMAIN.axes[0].keys == ("France", "Kenya")
+    assert pkg.data.RATIO_DOMAIN.axes[1].keys == (2020, 2021)
     assert pkg.compute_ratio.__key__ == ("REF_AREA", "TIME_PERIOD")
     expected_domain = (
         ("France", 2020),
@@ -310,14 +309,14 @@ def test_matrix_domain_is_row_major_and_matches_evaluator(tmp_path: Path) -> Non
         ("Kenya", 2020),
         ("Kenya", 2021),
     )
-    assert pkg.compute_ratio.__domain__ == expected_domain
+    assert tuple(pkg.compute_ratio.__domain__) == expected_domain
     addresses = ["Engine!B8", "Engine!C8", "Engine!B9", "Engine!C9"]
     graph = create_dependency_graph(workbook, addresses, load_values=True)
     evaluated = FormulaEvaluator(graph).evaluate(addresses)
     got = pkg.compute_ratio()
-    assert len(pkg.compute_ratio.__domain__) == len(got)
+    assert len(pkg.compute_ratio.__domain__) == len(got.domain)
     for point, address in zip(pkg.compute_ratio.__domain__, addresses, strict=True):
-        assert got[pkg.compute_ratio.__domain__.index(point)] == pytest.approx(evaluated[address])
+        assert got[point] == pytest.approx(evaluated[address])
 
 
 def test_late_start_series_publishes_domain_slice(tmp_path: Path) -> None:
@@ -325,14 +324,14 @@ def test_late_start_series_publishes_domain_slice(tmp_path: Path) -> None:
     pkg = load_package(
         generate_inverted(workbook, _late_start_bindings()), tmp_path, name="key_late"
     )
-    assert pkg.data.TIME_PERIOD_DOMAIN == (2020, 2021, 2022)
+    assert pkg.data.VALUES_DOMAIN.axes[0].keys == (2020, 2021, 2022)
     assert pkg.compute_adj.__key__ == ("TIME_PERIOD",)
-    assert pkg.compute_adj.__domain__ == (2021, 2022)
-    assert pkg.compute_adj.__domain__ == pkg.data.TIME_PERIOD_DOMAIN[1:]
-    assert pkg.internals.adj.__domain__ == (2021, 2022)
+    assert tuple(pkg.compute_adj.__domain__) == ((2021,), (2022,))
+    assert pkg.compute_adj.__domain__ is pkg.data.ADJ_REQUIRED
+    assert tuple(pkg.internals.adj.__domain__) == ((2021,), (2022,))
     result = pkg.compute_adj(values=pkg.data.VALUES_DEFAULT)
-    assert len(pkg.compute_adj.__domain__) == len(result)
-    assert result[pkg.compute_adj.__domain__.index(2021)] == pytest.approx(2.0)
+    assert len(pkg.compute_adj.__domain__) == len(result.domain)
+    assert result[2021] == pytest.approx(2.0)
 
 
 def test_as_records_zips_key_and_domain(tmp_path: Path) -> None:
@@ -364,8 +363,8 @@ def test_domain_literals_stay_out_of_api_and_internals(tmp_path: Path) -> None:
     assert "2008, 2009, 2010, 2011, 2012, 2013" in modules["data.py"]
     assert "2008, 2009, 2010, 2011, 2012, 2013" not in modules["api.py"]
     assert "2008, 2009, 2010, 2011, 2012, 2013" not in modules["internals.py"]
-    assert "data.TIME_PERIOD_DOMAIN" in modules["api.py"]
-    assert "data.TIME_PERIOD_DOMAIN" in modules["internals.py"]
+    assert "data.PATH_REQUIRED" in modules["api.py"]
+    assert "data.PATH_REQUIRED" in modules["internals.py"]
 
 
 def test_generated_modules_publish_keyed_meta_via_decorator(tmp_path: Path) -> None:
@@ -382,16 +381,13 @@ def test_generated_modules_publish_keyed_meta_via_decorator(tmp_path: Path) -> N
             assert "from .runtime import" in source
             assert re.search(r"from \.runtime import .*\bpublish\b", source)
     assert (
-        "@publish(\n"
-        "    key=('TIME_PERIOD',),\n"
-        "    domain=data.TIME_PERIOD_DOMAIN,\n"
-        "    constants=(),\n"
-        ")\ndef compute_path("
-    ) in year_modules["api.py"]
+        "@publish(key=('TIME_PERIOD',), domain=data.PATH_REQUIRED, constants=(), cells=data.PATH_CELLS)"
+        in year_modules["api.py"]
+    )
     assert (
-        "@publish(\n    key=('TIME_PERIOD',),\n    domain=data.TIME_PERIOD_DOMAIN,\n)\ndef path("
-    ) in year_modules["internals.py"]
-    assert "constants=" not in year_modules["internals.py"]
+        "@publish(key=('TIME_PERIOD',), domain=data.PATH_REQUIRED, constants=(), cells=data.PATH_CELLS)"
+        in year_modules["internals.py"]
+    )
     assert "constants=('gdp', 'revenue')" in matrix_modules["api.py"]
 
 

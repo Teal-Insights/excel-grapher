@@ -1,15 +1,8 @@
 #!/usr/bin/env python3
-"""Pass a tidy pandas DataFrame as catalog-order input to a package compute.
+"""Pass tidy DataFrame records to a named-coordinate generated function.
 
-Inverted-tree packages take sequences in catalog order (the expansion order of
-``data_range``), not ctx setters. Convert a tidy table (binding ``key`` columns
-plus ``OBS_VALUE``) into that tuple, then call ``compute_*``.
-
-See also ``matrix_dataframe_example.py`` for multi-key matrix bindings.
-
-Run from the repo root::
-
-    uv run python examples/micro_workbooks/setter_dataframe_example.py
+Overlay rows by their declared `TIME_PERIOD` keys and publish a new immutable
+input tensor. Run with `uv run python examples/micro_workbooks/setter_dataframe_example.py`.
 """
 
 from __future__ import annotations
@@ -98,16 +91,18 @@ def wide_row_to_tidy(df_wide: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def apply_tidy_updates(
-    default: tuple[object, ...],
-    domain: tuple[object, ...],
-    tidy: pd.DataFrame,
-) -> tuple[object, ...]:
-    """Overlay tidy OBS_VALUE rows onto a catalog-order default tuple."""
-    values = list(default)
+def apply_tidy_updates(default: Any, tidy: pd.DataFrame) -> Any:
+    """Overlay unique, valid period records onto an immutable input tensor."""
+    values = dict(default.items())
+    seen = set()
     for period, value in zip(tidy["TIME_PERIOD"], tidy["OBS_VALUE"], strict=True):
-        values[domain.index(period)] = float(value)
-    return tuple(values)
+        coordinate = (period,)
+        default.domain.require(coordinate)
+        if coordinate in seen:
+            raise ValueError(f"duplicate update for {coordinate!r}")
+        seen.add(coordinate)
+        values[coordinate] = float(value)
+    return type(default).from_records(domain=default.domain, records=values.items())
 
 
 def main() -> None:
@@ -129,7 +124,6 @@ def main() -> None:
             (pkg_dir / filename).write_text(content, encoding="utf-8")
         sys.path.insert(0, str(tmp_path))
         pkg = importlib.import_module("setter_df_pkg")
-        domain = pkg.compute_borvelia_primary_balance_out.__domain__
         default = pkg.data.BORVELIA_PRIMARY_BALANCE_DEFAULT
 
         # --- 1. Tidy DataFrame (partial update: periods 4 and 5 only) ---
@@ -143,7 +137,7 @@ def main() -> None:
         print(updates.to_string(index=False))
         print()
 
-        overlay = apply_tidy_updates(default, domain, updates)
+        overlay = apply_tidy_updates(default, updates)
         result = pkg.compute_borvelia_primary_balance_out(borvelia_primary_balance=overlay)
         records = pkg.as_records(pkg.compute_borvelia_primary_balance_out, result)
         by_period = {row["TIME_PERIOD"]: row["OBS_VALUE"] for row in records}
@@ -153,7 +147,7 @@ def main() -> None:
         print(f"  period 1 (unchanged): {by_period[1]}")
         print()
 
-        # --- 2. Wide spreadsheet row → tidy → catalog-order tuple ---
+        # --- 2. Wide spreadsheet row → tidy → named-coordinate tensor ---
         df_wide = pd.DataFrame(
             {1: [-1.0], 2: [-0.5], 3: [0.0], 4: [0.5], 5: [1.0]},
             index=["Primary balance (% of GDP)"],
@@ -166,7 +160,7 @@ def main() -> None:
         print(tidy.to_string(index=False))
         print()
 
-        overlay = apply_tidy_updates(default, domain, tidy)
+        overlay = apply_tidy_updates(default, tidy)
         result = pkg.compute_borvelia_primary_balance_out(borvelia_primary_balance=overlay)
         records = pkg.as_records(pkg.compute_borvelia_primary_balance_out, result)
         by_period = {row["TIME_PERIOD"]: row["OBS_VALUE"] for row in records}

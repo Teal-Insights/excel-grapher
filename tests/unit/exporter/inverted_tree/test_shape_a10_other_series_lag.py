@@ -163,9 +163,17 @@ def test_other_series_lag_emits_without_two_position_error(
     modules = generate_inverted(workbook, bindings_fn())
     pkg = load_package(modules, tmp_path, name=pkg_name)
     assert "debt" in all_param_names(pkg.internals.direction)
-    assert pkg.internals.direction((100.0, 101.0, 102.0)) == (1.0, 1.0)
-    assert pkg.internals.direction((102.0, 101.0, 100.0)) == (2.0, 2.0)
-    assert pkg.internals.direction((100.0, 102.0, 101.0)) == (1.0, 2.0)
+    for values, expected in [
+        ((100.0, 101.0, 102.0), (1.0, 1.0)),
+        ((102.0, 101.0, 100.0), (2.0, 2.0)),
+        ((100.0, 102.0, 101.0), (1.0, 2.0)),
+    ]:
+        debt = pkg.data.Debt.from_records(
+            domain=pkg.data.DEBT_REQUIRED,
+            records=zip(((2009,), (2010,), (2011,)), values, strict=True),
+        )
+        result = pkg.internals.direction(debt=debt)
+        assert (result[2010], result[2011]) == expected
 
 
 @pytest.mark.parametrize(
@@ -201,9 +209,15 @@ def test_other_series_lag_matches_formula_evaluator(
     targets = [*debt_cells, *dir_cells]
     graph = create_dependency_graph(workbook, targets, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(targets)
-    debt = tuple(expected[cell] for cell in debt_cells)
-    got = pkg.internals.direction(debt)
-    assert got == pytest.approx(tuple(expected[cell] for cell in dir_cells))
+    debt = pkg.data.Debt.from_records(
+        domain=pkg.data.DEBT_REQUIRED,
+        records=(
+            ((year,), expected[cell])
+            for year, cell in zip((2009, 2010, 2011), debt_cells, strict=True)
+        ),
+    )
+    got = pkg.internals.direction(debt=debt)
+    assert (got[2010], got[2011]) == pytest.approx(tuple(expected[cell] for cell in dir_cells))
 
 
 def test_non_adjacent_two_positions_still_fail_closed(tmp_path: Path) -> None:
@@ -264,6 +278,6 @@ def test_consistent_two_period_lag_is_not_catalog_adjacency(tmp_path: Path) -> N
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_delta(debt=(100.0, 101.0, 102.0, 103.0))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((2.0, 2.0))
+    got = pkg.compute_delta(debt=pkg.data.DEBT_DEFAULT)
+    assert (got[2011], got[2012]) == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert (got[2011], got[2012]) == pytest.approx((2.0, 2.0))

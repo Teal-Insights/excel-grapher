@@ -28,9 +28,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -196,7 +196,7 @@ def test_threshold_coread_emits_and_matches_evaluator(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "paths" in deps["breach"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     assert "paths[i]" in internals
     assert "paths[i + 2]" in internals
     assert ".index(" not in internals
@@ -205,9 +205,9 @@ def test_threshold_coread_emits_and_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
-    got = pkg.internals.breach(kwargs["paths"])
-    assert got == pytest.approx((1.0, 0.0, 1.0, 1.0))
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    got = pkg.internals.breach(paths=kwargs["paths"])
+    assert tuple(value for _, value in got.items()) == pytest.approx((1.0, 0.0, 1.0, 1.0))
     assert (
         _unwrap(call_compute(pkg, "result_baseline_year", kwargs)),
         _unwrap(call_compute(pkg, "result_shock_year", kwargs)),

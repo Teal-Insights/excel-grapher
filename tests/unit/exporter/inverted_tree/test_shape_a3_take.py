@@ -18,49 +18,64 @@ from tests.unit.exporter.inverted_tree.helpers import (
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import _a1_bindings, _a1_workbook
 
 
-def test_engine_path_accepts_year1_working_buffer(tmp_path: Path) -> None:
+def test_engine_path_requires_complete_declared_result_inputs(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a1_bindings()), tmp_path, name="a3_buf")
-    year0 = pkg.internals.engine_year0(60.0)
-    one = pkg.internals.engine_path(year0, (3.5,), (4.0,))
-    assert len(one) == 1
-    full = pkg.internals.engine_path(year0, (3.5, 3.5), (4.0, 4.0))
-    assert one[0] == pytest.approx(full[0])
+    year0 = pkg.internals.engine_year0(initial_debt=60.0)
+    partial = pkg.Tensor.from_records(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (1,), int)), records=(((1,), 3.5),)
+    )
+    with pytest.raises(pkg.tensor.SchemaError, match="growth.*required coordinate.*2"):
+        pkg.internals.engine_path(
+            engine_year0=year0, growth=partial, interest=pkg.data.INTEREST_DEFAULT
+        )
 
 
 def test_misaligned_growth_interest_raise(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a1_bindings()), tmp_path, name="a3_align")
-    year0 = pkg.internals.engine_year0(60.0)
-    with pytest.raises(ValueError, match="misaligned"):
-        pkg.internals.engine_path(year0, (3.5, 3.5), (4.0,))
+    wrong = pkg.Tensor.from_records(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2, 3), int)),
+        records=(((2,), 4.0), ((3,), 4.0)),
+    )
+    with pytest.raises(pkg.tensor.SchemaError, match="interest.*required coordinate.*1"):
+        pkg.internals.engine_path(engine_year0=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=wrong)
 
 
-def test_scan_restart_from_year1_debt(tmp_path: Path) -> None:
+def test_scan_does_not_implicitly_rebase_a_later_year(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
-    pkg = load_package(generate_inverted(workbook, _a1_bindings()), tmp_path, name="a3_restart")
-    year0 = pkg.internals.engine_year0(60.0)
-    full = pkg.internals.engine_path(year0, (3.5, 3.5), (4.0, 4.0))
-    restarted = pkg.internals.engine_path(full[0], (3.5,), (4.0,))
-    assert restarted[0] == pytest.approx(full[1])
+    modules = generate_inverted(workbook, _a1_bindings())
+    assert "_kernels.engine_path(" not in modules["internals.py"]
+    assert "CoordinateReader" in modules["internals.py"]
+    assert "engine_path[time_period - 1]" in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="a3_restart")
+    full = pkg.internals.engine_path(
+        engine_year0=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    )
+    later = pkg.Tensor.from_records(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2,), int)), records=(((2,), 3.5),)
+    )
+    with pytest.raises(pkg.tensor.SchemaError, match="growth.*required coordinate.*1"):
+        pkg.internals.engine_path(
+            engine_year0=full[1], growth=later, interest=pkg.data.INTEREST_DEFAULT
+        )
 
 
-def test_public_compute_takes_catalog_order_arrays(tmp_path: Path) -> None:
+def test_public_compute_takes_named_series(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     modules = generate_inverted(workbook, _a1_bindings())
     assert "trim(" not in modules["api.py"]
     pkg = load_package(modules, tmp_path, name="a3_y1")
     value = pkg.compute_output_year1(
         initial_debt=60.0,
-        growth=(3.5, 3.5),
-        interest=(4.0, 4.0),
+        growth=pkg.data.GROWTH_DEFAULT,
+        interest=pkg.data.INTEREST_DEFAULT,
     )
-    if isinstance(value, tuple):
-        assert len(value) == 1
-        value = value[0]
-    full = pkg.compute_output_path(initial_debt=60.0, growth=(3.5, 3.5), interest=(4.0, 4.0))
-    assert value == pytest.approx(full[0])
-    with pytest.raises(ValueError, match="expected length 2"):
+    full = pkg.compute_output_path(
+        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    )
+    assert value == pytest.approx(full[1])
+    with pytest.raises(pkg.tensor.SchemaError, match="expected Tensor"):
         pkg.compute_output_year1(initial_debt=60.0, growth=(3.5,), interest=(4.0,))
 
 
@@ -144,20 +159,18 @@ def test_middle_slice_scan_uses_predecessor_closure(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _middle_bindings())
     api = modules["api.py"]
     assert "trim(" not in api
-    assert "take(growth, range(0, 3))" in api
-    assert "take(interest, range(0, 3))" in api
-    assert "take(engine_path, range(1, 3))" in api
-    assert "take(growth, (0, 1, 2))" not in api
+    assert "growth: data.Growth[" in api
+    assert "interest: data.Interest[" in api
     pkg = load_package(modules, tmp_path, name="a3_mid")
-    growth = (3.0, 3.5, 4.0, 4.5)
-    interest = (4.0, 4.5, 5.0, 5.5)
-    year0 = pkg.internals.engine_year0(60.0)
-    full = pkg.internals.engine_path(year0, growth, interest)
+    growth = pkg.data.GROWTH_DEFAULT
+    interest = pkg.data.INTEREST_DEFAULT
+    year0 = pkg.internals.engine_year0(initial_debt=60.0)
+    full = pkg.internals.engine_path(engine_year0=year0, growth=growth, interest=interest)
     got = pkg.compute_output_mid(initial_debt=60.0, growth=growth, interest=interest)
-    assert got == pytest.approx((full[1], full[2]))
+    assert (got[2], got[3]) == pytest.approx((full[2], full[3]))
     graph = create_dependency_graph(workbook, ["Outputs!A1", "Outputs!B1"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
-    assert got == pytest.approx((expected["Outputs!A1"], expected["Outputs!B1"]))
+    assert (got[2], got[3]) == pytest.approx((expected["Outputs!A1"], expected["Outputs!B1"]))
 
 
 def _punched_workbook(tmp_path: Path) -> Path:
@@ -221,10 +234,10 @@ def test_punched_elementwise_gathers_holes(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _punched_bindings())
     api = modules["api.py"]
     assert "trim(" not in api
-    assert "take(values, range(0, 4, 2))" in api
-    assert "take(values, (0, 2))" not in api
+    assert "values: data.Values[" in api
     pkg = load_package(modules, tmp_path, name="a3_punch")
-    got = pkg.compute_output_punched(values=(10.0, 20.0, 30.0))
-    assert got == pytest.approx((11.0, 31.0))
-    with pytest.raises(ValueError, match="expected length 3"):
+    got = pkg.compute_output_punched(values=pkg.data.VALUES_DEFAULT)
+    assert tuple(got.domain) == ((1,), (3,))
+    assert (got[1], got[3]) == pytest.approx((11.0, 31.0))
+    with pytest.raises(pkg.tensor.SchemaError, match="expected Tensor"):
         pkg.compute_output_punched(values=(10.0, 30.0))

@@ -2594,6 +2594,27 @@ def plan_indices(
             continue
         host_result = result[host_id]
         host_call = predecessor_closure(host_result) if info.is_scan else host_result
+        host = catalog.get(host_id)
+        full = tuple(range(len(host.cells)))
+        # A sliced buffer changes the loop's integer origin. Region branches
+        # and non-identity producer reads still refer to the full host walk.
+        # Keep that walk intact, then project the published result.
+        identity_only = all(
+            not catalog.get(param_id).is_sequence
+            or (
+                param_id in info.aligned_ids
+                and param_id not in info.affine_maps
+                and info.index_maps.get(param_id, full) == full
+            )
+            for param_id in info.param_ids
+        )
+        prefix = host_call == tuple(range(len(host_call)))
+        if (
+            not identity_only
+            or (not prefix and len(host.statements) > 1)
+            or (info.is_scan and info.scan_direction == "reversed")
+        ):
+            host_call = full
         call[host_id] = host_call
         _propagate_param_indices(
             info,

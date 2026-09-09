@@ -30,9 +30,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     oriented_document,
     required_param_names,
     series_entry,
@@ -110,7 +110,12 @@ from tests.unit.exporter.inverted_tree.test_shape_a36_vintage_residual import (
 )
 
 
-def _values_close(got: object, expected: object) -> None:
+def _values_close(got: Any, expected: Any) -> None:
+    if hasattr(got, "domain") and hasattr(expected, "domain"):
+        assert tuple(got.domain) == tuple(expected.domain)
+        for coordinate, value in got.items():
+            _values_close(value, expected[coordinate])
+        return
     if isinstance(got, tuple) and isinstance(expected, tuple):
         assert len(got) == len(expected)
         for left, right in zip(got, expected, strict=True):
@@ -149,7 +154,7 @@ def _package_matches_evaluator(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
 ) -> None:
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     cells = [cell for series in catalog.output_series() for cell in series.cells]
     expected = FormulaEvaluator(graph).evaluate(cells)
     for series in catalog.output_series():
@@ -157,10 +162,14 @@ def _package_matches_evaluator(
         function = getattr(pkg, name)
         accepted = set(inspect.signature(function).parameters)
         got = function(**{key: value for key, value in kwargs.items() if key in accepted})
-        if not isinstance(got, tuple):
-            got = (got,)
-        want = tuple(expected[cell] for cell in _output_cells_in_export_order(series))
-        _values_close(got, want)
+        if series.layout == "scalar":
+            _values_close(got, expected[series.cells[0]])
+        else:
+            assert tuple(got.domain) == tuple(
+                coord for coord in series.tensor_domain if coord in series.required_coordinates
+            )
+            for coordinate, value in got.items():
+                _values_close(value, expected[series.coordinate_cells[coordinate]])
 
 
 def _emit_and_compare(
@@ -297,11 +306,11 @@ def test_corpus_rung3_matches_evaluator_and_auto(
     )
     _package_matches_evaluator(auto, catalog, graph)
     _package_matches_evaluator(forced, catalog, graph)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(auto, catalog, graph)
     for series in catalog.output_series():
         _values_close(
             call_compute(auto, series.series_id, kwargs),
-            call_compute(forced, series.series_id, kwargs),
+            call_compute(forced, series.series_id, named_input_kwargs(forced, catalog, graph)),
         )
 
 
@@ -332,11 +341,11 @@ def test_corpus_rung2_matches_evaluator_and_auto(
     )
     _package_matches_evaluator(auto, catalog, graph)
     _package_matches_evaluator(forced, catalog, graph)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(auto, catalog, graph)
     for series in catalog.output_series():
         _values_close(
             call_compute(auto, series.series_id, kwargs),
-            call_compute(forced, series.series_id, kwargs),
+            call_compute(forced, series.series_id, named_input_kwargs(forced, catalog, graph)),
         )
 
 
@@ -672,7 +681,11 @@ def test_lexically_misordered_string_keys_match_evaluator(tmp_path: Path) -> Non
         modules = generate_inverted(workbook, document, force_rung=force_rung)
         pkg = load_package(modules, tmp_path, name=f"lex_{force_rung}")
         _package_matches_evaluator(pkg, catalog, graph)
-        assert pkg.compute_path() == pytest.approx((100.0, 101.0, 102.0))
+        result = pkg.compute_path()
+        assert tuple(result.domain) == (("Y9",), ("Y10",), ("Y11",))
+        assert [result[year] for year in ("Y9", "Y10", "Y11")] == pytest.approx(
+            (100.0, 101.0, 102.0)
+        )
 
 
 def test_leaf_closure_signatures_use_inspect(tmp_path: Path) -> None:

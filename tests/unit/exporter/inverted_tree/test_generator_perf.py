@@ -98,6 +98,8 @@ def _count_fused_plan_ops(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
         index_edges: Sequence[DependenceEdge],
         union_t: int,
         index: int,
+        partition: tuple[object, ...] | None = None,
+        statement_ids: Mapping[str, Mapping[int, str]] | None = None,
     ) -> object:
         counts["index_keys"] += 1
         counts["index_edges"] += len(index_edges)
@@ -108,6 +110,8 @@ def _count_fused_plan_ops(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
             index_edges=index_edges,
             union_t=union_t,
             index=index,
+            partition=partition,
+            statement_ids=statement_ids,
         )
 
     def counting_bucket(

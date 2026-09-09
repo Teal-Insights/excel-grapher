@@ -112,8 +112,8 @@ Each issue in the JSON report has `level`, `code`, `message`, and optional `seri
 ### Smoke test and code generation
 
 After validation succeeds, `--smoke-test` generates an inverted-tree package, calls each
-`compute_*` with the workbook-default inputs from `data.py`, and checks that the result tuple
-length matches the output series. Export requires at least one formula output series.
+`compute_*` with the workbook-default tensors and scalars from `data.py`, and checks
+the declared output coordinates and value contract. Export requires at least one formula output series.
 
 ```bash
 uv run excel-grapher bindings validate lic_inputs.xlsx --smoke-test

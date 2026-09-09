@@ -6,6 +6,7 @@ import importlib
 import inspect
 import sys
 from collections.abc import Callable
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -91,13 +92,17 @@ def smoke_test_computes(
             raise BindingsSmokeError(
                 f"Compute {name!r} raised {type(exc).__name__}: {exc}"
             ) from exc
-        if not isinstance(result, tuple):
+        if isinstance(result, pkg.Tensor):
+            result_count = len(result.domain)
+        elif isinstance(result, (int, float, str, bool, date, datetime)) or result is None:
+            result_count = 1
+        else:
             raise BindingsSmokeError(
-                f"Compute {name!r} did not return a tuple (got {type(result).__name__})"
+                f"Compute {name!r} must return a scalar or Tensor (got {type(result).__name__})"
             )
-        if len(result) != expected_count:
+        if result_count != expected_count:
             raise BindingsSmokeError(
-                f"Compute {name!r} returned {len(result)} values, expected {expected_count}"
+                f"Compute {name!r} returned {result_count} values, expected {expected_count}"
             )
 
 

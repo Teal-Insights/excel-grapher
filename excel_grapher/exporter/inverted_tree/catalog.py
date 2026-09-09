@@ -29,7 +29,13 @@ from excel_grapher.core.formula_ast import (
     resolve_cell_ref,
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
+from excel_grapher.exporter.export_runtime.tensor import Axis, Domain
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.grapher.blank_ranges import (
+    BlankRangeRect,
+    address_in_blank_ranges,
+    normalize_blank_range_specs,
+)
 from excel_grapher.series_bindings.graph_predicates import (
     is_graph_formula_node,
     is_graph_leaf,
@@ -49,6 +55,8 @@ from excel_grapher.series_bindings.ranges import (
     series_data_ranges,
 )
 from excel_grapher.series_bindings.resolve import (
+    _component_dtype,
+    _effective_read_as,
     _structure_source_addresses,
     _WorkbookValues,
     resolve_key_domain,
@@ -136,6 +144,10 @@ class BoundSeries:
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
     holes: tuple[SeriesHole, ...] = ()
+    authored_cells: tuple[CanonicalAddress, ...] | None = None
+    authored_domain: tuple[KeyPoint, ...] | None = None
+    graph_cells: frozenset[CanonicalAddress] | None = None
+    key_types: tuple[str, ...] = ()
     _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
     _rect: tuple[str, int, int, int, int] | None = field(init=False, repr=False, compare=False)
     _holes_by_index: dict[int, SeriesHole] = field(init=False, repr=False, compare=False)
@@ -163,6 +175,70 @@ class BoundSeries:
     def is_scalar(self) -> bool:
         """True when the series is a single value."""
         return self.layout == "scalar" or len(self.cells) == 1
+
+    @property
+    def tensor_domain(self) -> Domain:
+        """The complete authored semantic domain, independent of graph projection."""
+        points = self.domain if self.authored_domain is None else self.authored_domain
+        if not self.key_fields:
+            cells = self.cells if self.authored_cells is None else self.authored_cells
+            if not cells:
+                return Domain.explicit(axes=(), coordinates=())
+            if len(cells) != 1:
+                raise InvertedTreeExportError(
+                    f"series {self.series_id!r}: multiple observations require authored semantic keys"
+                )
+            return Domain.product()
+        axes = []
+        for dimension_index, name in enumerate(self.key_fields):
+            keys = tuple(dict.fromkeys(point[name] for point in points))
+            bind = self.dimension_bind(name) or {}
+            read = (
+                self.key_types[dimension_index] if self.key_types else str(bind.get("read", "auto"))
+            )
+            if read == "auto":
+                read = "int" if keys and type(keys[0]) is int else "string"
+            if read not in {"int", "integer", "str", "string"}:
+                raise InvertedTreeExportError(
+                    f"series {self.series_id!r}: axis {name!r} requires a string or integer key type, received {read!r}"
+                )
+            key_type = int if read in {"int", "integer"} else str
+            try:
+                axes.append(Axis(name, cast(tuple[str | int, ...], keys), key_type))
+            except ValueError as exc:
+                raise InvertedTreeExportError(f"series {self.series_id!r}: {exc}") from exc
+        coordinates = tuple(tuple(point[name] for name in self.key_fields) for point in points)
+        try:
+            domain = Domain.explicit(
+                axes=axes, coordinates=cast(tuple[tuple[str | int, ...], ...], coordinates)
+            )
+        except ValueError as exc:
+            raise InvertedTreeExportError(
+                f"series {self.series_id!r}: {exc}; correct the authored keys"
+            ) from exc
+        rectangular = Domain.product(*axes)
+        return rectangular if len(rectangular) == len(domain) else domain
+
+    @property
+    def coordinate_cells(self) -> Mapping[tuple[Scalar, ...], CanonicalAddress]:
+        """Authored coordinate provenance, including members outside the graph."""
+        _ = self.tensor_domain
+        points = self.domain if self.authored_domain is None else self.authored_domain
+        cells = self.cells if self.authored_cells is None else self.authored_cells
+        return MappingProxyType(
+            {
+                tuple(point[name] for name in self.key_fields): cell
+                for point, cell in zip(points, cells, strict=True)
+            }
+        )
+
+    @property
+    def required_coordinates(self) -> frozenset[tuple[Scalar, ...]]:
+        """Coordinates required by this extraction, separate from authored membership."""
+        cells = self.graph_cells
+        return frozenset(
+            coord for coord, cell in self.coordinate_cells.items() if cells is None or cell in cells
+        )
 
     @property
     def is_sequence(self) -> bool:
@@ -764,6 +840,7 @@ def _cell_access_pairs(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
     address: CanonicalAddress,
+    blank_rects: tuple[BlankRangeRect, ...] = (),
 ) -> tuple[tuple[str, int | None], ...]:
     """Return `(producer_id, catalog_index)` for each cell or range endpoint."""
     node = graph.get_node(address)
@@ -773,6 +850,9 @@ def _cell_access_pairs(
     found: list[tuple[str, int | None]] = []
     for ref in _iter_cell_refs(ast):
         resolved = as_canonical(resolve_cell_ref(ref, address))
+        if address_in_blank_ranges(resolved, blank_rects):
+            found.append(("<structural blank>", None))
+            continue
         owner_id = catalog.series_id_for(resolved)
         if owner_id is None:
             found.append(("?", None))
@@ -788,10 +868,14 @@ def _shape_partition(
     series: BoundSeries,
     catalog: SeriesCatalog,
     graph: DependencyGraph,
+    blank_rects: tuple[BlankRangeRect, ...] = (),
 ) -> tuple[Statement, ...]:
     """Split a formula series into consecutive affine formula-shape statements."""
     meta = [
-        (_formula_shape_key(graph, address), _cell_access_pairs(catalog, graph, address))
+        (
+            _formula_shape_key(graph, address),
+            _cell_access_pairs(catalog, graph, address, blank_rects),
+        )
         for address in series.cells
     ]
     if not meta:
@@ -865,7 +949,12 @@ def _shape_partition(
     )
 
 
-def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesCatalog:
+def partition_catalog(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    *,
+    blank_rects: tuple[BlankRangeRect, ...] = (),
+) -> SeriesCatalog:
     """Split each series into consecutive formula-shape statements."""
     series_map: dict[str, BoundSeries] = {}
     statement_id_by_coord = catalog.schedule.statement_id_by_coord
@@ -874,7 +963,9 @@ def partition_catalog(catalog: SeriesCatalog, graph: DependencyGraph) -> SeriesC
         if not series.is_formula_series:
             series_map[series_id] = series
             continue
-        partitioned = replace(series, statements=_shape_partition(series, catalog, graph))
+        partitioned = replace(
+            series, statements=_shape_partition(series, catalog, graph, blank_rects)
+        )
         series_map[series_id] = partitioned
         if partitioned.statements == series.statements:
             continue
@@ -1050,6 +1141,7 @@ def build_catalog(
     *,
     workbook: Path | str,
     graph: DependencyGraph | None = None,
+    blank_ranges: Sequence[str] | None = None,
 ) -> SeriesCatalog:
     """Expand every series `data_range` into a lookup catalog.
 
@@ -1067,11 +1159,13 @@ def build_catalog(
             cell, key-domain resolution fails, a formula series has no graph
             formula cells, or a retained graph leaf has no cached value.
     """
+    blank_rects = normalize_blank_range_specs(blank_ranges)
     series_map: dict[str, BoundSeries] = {}
     order: list[str] = []
     address_to_id: dict[CanonicalAddress, str] = {}
     concept_scheme = bindings.get("concept_scheme")
     pending: list[tuple[str, dict[str, Any], tuple[CanonicalAddress, ...]]] = []
+    authored_by_id: dict[str, tuple[CanonicalAddress, ...]] = {}
     seen_raw: dict[str, Mapping[str, Any]] = {}
     for entry in bindings.get("series", []):
         if not isinstance(entry, dict):
@@ -1092,6 +1186,7 @@ def build_catalog(
                 canonical_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
         cells = [as_canonical(addr) for addr in apply_series_excludes(cells, entry)]
+        authored_by_id[series_id] = tuple(cells)
         if graph is not None:
             cell_tuple = _filter_formula_series_cells(
                 cells,
@@ -1106,24 +1201,39 @@ def build_catalog(
         pending.append((series_id, entry, cell_tuple))
     with _WorkbookValues(workbook) as reader:
         sources: list[str] = []
-        for _series_id, entry, cell_tuple in pending:
+        for _series_id, entry, _cell_tuple in pending:
             if entry.get("key"):
-                sources.extend(_structure_source_addresses(entry, cell_tuple))
+                sources.extend(_structure_source_addresses(entry, authored_by_id[_series_id]))
         reader.prefetch(sources, graph=graph)
         for series_id, entry, cell_tuple in pending:
             key_fields = _key_fields_of(entry)
+            components = {
+                effective_dimension_id(component): component
+                for component in entry.get("structure", {}).get("dimensions", [])
+            }
+            key_types = tuple(
+                _effective_read_as(
+                    components[name].get("bind", {}),
+                    inferred_dtype=_component_dtype(concept_scheme, entry, components[name]),
+                )
+                if name in components
+                else "auto"
+                for name in key_fields
+            )
             try:
                 raw_domain = resolve_key_domain(
                     workbook,
                     entry,
-                    cell_tuple,
+                    authored_by_id[series_id],
                     concept_scheme=concept_scheme,
                     graph=graph,
                     reader=reader,
                 )
             except ValueError as exc:
                 raise InvertedTreeExportError(str(exc)) from exc
-            domain = tuple(_key_point(values, key_fields) for values in raw_domain)
+            authored_domain = tuple(_key_point(values, key_fields) for values in raw_domain)
+            points_by_cell = dict(zip(authored_by_id[series_id], authored_domain, strict=True))
+            domain = tuple(points_by_cell[cell] for cell in cell_tuple)
             layout = _layout_of(entry)
             direction = _direction_of(entry)
             holes: tuple[SeriesHole, ...] = ()
@@ -1151,6 +1261,24 @@ def build_catalog(
                 domain=domain,
                 statements=(_whole_statement(series_id, cell_tuple, domain),),
                 holes=holes,
+                authored_cells=tuple(
+                    cell
+                    for cell in authored_by_id[series_id]
+                    if not address_in_blank_ranges(cell, blank_rects)
+                ),
+                authored_domain=tuple(
+                    point
+                    for cell, point in zip(authored_by_id[series_id], authored_domain, strict=True)
+                    if not address_in_blank_ranges(cell, blank_rects)
+                ),
+                graph_cells=None
+                if graph is None
+                else frozenset(
+                    cell
+                    for cell in authored_by_id[series_id]
+                    if is_graph_formula_node(graph, cell) or is_graph_leaf(graph, cell)
+                ),
+                key_types=key_types,
             )
             series_map[series_id] = bound
             order.append(series_id)
@@ -1169,7 +1297,7 @@ def build_catalog(
     )
     if graph is None:
         return catalog
-    return partition_catalog(catalog, graph)
+    return partition_catalog(catalog, graph, blank_rects=blank_rects)
 
 
 def covering_series(

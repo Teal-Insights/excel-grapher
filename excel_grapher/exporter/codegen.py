@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, ClassVar, cast
 
 from excel_grapher.grapher.graph import DependencyGraph
 
 __all__ = ["CodeGenerator"]
+
+REPRESENTATION_VERSION = "named-axis-v1"
 
 if TYPE_CHECKING:
     from excel_grapher.series_bindings.types import InputSeries, WorkbookSeriesBindings
@@ -19,6 +21,8 @@ class CodeGenerator:
 
     Package export is `generate_modules()` and requires series bindings.
     """
+
+    representation_version: ClassVar[str] = REPRESENTATION_VERSION
 
     def __init__(self, graph: DependencyGraph) -> None:
         """Initialize the code generator.

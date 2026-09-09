@@ -12,7 +12,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
     series_entry,
@@ -45,7 +44,11 @@ def _package_matches_output(
     expected = FormulaEvaluator(graph).evaluate([cell])[cell]
     series_id = catalog.series_id_for(cell)
     assert series_id is not None
-    got = call_compute(pkg, series_id, input_kwargs(catalog, graph))
+    kwargs = {
+        series.series_id: getattr(pkg.data, series.series_id.upper() + "_DEFAULT")
+        for series in catalog.input_series()
+    }
+    got = call_compute(pkg, series_id, kwargs)
     assert _scalar(got) == expected
 
 
@@ -58,7 +61,7 @@ def test_if_and_true_false_matches_mcve(tmp_path: Path) -> None:
     assert "xl_and(" in modules["internals.py"]
     assert "def xl_and" in modules["runtime.py"]
     pkg = load_package(modules, tmp_path, name="and_mcve")
-    assert pkg.compute_out() == pytest.approx((20.0,))
+    assert pkg.compute_out() == pytest.approx(20.0)
     _package_matches_output(tmp_path, workbook, _scalar_bindings(), "and_mcve_eval", "Engine!A1")
 
 
@@ -84,9 +87,9 @@ def test_if_or_and_not_scalars_match_evaluator(tmp_path: Path) -> None:
     assert "def xl_or" in modules["runtime.py"]
     assert "def xl_not" in modules["runtime.py"]
     pkg = load_package(modules, tmp_path, name="or_not")
-    assert pkg.compute_or_out() == pytest.approx((10.0,))
-    assert pkg.compute_not_true() == pytest.approx((20.0,))
-    assert pkg.compute_not_false() == pytest.approx((10.0,))
+    assert pkg.compute_or_out() == pytest.approx(10.0)
+    assert pkg.compute_not_true() == pytest.approx(20.0)
+    assert pkg.compute_not_false() == pytest.approx(10.0)
     for cell in ("Engine!A1", "Engine!A2", "Engine!A3"):
         _package_matches_output(tmp_path, workbook, document, f"or_not_{cell[-2:]}", cell)
 
@@ -118,8 +121,8 @@ def test_and_or_over_bound_series_match_evaluator(tmp_path: Path) -> None:
     assert "xl_and(" in modules["internals.py"]
     assert "xl_or(" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="and_or_range")
-    assert pkg.compute_and_out(flags=(True, False)) == (False,)
-    assert pkg.compute_or_out(flags=(True, False)) == (True,)
+    assert pkg.compute_and_out(flags=pkg.data.FLAGS_DEFAULT) is False
+    assert pkg.compute_or_out(flags=pkg.data.FLAGS_DEFAULT) is True
     _package_matches_output(tmp_path, workbook, document, "and_range_eval", "Outputs!Z1")
     _package_matches_output(tmp_path, workbook, document, "or_range_eval", "Outputs!Z2")
 
@@ -151,9 +154,11 @@ def test_and_range_window_takes_only_the_range(tmp_path: Path) -> None:
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output", dtype="bool"),
     )
     modules = generate_inverted(workbook, document)
-    assert "take(" in modules["internals.py"]
+    assert "flags[2024]" in modules["internals.py"]
+    assert "flags[2025]" in modules["internals.py"]
+    assert "flags[2026]" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="and_window")
-    assert pkg.compute_out(flags=(True, True, False)) == (True,)
+    assert pkg.compute_out(flags=pkg.data.FLAGS_DEFAULT) is True
     _package_matches_output(tmp_path, workbook, document, "and_window_eval", "Outputs!Z1")
 
 
@@ -177,5 +182,5 @@ def test_and_mixed_range_and_scalar_matches_evaluator(tmp_path: Path) -> None:
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output", dtype="bool"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="and_mixed")
-    assert pkg.compute_out(flags=(True, True)) == (True,)
+    assert pkg.compute_out(flags=pkg.data.FLAGS_DEFAULT) is True
     _package_matches_output(tmp_path, workbook, document, "and_mixed_eval", "Outputs!Z1")

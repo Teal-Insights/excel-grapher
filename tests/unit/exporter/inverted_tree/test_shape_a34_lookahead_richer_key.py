@@ -26,10 +26,10 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
     make_catalog,
+    named_input_kwargs,
     write_workbook,
 )
 
@@ -237,9 +237,11 @@ def test_if_lookahead_into_richer_key_emits_and_matches_evaluator(tmp_path: Path
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = call_compute(pkg, "stock", input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((52.0, 54.0))
+    got = call_compute(pkg, "stock", named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((52.0, 54.0))
 
 
 def test_unique_lookahead_into_richer_key_is_not_a_seed(tmp_path: Path) -> None:

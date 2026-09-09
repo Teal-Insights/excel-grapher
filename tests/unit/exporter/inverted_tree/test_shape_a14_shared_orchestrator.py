@@ -30,7 +30,7 @@ from tests.unit.exporter.inverted_tree.test_shape_a13_identity_flip import (
 
 def test_shared_engine_emits_one_runner(tmp_path: Path) -> None:
     modules = generate_inverted(_a1_workbook(tmp_path), _a1_bindings())
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     assert api.count("internals.engine_path(") == 1
     assert api.count("internals.engine_year0(") == 1
     assert "def _run_" in api
@@ -42,11 +42,13 @@ def test_shared_engine_emits_one_runner(tmp_path: Path) -> None:
     }
     assert "unused_flag" not in all_param_names(pkg.compute_output_path)
     assert "unused_flag" not in all_param_names(pkg.compute_output_year1)
-    path = pkg.compute_output_path(initial_debt=60.0, growth=(3.5, 3.5), interest=(4.0, 4.0))
-    year1 = pkg.compute_output_year1(initial_debt=60.0, growth=(3.5, 3.5), interest=(4.0, 4.0))
-    if isinstance(year1, tuple):
-        year1 = year1[0]
-    assert year1 == pytest.approx(path[0])
+    path = pkg.compute_output_path(
+        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    )
+    year1 = pkg.compute_output_year1(
+        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    )
+    assert year1 == pytest.approx(path[1])
 
 
 def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:
@@ -63,18 +65,24 @@ def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:
         runner_src = inspect.getsource(getattr(pkg.api, runner.group()))
         assert "shocked_path" not in runner_src
         assert "shock_year" not in runner_src
-    assert pkg.compute_output_baseline(value=10.0) == pytest.approx((10.0, 10.0))
-    assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((11.0, 11.0))
+    baseline = pkg.compute_output_baseline(value=10.0)
+    shocked = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    assert (baseline[1], baseline[2]) == pytest.approx((10.0, 10.0))
+    assert (shocked[1], shocked[2]) == pytest.approx((11.0, 11.0))
 
 
 def test_identity_flip_outputs_share_one_scan_call(tmp_path: Path) -> None:
     modules = generate_inverted(_qcraft_workbook(tmp_path), _qcraft_bindings())
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     assert api.count("internals.scan_") == 1
     pkg = load_package(modules, tmp_path, name="a14_qc")
     emp = pkg.compute_employment_growth()
     prod = pkg.compute_labour_productivity_growth()
     growth = pkg.compute_real_gdp_growth()
-    assert emp == pytest.approx((2.9411764705882355, 3.0, 3.0))
-    assert prod == pytest.approx((2.0, 0.9708737864077671, 2.0))
-    assert growth == pytest.approx((5.0, 4.0, 5.06))
+    assert tuple(emp[year] for year in (2009, 2010, 2011)) == pytest.approx(
+        (2.9411764705882355, 3.0, 3.0)
+    )
+    assert tuple(prod[year] for year in (2009, 2010, 2011)) == pytest.approx(
+        (2.0, 0.9708737864077671, 2.0)
+    )
+    assert tuple(growth[year] for year in (2009, 2010, 2011)) == pytest.approx((5.0, 4.0, 5.06))

@@ -16,9 +16,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     write_workbook,
 )
 
@@ -121,7 +121,7 @@ def _expected_hits(size: int) -> tuple[float, ...]:
 def test_repeated_vlookup_table_is_zipped_and_hoisted_once(tmp_path: Path) -> None:
     size = 10
     workbook = _lookup_workbook(tmp_path, size)
-    internals = generate_inverted(workbook, _lookup_bindings(size))["internals.py"]
+    internals = generate_inverted(workbook, _lookup_bindings(size))["_kernels.py"]
     assert internals.count("xl_vlookup(") == 1
     assert "left_values[0]" not in internals
     assert "tuple(zip(" in internals
@@ -140,10 +140,18 @@ def test_lookup_table_source_does_not_copy_per_row(tmp_path: Path) -> None:
     compile_times: list[float] = []
     for size in (10, 40):
         workbook = _lookup_workbook(tmp_path, size)
-        internals = generate_inverted(workbook, _lookup_bindings(size))["internals.py"]
+        internals = generate_inverted(workbook, _lookup_bindings(size))["_kernels.py"]
         internals_sizes.append(len(internals.encode()))
         compile_times.append(
-            timeit.timeit(lambda src=internals: compile(src, "<internals>", "exec"), number=20)
+            # Compare best repeated samples so an unrelated process interrupting
+            # one short compilation batch does not look like source-size growth.
+            min(
+                timeit.repeat(
+                    lambda src=internals: compile(src, "<internals>", "exec"),
+                    number=20,
+                    repeat=5,
+                )
+            )
         )
         assert internals.count("xl_vlookup(") == 1
         assert internals.count("tuple(zip(") == 1
@@ -162,16 +170,25 @@ def test_repeated_vlookup_matches_evaluator_and_tracks_inputs(tmp_path: Path) ->
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = call_compute(pkg, "result", kwargs)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_expected_hits(size))
+    assert [got[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [got[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx(
+        _expected_hits(size)
+    )
 
     swapped = dict(kwargs)
-    swapped["right_values"] = tuple(float(row * 3) for row in range(2, size + 2))
+    swapped["right_values"] = pkg.data.RightValues.from_records(
+        domain=pkg.data.RIGHT_VALUES_DOMAIN,
+        records=[((f"Country {row}",), float(row * 3)) for row in range(2, size + 2)],
+    )
     got_swapped = call_compute(pkg, "result", swapped)
-    assert got_swapped == pytest.approx(tuple(float(row * 3 * 2) for row in range(2, size + 2)))
-    assert got_swapped != pytest.approx(got)
+    assert [got_swapped[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx(
+        tuple(float(row * 3 * 2) for row in range(2, size + 2))
+    )
+    assert dict(got_swapped.items()) != pytest.approx(dict(got.items()))
 
 
 def test_lookup_miss_and_error_propagate(tmp_path: Path) -> None:
@@ -180,22 +197,38 @@ def test_lookup_miss_and_error_propagate(tmp_path: Path) -> None:
     document = _lookup_bindings(size)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="lookup_miss")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     selectors = kwargs["selectors"]
-    assert isinstance(selectors, tuple)
+    assert isinstance(selectors, pkg.Tensor)
     missing = dict(kwargs)
-    missing["selectors"] = (99.0, *selectors[1:])
+    missing["selectors"] = pkg.data.Selectors.from_records(
+        domain=selectors.domain,
+        records=[
+            (coord, 99.0 if coord == ("Country 2",) else value)
+            for coord, value in selectors.items()
+        ],
+    )
     got_miss = call_compute(pkg, "result", missing)
-    assert isinstance(got_miss, tuple)
-    assert got_miss[0] == "#N/A"
-    assert got_miss[1:] == pytest.approx(_expected_hits(size)[1:])
+    assert isinstance(got_miss, pkg.Tensor)
+    assert got_miss["Country 2"] == "#N/A"
+    assert [got_miss[f"Country {row}"] for row in range(3, size + 2)] == pytest.approx(
+        _expected_hits(size)[1:]
+    )
 
     errors = dict(kwargs)
-    errors["selectors"] = ("#DIV/0!", *selectors[1:])
+    errors["selectors"] = pkg.data.Selectors.from_records(
+        domain=selectors.domain,
+        records=[
+            (coord, "#DIV/0!" if coord == ("Country 2",) else value)
+            for coord, value in selectors.items()
+        ],
+    )
     got_err = call_compute(pkg, "result", errors)
-    assert isinstance(got_err, tuple)
-    assert got_err[0] == "#DIV/0!"
-    assert got_err[1:] == pytest.approx(_expected_hits(size)[1:])
+    assert isinstance(got_err, pkg.Tensor)
+    assert got_err["Country 2"] == "#DIV/0!"
+    assert [got_err[f"Country {row}"] for row in range(3, size + 2)] == pytest.approx(
+        _expected_hits(size)[1:]
+    )
 
 
 def test_if_unused_lookup_branch_is_not_evaluated(tmp_path: Path) -> None:
@@ -203,12 +236,14 @@ def test_if_unused_lookup_branch_is_not_evaluated(tmp_path: Path) -> None:
     formula = "=IF(TRUE,VLOOKUP(D{row},{table},2,FALSE),VLOOKUP(99,{table},2,FALSE))"
     workbook = _lookup_workbook(tmp_path, size, formula=formula)
     document = _lookup_bindings(size)
-    internals = generate_inverted(workbook, document)["internals.py"]
+    internals = generate_inverted(workbook, document)["_kernels.py"]
     assert internals.count("xl_vlookup(") == 2
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="lookup_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    got = call_compute(pkg, "result", input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(float(row * 2) for row in range(2, size + 2)))
+    got = call_compute(pkg, "result", named_input_kwargs(pkg, catalog, graph))
+    assert [got[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx(
+        tuple(float(row * 2) for row in range(2, size + 2))
+    )
 
 
 def test_iferror_miss_does_not_escape_the_handler(tmp_path: Path) -> None:
@@ -216,13 +251,13 @@ def test_iferror_miss_does_not_escape_the_handler(tmp_path: Path) -> None:
     formula = "=IFERROR(VLOOKUP(99,{table},2,FALSE),0)"
     workbook = _lookup_workbook(tmp_path, size, formula=formula)
     document = _lookup_bindings(size)
-    internals = generate_inverted(workbook, document)["internals.py"]
+    internals = generate_inverted(workbook, document)["_kernels.py"]
     assert "lambda:" in internals
     assert "_LOOKUP_" not in internals
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="lookup_iferror")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    got = call_compute(pkg, "result", input_kwargs(catalog, graph))
-    assert got == pytest.approx((0.0,) * size)
+    got = call_compute(pkg, "result", named_input_kwargs(pkg, catalog, graph))
+    assert [got[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx((0.0,) * size)
 
 
 @pytest.mark.parametrize("force_rung", [None, 3])
@@ -231,14 +266,16 @@ def test_demand_driven_lookup_reuses_table(tmp_path: Path, force_rung: int | Non
     workbook = _lookup_workbook(tmp_path, size)
     document = _lookup_bindings(size)
     modules = generate_inverted(workbook, document, force_rung=force_rung)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     assert internals.count("tuple(zip(") == 1
     helper = _helper_ast(internals)
     assert _table_assigns_outside_loops(helper) == ["_TABLE_0"]
     pkg = load_package(modules, tmp_path, name=f"lookup_rung_{force_rung}")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    got = call_compute(pkg, "result", input_kwargs(catalog, graph))
-    assert got == pytest.approx(_expected_hits(size))
+    got = call_compute(pkg, "result", named_input_kwargs(pkg, catalog, graph))
+    assert [got[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx(
+        _expected_hits(size)
+    )
 
 
 def test_lookup_table_allocation_is_once_per_call(tmp_path: Path) -> None:
@@ -247,12 +284,14 @@ def test_lookup_table_allocation_is_once_per_call(tmp_path: Path) -> None:
     document = _lookup_bindings(size)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="lookup_alloc")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     call_compute(pkg, "result", kwargs)
     tracemalloc.start()
     got = call_compute(pkg, "result", kwargs)
     _current, peak = tracemalloc.get_traced_memory()
     tracemalloc.stop()
-    assert got == pytest.approx(_expected_hits(size))
+    assert [got[f"Country {row}"] for row in range(2, size + 2)] == pytest.approx(
+        _expected_hits(size)
+    )
     # One 40-row pair table plus the output tuple; far below a per-row copy.
     assert peak < 80_000

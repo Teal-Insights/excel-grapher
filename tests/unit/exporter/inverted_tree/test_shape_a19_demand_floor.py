@@ -149,8 +149,13 @@ def test_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     assert graph.cycle_report().has_must_cycles is False
     expected = FormulaEvaluator(graph).evaluate(cells)
     got = pkg.compute_value()
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((81.0, 90.0, 100.0))
+    assert dict(got.items()) == pytest.approx(
+        {
+            coordinate: expected[catalog.get("value").coordinate_cells[coordinate]]
+            for coordinate in got.domain
+        }
+    )
+    assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx((81.0, 90.0, 100.0))
 
 
 def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) -> None:
@@ -165,8 +170,13 @@ def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) 
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
     got = pkg.compute_value()
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((50.0, 100.0, 100.0, 200.0))
+    assert dict(got.items()) == pytest.approx(
+        {
+            coordinate: expected[catalog.get("value").coordinate_cells[coordinate]]
+            for coordinate in got.domain
+        }
+    )
+    assert [value for _, value in got.items()] == pytest.approx((50.0, 100.0, 100.0, 200.0))
 
 
 def _backward_chain_closed_form(
@@ -194,8 +204,9 @@ def _backward_chain_closed_form(
     modules = generate_inverted(workbook, doc)
     pkg = load_package(modules, tmp_path, name=f"a19_back_{n}")
     got = pkg.compute_value()
+    assert dict(pkg.internals.value().items()) == pytest.approx(dict(got.items()))
     expected = tuple(100.0 * (0.99 ** (n - 1 - i)) for i in range(n))
-    return got, expected
+    return tuple(value for _, value in got.items()), expected
 
 
 def test_backward_chain_large_n_matches_closed_form(tmp_path: Path) -> None:

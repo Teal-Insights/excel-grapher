@@ -71,9 +71,9 @@ def test_mixed_series_returns_error_code_not_abort(tmp_path: Path) -> None:
     assert "tuple[float, ...]" not in modules["api.py"]
     assert "float | str" in modules["api.py"]
     pkg = load_package(modules, tmp_path, name="a7_mixed")
-    got = pkg.compute_output_row(denominators=(10.0, 0.0))
-    assert got[0] == 0.1
-    assert got[1] == "#DIV/0!"
+    got = pkg.compute_output_row(denominators=pkg.data.DENOMINATORS_DEFAULT)
+    assert got[1] == 0.1
+    assert got[2] == "#DIV/0!"
 
 
 def _ref_workbook(tmp_path: Path) -> Path:
@@ -96,7 +96,7 @@ def _ref_bindings() -> dict:
 def test_ref_literal_is_error_code_measure(tmp_path: Path) -> None:
     workbook = _ref_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _ref_bindings()), tmp_path, name="a7_ref")
-    assert pkg.compute_output_ref() == ("#REF!",)
+    assert pkg.compute_output_ref() == "#REF!"
 
 
 def _scan_poison_workbook(tmp_path: Path) -> Path:
@@ -162,5 +162,6 @@ def test_scan_propagates_error_code_to_later_years(tmp_path: Path) -> None:
         tmp_path,
         name="a7_scan",
     )
-    got = pkg.compute_output_path(initial_debt=60.0, growth=(0.0, 3.5))
-    assert got == ("#DIV/0!", "#DIV/0!")
+    got = pkg.compute_output_path(initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT)
+    assert got[1] == "#DIV/0!"
+    assert got[2] == "#DIV/0!"

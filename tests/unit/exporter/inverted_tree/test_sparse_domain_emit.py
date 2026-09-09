@@ -21,10 +21,10 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
     make_catalog,
+    named_input_kwargs,
     write_workbook,
 )
 
@@ -273,23 +273,29 @@ def test_missing_corner_generated_domain_matches_public_output(tmp_path: Path) -
     document = _missing_corner_bindings(size)
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     modules = generate_inverted(workbook, document)
-    interned = [line for line in modules["data.py"].splitlines() if line.startswith("_DOMAIN_")]
-    assert interned
-    assert all("Country " not in line for line in interned)
-    assert "COUNTRY_DOMAIN" in interned[0]
     pkg = load_package(modules, tmp_path, name="sparse_corner")
     expected = series_domain_points(catalog.get("values"))
-    assert expected == pkg.data._DOMAIN_0
+    assert tuple(pkg.data.VALUES_DOMAIN) == expected
+    assert pkg.data.VALUES_DOMAIN.coordinates is not None
     assert pkg.compute_result.__key__ == ("COUNTRY",)
-    assert pkg.compute_result.__domain__ == tuple(f"Country {row}" for row in range(2, size + 2))
+    assert tuple(pkg.compute_result.__domain__) == tuple(
+        (f"Country {row}",) for row in range(2, size + 2)
+    )
     cells = [f"Data!E{row}" for row in range(2, size + 2)]
     evaluated = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(evaluated[cell] for cell in cells))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert dict(got.items()) == pytest.approx(
+        {
+            coordinate: evaluated[cell]
+            for coordinate, cell in catalog.get("result").coordinate_cells.items()
+        }
+    )
     records = pkg.as_records(pkg.compute_result, got)
-    assert [row["COUNTRY"] for row in records] == list(pkg.compute_result.__domain__)
+    assert [row["COUNTRY"] for row in records] == [
+        point[0] for point in pkg.compute_result.__domain__
+    ]
 
 
 def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
@@ -301,7 +307,7 @@ def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
         workbook = _missing_corner_workbook(tmp_path, size)
         document = _missing_corner_bindings(size)
         modules = generate_inverted(workbook, document)
-        data_py = modules["data.py"]
+        data_py = modules["_data.py"]
         interned_line = next(line for line in data_py.splitlines() if line.startswith("_DOMAIN_"))
         data_sizes.append(len(data_py))
         domain_sizes.append(len(interned_line))

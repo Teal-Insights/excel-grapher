@@ -52,6 +52,32 @@ from excel_grapher.exporter.inverted_tree.runtime import (
 )
 
 
+def test_coordinate_reader_memoizes_labels_and_detects_same_coordinate_cycles() -> None:
+    from excel_grapher.exporter.export_runtime.tensor import Axis, CoordinateError, Domain
+    from excel_grapher.exporter.inverted_tree.runtime import CoordinateReader
+
+    domain = Domain.product(Axis("year", (2025, 2027, 2028), int))
+    calls = []
+
+    def compute(coordinate):
+        calls.append(coordinate)
+        if coordinate == (2025,):
+            return 10
+        if coordinate == (2027,):
+            return reader[2025] + 2
+        return reader[2028]
+
+    reader = CoordinateReader("debt", domain, compute)
+    assert reader[2027] == 12
+    assert reader[2027] == 12
+    assert calls == [(2027,), (2025,)]
+    with pytest.raises(CoordinateError, match="2026"):
+        reader[2026]
+    with pytest.raises(InstanceCycleError, match="debt.*2028"):
+        reader[2028]
+    assert reader[2025] == 10
+
+
 def test_require_aligned_returns_common_length() -> None:
     assert require_aligned((1, 2, 3), ("a", "b", "c")) == 3
 
@@ -224,6 +250,13 @@ def test_xl_match_exact_and_na() -> None:
     with pytest.raises(XlError) as exc:
         xl_match("Nope", ("Borvelia",), 0)
     assert exc.value.code == "#N/A"
+
+
+def test_xl_match_accepts_scalar_index_results() -> None:
+    assert xl_match("Loan", "Loan", 0) == 1
+    assert xl_match(None, None, 0) == 1
+    with pytest.raises(XlError, match="#N/A"):
+        xl_match("Loan", None, 0)
 
 
 def test_xl_index_intersection_blank_and_ref() -> None:

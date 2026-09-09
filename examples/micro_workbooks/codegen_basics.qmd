@@ -77,7 +77,7 @@ with FormulaEvaluator(graph) as ev:
 print(f"```text\n{str(result)}\n```")
 ```
 
-For stable tabular contracts with named `compute_*` functions that return tuples (and `as_records` for a Records view), export an inverted-tree **package** with series bindings — see [Series bindings](series_bindings.md).
+For stable tabular contracts with named `compute_*` functions that return named-coordinate tensors or scalars (and `as_records` for a Records view), export an inverted-tree **package** with series bindings — see [Series bindings](series_bindings.md).
 
 ## 05. Must cycle
 

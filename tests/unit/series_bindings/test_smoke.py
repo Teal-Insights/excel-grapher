@@ -156,7 +156,7 @@ def test_run_binding_checks_inverted_tree_smoke_with_in_domain_default(
         package_name="inv_domain_pkg",
         smoke_test=True,
     )
-    assert "require_input_domain" in result["generated_files"]["api.py"]
+    assert "require_input_domain" in result["generated_files"]["_kernel.py"]
 
 
 def test_run_binding_checks_inverted_tree_smoke_with_value_map(tmp_path: Path) -> None:
@@ -207,10 +207,10 @@ def test_run_binding_checks_inverted_tree_smoke_with_value_map(tmp_path: Path) -
         package_name="inv_value_map_pkg",
         smoke_test=True,
     )
-    assert "apply_input_value_map" in result["generated_files"]["api.py"]
+    assert "apply_input_value_map" in result["generated_files"]["_kernel.py"]
 
 
-def test_inverted_tree_smoke_fails_when_compute_returns_wrong_length(tmp_path: Path) -> None:
+def test_inverted_tree_smoke_rejects_legacy_tuple_result(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import (
         bindings_document,
         series_entry,
@@ -242,8 +242,10 @@ def test_inverted_tree_smoke_fails_when_compute_returns_wrong_length(tmp_path: P
         bindings=result["bindings"],
         workbook=workbook,
     )
-    files["api.py"] = files["api.py"].replace("    return (z,)", "    return (z, z)")
-    with pytest.raises(BindingsSmokeError, match=r"returned 2 values, expected 1"):
+    files["api.py"] = files["api.py"].replace(
+        "    return result[0] if isinstance(result, tuple) else result", "    return (1, 2)"
+    )
+    with pytest.raises(BindingsSmokeError, match=r"scalar or Tensor"):
         smoke_test_bindings_module(
             files,
             bindings=result["bindings"],

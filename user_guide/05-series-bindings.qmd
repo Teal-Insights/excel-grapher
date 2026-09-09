@@ -13,7 +13,8 @@ Validation uses the JSON Schema shipped with the package at
 `excel_grapher/series_bindings/series_binding.schema.json`.
 
 Package exports (`generate_modules(...)`) use **inverted-tree**: `compute_*` functions take
-explicit inputs and return tuples. Use `as_records(compute, result)` for a Records view.
+explicit named-coordinate tensors or scalars and return tensors or scalars.
+Use `as_records(compute, result)` for a Records view.
 There is no bindings-free `generate()` path; callers who want a named `compute_*` API provide
 a sidecar. See [Exporting standalone Python](06-export.qmd) for the package layout.
 
@@ -303,7 +304,7 @@ Suggested workflow:
 | Setter name | `setter.name` |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
-5. **Export.** `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit inputs, tuples). There is no bindings-free `generate()` path (see [Code export](export.qmd)).
+5. **Export.** `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit tensor/scalar inputs and results). There is no bindings-free `generate()` path (see [Code export](06-export.qmd)).
 
 Offset projection years (1..5) vs calendar years (1999..2000) are distinguished only by what you bind in `column_header` — declare the intended semantics in `sdmx_notes`. Use `read: int` for offset-style headers and `read: datetime` (or `read: auto` when Excel stores native date cells) for calendar `TIME_PERIOD` keys.
 
@@ -314,10 +315,10 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
 2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
 3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
-4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take input leaves and return measure tuples; use `as_records` for a Records view.
+4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take named tensors or scalars and return tensors or scalars; use `as_records` for a Records view.
 5. `output.compute.helper` applies to the library `emit_compute_function` path only (dim-keyed internals instead of `xl_cell`). Inverted-tree packages already emit one leaf-closure function per output.
-6. Optionally add `input.setter` in the same series or a mergeable shard. Setters are library emitters (`emit_setter_function`); `generate_modules()` takes catalog-order arguments instead.
-7. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Call `compute_*` with catalog-order arguments (or `as_records` afterward).
+6. Optionally add `input.setter` in the same series or a mergeable shard for the library emitter `emit_setter_function`. Generated packages validate input tensors against their declared schemas.
+7. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Call `compute_*` with keyword tensor/scalar arguments and use `as_records` afterward when records are needed.
 
 ### Upgrade notes (1.10.0): helper-backed compute (library emitters)
 
@@ -327,8 +328,8 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 
 ## Records contract
 
-Package `compute_*` functions take catalog-order sequences (or scalars) and return measure
-tuples. Use `as_records(compute, result)` for a tidy `list[dict]` view.
+Package `compute_*` functions take named tensors (or scalars) and return tensors
+or scalars. Use `as_records(compute, result)` for a tidy `list[dict]` view.
 
 The library emitters `emit_setter_function` / `emit_compute_function` still accept **series**
 and **matrix** `SeriesInput`: records or a **tidy** pandas/polars `DataFrame`. Those helpers
@@ -366,8 +367,8 @@ set_macro_matrix(
 `layout: matrix` setters accept records or a tidy DataFrame with all `key` fields plus the measure
 concept; positional 1D measure values are rejected for matrix bindings.
 
-See also `examples/micro_workbooks/setter_dataframe_example.py` (single-key series → catalog-order
-tuple) and `examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
+See also `examples/micro_workbooks/setter_dataframe_example.py` (single-key tensor
+updates) and `examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
 
 ### Record dicts
 

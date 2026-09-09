@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -43,6 +43,7 @@ from excel_grapher.exporter.inverted_tree.domains import (
     publish_decorator_source,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.named_emit import emit_named_modules
 from excel_grapher.exporter.inverted_tree.schedule import (
     IndexSet,
     IndexSourceIntern,
@@ -79,6 +80,8 @@ def _default_name(series_id: str) -> str:
 
 
 def _py_literal(value: object) -> str:
+    if value is None:
+        return "None"
     if isinstance(value, bool):
         return "True" if value else "False"
     if isinstance(value, int | float | str):
@@ -864,7 +867,7 @@ def _keyword_signature(name: str, params: Sequence[str], returns: str) -> str:
 
 def _emit_result_return(output: BoundSeries) -> str:
     if output.is_scalar:
-        return f"    return ({output.series_id},)"
+        return f"    return {output.series_id}"
     return f"    return tuple({output.series_id})"
 
 
@@ -937,6 +940,9 @@ def _emit_evaluation_body(
     mapping = scc_map or {}
     formula_set = set(formula_ids)
     applicable = [plan for plan in subplans if set(plan.formula_ids) <= formula_set]
+    expected_windows = {
+        plan.name: _shared_parameter_windows(plan, catalog, subplans) for plan in applicable
+    }
     covered: set[str] = set()
     for series_id in formula_ids:
         if series_id in covered:
@@ -948,6 +954,11 @@ def _emit_evaluation_body(
                 if plan.formula_ids
                 and plan.formula_ids[0] == series_id
                 and covered.isdisjoint(plan.formula_ids)
+                and all(sid in leaf_source or sid in locals_bound for sid in plan.param_ids)
+                and all(
+                    local_indices.get(sid, _identity_indices(catalog.get(sid))) == window
+                    for sid, window in expected_windows[plan.name].items()
+                )
             ),
             None,
         )
@@ -1131,6 +1142,26 @@ def _emit_shared_runner(
     return "\n".join([signature, doc, *body]), runtime, bool(constants)
 
 
+def _shared_parameter_windows(
+    subplan: _SharedSubplan,
+    catalog: SeriesCatalog,
+    subplans: Sequence[_SharedSubplan],
+) -> dict[str, tuple[int, ...]]:
+    """Return the exact formula-buffer coordinate order a shared helper expects."""
+    windows = {
+        sid: _identity_indices(catalog.get(sid))
+        for sid in subplan.param_ids
+        if catalog.get(sid).is_formula_series
+    }
+    for other in subplans:
+        if other.name == subplan.name:
+            continue
+        for sid in windows:
+            if sid in other.returns and sid in other.result_indices:
+                windows[sid] = other.result_indices[sid]
+    return windows
+
+
 def _emit_shared_subplan(
     subplan: _SharedSubplan,
     *,
@@ -1142,8 +1173,12 @@ def _emit_shared_subplan(
     """Emit a private helper for one shared formula prefix."""
     seen: set[str] = set()
     for series_id in subplan.formula_ids:
-        seen.update(leaf_closure(series_id, catalog=catalog, deps=deps))
-    leaves = tuple(sid for sid in catalog.order if sid in seen)
+        seen.update(deps[series_id].param_ids)
+    # Supplied formula results are evaluation boundaries: their original
+    # input leaves are neither parameters nor locals of this shared helper.
+    leaves = tuple(
+        sid for sid in catalog.order if sid in seen and not catalog.get(sid).is_formula_series
+    )
     params = [f"{sid}: {python_annotation(catalog.get(sid))}" for sid in subplan.param_ids]
     if len(subplan.returns) == 1:
         returns = python_return_annotation(catalog.get(subplan.returns[0]))
@@ -1151,17 +1186,7 @@ def _emit_shared_subplan(
         parts = ", ".join(python_return_annotation(catalog.get(sid)) for sid in subplan.returns)
         returns = f"tuple[{parts}]"
     signature = _keyword_signature(subplan.name, params, returns)
-    bound_windows = {
-        sid: _identity_indices(catalog.get(sid))
-        for sid in subplan.param_ids
-        if catalog.get(sid).is_formula_series
-    }
-    for other in subplans:
-        if other.name == subplan.name:
-            continue
-        for sid in subplan.param_ids:
-            if sid in other.returns and sid in other.result_indices:
-                bound_windows[sid] = other.result_indices[sid]
+    bound_windows = _shared_parameter_windows(subplan, catalog, subplans)
     body, runtime, _bound = _emit_evaluation_body(
         leaves=leaves,
         formula_ids=subplan.formula_ids,
@@ -1456,7 +1481,9 @@ def generate_inverted_tree_modules(
     token = bind_blank_rects(blank_rects)
     try:
         _refuse_invalid_bindings(graph, series_bindings, bindings_workbook)
-        catalog = build_catalog(series_bindings, workbook=bindings_workbook, graph=graph)
+        catalog = build_catalog(
+            series_bindings, workbook=bindings_workbook, graph=graph, blank_ranges=blank_ranges
+        )
         if not catalog.output_series():
             raise InvertedTreeExportError(
                 "inverted-tree codegen requires at least one output series"
@@ -1464,6 +1491,13 @@ def generate_inverted_tree_modules(
         catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
         deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
         scc_map = build_scc_map(catalog, deps, edges=catalog_edges.edges)
+        # Fused SCCs and nested self recurrences index external producers
+        # in catalog coordinates. Their callers must not compact producers
+        # to a shorter host domain, regardless of the selected evaluation rung.
+        for sid, info in tuple(deps.items()):
+            host = catalog.get(sid)
+            if len(scc_map.get(sid, (sid,))) > 1 or (info.is_scan and len(host.key_fields) > 1):
+                deps[sid] = replace(info, aligned_ids=frozenset(), index_maps={}, affine_maps={})
         domains = plan_domain_emission(catalog, scc_map)
         assert_subgraph_bound(
             catalog=catalog,
@@ -1471,7 +1505,7 @@ def generate_inverted_tree_modules(
             roots=list(all_formula_root_cells(catalog)),
         )
         runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
-        return {
+        modules = {
             "__init__.py": emit_init_module(catalog),
             "api.py": emit_api_module(catalog, deps, scc_map, domains=domains),
             "data.py": emit_data_module(catalog, graph, domains=domains),
@@ -1486,5 +1520,6 @@ def generate_inverted_tree_modules(
                 domains=domains,
             ),
         }
+        return emit_named_modules(modules, catalog, deps, graph, bindings_workbook)
     finally:
         reset_blank_rects(token)

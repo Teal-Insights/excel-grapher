@@ -129,7 +129,10 @@ def test_mixed_member_formulas_emit_correct_values(
     modules = generate_inverted(workbook, bindings_fn())
     assert "formula shape" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name=pkg_name)
-    assert pkg.compute_path() == pytest.approx((1.0, 2.0, 102.0))
+    result = pkg.compute_path()
+    assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx((1.0, 2.0, 102.0))
+    internal = pkg.internals.path()
+    assert tuple(internal.items()) == tuple(result.items())
 
     graph = create_dependency_graph(workbook, cells, load_values=True)
     evaluator = FormulaEvaluator(graph)
@@ -144,4 +147,5 @@ def test_mixed_elementwise_formulas_emit_correct_values(tmp_path: Path) -> None:
         tmp_path,
         name="a12_elem",
     )
-    assert pkg.compute_path(values=(10.0, 20.0, 30.0)) == pytest.approx((10.0, 40.0, 130.0))
+    result = pkg.compute_path(values=pkg.data.VALUES_DEFAULT)
+    assert (result[1], result[2], result[3]) == pytest.approx((10.0, 40.0, 130.0))

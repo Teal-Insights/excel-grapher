@@ -105,7 +105,7 @@ def _measure(value: object) -> object:
     return value
 
 
-def test_catalog_accepts_matrix_as_row_major_sequence(tmp_path: Path) -> None:
+def test_catalog_resolves_matrix_as_named_domain(tmp_path: Path) -> None:
     workbook = _profile_workbook(tmp_path)
     catalog = build_catalog(validate_bindings_document(_profile_bindings()), workbook=workbook)
     series = catalog.get("profile_table")
@@ -115,6 +115,24 @@ def test_catalog_accepts_matrix_as_row_major_sequence(tmp_path: Path) -> None:
     assert not series.is_scalar
     assert not series.is_time_series
     assert series.key_fields == ("COUNTRY", "TIME_PERIOD")
+    assert tuple(axis.name for axis in series.tensor_domain.axes) == ("COUNTRY", "TIME_PERIOD")
+    assert tuple(series.tensor_domain) == (
+        ("France", 2020),
+        ("France", 2021),
+        ("Kenya", 2020),
+        ("Kenya", 2021),
+    )
+    assert series.coordinate_cells[("Kenya", 2021)] == "Profile!C3"
+
+
+def test_named_axes_use_declared_concept_types_without_redundant_read(tmp_path: Path) -> None:
+    workbook = _profile_workbook(tmp_path)
+    entry = _profile_table_series()
+    time = entry["structure"]["dimensions"][1]
+    del time["bind"]["read"]
+    time["dtype"] = "int"
+    catalog = build_catalog(validate_bindings_document(bindings_document(entry)), workbook=workbook)
+    assert catalog.get("profile_table").tensor_domain.axes[1].key_type is int
 
 
 def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
@@ -133,7 +151,10 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     assert pkg.compute_output_cell.__constants__ == ("profile_table",)
     assert "ctx" not in all_param_names(pkg.compute_output_cell)
     assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
-    with pkg.data.overrides(PROFILE_TABLE=(99.0, 11.0, 20.0, 21.0)):
+    replacement = pkg.data.ProfileTable.from_nested(
+        domain=pkg.data.PROFILE_TABLE_DOMAIN, values=((99.0, 11.0), (20.0, 21.0))
+    )
+    with pkg.data.overrides(PROFILE_TABLE=replacement):
         assert _measure(pkg.compute_output_cell()) == pytest.approx(99.0)
     assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
 

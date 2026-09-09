@@ -126,8 +126,8 @@ def test_sparse_picks_record_literal_index_map(tmp_path: Path) -> None:
 def test_sparse_picks_emit_take_not_consecutive_offset(tmp_path: Path) -> None:
     workbook = _milestone_workbook(tmp_path)
     modules = generate_inverted(workbook, _milestone_bindings())
-    api = modules["api.py"]
-    internals = modules["internals.py"]
+    api = modules["_kernel.py"]
+    internals = modules["_kernels.py"]
     assert "take(engine_pb, (22, 47, 71))" in api
     assert "i + 22" not in internals
     assert "engine_pb[i]" in internals
@@ -145,5 +145,7 @@ def test_sparse_picks_match_formula_evaluator(tmp_path: Path) -> None:
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
     got = pkg.compute_milestones(rate=0)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((2050.0, 2075.0, 2099.0))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((2050.0, 2075.0, 2099.0))

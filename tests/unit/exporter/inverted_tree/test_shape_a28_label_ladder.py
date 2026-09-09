@@ -145,8 +145,10 @@ def test_label_ladder_matches_evaluator(
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
     got = pkg.compute_picked(variant=variant)
-    assert got == pytest.approx((expected[cells[0]], expected[cells[1]]))
-    assert got == pytest.approx(_expected_for(variant))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        (expected[cells[0]], expected[cells[1]])
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(_expected_for(variant))
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
@@ -160,7 +162,7 @@ def test_label_ladder_emits_literal_subscripts(
         orientation=orientation,
     )
     document = oriented_document(label_ladder_bindings(), orientation)
-    internals = generate_inverted(workbook, document)["internals.py"]
+    internals = generate_inverted(workbook, document)["_kernels.py"]
     assert "labels[0]" in internals
     assert "labels[1]" in internals
     assert "labels[i]" not in internals
@@ -212,5 +214,7 @@ def test_mixed_absolute_and_relative_are_two_accesses(tmp_path: Path) -> None:
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
     got = pkg.compute_picked()
-    assert got == pytest.approx((expected["S!B2"], expected["S!C2"]))
-    assert got == pytest.approx((10.0, 11.0))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        (expected["S!B2"], expected["S!C2"])
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((10.0, 11.0))

@@ -110,15 +110,46 @@ def test_overriding_data_constant_changes_compute_and_restores(tmp_path: Path) -
     workbook = _a5_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a5_bindings()), tmp_path, name="a5_ov")
     baseline = pkg.compute_output_shocked(value=10.0, shock_year=1)
-    assert baseline == pytest.approx((11.0, 11.0))
-    pkg.data.ENGINE_YEAR_LABELS = (0, 0)
-    assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((10.0, 10.0))
-    pkg.data.ENGINE_YEAR_LABELS = (1, 2)
-    with pkg.data.overrides(ENGINE_YEAR_LABELS=(0, 0)):
-        assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((10.0, 10.0))
-    assert pkg.compute_output_shocked(value=10.0, shock_year=1) == pytest.approx((11.0, 11.0))
+    assert (baseline[1], baseline[2]) == pytest.approx((11.0, 11.0))
+    original = pkg.data.ENGINE_YEAR_LABELS
+    zeros = pkg.data.EngineYearLabels.from_records(
+        domain=original.domain, records=(((1,), 0), ((2,), 0))
+    )
+    pkg.data.ENGINE_YEAR_LABELS = zeros
+    result = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    assert (result[1], result[2]) == pytest.approx((10.0, 10.0))
+    pkg.data.ENGINE_YEAR_LABELS = original
+    with pkg.data.overrides(ENGINE_YEAR_LABELS=zeros):
+        result = pkg.compute_output_shocked(value=10.0, shock_year=1)
+        assert (result[1], result[2]) == pytest.approx((10.0, 10.0))
+    assert pkg.data.ENGINE_YEAR_LABELS is original
+    result = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    assert (result[1], result[2]) == pytest.approx((11.0, 11.0))
     with (
         pytest.raises(AttributeError, match="unknown constant"),
         pkg.data.overrides(NOT_A_CONSTANT=(0, 0)),
     ):
         pass
+
+
+def test_internal_constant_argument_validates_supplied_tensor(tmp_path: Path) -> None:
+    pkg = load_package(
+        generate_inverted(_a5_workbook(tmp_path), _a5_bindings()), tmp_path, name="a5_schema"
+    )
+    wrong = pkg.Tensor.from_records(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (3, 4), int)),
+        records=(((3,), 1), ((4,), 2)),
+    )
+    with pytest.raises(pkg.tensor.SchemaError, match="engine_year_labels.*required coordinate"):
+        pkg.internals.shocked_path(value=10.0, shock_year=1, engine_year_labels=wrong)
+
+
+def test_semantic_loop_does_not_overwrite_input_named_value(tmp_path: Path) -> None:
+    pkg = load_package(
+        generate_inverted(_a5_workbook(tmp_path), _a5_bindings()), tmp_path, name="a5_value"
+    )
+    result = pkg.internals.shocked_path(
+        value=10.0, shock_year=1, engine_year_labels=pkg.data.ENGINE_YEAR_LABELS
+    )
+    assert result[1] == 11.0
+    assert result[2] == 11.0

@@ -247,12 +247,13 @@ def test_catalog_warns_when_filtering_collapses_to_scalar(tmp_path: Path) -> Non
     assert series.is_scalar
 
 
-def test_mcve_emit_succeeds(tmp_path: Path) -> None:
+def test_scalar_binding_cannot_hide_multiple_authored_observations(tmp_path: Path) -> None:
     workbook = _mcve_workbook(tmp_path)
-    with pytest.warns(UserWarning):
-        modules = _emit_from_outputs(workbook, _mcve_document())
-    pkg = load_package(modules, tmp_path, name="partial_mcve")
-    assert pkg.compute_result(rate=10.0) == pytest.approx((11.0,))
+    with (
+        pytest.warns(UserWarning),
+        pytest.raises(InvertedTreeExportError, match="engine_row.*authored semantic keys"),
+    ):
+        _emit_from_outputs(workbook, _mcve_document())
 
 
 def test_year_keyed_interior_hole_exports(tmp_path: Path) -> None:
@@ -267,43 +268,52 @@ def test_year_keyed_interior_hole_exports(tmp_path: Path) -> None:
     rate = catalog.get("rate")
     assert engine.cells == ("Engine!B2", "Engine!C2", "Engine!E2", "Engine!F2")
     assert [point["TIME_PERIOD"] for point in engine.domain] == [2021, 2022, 2024, 2025]
+    assert tuple(engine.tensor_domain) == ((2021,), (2022,), (2023,), (2024,), (2025,))
+    assert engine.required_coordinates == frozenset({(2021,), (2022,), (2024,), (2025,)})
+    assert engine.coordinate_cells[(2023,)] == "Engine!D2"
     assert len(result.cells) == 5
     assert len(rate.cells) == 5
 
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="partial_years")
-    assert pkg.compute_result.__domain__ == (2021, 2022, 2023, 2024, 2025)
-    assert pkg.internals.engine_row.__domain__ == (2021, 2022, 2024, 2025)
-    got = pkg.compute_result(rate=(1.0, 2.0, 3.0, 4.0, 5.0))
-    assert got == pytest.approx((2.0, 3.0, 3.0, 5.0, 6.0))
+    assert tuple(pkg.compute_result.__domain__) == ((2021,), (2022,), (2023,), (2024,), (2025,))
+    assert tuple(pkg.internals.engine_row.__domain__) == ((2021,), (2022,), (2024,), (2025,))
+    got = pkg.compute_result(rate=pkg.data.RATE_DEFAULT)
+    assert tuple(got[year] for year in range(2021, 2026)) == pytest.approx(
+        (2.0, 3.0, 3.0, 5.0, 6.0)
+    )
 
 
-def test_helper_rejects_public_length_on_holed_series(tmp_path: Path) -> None:
+def test_helper_accepts_wider_domain_and_rejects_missing_coordinates(tmp_path: Path) -> None:
     workbook = _year_workbook(tmp_path)
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, _year_document())
     pkg = load_package(modules, tmp_path, name="partial_guards")
-    rate5 = (1.0, 2.0, 3.0, 4.0, 5.0)
+    rate5 = pkg.data.RATE_DEFAULT
     engine4 = pkg.internals.engine_row.__domain__
     assert len(engine4) == 4
-    with pytest.raises(ValueError, match="expected length"):
-        pkg.internals.engine_row(rate5)
-    engine5 = (2.0, 3.0, 102.0, 5.0, 6.0)
-    with pytest.raises(ValueError, match="expected length"):
-        pkg.internals.result(rate5, engine5)
-    with pytest.raises(ValueError, match="expected length"):
-        pkg.internals.result(rate5, (2.0, 3.0, 5.0))
+    assert pkg.internals.engine_row(rate=rate5)[2024] == 5
+    engine5 = pkg.data.EngineRow.from_nested(
+        domain=pkg.data.ENGINE_ROW_DOMAIN, values=(2.0, 3.0, 102.0, 5.0, 6.0)
+    )
+    assert pkg.internals.result(rate=rate5, engine_row=engine5)[2023] == 3
+    missing = pkg.Tensor.from_nested(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2021, 2022, 2024), int)),
+        values=(2.0, 3.0, 5.0),
+    )
+    with pytest.raises(ValueError, match="engine_row.*2025"):
+        pkg.internals.result(rate=rate5, engine_row=missing)
 
 
-def test_helper_docstring_states_dense_domain_contract(tmp_path: Path) -> None:
+def test_helper_documents_named_coordinate_contract(tmp_path: Path) -> None:
     workbook = _year_workbook(tmp_path)
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, _year_document())
     internals = modules["internals.py"]
-    assert "dense over" in internals
-    assert "__domain__" in internals
-    assert "shorter than the public domain" in internals
+    assert "coordinate identities" in internals
+    assert "domain=data.ENGINE_ROW_REQUIRED" in internals
+    assert "rate[time_period]" in internals
 
 
 def test_emit_refuses_non_leaf_input_overlap(tmp_path: Path) -> None:
@@ -438,34 +448,26 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
 
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
-    internals = modules["internals.py"]
-    assert "Profile!C2" in internals
-    assert "blank" in internals
-    assert "float | str | None" in internals
-    assert "holes=(1,)" in internals
-    assert "holes=()" not in internals
-    assert "@publish(" in internals
-    assert "setattr(" not in internals
+    assert "Profile!C2" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="matrix_blank")
     helper = pkg.internals.profile_table
-    assert helper.__domain__ == (
+    assert tuple(helper.__domain__) == (
         ("France", 2020),
         ("France", 2021),
         ("Kenya", 2020),
         ("Kenya", 2021),
     )
-    assert len(helper.__domain__) == 4
-    assert helper.__holes__ == (1,)
+    assert len(pkg.data.PROFILE_TABLE_DOMAIN) == 4
     got = helper()
-    assert got[0] == pytest.approx(1.0)
-    assert got[1] is None
-    assert got[2] == pytest.approx(3.0)
-    assert got[3] == pytest.approx(4.0)
+    assert got["France", 2020] == pytest.approx(1.0)
+    assert got["France", 2021] is None
+    assert got["Kenya", 2020] == pytest.approx(3.0)
+    assert got["Kenya", 2021] == pytest.approx(4.0)
     records = pkg.runtime.as_records(helper, got)
-    filled = [record for index, record in enumerate(records) if index not in helper.__holes__]
-    assert [record["OBS_VALUE"] for record in filled] == pytest.approx([1.0, 3.0, 4.0])
+    assert records[1]["OBS_VALUE"] is None
+    assert [records[i]["OBS_VALUE"] for i in (0, 2, 3)] == pytest.approx([1.0, 3.0, 4.0])
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_output_cell() == pytest.approx((expected["Outputs!A1"],))
+    assert pkg.compute_output_cell() == pytest.approx(expected["Outputs!A1"])
 
 
 def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> None:
@@ -481,16 +483,14 @@ def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> Non
     )
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
-    internals = modules["internals.py"]
-    assert "Profile!C2" in internals
-    assert "not computed" in internals
+    assert "Profile!C2" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="matrix_off_closure")
     got = pkg.internals.profile_table()
-    assert got[0] == pytest.approx(1.0)
-    assert got[1] is None
-    assert got[2] is None
-    assert got[3] is None
-    assert pkg.internals.profile_table.__holes__ == (1, 2, 3)
+    assert got["France", 2020] == pytest.approx(1.0)
+    assert len(pkg.data.PROFILE_TABLE_DOMAIN) == 4
+    assert len(got.domain) == 1
+    with pytest.raises(KeyError):
+        got["France", 2021]
 
 
 def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
@@ -520,13 +520,13 @@ def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
 
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
-    assert "99.0" in modules["internals.py"]
+    assert "99.0" in modules["_kernels.py"]
     pkg = load_package(modules, tmp_path, name="matrix_literal")
     got = pkg.internals.profile_table()
-    assert got[1] == pytest.approx(99.0)
+    assert got["France", 2021] == pytest.approx(99.0)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!A2"])
-    assert pkg.compute_on_graph() == pytest.approx((expected["Outputs!A1"],))
-    assert pkg.compute_from_literal() == pytest.approx((expected["Outputs!A2"],))
+    assert pkg.compute_on_graph() == pytest.approx(expected["Outputs!A1"])
+    assert pkg.compute_from_literal() == pytest.approx(expected["Outputs!A2"])
 
 
 def test_matrix_graph_leaf_without_cached_value_raises(tmp_path: Path) -> None:
@@ -575,7 +575,9 @@ def test_matrix_unreferenced_literal_is_embedded(tmp_path: Path) -> None:
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="matrix_unref_literal")
     got = pkg.internals.profile_table()
-    assert got[1] == pytest.approx(42.0)
+    assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
+    with pytest.raises(KeyError):
+        got["France", 2021]
 
 
 def _series_leaf_workbook(tmp_path: Path, *, extra_off_graph: bool = False) -> tuple[Path, str]:
@@ -652,8 +654,8 @@ def test_series_graph_leaf_is_owned_and_sum_emits(tmp_path: Path) -> None:
     modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="series_graph_leaf")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_result(rate=(1.0, 2.0, 3.0)) == pytest.approx((expected["Outputs!A1"],))
-    assert pkg.internals.engine_row(rate=(1.0, 2.0, 3.0))[1] == pytest.approx(0.0)
+    assert pkg.compute_result(rate=pkg.data.RATE_DEFAULT) == pytest.approx(expected["Outputs!A1"])
+    assert pkg.internals.engine_row(rate=pkg.data.RATE_DEFAULT)[2022] == pytest.approx(0.0)
 
 
 def test_series_graph_leaf_strips_off_graph_and_keeps_leaf(tmp_path: Path) -> None:
@@ -679,7 +681,7 @@ def test_series_graph_leaf_strips_off_graph_and_keeps_leaf(tmp_path: Path) -> No
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="series_leaf_extra")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_result(rate=(1.0, 2.0, 3.0)) == pytest.approx((expected["Outputs!A1"],))
+    assert pkg.compute_result(rate=pkg.data.RATE_DEFAULT) == pytest.approx(expected["Outputs!A1"])
 
 
 def test_series_graph_leaf_without_cached_value_raises(tmp_path: Path) -> None:

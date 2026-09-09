@@ -24,9 +24,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -233,7 +233,7 @@ def test_scenario_vocab_dual_read_emits_and_matches_evaluator(tmp_path: Path) ->
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "amortization" in deps["total_amortization"].keyed_ids
     modules = generate_inverted(workbook, document)
-    internals = modules["internals.py"]
+    internals = modules["_kernels.py"]
     assert "amortization[i]" in internals
     assert "amortization[i + 2]" in internals
     assert "amortization[i + 4]" in internals
@@ -243,9 +243,9 @@ def test_scenario_vocab_dual_read_emits_and_matches_evaluator(tmp_path: Path) ->
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
-    got = pkg.internals.total_amortization(kwargs["amortization"])
-    assert got == pytest.approx((13.0, 15.0, 25.0, 27.0))
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    got = pkg.internals.total_amortization(amortization=kwargs["amortization"])
+    assert tuple(value for _, value in got.items()) == pytest.approx((13.0, 15.0, 25.0, 27.0))
     assert (
         _unwrap(call_compute(pkg, "result_shock", kwargs)),
         _unwrap(call_compute(pkg, "result_combo", kwargs)),
@@ -259,5 +259,7 @@ def test_aligned_scenario_names_still_emit(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "amortization" in deps["total_amortization"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a32_aligned")
-    got = pkg.internals.total_amortization(input_kwargs(catalog, graph)["amortization"])
-    assert got == pytest.approx((13.0, 15.0, 25.0, 27.0))
+    got = pkg.internals.total_amortization(
+        amortization=named_input_kwargs(pkg, catalog, graph)["amortization"]
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((13.0, 15.0, 25.0, 27.0))

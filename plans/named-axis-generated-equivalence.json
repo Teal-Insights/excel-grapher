@@ -1,0 +1,59 @@
+{
+  "allowed_differences": [
+    "CODEGEN_FINGERPRINT assignment",
+    "ordering of literal frozenset members"
+  ],
+  "modules": {
+    "__init__.py": {
+      "before_sha256": "ac7cbee543e95ab9de52687d67aac6d6c713eef26debad1e00701ee9e5d16d55",
+      "after_sha256": "ac7cbee543e95ab9de52687d67aac6d6c713eef26debad1e00701ee9e5d16d55",
+      "identical_bytes": true
+    },
+    "_data.py": {
+      "before_sha256": "22cd75ea11eecb832b9e45819938924360f5b2b33e650ad7782158967a0e8711",
+      "after_sha256": "22cd75ea11eecb832b9e45819938924360f5b2b33e650ad7782158967a0e8711",
+      "identical_bytes": true
+    },
+    "_kernel.py": {
+      "before_sha256": "d532b76b44c6a20d0d81234eae7260eae124a5e9fa99c322d8239140a3c0c408",
+      "after_sha256": "376c7189ed914f635868ed98c07c6dec8cec7499c93ce60bafe8d9b6d841db24",
+      "identical_bytes": false
+    },
+    "_kernels.py": {
+      "before_sha256": "957810a204fe4b0b0c6c839522b5c1cd0d07e261874e61c8b67791d836c58bb3",
+      "after_sha256": "957810a204fe4b0b0c6c839522b5c1cd0d07e261874e61c8b67791d836c58bb3",
+      "identical_bytes": true
+    },
+    "_tensor_lowering.py": {
+      "before_sha256": "60c03111eba15d020cc15745e45bb6d23edfa535fcec96441d0c304aa2b16999",
+      "after_sha256": "60c03111eba15d020cc15745e45bb6d23edfa535fcec96441d0c304aa2b16999",
+      "identical_bytes": true
+    },
+    "api.py": {
+      "before_sha256": "a9ae57bbf508d150cd5467ddd5cf5eb82db9cb974c3316808d678935d0cbd410",
+      "after_sha256": "a0172c83fe1cadd1bdb43efe1b4c044523e845be247da7429c292de3ef46e2c8",
+      "identical_bytes": false
+    },
+    "data.py": {
+      "before_sha256": "7dbf04b635aa1c8ce550107ee1edc7e3d82f1e3dc610c965e59fbda24fe076d5",
+      "after_sha256": "7dbf04b635aa1c8ce550107ee1edc7e3d82f1e3dc610c965e59fbda24fe076d5",
+      "identical_bytes": true
+    },
+    "internals.py": {
+      "before_sha256": "f3f72ad125f1f1aa3444830a109930e54f76fa049233b34cde9c62833cc64115",
+      "after_sha256": "f3f72ad125f1f1aa3444830a109930e54f76fa049233b34cde9c62833cc64115",
+      "identical_bytes": true
+    },
+    "runtime.py": {
+      "before_sha256": "c05a913f188aa1ee6b4f0531eeacee7698b7cb639639f2f695f05188ef54d08b",
+      "after_sha256": "c05a913f188aa1ee6b4f0531eeacee7698b7cb639639f2f695f05188ef54d08b",
+      "identical_bytes": true
+    },
+    "tensor.py": {
+      "before_sha256": "b6e0a41b11ef245f16ced9f516983dbb712b0cfa69c9b57759a56bbb5617d261",
+      "after_sha256": "b6e0a41b11ef245f16ced9f516983dbb712b0cfa69c9b57759a56bbb5617d261",
+      "identical_bytes": true
+    }
+  },
+  "identical_calculation_and_schema_source": true
+}

@@ -79,8 +79,8 @@ def test_scalar_enum_domain_accepts_and_rejects(tmp_path: Path) -> None:
         tmp_path,
         name="domain_enum",
     )
-    assert pkg.compute_out(flag=0) == (0,)
-    assert pkg.compute_out(flag=1) == (1,)
+    assert pkg.compute_out(flag=0) == 0
+    assert pkg.compute_out(flag=1) == 1
     with pytest.raises(ValueError, match=r"flag out of domain"):
         pkg.compute_out(flag=2)
 
@@ -91,9 +91,13 @@ def test_series_real_between_names_series_on_out_of_range_member(tmp_path: Path)
         tmp_path,
         name="domain_rate",
     )
-    assert pkg.compute_out(rate=(0.0, 1.0)) == pytest.approx((0.0, 1.0))
-    with pytest.raises(ValueError, match=r"rate\[1\] out of domain"):
-        pkg.compute_out(rate=(0.0, 1.1))
+    rate = pkg.data.Rate.from_nested(domain=pkg.data.RATE_DOMAIN, values=(0.0, 1.0))
+    result = pkg.compute_out(rate=rate)
+    assert (result[1], result[2]) == pytest.approx((0.0, 1.0))
+    with pytest.raises(ValueError, match=r"rate\(2,\) out of domain"):
+        pkg.compute_out(
+            rate=pkg.data.Rate.from_nested(domain=pkg.data.RATE_DOMAIN, values=(0.0, 1.1))
+        )
 
 
 def test_no_input_domain_does_not_emit_domain_guard(tmp_path: Path) -> None:
@@ -133,9 +137,8 @@ def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document)
     api = modules["api.py"]
-    assert "def _run_0" in api
-    assert api.count("require_input_domain(flag") >= 2
+    assert api.count("require_input_domain(flag") == 2
     pkg = load_package(modules, tmp_path, name="domain_shared")
-    assert pkg.compute_out_a(flag=0) == (0,)
+    assert pkg.compute_out_a(flag=0) == 0
     with pytest.raises(ValueError, match=r"flag out of domain"):
         pkg.compute_out_b(flag=2)

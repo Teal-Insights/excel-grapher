@@ -127,8 +127,10 @@ def test_stride_k_self_lag_emits_fused_scan_and_matches_evaluator(
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
     got = pkg.compute_path()
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_expected_stride(n, lag))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx(_expected_stride(n, lag))
 
 
 def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) -> None:
@@ -153,8 +155,10 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
     got = pkg.compute_path()
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(_expected_dual(n))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx(_expected_dual(n))
 
 
 def test_stride_k_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
@@ -165,7 +169,7 @@ def test_stride_k_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
     forced = load_package(
         generate_inverted(workbook, document, force_rung=3), tmp_path, name="a22_or_r3"
     )
-    assert auto.compute_path() == pytest.approx(forced.compute_path())
+    assert dict(auto.compute_path().items()) == pytest.approx(dict(forced.compute_path().items()))
 
 
 @pytest.mark.parametrize("lag", [2, 4], ids=["t-2", "t-4"])

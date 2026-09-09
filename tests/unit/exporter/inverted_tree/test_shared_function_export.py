@@ -60,7 +60,7 @@ def test_shared_function_export(
     )
     package = load_package(generate_inverted(workbook, document, force_rung=force_rung), tmp_path)
     result = package.api.compute_result()
-    assert result == ((pytest.approx(expected) if isinstance(expected, float) else expected),)
+    assert result == (pytest.approx(expected) if isinstance(expected, float) else expected)
 
 
 def test_shared_helpers_preserve_function_specific_error_handling() -> None:
@@ -100,5 +100,11 @@ def test_row_geometry_tracks_series_members(
             label_column="C",
         ),
     )
-    package = load_package(generate_inverted(workbook, document, force_rung=force_rung), tmp_path)
-    assert package.api.compute_result() == expected
+    modules = generate_inverted(workbook, document, force_rung=force_rung)
+    assert "_kernels.result(" not in modules["internals.py"]
+    package = load_package(modules, tmp_path)
+    result = package.api.compute_result()
+    assert tuple(result.domain) == ((2020,), (2021,), (2022,))
+    internal = package.internals.result(**({"base_year": 2020} if "C$2" in expression else {}))
+    assert tuple(internal[year] for year in (2020, 2021, 2022)) == expected
+    assert tuple(result[year] for year in (2020, 2021, 2022)) == expected

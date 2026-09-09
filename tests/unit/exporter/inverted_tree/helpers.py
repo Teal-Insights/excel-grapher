@@ -476,19 +476,29 @@ def oriented_addresses(addresses: Sequence[str], orientation: str) -> tuple[str,
     return tuple(transpose_address(address) for address in addresses)
 
 
-def input_kwargs(catalog: SeriesCatalog, graph: DependencyGraph) -> dict[str, object]:
-    """Build `compute_*` keyword arguments from loaded input-series values."""
-    kwargs: dict[str, object] = {}
+def named_input_kwargs(
+    pkg: Any, catalog: SeriesCatalog, graph: DependencyGraph
+) -> dict[str, object]:
+    """Supply graph values by coordinate without changing Excel input types."""
+    values = {}
     for series in catalog.input_series():
-        values: list[object] = []
-        for cell in series.cells:
-            node = graph.get_node(cell)
-            values.append(None if node is None else node.value)
-        kwargs[series.series_id] = values[0] if series.is_scalar else tuple(values)
-    return kwargs
+        if series.graph_cells is not None and not series.graph_cells:
+            continue
+        if series.layout == "scalar":
+            node = graph.get_node(series.cells[0])
+            values[series.series_id] = None if node is None else node.value
+            continue
+        domain = getattr(pkg.data, series.series_id.upper() + "_REQUIRED")
+        records = []
+        cells = series.coordinate_cells
+        for coordinate in domain:
+            node = graph.get_node(cells[coordinate])
+            records.append((coordinate, None if node is None else node.value))
+        values[series.series_id] = pkg.Tensor.from_records(domain=domain, records=records)
+    return values
 
 
-def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, object]) -> object:
+def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, object]) -> Any:
     """Call `pkg.compute_<series_id>` with the intersection of `kwargs`."""
     name = f"compute_{series_id}"
     function = getattr(pkg, name)

@@ -21,9 +21,9 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -183,7 +183,7 @@ def test_api_interns_repeated_value_take_mappings(tmp_path: Path) -> None:
     workbook = _align_workbook(tmp_path, producer_n=n, host_map=host_map, name="repeat_values")
     document = _align_bindings(n, len(host_map))
     modules = generate_inverted(workbook, document)
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     compact = indices_to_source(host_map)
     assert compact == "tuple(i for i in range(0, 8) for _ in range(6))"
     assert f"_TAKE_0 = {compact}" in api
@@ -198,8 +198,10 @@ def test_api_interns_repeated_value_take_mappings(tmp_path: Path) -> None:
     expected_values = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected_values[cell] for cell in cells))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected_values[cell] for cell in cells)
+    )
 
 
 def test_api_interns_identical_compact_take_mappings(tmp_path: Path) -> None:
@@ -208,7 +210,7 @@ def test_api_interns_identical_compact_take_mappings(tmp_path: Path) -> None:
     workbook = _align_workbook(tmp_path, producer_n=n, host_map=host_map, name="repeat_take")
     document = _align_bindings(n, len(host_map))
     modules = generate_inverted(workbook, document)
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     compact = indices_to_source(host_map)
     assert compact == "tuple(range(0, 8)) * 6"
     assert f"_TAKE_0 = {compact}" in api
@@ -225,8 +227,10 @@ def test_api_interns_identical_compact_take_mappings(tmp_path: Path) -> None:
     expected_values = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected_values[cell] for cell in cells))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected_values[cell] for cell in cells)
+    )
 
 
 def test_api_compacts_strided_block_take_mappings(tmp_path: Path) -> None:
@@ -238,7 +242,7 @@ def test_api_compacts_strided_block_take_mappings(tmp_path: Path) -> None:
     )
     document = _align_bindings(producer_n, len(host_map))
     modules = generate_inverted(workbook, document)
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     compact = indices_to_source(host_map)
     assert compact == "tuple(4 * i + j for i in range(6) for j in range(3))"
     assert _eval_index_source(compact) == host_map
@@ -253,8 +257,10 @@ def test_api_compacts_strided_block_take_mappings(tmp_path: Path) -> None:
     expected_values = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected_values[cell] for cell in cells))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected_values[cell] for cell in cells)
+    )
 
 
 def test_api_keeps_irregular_gather_order(tmp_path: Path) -> None:
@@ -310,7 +316,7 @@ def test_api_keeps_irregular_gather_order(tmp_path: Path) -> None:
         ),
     )
     modules = generate_inverted(workbook, document)
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     assert "take(engine_plus, (0, 2, 1))" in api
     assert "take(engine_plus, (0, 1, 2))" not in api
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
@@ -319,9 +325,14 @@ def test_api_keeps_irregular_gather_order(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((11.0, 31.0, 21.0))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert dict(got.items()) == pytest.approx(
+        {
+            coordinate: expected[cell]
+            for coordinate, cell in catalog.get("result").coordinate_cells.items()
+        }
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((11.0, 31.0, 21.0))
 
 
 def test_generated_api_import_and_eval_cost(
@@ -331,7 +342,7 @@ def test_generated_api_import_and_eval_cost(
     host_map = tuple(j for _ in range(copies) for j in range(n))
     workbook = _align_workbook(tmp_path, producer_n=n, host_map=host_map, name="take_cost")
     modules = generate_inverted(workbook, _align_bindings(n, len(host_map)))
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     compile_time = timeit.timeit(lambda src=api: compile(src, "<api>", "exec"), number=20)
     interned = [line for line in api.splitlines() if line.startswith("_TAKE_")]
     print(

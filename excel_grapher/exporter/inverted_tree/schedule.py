@@ -813,6 +813,7 @@ def _statement_at_union(
     series_id: str,
     _union_t: int,
     index: int,
+    partition: tuple[Scalar, ...] | None = None,
 ) -> str:
     """Return the statement covering schedule coordinate `index`.
 
@@ -821,7 +822,11 @@ def _statement_at_union(
     join keys). A miss falls back to the inner `TIME_PERIOD` axis so a
     matrix nest can resolve the covering statement per outer-key block.
     """
-    found = catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
+    found = (
+        catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
+        if partition is None
+        else None
+    )
     if found is not None:
         return found
     series = catalog.get(series_id)
@@ -829,7 +834,9 @@ def _statement_at_union(
         return series_id
     for stmt in series.statements:
         for cell in stmt.cells:
-            if schedule_axis_coord(cell, catalog) == index:
+            if schedule_axis_coord(cell, catalog) == index and (
+                partition is None or schedule_partition(cell, catalog) == partition
+            ):
                 return stmt.statement_id
     return series_id
 
@@ -875,6 +882,8 @@ def _index_region_key(
     index_edges: Sequence[DependenceEdge],
     union_t: int,
     index: int,
+    partition: tuple[Scalar, ...] | None = None,
+    statement_ids: Mapping[str, Mapping[int, str]] | None = None,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None:
     """Return `(body_order, shape_sig, access_sig)` for one union index."""
     active = tuple(sid for sid in scc if domain[sid][0] <= union_t < domain[sid][1])
@@ -883,7 +892,15 @@ def _index_region_key(
     order = _residual_order_at_index(active, index_edges)
     if order is None:
         return None
-    shape_sig = tuple((sid, _statement_at_union(catalog, sid, union_t, index)) for sid in active)
+    shape_sig = tuple(
+        (
+            sid,
+            statement_ids[sid].get(index, sid)
+            if statement_ids is not None
+            else _statement_at_union(catalog, sid, union_t, index, partition),
+        )
+        for sid in active
+    )
     return order, shape_sig, _access_signature(active, index_edges)
 
 
@@ -916,6 +933,15 @@ def _fuse_regions(
 ) -> tuple[FusedRegion, ...] | None:
     """Group contiguous union indices that share residual order and access."""
     by_coord = _bucket_edges_by_consumer_coord(edges, catalog, partition=partition)
+    statement_ids = {
+        sid: {
+            schedule_axis_coord(cell, catalog): statement.statement_id
+            for statement in catalog.get(sid).statements
+            for cell in statement.cells
+            if partition is None or schedule_partition(cell, catalog) == partition
+        }
+        for sid in scc
+    }
     regions: list[FusedRegion] = []
     run_start = 0
     run_key: (
@@ -929,6 +955,8 @@ def _fuse_regions(
             index_edges=by_coord.get(index, ()),
             union_t=union_t,
             index=index,
+            partition=partition,
+            statement_ids=statement_ids,
         )
         if key is None:
             return None

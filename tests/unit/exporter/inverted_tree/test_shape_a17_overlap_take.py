@@ -80,16 +80,19 @@ def test_revenue_pct_gdp_index_map_is_overlapping_window(tmp_path: Path) -> None
 def test_overlap_call_site_takes_gdp_window(tmp_path: Path) -> None:
     workbook = _overlap_workbook(tmp_path)
     modules = generate_inverted(workbook, _overlap_bindings())
-    api = modules["api.py"]
-    assert "take(gdp, range(1, 3))" in api
-    assert "internals.gdp_growth(gdp)" in api
-    assert "internals.revenue_pct_gdp(take(gdp, range(1, 3)), revenue)" in api
     internals = modules["internals.py"]
-    assert "require_length(gdp, 2)" in internals
-    assert "require_aligned(revenue)" in internals
+    assert "gdp[time_period]" in internals
+    assert "gdp[time_period - 1]" in internals
+    assert "revenue[time_period]" in internals
+    assert "GDP_SCHEMA.validate(gdp)" in internals
     pkg = load_package(modules, tmp_path, name="a17_overlap")
-    got = pkg.compute_result(gdp=(100.0, 110.0, 121.0), revenue=(10.0, 12.0))
-    assert got == pytest.approx((110 / 100 + 10 / 110, 121 / 110 + 12 / 121))
+    got = pkg.compute_result(
+        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0)),
+        revenue=pkg.data.Revenue.from_nested(domain=pkg.data.REVENUE_DOMAIN, values=(10.0, 12.0)),
+    )
+    assert [got[year] for year in (2010, 2011)] == pytest.approx(
+        (110 / 100 + 10 / 110, 121 / 110 + 12 / 121)
+    )
 
 
 def test_overlap_matches_formula_evaluator(tmp_path: Path) -> None:
@@ -97,8 +100,13 @@ def test_overlap_matches_formula_evaluator(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, _overlap_bindings()), tmp_path, name="a17_eval")
     graph = create_dependency_graph(workbook, ["Engine!C6", "Engine!D6"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Engine!C6", "Engine!D6"])
-    got = pkg.compute_result(gdp=(100.0, 110.0, 121.0), revenue=(10.0, 12.0))
-    assert got == pytest.approx((expected["Engine!C6"], expected["Engine!D6"]))
+    got = pkg.compute_result(
+        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0)),
+        revenue=pkg.data.Revenue.from_nested(domain=pkg.data.REVENUE_DOMAIN, values=(10.0, 12.0)),
+    )
+    assert [got[year] for year in (2010, 2011)] == pytest.approx(
+        (expected["Engine!C6"], expected["Engine!D6"])
+    )
 
 
 def _nested_compute_body(source: str, helper: str) -> str:
@@ -112,11 +120,16 @@ def test_overlap_rung3_indexes_taken_window(tmp_path: Path) -> None:
     """Rung-3 helpers subscript the taken gdp window, not the catalog (#633)."""
     workbook = _overlap_workbook(tmp_path)
     modules = generate_inverted(workbook, _overlap_bindings(), force_rung=3)
-    body = _nested_compute_body(modules["internals.py"], "revenue_pct_gdp")
-    assert "gdp[i + 1]" not in body
-    assert "gdp[i]" in body
+    body = modules["internals.py"]
+    assert "gdp[time_period]" in body
+    assert "revenue[time_period]" in body
     pkg = load_package(modules, tmp_path, name="a17_r3")
     graph = create_dependency_graph(workbook, ["Engine!C6", "Engine!D6"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Engine!C6", "Engine!D6"])
-    got = pkg.compute_result(gdp=(100.0, 110.0, 121.0), revenue=(10.0, 12.0))
-    assert got == pytest.approx((expected["Engine!C6"], expected["Engine!D6"]))
+    got = pkg.compute_result(
+        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0)),
+        revenue=pkg.data.Revenue.from_nested(domain=pkg.data.REVENUE_DOMAIN, values=(10.0, 12.0)),
+    )
+    assert [got[year] for year in (2010, 2011)] == pytest.approx(
+        (expected["Engine!C6"], expected["Engine!D6"])
+    )

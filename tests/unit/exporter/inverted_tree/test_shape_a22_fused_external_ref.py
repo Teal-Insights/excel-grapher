@@ -122,7 +122,17 @@ def test_forward_off_union_seed_does_not_raise_keyerror(tmp_path: Path) -> None:
     assert 0 not in choice.plan.coord_to_t
 
     fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a22_fwd_seed_or")
-    assert fused.compute_debt(seed=100.0) == pytest.approx(demand.compute_debt(seed=100.0))
+    assert dict(
+        fused.compute_debt(
+            seed=fused.data.Seed.from_nested(domain=fused.data.SEED_DOMAIN, values=(100.0,))
+        ).items()
+    ) == pytest.approx(
+        dict(
+            demand.compute_debt(
+                seed=demand.data.Seed.from_nested(domain=demand.data.SEED_DOMAIN, values=(100.0,))
+            ).items()
+        )
+    )
 
 
 def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
@@ -132,18 +142,26 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     assert plan_scc(("debt", "adj"), catalog=catalog, graph=graph_bound).rung == 2
     modules = generate_inverted(workbook, doc)
     internals = modules["internals.py"]
-    assert "live_measure" in internals
+    assert "debt[time_period - 1]" in internals
     assert "KeyError" not in internals
 
     pkg = load_package(modules, tmp_path, name="a22_fwd_seed")
     cells = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_debt(seed=100.0)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells[:2]))
-    assert got == pytest.approx((102.0, 104.04))
-    _debt, adj = pkg.internals.scan_debt_adj(seed=100.0)
-    assert adj == pytest.approx(tuple(expected[cell] for cell in cells[2:]))
+    got = pkg.compute_debt(
+        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
+    )
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells[:2])
+    )
+    assert [value for _, value in got.items()] == pytest.approx((102.0, 104.04))
+    adj = pkg.internals.scan_debt_adj(
+        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
+    ).adj
+    assert [value for _, value in adj.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells[2:])
+    )
 
 
 def test_reversed_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
@@ -158,13 +176,27 @@ def test_reversed_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     assert 2 not in choice.plan.coord_to_t
 
     fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a22_rev_seed")
-    assert fused.compute_value(seed=100.0) == pytest.approx(demand.compute_value(seed=100.0))
+    assert dict(
+        fused.compute_value(
+            seed=fused.data.Seed.from_nested(domain=fused.data.SEED_DOMAIN, values=(100.0,))
+        ).items()
+    ) == pytest.approx(
+        dict(
+            demand.compute_value(
+                seed=demand.data.Seed.from_nested(domain=demand.data.SEED_DOMAIN, values=(100.0,))
+            ).items()
+        )
+    )
     pkg = fused
     cells = ["Engine!A2", "Engine!B2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_value(seed=100.0)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells[:2]))
+    got = pkg.compute_value(
+        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
+    )
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells[:2])
+    )
 
 
 def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> None:
@@ -179,14 +211,23 @@ def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> No
     assert choice.plan.direction == "reversed"
 
     fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a22_rev_rate")
-    rate = (0.01, 0.02, 0.03)
-    assert fused.compute_value(rate=rate) == pytest.approx(demand.compute_value(rate=rate))
+    rate = fused.data.Rate.from_nested(domain=fused.data.RATE_DOMAIN, values=(0.01, 0.02, 0.03))
+    demand_rate = demand.data.Rate.from_nested(
+        domain=demand.data.RATE_DOMAIN, values=(0.01, 0.02, 0.03)
+    )
+    assert dict(fused.compute_value(rate=rate).items()) == pytest.approx(
+        dict(demand.compute_value(rate=demand_rate).items())
+    )
     pkg = fused
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
     got = pkg.compute_value(rate=rate)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells[:3]))
-    _value, flow = pkg.internals.scan_value_flow(rate=rate)
-    assert flow == pytest.approx(tuple(expected[cell] for cell in cells[3:]))
-    assert got == pytest.approx((83.72, 92.0, 100.0))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells[:3])
+    )
+    flow = pkg.internals.scan_value_flow(rate=rate).flow
+    assert [value for _, value in flow.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells[3:])
+    )
+    assert [value for _, value in got.items()] == pytest.approx((83.72, 92.0, 100.0))

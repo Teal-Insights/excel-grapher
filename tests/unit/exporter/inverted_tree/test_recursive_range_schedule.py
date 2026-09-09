@@ -46,4 +46,9 @@ def test_recursive_sum_selects_available_catalog_instances(
     )
     modules = generate_inverted(workbook, bindings)
     package = load_package(modules, tmp_path, name=f"recursive_{moving}")
-    assert package.compute_totals() == (1.0, 2.0, 3.0, 5.0 if moving else 3.0)
+    assert dict(package.compute_totals().items()) == {
+        (2020,): 1.0,
+        (2021,): 2.0,
+        (2022,): 3.0,
+        (2023,): 5.0 if moving else 3.0,
+    }

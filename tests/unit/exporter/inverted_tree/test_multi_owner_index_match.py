@@ -24,9 +24,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -178,13 +178,14 @@ def _export_picked(
     cells = ("Engine!E230", "Engine!E231")
     with FormulaEvaluator(graph, blank_ranges=_BLANK) as ev:
         expected = ev.evaluate(list(cells))
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     if inputs is not None:
         kwargs.update(inputs)
     got = call_compute(pkg, "picked", kwargs)
-    assert isinstance(got, tuple)
+    assert isinstance(got, pkg.Tensor)
+    assert set(got.domain) == catalog.get("picked").required_coordinates
     want = tuple(_norm_measure(expected[cell]) for cell in cells)
-    return tuple(_norm_measure(value) for value in got), want, modules
+    return tuple(_norm_measure(value) for _, value in got.items()), want, modules
 
 
 def test_resolve_positional_range_keeps_declared_blanks(tmp_path: Path) -> None:
@@ -296,10 +297,11 @@ def test_match_slice_does_not_use_the_rest_of_the_series(tmp_path: Path) -> None
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="match_slice")
     with FormulaEvaluator(graph) as ev:
         expected = ev.evaluate(["Engine!B1", "Engine!B2"])
-    got = call_compute(pkg, "picked", input_kwargs(catalog, graph))
-    assert isinstance(got, tuple)
+    got = call_compute(pkg, "picked", named_input_kwargs(pkg, catalog, graph))
+    assert isinstance(got, pkg.Tensor)
+    assert set(got.domain) == catalog.get("picked").required_coordinates
     want = tuple(_norm_measure(expected[cell]) for cell in ("Engine!B1", "Engine!B2"))
-    assert tuple(_norm_measure(value) for value in got) == want
+    assert tuple(_norm_measure(value) for _, value in got.items()) == want
     assert want[0] == "#N/A"
     assert want[1] == 1
 
@@ -337,10 +339,11 @@ def test_invalid_index_coordinates_use_shared_ref_semantics(tmp_path: Path) -> N
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="index_oob")
     with FormulaEvaluator(graph) as ev:
         expected = ev.evaluate(["Engine!C1", "Engine!C2"])
-    got = call_compute(pkg, "picked", input_kwargs(catalog, graph))
-    assert isinstance(got, tuple)
+    got = call_compute(pkg, "picked", named_input_kwargs(pkg, catalog, graph))
+    assert isinstance(got, pkg.Tensor)
+    assert set(got.domain) == catalog.get("picked").required_coordinates
     want = tuple(_norm_measure(expected[cell]) for cell in ("Engine!C1", "Engine!C2"))
-    assert tuple(_norm_measure(value) for value in got) == want
+    assert tuple(_norm_measure(value) for _, value in got.items()) == want
     assert want == ("#REF!", "#REF!")
 
 

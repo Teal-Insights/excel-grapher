@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import FrozenInstanceError
 from pathlib import Path
 
 import pytest
@@ -274,29 +275,38 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
     pkg = load_package(modules, tmp_path, name=f"a11_zip_{orientation[:1]}")
     got = pkg.compute_debt()
-    assert got == pytest.approx((100.0, 102.0, 104.04))
+    assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx((100.0, 102.0, 104.04))
     assert "scan_debt_adjustment" in internals
-    assert "internals.scan_debt_adjustment" in api
+    assert "data.Debt[" in api
     assert not hasattr(pkg.internals, "debt")
     assert not hasattr(pkg.internals, "adjustment")
-    assert internals.count("scan_debt_adjustment(") == 1
+    assert "class ScanDebtAdjustmentResult:" in internals
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
 def test_lag_zipper_matches_formula_evaluator(tmp_path: Path, orientation: str) -> None:
     workbook_fn, bindings_fn, debt_cells, adj_cells = _zipper_orientation(orientation)
     workbook = workbook_fn(tmp_path)
-    pkg = load_package(
-        generate_inverted(workbook, bindings_fn()), tmp_path, name=f"a11_num_{orientation[:1]}"
-    )
+    modules = generate_inverted(workbook, bindings_fn())
+    pkg = load_package(modules, tmp_path, name=f"a11_num_{orientation[:1]}")
     targets = [*debt_cells, *adj_cells]
     graph = create_dependency_graph(workbook, targets, load_values=True)
     assert graph.cycle_report().has_must_cycles is False
     expected = FormulaEvaluator(graph).evaluate(targets)
     got = pkg.compute_debt()
-    assert got == pytest.approx(tuple(expected[cell] for cell in debt_cells))
-    _debt, adj = pkg.internals.scan_debt_adjustment()
-    assert adj == pytest.approx(tuple(expected[cell] for cell in adj_cells))
+    assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx(
+        tuple(expected[cell] for cell in debt_cells)
+    )
+    result = pkg.internals.scan_debt_adjustment()
+    assert "debt[time_period - 1]" in modules["internals.py"]
+    assert "adjustment[time_period]" in modules["internals.py"]
+    assert "_kernels.scan_debt_adjustment" not in modules["internals.py"]
+    assert tuple(result.adjustment[year] for year in (2010, 2011)) == pytest.approx(
+        tuple(expected[cell] for cell in adj_cells)
+    )
+    assert tuple(result.debt.items()) == tuple(got.items())
+    with pytest.raises(FrozenInstanceError):
+        result.debt = got
 
 
 @pytest.mark.parametrize(
@@ -326,7 +336,11 @@ def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path, orientation: str) -
         tmp_path,
         name=f"a11_or_r3_{orientation[:1]}",
     )
-    assert auto.compute_debt() == pytest.approx(forced.compute_debt())
+    result, expected = auto.compute_debt(), forced.compute_debt()
+    assert tuple(result.domain) == tuple(expected.domain)
+    assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx(
+        tuple(expected[year] for year in (2009, 2010, 2011))
+    )
 
 
 def test_offset_helper_block_stays_on_rung2(tmp_path: Path) -> None:
@@ -336,7 +350,10 @@ def test_offset_helper_block_stays_on_rung2(tmp_path: Path) -> None:
     pkg = load_package(
         generate_inverted(workbook, _offset_zipper_bindings()), tmp_path, name="a11_off"
     )
-    assert pkg.compute_debt() == pytest.approx((100.0, 102.0, 104.04))
+    result = pkg.compute_debt()
+    assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx(
+        (100.0, 102.0, 104.04)
+    )
 
 
 def test_cross_sheet_zipper_joins_on_time_period(tmp_path: Path) -> None:
@@ -346,7 +363,10 @@ def test_cross_sheet_zipper_joins_on_time_period(tmp_path: Path) -> None:
     pkg = load_package(
         generate_inverted(workbook, _cross_sheet_zipper_bindings()), tmp_path, name="a11_xsheet"
     )
-    assert pkg.compute_debt() == pytest.approx((100.0, 102.0, 104.04))
+    result = pkg.compute_debt()
+    assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx(
+        (100.0, 102.0, 104.04)
+    )
 
 
 def test_vertical_scan_matches_formula_evaluator(tmp_path: Path) -> None:
@@ -358,6 +378,7 @@ def test_vertical_scan_matches_formula_evaluator(tmp_path: Path) -> None:
         workbook, ["Engine!B1", "Engine!B2", "Engine!B3"], load_values=True
     )
     expected = FormulaEvaluator(graph).evaluate(["Engine!B1", "Engine!B2", "Engine!B3"])
-    assert pkg.compute_debt() == pytest.approx(
+    result = pkg.compute_debt()
+    assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx(
         (expected["Engine!B1"], expected["Engine!B2"], expected["Engine!B3"])
     )

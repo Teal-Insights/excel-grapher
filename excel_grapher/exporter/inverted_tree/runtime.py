@@ -12,11 +12,13 @@ the tuple.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from datetime import date, datetime
-from typing import Any, Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
+from types import MappingProxyType
+from typing import Any, Generic, Literal, NoReturn, Protocol, TypeGuard, TypeVar, cast, overload
 
 from excel_grapher.core import operators as _core_ops
+from excel_grapher.core.grid import Range
 from excel_grapher.core.logic_funcs import logical_and, logical_if, logical_not, logical_or
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
 from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, min_cells, sum_cells
@@ -28,6 +30,7 @@ from excel_grapher.exporter.export_runtime import error_funcs as _shared_errors
 from excel_grapher.exporter.export_runtime import lookup as _shared_lookup
 from excel_grapher.exporter.export_runtime import math as _shared_math
 from excel_grapher.exporter.export_runtime import text as _shared_text
+from excel_grapher.exporter.export_runtime.tensor import Domain, Tensor
 from excel_grapher.runtime.info import xl_isnumber as _info_isnumber
 from excel_grapher.series_bindings.input_coerce import (
     apply_input_value_map as apply_input_value_map,
@@ -36,27 +39,43 @@ from excel_grapher.series_bindings.input_coerce import require_input_domain as r
 
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., object])
+K = TypeVar("K", bound=tuple[object, ...])
+
+
+def lazy_table(rows: tuple[tuple[Callable[[], object], ...], ...]) -> Range:
+    """Expose a formula table without evaluating cells a lookup does not select."""
+    return Range(
+        "",
+        1,
+        1,
+        len(rows),
+        len(rows[0]),
+        lambda address: None,
+        _coord_resolver=lambda row, column: cast(FormulaValue, rows[row - 1][column - 1]()),
+    )
 
 
 class KeyedCompute(Protocol):
     """A generated `compute_*` or internals helper with published key metadata."""
 
     __key__: tuple[str, ...]
-    __domain__: tuple[object, ...]
+    __domain__: tuple[object, ...] | Domain | None
     __holes__: tuple[int, ...]
 
 
 def publish(
     *,
     key: tuple[str, ...],
-    domain: tuple[object, ...],
+    domain: object,
     holes: tuple[int, ...] = (),
     constants: tuple[str, ...] | None = None,
+    cells: Mapping[K, str] | None = None,
 ) -> Callable[[F], F]:
     """Attach series metadata to a generated helper and return it unchanged.
 
     Sets `__key__`, `__domain__`, and `__holes__` on `fn`. When `constants` is
-    given, also sets `__constants__`. Does not wrap `fn`.
+    given, also sets `__constants__`. `cells` publishes immutable coordinate
+    provenance as `__cells__`. Does not wrap `fn`.
     """
 
     def decorator(fn: F) -> F:
@@ -64,6 +83,8 @@ def publish(
         target.__key__ = key
         target.__domain__ = domain
         target.__holes__ = holes
+        if cells is not None:
+            target.__cells__ = MappingProxyType(dict(cells))
         if constants is not None:
             target.__constants__ = constants
         return fn
@@ -209,6 +230,13 @@ def xl_add(left: object, right: object) -> object:
     return _adapt_core(_core_ops.xl_add(_arith_operand(left), _arith_operand(right)))
 
 
+def xl_concat(left: object, right: object) -> object:
+    """Excel `&` with shared blank, boolean, number, and error semantics."""
+    _raise_stored_error(left)
+    _raise_stored_error(right)
+    return _adapt_core(_core_ops.xl_concat(_as_formula(left), _as_formula(right)))
+
+
 def xl_sub(left: object, right: object) -> object:
     """Excel `-` via `core.operators.xl_sub`."""
     return _adapt_core(_core_ops.xl_sub(_arith_operand(left), _arith_operand(right)))
@@ -309,28 +337,28 @@ def xl_sum(*args: object) -> object:
     """Excel `SUM` via `core.math_funcs.sum_cells`."""
     for arg in args:
         _raise_stored_errors_in(arg)
-    return _adapt_core(sum_cells(*cast(tuple[CellValue, ...], args)))
+    return _adapt_core(sum_cells(*(_as_core_cells(arg) for arg in args)))
 
 
 def xl_average(*args: object) -> object:
     """Excel `AVERAGE` via `core.math_funcs.average_cells`."""
     for arg in args:
         _raise_stored_errors_in(arg)
-    return _adapt_core(average_cells(*cast(tuple[CellValue, ...], args)))
+    return _adapt_core(average_cells(*(_as_core_cells(arg) for arg in args)))
 
 
 def xl_min(*args: object) -> object:
     """Excel `MIN` via `core.math_funcs.min_cells`."""
     for arg in args:
         _raise_stored_errors_in(arg)
-    return _adapt_core(min_cells(*cast(tuple[CellValue, ...], args)))
+    return _adapt_core(min_cells(*(_as_core_cells(arg) for arg in args)))
 
 
 def xl_max(*args: object) -> object:
     """Excel `MAX` via `core.math_funcs.max_cells`."""
     for arg in args:
         _raise_stored_errors_in(arg)
-    return _adapt_core(max_cells(*cast(tuple[CellValue, ...], args)))
+    return _adapt_core(max_cells(*(_as_core_cells(arg) for arg in args)))
 
 
 def xl_if(cond: object, then_value: object, else_value: object = False) -> object:
@@ -357,7 +385,7 @@ def xl_sumproduct(*args: object) -> object:
     """Excel `SUMPRODUCT` via `core.sumproduct.sumproduct_cells`."""
     for arg in args:
         _raise_stored_errors_in(arg)
-    return _adapt_core(sumproduct_cells(*cast(tuple[CellValue, ...], args)))
+    return _adapt_core(sumproduct_cells(*(_as_core_cells(arg) for arg in args)))
 
 
 def xl_choose(index: object, *choices: float) -> float:
@@ -368,15 +396,21 @@ def xl_choose(index: object, *choices: float) -> float:
     return choices[position - 1]
 
 
+def xl_choose_lazy(index: object, *choices: Callable[[], object]) -> object:
+    """Select one CHOOSE branch before evaluating its workbook expression."""
+    selected = int(xl_choose(index, *range(len(choices))))
+    return choices[selected]()
+
+
 def xl_index(array: object, row_num: object = None, col_num: object = None) -> object:
     """Excel `INDEX` via `core.lookup_funcs.index_cells`."""
     return _adapt_core(index_cells(array, row_num, col_num))
 
 
-def xl_match(lookup: object, lookup_array: Sequence[object], match_type: int = 0) -> int:
+def xl_match(lookup: object, lookup_array: object, match_type: int = 0) -> int:
     """Excel `MATCH` via `core.lookup_funcs.match_cells`."""
     _raise_stored_error(lookup)
-    result = match_cells(lookup, list(lookup_array), match_type)
+    result = match_cells(lookup, _as_core_cells(lookup_array), match_type)
     adapted = _adapt_core(result)
     if not isinstance(adapted, int | float):
         raise TypeError(f"MATCH returned {type(adapted).__name__}")
@@ -591,18 +625,28 @@ def take(values: Sequence[T], indices: Sequence[int] | slice) -> tuple[T, ...]:
 
 def as_records(
     compute: KeyedCompute,
-    result: Sequence[object],
+    result: object,
     *,
     measure: str = "OBS_VALUE",
 ) -> list[dict[str, object]]:
     """Zip a compute result with `__key__` / `__domain__` into records.
 
-    Tuples stay the ABI; this helper is for docs, tests, and tidy views.
-    A one-key domain is a tuple of scalars (`TIME_PERIOD_DOMAIN.index(2050)`).
-    A multi-key domain is a tuple of key tuples aligned with `__key__`.
+    Named results iterate by coordinate identity. Legacy metadata requires an
+    explicitly ordered sequence and remains supported by this record adapter.
     """
     keys = compute.__key__
     domain = compute.__domain__
+    if isinstance(domain, Domain):
+        if not isinstance(result, Tensor) or result.domain != domain:
+            raise ValueError("result must be a Tensor over the declared result domain")
+        return [
+            dict(zip(keys, coord, strict=True)) | {measure: value}
+            for coord, value in result.items()
+        ]
+    if domain is None:
+        return [{measure: result}]
+    if not isinstance(result, Sequence):
+        raise ValueError("legacy result metadata requires an explicitly ordered sequence")
     if len(domain) != len(result):
         raise ValueError(f"result length {len(result)} does not match domain length {len(domain)}")
     records: list[dict[str, object]] = []
@@ -622,6 +666,38 @@ def as_records(
 
 class InstanceCycleError(ValueError):
     """Demand-driven evaluation hit a same-index circular reference."""
+
+
+class CoordinateReader(Generic[T]):
+    """Private demand-driven series; only completed tensors are published."""
+
+    def __init__(
+        self,
+        series_id: str,
+        domain: Domain,
+        compute: Callable[[tuple[str | int, ...]], T],
+    ) -> None:
+        self._series_id = series_id
+        self._domain = domain
+        self._compute = compute
+        self._memo: dict[tuple[str, tuple[str | int, ...]], T] = {}
+        self._active: set[tuple[str, tuple[str | int, ...]]] = set()
+
+    def __getitem__(self, key: str | int | tuple[str | int, ...]) -> T:
+        coordinate = key if isinstance(key, tuple) else (key,)
+        self._domain.require(coordinate)
+        identity = (self._series_id, coordinate)
+        if identity in self._memo:
+            return self._memo[identity]
+        if identity in self._active:
+            raise InstanceCycleError(f"circular reference at {self._series_id}{coordinate!r}")
+        self._active.add(identity)
+        try:
+            value = self._compute(coordinate)
+            self._memo[identity] = value
+            return value
+        finally:
+            self._active.remove(identity)
 
 
 def eval_instance(

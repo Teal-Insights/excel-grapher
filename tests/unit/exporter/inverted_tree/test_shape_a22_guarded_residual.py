@@ -118,8 +118,8 @@ def test_scalar_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
 
     modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_repro_pkg")
-    assert pkg.compute_x(flag=0) == (10.0,)
-    assert pkg.compute_y(flag=0) == (20.0,)
+    assert pkg.compute_x(flag=0) == 10.0
+    assert pkg.compute_y(flag=0) == 20.0
 
     # When the guarded branch is actually taken, InstanceCycleError is raised at runtime
     with pytest.raises(pkg.runtime.InstanceCycleError):
@@ -149,8 +149,12 @@ def test_series_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
 
     modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_series_pkg")
-    assert pkg.compute_x(flag=0) == pytest.approx((10.0, 11.0, 12.0))
-    assert pkg.compute_y(flag=0) == pytest.approx((20.0, 22.0, 24.0))
+    assert [pkg.compute_x(flag=0)[year] for year in (2020, 2021, 2022)] == pytest.approx(
+        (10.0, 11.0, 12.0)
+    )
+    assert [pkg.compute_y(flag=0)[year] for year in (2020, 2021, 2022)] == pytest.approx(
+        (20.0, 22.0, 24.0)
+    )
 
     with pytest.raises(pkg.runtime.InstanceCycleError):
         pkg.compute_x(flag=1)

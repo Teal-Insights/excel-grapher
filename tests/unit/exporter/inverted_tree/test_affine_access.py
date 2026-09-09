@@ -138,17 +138,21 @@ def test_plan_indices_maps_affine_image_without_index_map(tmp_path: Path) -> Non
 def test_decimate_emit_uses_strided_range_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = _decimate_workbook(tmp_path)
     modules = generate_inverted(workbook, _decimate_bindings())
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     assert "take(source, range(0, 6, 2))" in api
     assert "take(source, (0, 2, 4))" not in api
     pkg = load_package(modules, tmp_path, name="affine_decimate")
-    got = pkg.compute_sampled(source=(10.0, 20.0, 30.0, 40.0, 50.0))
-    assert got == pytest.approx((10.0, 30.0, 50.0))
+    got = pkg.compute_sampled(
+        source=pkg.data.Source.from_nested(
+            domain=pkg.data.SOURCE_DOMAIN, values=(10.0, 20.0, 30.0, 40.0, 50.0)
+        )
+    )
+    assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx((10.0, 30.0, 50.0))
     graph = create_dependency_graph(
         workbook, ["Engine!A3", "Engine!B3", "Engine!C3"], load_values=True
     )
     expected = FormulaEvaluator(graph).evaluate(["Engine!A3", "Engine!B3", "Engine!C3"])
-    assert got == pytest.approx(
+    assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx(
         (expected["Engine!A3"], expected["Engine!B3"], expected["Engine!C3"])
     )
 
@@ -156,15 +160,17 @@ def test_decimate_emit_uses_strided_range_and_matches_evaluator(tmp_path: Path) 
 def test_reverse_emit_preserves_decreasing_order_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = _reverse_workbook(tmp_path)
     modules = generate_inverted(workbook, _reverse_bindings())
-    api = modules["api.py"]
+    api = modules["_kernel.py"]
     assert "take(source, range(2, -1, -1))" in api
     pkg = load_package(modules, tmp_path, name="affine_reverse")
-    got = pkg.compute_reversed(source=(10.0, 20.0, 30.0))
-    assert got == pytest.approx((30.0, 20.0, 10.0))
+    got = pkg.compute_reversed(
+        source=pkg.data.Source.from_nested(domain=pkg.data.SOURCE_DOMAIN, values=(10.0, 20.0, 30.0))
+    )
+    assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx((30.0, 20.0, 10.0))
     graph = create_dependency_graph(
         workbook, ["Engine!A3", "Engine!B3", "Engine!C3"], load_values=True
     )
     expected = FormulaEvaluator(graph).evaluate(["Engine!A3", "Engine!B3", "Engine!C3"])
-    assert got == pytest.approx(
+    assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx(
         (expected["Engine!A3"], expected["Engine!B3"], expected["Engine!C3"])
     )

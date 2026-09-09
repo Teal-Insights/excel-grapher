@@ -133,8 +133,8 @@ def test_absolute_selector_emits_identity_loop_reading_mode(tmp_path: Path) -> N
     assert "prior: float | str = mode" not in internals
     assert "prior == label_nominal" not in internals
     assert "xl_eq(mode, label_nominal)" in internals
-    assert "for i in range(n):" in internals
-    assert "out.append(" in internals
+    assert "for _coordinate in data.SELECTED_REQUIRED:" in internals
+    assert "_records.append(" in internals
 
 
 def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:
@@ -145,13 +145,15 @@ def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(graph).evaluate(cells)
     got = pkg.compute_selected(
         mode="Nominal",
-        nominal=(4.0, 5.0, 6.0),
-        other=(1.0, 2.0, 3.0),
+        nominal=pkg.data.Nominal.from_nested(
+            domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
+        ),
+        other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
     )
-    assert got == pytest.approx(
+    assert [value for _, value in got.items()] == pytest.approx(
         (expected["Engine!B2"], expected["Engine!C2"], expected["Engine!D2"])
     )
-    assert got == pytest.approx((4.0, 5.0, 6.0))
+    assert [value for _, value in got.items()] == pytest.approx((4.0, 5.0, 6.0))
 
 
 def test_absolute_selector_other_branch_and_fallback(tmp_path: Path) -> None:
@@ -160,15 +162,25 @@ def test_absolute_selector_other_branch_and_fallback(tmp_path: Path) -> None:
         tmp_path,
         name="a24_branches",
     )
-    assert pkg.compute_selected(
-        mode="Other",
-        nominal=(4.0, 5.0, 6.0),
-        other=(1.0, 2.0, 3.0),
+    assert tuple(
+        value
+        for _, value in pkg.compute_selected(
+            mode="Other",
+            nominal=pkg.data.Nominal.from_nested(
+                domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
+            ),
+            other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
+        ).items()
     ) == pytest.approx((1.0, 2.0, 3.0))
-    assert pkg.compute_selected(
-        mode="Neither",
-        nominal=(4.0, 5.0, 6.0),
-        other=(1.0, 2.0, 3.0),
+    assert tuple(
+        value
+        for _, value in pkg.compute_selected(
+            mode="Neither",
+            nominal=pkg.data.Nominal.from_nested(
+                domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
+            ),
+            other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
+        ).items()
     ) == ('"', '"', '"')
 
 
@@ -182,4 +194,6 @@ def test_year0_seed_read_only_by_first_member_is_still_a_scan(tmp_path: Path) ->
     assert path.seed_id == "year0"
     modules = generate_inverted(_recursive_seed_workbook(tmp_path), _recursive_seed_bindings())
     pkg = load_package(modules, tmp_path, name="a24_seed")
-    assert pkg.compute_path(year0=10.0) == pytest.approx((11.0, 12.0))
+    assert tuple(value for _, value in pkg.compute_path(year0=10.0).items()) == pytest.approx(
+        (11.0, 12.0)
+    )

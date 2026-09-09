@@ -26,9 +26,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -101,7 +101,7 @@ def _export_interp(
     pkg = load_package(modules, tmp_path, name=stem)
     with FormulaEvaluator(graph, blank_ranges=blank_ranges) as ev:
         expected = ev.evaluate(["Engine!O10"])["Engine!O10"]
-    got = call_compute(pkg, "interp", input_kwargs(catalog, graph))
+    got = call_compute(pkg, "interp", named_input_kwargs(pkg, catalog, graph))
     if isinstance(got, tuple):
         assert len(got) == 1
         got = got[0]
