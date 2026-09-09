@@ -90,8 +90,8 @@
     marker.setAttribute('viewBox', '0 0 12 12');
     marker.setAttribute('refX', '12');
     marker.setAttribute('refY', '6');
-    marker.setAttribute('markerWidth', '9');
-    marker.setAttribute('markerHeight', '9');
+    marker.setAttribute('markerWidth', '12');
+    marker.setAttribute('markerHeight', '12');
     marker.setAttribute('markerUnits', 'userSpaceOnUse');
     marker.setAttribute('orient', 'auto');
     marker.setAttribute('overflow', 'visible');
@@ -173,7 +173,6 @@
       if (b.discharged) cls += ' discharged';
       if (b.guarded) cls += ' guarded';
       path.setAttribute('class', cls);
-      path.setAttribute('marker-end', 'url(#' + markerFor(b) + ')');
       var d;
       if (a === c) {
         var r = Math.max(a._w, 56) * 0.45;
@@ -199,6 +198,15 @@
         'partitions=' + JSON.stringify(b.partitions)
       ].join('\n');
       viewport.appendChild(path);
+      var arrow = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      arrow.setAttribute('d', d);
+      arrow.setAttribute('fill', 'none');
+      arrow.setAttribute('stroke', MARKER_COLORS[b.discharged ? 'shift' : (b.access || 'identity')] || MARKER_COLORS.identity);
+      arrow.setAttribute('stroke-width', '1.8');
+      arrow.setAttribute('stroke-opacity', '0');
+      arrow.setAttribute('marker-end', 'url(#' + markerFor(b) + ')');
+      arrow.setAttribute('pointer-events', 'none');
+      viewport.appendChild(arrow);
     });
 
     nodes.forEach(function (n) {
