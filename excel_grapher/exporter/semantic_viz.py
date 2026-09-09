@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from importlib import resources
 from pathlib import Path
@@ -119,17 +119,28 @@ def to_semantic_viz_payload(
     *,
     workbook: Path | str,
     view: SemanticCatalogView | None = None,
+    blank_ranges: Iterable[str] | None = None,
 ) -> SemanticVizPayload:
     """Build a statement-graph payload from a cell graph plus series bindings.
 
     Does not construct cell-level `LightweightVizCore` and does not import
     inverted-tree emission. Catalog analysis fail-closes as `SemanticCatalogError`.
 
+    Args:
+        graph: Cell-level dependency graph.
+        bindings: Validated series bindings.
+        workbook: Workbook path used to expand series geometry.
+        view: Precomputed catalog. When omitted, `load_semantic_catalog` runs.
+        blank_ranges: Sheet-qualified rectangles omitted from the graph. Forwarded
+            to catalog edge classification when `view` is omitted.
+
     Raises:
         SemanticCatalogError: Catalog or instance-edge analysis failed.
     """
     snapshot = (
-        view if view is not None else load_semantic_catalog(graph, bindings, workbook=workbook)
+        view
+        if view is not None
+        else load_semantic_catalog(graph, bindings, workbook=workbook, blank_ranges=blank_ranges)
     )
     statement_graph = build_statement_graph(snapshot, graph)
     return SemanticVizPayload(version=SEMANTIC_VIZ_PAYLOAD_VERSION, graph=statement_graph)

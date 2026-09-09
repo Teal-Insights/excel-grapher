@@ -6,6 +6,8 @@ import inspect
 import json
 from pathlib import Path
 
+import pytest
+
 from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.exporter.semantic_catalog import load_semantic_catalog
 from excel_grapher.exporter.semantic_graph import (
@@ -199,6 +201,31 @@ def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
     assert embedded in html
     for node in json.loads(embedded)["nodes"]:
         assert len(node["cells"]) <= SEMANTIC_VIZ_CELL_SAMPLE
+
+
+def test_semantic_catalog_honors_blank_ranges(tmp_path: Path) -> None:
+    from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
+    from excel_grapher.grapher import create_dependency_graph
+    from tests.unit.exporter.inverted_tree.test_blank_ranges import (
+        _BLANK,
+        _mcve_bindings,
+        _mcve_workbook,
+    )
+
+    workbook = _mcve_workbook(tmp_path)
+    bindings = validate_bindings_document(_mcve_bindings())
+    graph = create_dependency_graph(
+        workbook,
+        ["Outputs!B1"],
+        load_values=True,
+        blank_ranges=_BLANK,
+    )
+    with pytest.raises(SemanticCatalogError, match="is not a bound series"):
+        load_semantic_catalog(graph, bindings, workbook=workbook)
+    view = load_semantic_catalog(graph, bindings, workbook=workbook, blank_ranges=_BLANK)
+    assert view.edges.edges
+    payload = to_semantic_viz_payload(graph, bindings, workbook=workbook, blank_ranges=_BLANK)
+    assert payload.graph.stats.statement_count >= 1
 
 
 def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:
