@@ -177,9 +177,13 @@ def test_emit_bound_leaf_constant_is_parameter(tmp_path: Path) -> None:
 
     pkg = load_package(modules, tmp_path, name="bound_leaf_constant")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_result(rate=(1.0, 2.0, 3.0)) == pytest.approx((expected["Outputs!A1"],))
-    assert pkg.internals.engine_row(rate=(1.0, 2.0, 3.0), seed=0.0)[1] == pytest.approx(0.0)
-    assert pkg.internals.engine_row(rate=(1.0, 2.0, 3.0), seed=99.0)[1] == pytest.approx(99.0)
+    rate = pkg.data.Rate.from_records(
+        domain=pkg.data.RATE_REQUIRED,
+        records=(((2021,), 1.0), ((2023,), 3.0)),
+    )
+    assert pkg.compute_result(rate=rate) == pytest.approx(expected["Outputs!A1"])
+    assert pkg._kernels.engine_row((1.0, 2.0, 3.0), 0.0)[1] == pytest.approx(0.0)
+    assert pkg._kernels.engine_row((1.0, 2.0, 3.0), 99.0)[1] == pytest.approx(99.0)
     with pkg.data.overrides(SEED=99.0):
-        assert pkg.compute_result(rate=(1.0, 2.0, 3.0)) == pytest.approx((2.0 + 99.0 + 6.0,))
+        assert pkg.compute_result(rate=rate) == pytest.approx(2.0 + 99.0 + 6.0)
     assert "seed" in pkg.compute_result.__constants__

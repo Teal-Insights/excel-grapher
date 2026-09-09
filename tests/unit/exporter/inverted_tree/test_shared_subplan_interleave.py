@@ -95,9 +95,9 @@ def test_interleaved_consumer_groups_do_not_emit_unbound_helper_params(
     tmp_path: Path,
 ) -> None:
     modules = generate_inverted(_interleave_workbook(tmp_path), _interleave_bindings())
-    api = modules["api.py"]
-    assert "def _shared_" in api
-    assert _kwarg_uses_before_assign(api) == []
+    kernel = modules["_kernel.py"]
+    assert "def _shared_" in kernel
+    assert _kwarg_uses_before_assign(kernel) == []
 
 
 def test_interleaved_consumer_groups_evaluate_without_unbound_local(tmp_path: Path) -> None:
@@ -109,15 +109,15 @@ def test_interleaved_consumer_groups_evaluate_without_unbound_local(tmp_path: Pa
     assert required_param_names(pkg.compute_out_mid) == ("x",)
     assert set(required_param_names(pkg.compute_out_shock)) == {"x", "y"}
 
-    assert pkg.compute_out_base(x=1.0) == pytest.approx((13.0,))
-    assert pkg.compute_out_mid(x=1.0) == pytest.approx((12.0,))
-    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx((15.0,))
+    assert pkg.compute_out_base(x=1.0) == pytest.approx(13.0)
+    assert pkg.compute_out_mid(x=1.0) == pytest.approx(12.0)
+    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx(15.0)
 
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1", "Outputs!C1"])
-    assert pkg.compute_out_base(x=1.0) == pytest.approx((expected["Outputs!A1"],))
-    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx((expected["Outputs!B1"],))
-    assert pkg.compute_out_mid(x=1.0) == pytest.approx((expected["Outputs!C1"],))
+    assert pkg.compute_out_base(x=1.0) == pytest.approx(expected["Outputs!A1"])
+    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx(expected["Outputs!B1"])
+    assert pkg.compute_out_mid(x=1.0) == pytest.approx(expected["Outputs!C1"])
 
 
 def test_unbound_helper_params_fail_closed_at_emit(tmp_path: Path) -> None:
