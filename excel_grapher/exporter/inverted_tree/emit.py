@@ -537,6 +537,52 @@ def _take_after_call(
     return f"    {series_id} = take({series_id}, {index_mapping_source(work.materialize())})"
 
 
+def _unspliced_helper_has_param(
+    series_id: str,
+    *,
+    applicable: Sequence[_SharedSubplan],
+    covered: set[str],
+) -> bool:
+    """True when a not-yet-spliced helper still needs `series_id` as a parameter.
+
+    Shared helpers apply their own `take` from catalog order. Windowing the
+    same SSA name at the call site first makes the helper's `take` fail closed.
+    """
+    return any(
+        series_id in plan.param_ids
+        for plan in applicable
+        if plan.formula_ids and covered.isdisjoint(plan.formula_ids)
+    )
+
+
+def _emit_take_after_computed(
+    series_id: str,
+    *,
+    body: list[str],
+    local_indices: dict[str, tuple[int, ...]],
+    result_indices: Mapping[str, tuple[int, ...]],
+    call_indices: Mapping[str, tuple[int, ...]],
+    applicable: Sequence[_SharedSubplan],
+    covered: set[str],
+    runtime: set[str],
+) -> None:
+    """Window `series_id` unless a shared helper still needs catalog order."""
+    if _unspliced_helper_has_param(series_id, applicable=applicable, covered=covered):
+        return
+    taken = _take_after_call(
+        series_id,
+        result_indices=result_indices,
+        call_indices=call_indices,
+        runtime=runtime,
+    )
+    if taken is None:
+        return
+    body.append(taken)
+    wanted = result_indices.get(series_id)
+    if wanted is not None:
+        local_indices[series_id] = wanted
+
+
 def _aligned_call_arg(
     param_id: str,
     info: SeriesDeps,
@@ -924,6 +970,8 @@ def _splice_subplan(
 ) -> None:
     """Append a helper call and mark its formula series as covered.
 
+    Arguments are the catalog-order SSA names; the helper applies any `take`.
+
     Raises:
         InvertedTreeExportError: A parameter is not in `locals_bound`.
     """
@@ -1003,7 +1051,8 @@ def _emit_evaluation_body(
 
     Shared `_shared_*` helpers are spliced only after every `param_id` is in
     `locals_bound`. A helper that owns a series is never inlined, and emit
-    fails closed if an applicable helper cannot be spliced.
+    fails closed if an applicable helper cannot be spliced. Helpers own any
+    `take` on their parameters; callers pass catalog-order series.
     """
     runtime: set[str] = set()
     body: list[str] = []
@@ -1088,17 +1137,16 @@ def _emit_evaluation_body(
                 leaf_source[sid] = sid
                 computed = call_indices.get(sid, _identity_indices(catalog.get(sid)))
                 local_indices[sid] = computed
-                taken = _take_after_call(
+                _emit_take_after_computed(
                     sid,
+                    body=body,
+                    local_indices=local_indices,
                     result_indices=result_indices,
                     call_indices=call_indices,
+                    applicable=applicable,
+                    covered=covered,
                     runtime=runtime,
                 )
-                if taken is not None:
-                    body.append(taken)
-                    wanted = result_indices.get(sid)
-                    if wanted is not None:
-                        local_indices[sid] = wanted
             continue
         info = deps[series_id]
         host_call = call_indices.get(series_id, _identity_indices(catalog.get(series_id)))
@@ -1132,17 +1180,16 @@ def _emit_evaluation_body(
             else _identity_indices(host_series)
         )
         local_indices[series_id] = computed
-        taken = _take_after_call(
+        _emit_take_after_computed(
             series_id,
+            body=body,
+            local_indices=local_indices,
             result_indices=result_indices,
             call_indices=call_indices,
+            applicable=applicable,
+            covered=covered,
             runtime=runtime,
         )
-        if taken is not None:
-            body.append(taken)
-            wanted = result_indices.get(series_id)
-            if wanted is not None:
-                local_indices[series_id] = wanted
     _flush_ready_subplans(
         applicable,
         body=body,
