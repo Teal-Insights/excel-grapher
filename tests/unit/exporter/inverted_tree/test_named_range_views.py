@@ -95,7 +95,7 @@ def test_growing_and_sliding_ranges_are_spans_over_the_axis(tmp_path: Path) -> N
     modules = generate_inverted(_cumulative_workbook(tmp_path, 6), _cumulative_bindings(6))
     internals = modules["internals.py"]
     assert "span(data.TIME_PERIOD_AXIS, 2020, time_period)" in internals
-    assert "span(data.TIME_PERIOD_AXIS, time_period - 1, time_period)" in internals
+    assert "span(data.TIME_PERIOD_AXIS, time_period - 2, time_period)" in internals
     assert_package_matches_evaluator(
         _cumulative_workbook(tmp_path, 6), _cumulative_bindings(6), tmp_path, "cumulative_6"
     )

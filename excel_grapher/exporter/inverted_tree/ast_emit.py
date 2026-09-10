@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import product
 from typing import TYPE_CHECKING, Any, cast
@@ -14,6 +14,7 @@ from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
     BoolNode,
+    CellRef,
     CellRefNode,
     EmptyArgNode,
     ErrorNode,
@@ -52,6 +53,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     range_ref_label,
     resolve_offset_destination_series,
     resolve_positional_range,
+    try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
@@ -222,19 +224,128 @@ def _emit_named_address(
     return f"{name}[{', '.join(_named_keys(owner, owner.domain[index], ctx, ref=ref))}]"
 
 
-def _pinned_axes(ref: CellRefNode | None, host_cell: CanonicalAddress) -> set[str]:
-    """Worksheet axes on which `ref` is absolute and differs from the host."""
+def _iter_cell_refs(node: AstNode | None) -> Iterator[CellRef]:
+    """Yield every cell and range endpoint reference of `node` in formula order."""
+    if node is None:
+        return
+    match node:
+        case CellRefNode(ref):
+            yield ref
+        case RangeNode(start_ref, end_ref):
+            yield start_ref
+            yield end_ref
+        case FunctionCallNode(_name, args):
+            for arg in args:
+                yield from _iter_cell_refs(arg)
+        case BinaryOpNode(_op, left, right):
+            yield from _iter_cell_refs(left)
+            yield from _iter_cell_refs(right)
+        case UnaryOpNode(_op, operand):
+            yield from _iter_cell_refs(operand)
+        case _:
+            return
+
+
+def _neighbor_host_cell(ctx: EmitContext, axis: str) -> CanonicalAddress | None:
+    """The host series cell one step along `axis`, or the previous one at the edge."""
+    sheet, row, col = parse_cell_coords(ctx.host_cell)
+    candidates = (
+        [(row, col + 1), (row, col - 1)] if axis == "col" else [(row + 1, col), (row - 1, col)]
+    )
+    cells = {parse_cell_coords(cell): cell for cell in ctx.host.cells}
+    for candidate_row, candidate_col in candidates:
+        cell = cells.get((sheet, candidate_row, candidate_col))
+        if cell is not None:
+            return cell
+    return None
+
+
+def _reference_stays_put(ctx: EmitContext, ref: CellRef, axis: str) -> bool:
+    """True when the neighbouring host cell reaches the same target through `ref`.
+
+    A relative reference authored per cell can still point at one fixed
+    cell; the family then keys that cell literally instead of unrolling a
+    different displacement at every coordinate.
+    """
+    if ctx.graph is None:
+        return False
+    neighbor = _neighbor_host_cell(ctx, axis)
+    if neighbor is None:
+        return False
+    host_refs = list(_iter_cell_refs(try_formula_ast(ctx.graph, ctx.host_cell)))
+    neighbor_refs = list(_iter_cell_refs(try_formula_ast(ctx.graph, neighbor)))
+    if len(host_refs) != len(neighbor_refs):
+        return False
+    index = next((i for i, candidate in enumerate(host_refs) if candidate is ref), None)
+    if index is None:
+        return False
+    target = resolve_cell_ref(ref, ctx.host_cell)
+    return resolve_cell_ref(neighbor_refs[index], neighbor) == target
+
+
+def _pinned_axes(ref: CellRefNode | None, ctx: EmitContext) -> set[str]:
+    """Worksheet axes on which `ref` reaches one fixed cell that is not the host."""
     if ref is None:
         return set()
-    address = resolve_cell_ref(ref, host_cell)
-    _host_sheet, host_row, host_col = parse_cell_coords(host_cell)
+    address = resolve_cell_ref(ref, ctx.host_cell)
+    _host_sheet, host_row, host_col = parse_cell_coords(ctx.host_cell)
     _sheet, row, col = parse_cell_coords(address)
     pinned: set[str] = set()
-    if col != host_col and isinstance(ref.ref.col, AbsoluteAxis):
-        pinned.add("col")
-    if row != host_row and isinstance(ref.ref.row, AbsoluteAxis):
-        pinned.add("row")
+    for axis, host_position, position, axis_ref in (
+        ("col", host_col, col, ref.ref.col),
+        ("row", host_row, row, ref.ref.row),
+    ):
+        if _reference_stays_put(ctx, ref.ref, axis) or (
+            position != host_position and isinstance(axis_ref, AbsoluteAxis)
+        ):
+            pinned.add(axis)
     return pinned
+
+
+def _integer_driver(
+    ctx: EmitContext, key_field: str, field_axis: str | None
+) -> tuple[str, int] | None:
+    """The host loop variable an integer key of `key_field` moves with."""
+    from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
+
+    host_point = ctx.host.domain[ctx.host_index].as_mapping()
+    candidates = [
+        (field, variable)
+        for field, variable in ctx.coordinate_vars.items()
+        if type(host_point.get(field)) is int
+    ]
+    if not candidates:
+        return None
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            item[0] != key_field,
+            _key_field_axis(ctx.host, item[0]) != field_axis,
+            item[0] != "TIME_PERIOD",
+        ),
+    )
+    field, variable = ranked[0]
+    return variable, cast(int, host_point[field])
+
+
+def _key_template(target: str, ctx: EmitContext) -> str | None:
+    """An f-string over a host key embedded in the label `target`."""
+    host_point = ctx.host.domain[ctx.host_index].as_mapping()
+    best: tuple[str, str] | None = None
+    for key_field, variable in ctx.coordinate_vars.items():
+        value = host_point.get(key_field)
+        if not isinstance(value, str) or len(value) < 2 or value == target or value not in target:
+            continue
+        if any(char in value for char in "'\\\"{}"):
+            continue
+        if best is None or len(value) > len(best[0]):
+            best = (value, variable)
+    if best is None:
+        return None
+    value, variable = best
+    quoted = repr(target)
+    inner = quoted[1:-1].replace("{", "{{").replace("}", "}}")
+    return f"f{quoted[0]}{inner.replace(value, '{' + variable + '}')}{quoted[0]}"
 
 
 def _named_keys(
@@ -246,35 +357,44 @@ def _named_keys(
 ) -> list[str]:
     """Express each key of `point` relative to the host loop variables.
 
-    A key equal to the host's own key is the loop variable. An integer
-    `TIME_PERIOD` reached through a relative reference is the loop variable
-    plus the authored difference; formula-family grouping then verifies the
-    same difference at every coordinate sharing the expression. Keys reached
-    through an absolute (`$`) reference, or on other axes, stay literal.
+    A key equal to the host's own key is the loop variable. An integer key
+    reached through a moving reference is the host's period variable plus
+    the authored difference; formula-family grouping then verifies the same
+    difference at every coordinate sharing the expression. A label that
+    embeds the host's own key is a template over it. Keys reached through a
+    fixed reference (`$`, or the same cell from every host cell) stay literal.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
     assert ctx.coordinate_vars is not None
     host_point = ctx.host.domain[ctx.host_index].as_mapping()
-    pinned = _pinned_axes(ref, ctx.host_cell)
+    pinned = _pinned_axes(ref, ctx)
     keys = []
     for key_field in owner.key_fields:
         variable = ctx.coordinate_vars.get(key_field)
         current = host_point.get(key_field)
         target = point[key_field]
+        field_axis = _key_field_axis(owner, key_field)
+        if field_axis in pinned:
+            keys.append(repr(target))
+            continue
         if variable is not None and current == target:
             keys.append(variable)
-        elif (
-            variable is not None
-            and key_field == "TIME_PERIOD"
-            and type(current) is int
-            and type(target) is int
-            and _key_field_axis(owner, key_field) not in pinned
-        ):
-            difference = target - current
-            keys.append(f"{variable} {'+' if difference > 0 else '-'} {abs(difference)}")
-        else:
-            keys.append(repr(target))
+            continue
+        if type(target) is int:
+            driver = _integer_driver(ctx, key_field, field_axis)
+            if driver is not None:
+                variable, current = driver
+                difference = target - current
+                sign = "+" if difference > 0 else "-"
+                keys.append(variable if difference == 0 else f"{variable} {sign} {abs(difference)}")
+                continue
+        if isinstance(target, str):
+            template = _key_template(target, ctx)
+            if template is not None:
+                keys.append(template)
+                continue
+        keys.append(repr(target))
     return keys
 
 
@@ -648,7 +768,7 @@ def _named_range_view(
         literal_corners = start_key == repr(keys[first]) and end_key == repr(keys[last])
         if literal_corners and first == 0 and last == len(keys) - 1:
             expr = f"data.{constant}.keys"
-        elif len(seen) == 1:
+        elif start_key == end_key:
             expr = f"({start_key},)"
         else:
             expr = f"{ctx.use('span')}(data.{constant}, {start_key}, {end_key})"
