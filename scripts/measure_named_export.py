@@ -157,6 +157,29 @@ def _load_graph(paths: Mapping[str, Path], timings: dict[str, float]) -> Any:
     return graph
 
 
+def numeric_text_measure(graph: Any, entry: Mapping[str, Any], cells: Sequence[str]) -> bool:
+    """True when a text-typed measure binds only numeric workbook cells."""
+    measure = entry.get("structure", {}).get("measure", {})
+    if measure.get("dtype") not in {"string", "str"}:
+        return False
+    values = []
+    for cell in cells:
+        node = graph.get_node(cell)
+        if node is None:
+            return False
+        values.append(node.value)
+    return bool(values) and all(
+        isinstance(value, int | float) and not isinstance(value, bool) for value in values
+    )
+
+
+def read_as_numbers(entry: dict[str, Any]) -> None:
+    """Declare a measure as float so its numeric cells keep Excel number semantics."""
+    measure = entry["structure"]["measure"]
+    measure["dtype"] = "float"
+    measure.setdefault("bind", {})["read"] = "float"
+
+
 def reconcile_bindings(
     graph: Any,
     bindings: Mapping[str, Any],
@@ -213,6 +236,14 @@ def reconcile_bindings(
             others = [sid for sid in live if sid != victim]
             dropped[victim] = f"formula cell {cell} also bound by {others}"
     kept = [entry for entry in series if entry["id"] not in dropped]
+    retyped: dict[str, str] = {}
+    for entry in kept:
+        sid = entry["id"]
+        if direction[sid] in {"input", "constant"} and numeric_text_measure(
+            graph, entry, cells[sid]
+        ):
+            read_as_numbers(entry)
+            retyped[sid] = "text measure over numeric cells read as float"
     bound = {cell for entry in kept for cell in cells[entry["id"]]}
     roots = [
         cell
@@ -263,7 +294,7 @@ def reconcile_bindings(
         dropped[series_id] = f"added constant binding for unbound leaf {address}"
     result = dict(bindings)
     result["series"] = kept
-    return result, dropped
+    return result, {**dropped, **retyped}
 
 
 # ---------------------------------------------------------------------------

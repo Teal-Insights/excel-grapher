@@ -185,7 +185,11 @@ def run_internals(
             continue
         input_cells[name] = cells
         if hasattr(default, "domain"):
-            values[name] = {coord: default[coord] for coord in default.domain if coord in cells}
+            values[name] = {
+                coord: default[coord]
+                for coord in default.domain
+                if coord in cells and graph.get_node(cells[coord]) is not None
+            }
         else:
             values[name] = {next(iter(cells)): default}
     for name in series:
