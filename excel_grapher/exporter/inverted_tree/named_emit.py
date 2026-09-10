@@ -948,12 +948,34 @@ def _grid_source(series: BoundSeries, cells: dict[tuple[Any, ...], str]) -> str 
     return f"grid_cells({', '.join(arguments)})"
 
 
+def _coordinates_source(
+    coordinates: Sequence[tuple[Any, ...]], axes: Sequence[Any], named_axes: NamedAxes
+) -> str:
+    """List sparse coordinates as runs along the last axis when that is shorter."""
+    literal = repr(tuple(coordinates))
+    if not coordinates or not axes:
+        return literal
+    keys = axes[-1].keys
+    runs: list[tuple[tuple[Any, ...], Any, Any]] = []
+    for coordinate in coordinates:
+        prefix, key = coordinate[:-1], coordinate[-1]
+        if runs and runs[-1][0] == prefix:
+            previous = keys.index(runs[-1][2])
+            if previous + 1 < len(keys) and keys[previous + 1] == key:
+                runs[-1] = (prefix, runs[-1][1], key)
+                continue
+        runs.append((prefix, key, key))
+    source = f"coordinate_runs({named_axes.constant(axes[-1])}, {tuple(runs)!r})"
+    return source if len(source) < len(literal) else literal
+
+
 def _domain_source(series: BoundSeries, named_axes: NamedAxes) -> str:
     domain = series.tensor_domain
     axes = ", ".join(named_axes.constant(axis) for axis in domain.axes)
     if domain.coordinates is None:
         return f"Domain.product({axes})"
-    return f"Domain.explicit(axes=({axes},), coordinates={domain.coordinates!r})"
+    coordinates = _coordinates_source(domain.coordinates, domain.axes, named_axes)
+    return f"Domain.explicit(axes=({axes},), coordinates={coordinates})"
 
 
 def emit_named_data(
@@ -975,7 +997,7 @@ def emit_named_data(
         "from datetime import datetime",
         "from typing import TypeVar",
         "from .provenance import block_cells, column_cells, grid_cells, row_cells",
-        "from .tensor import Axis, Domain, Series, TensorSchema",
+        "from .tensor import Axis, Domain, Series, TensorSchema, coordinate_runs",
         "T = TypeVar('T')",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
@@ -1006,7 +1028,8 @@ def emit_named_data(
         required_source = (
             f"{name}_DOMAIN"
             if len(required) == len(domain)
-            else f"Domain.explicit(axes={name}_DOMAIN.axes, coordinates={required!r})"
+            else f"Domain.explicit(axes={name}_DOMAIN.axes, "
+            f"coordinates={_coordinates_source(required, domain.axes, named_axes)})"
         )
         keyed_by = ", ".join(axis.name for axis in domain.axes)
         lines.extend(

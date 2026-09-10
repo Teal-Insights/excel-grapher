@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.exporter.export_runtime.provenance import grid_cells
-from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
+from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor, coordinate_runs
 from excel_grapher.exporter.inverted_tree import runtime
 from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
@@ -178,3 +178,59 @@ def test_ranges_over_nested_blocks_are_product_views(tmp_path: Path) -> None:
         (2026,): "Vintage!D9",
     }
     assert pkg.data.VINTAGE_CELLS[("Kenya", "high", 2025)] == "Vintage!C6"
+
+
+def _ragged_workbook(tmp_path: Path) -> Path:
+    cells: dict[str, object] = {"B1": 2024, "C1": 2025, "D1": 2026}
+    row = 2
+    for country, scenarios in (("France", SCENARIOS.keys), ("Kenya", SCENARIOS.keys[:2])):
+        for scenario in scenarios:
+            cells[f"A{row}"] = scenario
+            for offset, column in enumerate("BCD"):
+                cells[f"{column}{row}"] = float(row * 10 + offset) + (
+                    1.0 if country == "Kenya" else 0.0
+                )
+            row += 1
+    for column in "BCD":
+        cells[f"{column}9"] = f"=SUM({column}2:{column}6)"
+    return write_workbook(tmp_path / "ragged.xlsx", {"Vintage": cells})
+
+
+def _ragged_bindings() -> dict[str, Any]:
+    document = _nested_bindings()
+    vintage = document["series"][0]
+    vintage["data_range"] = "Vintage!B2:D6"
+    vintage["structure"]["dimensions"][0]["bind"]["values"] = {"France": "2:4", "Kenya": "5:6"}
+    document["series"] = [vintage, document["series"][1]]
+    return document
+
+
+def test_coordinate_runs_expand_in_order() -> None:
+    runs = coordinate_runs(
+        YEARS, ((("France", "base"), 2024, 2026), (("Kenya", "low"), 2025, 2026))
+    )
+    assert runs == (
+        ("France", "base", 2024),
+        ("France", "base", 2025),
+        ("France", "base", 2026),
+        ("Kenya", "low", 2025),
+        ("Kenya", "low", 2026),
+    )
+
+
+def test_ragged_domains_list_runs_not_coordinates(tmp_path: Path) -> None:
+    modules = generate_inverted(_ragged_workbook(tmp_path), _ragged_bindings())
+    data = modules["data.py"]
+    assert (
+        "VINTAGE_DOMAIN = Domain.explicit(axes=(COUNTRY_AXIS, SCENARIO_AXIS, TIME_PERIOD_AXIS,), "
+        "coordinates=coordinate_runs(TIME_PERIOD_AXIS, ((('France', 'base'), 2024, 2026), "
+        "(('France', 'high'), 2024, 2026), (('France', 'low'), 2024, 2026), "
+        "(('Kenya', 'base'), 2024, 2026), (('Kenya', 'high'), 2024, 2026))))"
+    ) in data
+    pkg = assert_package_matches_evaluator(
+        _ragged_workbook(tmp_path), _ragged_bindings(), tmp_path, "ragged_runs"
+    )
+    assert len(pkg.data.VINTAGE_DOMAIN) == 15
+    assert pkg.compute_total(vintage=pkg.data.VINTAGE_DEFAULT)[2024] == sum(
+        row * 10 + (1.0 if row >= 5 else 0.0) for row in range(2, 7)
+    )

@@ -54,6 +54,25 @@ class Axis:
         object.__setattr__(self, "keys", keys)
 
 
+def coordinate_runs(
+    axis: Axis, runs: Iterable[tuple[Coordinate, object, object]]
+) -> tuple[Coordinate, ...]:
+    """Expand `(prefix, first, last)` runs along `axis` into coordinates, in order.
+
+    A ragged domain lists one run per prefix instead of every coordinate;
+    each run covers the keys of `axis` from `first` through `last`.
+    """
+    coordinates: list[Coordinate] = []
+    keys = axis.keys
+    for prefix, first, last in runs:
+        start = keys.index(cast(Any, first))
+        stop = keys.index(cast(Any, last))
+        if start > stop:
+            raise DomainError(f"run {prefix!r}: {first!r} follows {last!r} on axis {axis.name!r}")
+        coordinates.extend((*prefix, key) for key in keys[start : stop + 1])
+    return tuple(coordinates)
+
+
 @dataclass(frozen=True, slots=True)
 class Domain:
     """Ordered axes and exact membership, independent of stored values."""
