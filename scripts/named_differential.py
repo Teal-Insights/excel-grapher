@@ -178,22 +178,32 @@ def run_internals(
     ]
     values: dict[str, dict[tuple[object, ...], object]] = {}
     failures: dict[str, str] = {}
+    input_cells: dict[str, Any] = {}
+    for name, default in inputs.items():
+        cells = getattr(data, name.upper() + "_CELLS", None)
+        if cells is None:
+            continue
+        input_cells[name] = cells
+        if hasattr(default, "domain"):
+            values[name] = {coord: default[coord] for coord in default.domain if coord in cells}
+        else:
+            values[name] = {next(iter(cells)): default}
     for name in series:
         try:
             values[name] = _published_cells(getattr(internals, name), getattr(model, name))
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             failures[name] = f"{type(exc).__name__}: {exc}"[:300]
+
+    def provenance_of(name: str) -> Any:
+        return input_cells[name] if name in input_cells else getattr(internals, name).__cells__
+
     addresses = sorted(
-        {
-            getattr(internals, name).__cells__[coord]
-            for name, cells in values.items()
-            for coord in cells
-        }
+        {provenance_of(name)[coord] for name, cells in values.items() for coord in cells}
     )
     expected = evaluator.evaluate(addresses)
     status: dict[str, list[dict[str, Any]]] = {}
     for name, cells in values.items():
-        provenance = getattr(internals, name).__cells__
+        provenance = provenance_of(name)
         bad = []
         for coord, actual in cells.items():
             address = provenance[coord]
@@ -209,6 +219,8 @@ def run_internals(
         status[name] = bad
 
     def parameters(name: str) -> tuple[str, ...]:
+        if name in input_cells:
+            return ()
         code = getattr(internals, name).__code__
         return code.co_varnames[: code.co_kwonlyargcount]
 
