@@ -253,6 +253,7 @@ def test_gapped_layouts_are_grids_with_fixed_positions_where_possible() -> None:
     series = SimpleNamespace(
         series_id="gapped",
         layout="matrix",
+        single_valued=False,
         key_fields=("COUNTRY", "TIME_PERIOD"),
         coordinate_cells=cells,
         tensor_domain=Domain.explicit(axes=(countries, years), coordinates=tuple(cells)),

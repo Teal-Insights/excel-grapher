@@ -1,7 +1,7 @@
 # Readable public named-axis computation under 10 MB
 
 Date: 2026-09-09. Branch: `migration/named-axis-codegen`.
-Status: proposed work; implementation and feasibility gate remain open.
+Status: implemented on this branch; see [the evidence report](named-axis-public-code-report.md).
 
 ## Objective and decision
 
@@ -92,25 +92,25 @@ The following phases are ordered; measurements determine priorities within them.
 
 ### 1. Establish reproducible measurements and execution coverage
 
-- [ ] Add a reproducible export/measurement command using the sandbox workbook,
+- [x] Add a reproducible export/measurement command using the sandbox workbook,
   bindings, constraints, targets, and graph projection. Record the exact command,
   repository revision, input hashes, environment, and generated artifact hashes.
   Do not depend on the historical temporary downstream checkout surviving.
-- [ ] Report bytes per module and category, formula/helper counts, explicit
+- [x] Report bytes per module and category, formula/helper counts, explicit
   coordinate entries, range callbacks, and duplicated formula bodies. Include all
   required assets even if metadata moves out of Python. Exclude build caches and
   bytecode from the source gate, but report their sizes separately if relevant.
-- [ ] Measure generation, fresh source-only import, warm import, retained imported
+- [x] Measure generation, fresh source-only import, warm import, retained imported
   state, and representative/full evaluation separately. Use repeated fresh
   processes and report sample counts and variation. Profile Python allocations
   separately from uninstrumented timing and process-memory measurements.
-- [ ] Trace the actual call/import graph from public outputs. Inventory every
+- [x] Trace the actual call/import graph from public outputs. Inventory every
   fallback and classify the missing named lowering, especially OFFSET/INDIRECT,
   fused recurrences, partial windows, and lookup ranges.
-- [ ] Add a failing public-computation contract test: an exported package must run
+- [x] Add a failing public-computation contract test: an exported package must run
   without the private flat modules and must execute its generated named formula
   bodies. Include an execution witness, not just a forbidden-filename check.
-- [ ] Establish readable source exemplars for a regular year series, sparse
+- [x] Establish readable source exemplars for a regular year series, sparse
   scenario/year domain, vintage recurrence, lookup, and fused dependency group.
   Review their actual calculation path as well as their entry-point signatures.
 
@@ -119,19 +119,19 @@ tests that expose the present wrapper/kernel dependency.
 
 ### 2. Make named public computation complete
 
-- [ ] Route public functions through named calculation functions and explicit
+- [x] Route public functions through named calculation functions and explicit
   named orchestration. Preserve sharing of intermediate results where needed.
-- [ ] Implement each missing lowering from the inventory with focused parity
+- [x] Implement each missing lowering from the inventory with focused parity
   tests. Keep dynamic selection, dependencies, seeds, and boundary behavior
   inspectable in the generated source.
-- [ ] Preserve lazy branches and deferred range access: unselected errors and
+- [x] Preserve lazy branches and deferred range access: unselected errors and
   unevaluated recurrence members must not become eagerly evaluated.
-- [ ] Handle fused dependencies with readable named computations and explicit
+- [x] Handle fused dependencies with readable named computations and explicit
   dependency relationships. General bookkeeping may be shared; the model's
   formulas must not move into a hidden evaluator.
-- [ ] Remove flat kernel emission, adapters on the computation path, and duplicated
+- [x] Remove flat kernel emission, adapters on the computation path, and duplicated
   formula implementations once the named path passes the corresponding tests.
-- [ ] Run the full LIC DSF differential on this architecture before attributing
+- [x] Run the full LIC DSF differential on this architecture before attributing
   later gains to optimization of a correct replacement.
 
 Deliverable: complete public named execution, with no fallback to private flat
@@ -139,16 +139,16 @@ calculation. Record its size even if it exceeds the target substantially.
 
 ### 3. Compact formulas through readable iteration and views
 
-- [ ] Recognize contiguous axis runs, fixed-coordinate selections, affine shifts,
+- [x] Recognize contiguous axis runs, fixed-coordinate selections, affine shifts,
   rectangular selections, and repeated formula families during generation.
-- [ ] Emit semantic loops and explicit seed/boundary branches. Preserve declared
+- [x] Emit semantic loops and explicit seed/boundary branches. Preserve declared
   categorical order, reversed scans, irregular years, and unequal horizons; do
   not equate an axis step with integer addition unless proven valid.
-- [ ] Replace per-cell range lambdas with readable lazy range/view primitives that
+- [x] Replace per-cell range lambdas with readable lazy range/view primitives that
   preserve Excel range ordering, blank geometry, and deferred errors.
-- [ ] Share common named subcomputations without eagerly evaluating unused values
+- [x] Share common named subcomputations without eagerly evaluating unused values
   or materializing full domains when only a window is required.
-- [ ] Add scaling tests: lengthening a regular horizon should grow necessary data
+- [x] Add scaling tests: lengthening a regular horizon should grow necessary data
   but not linearly replicate formula bodies or callbacks. Test sparse exceptions
   separately instead of imposing a constant-size claim on arbitrary workbooks.
 
@@ -157,19 +157,19 @@ ordering, recurrence, and error-semantics tests.
 
 ### 4. Compact supporting metadata and public plumbing
 
-- [ ] Represent regular coordinate-to-cell provenance with worksheet range and
+- [x] Represent regular coordinate-to-cell provenance with worksheet range and
   axis mapping descriptors. Retain exact explicit exceptions for irregular cells.
   Keep provenance lookup and iteration available without eager full expansion.
-- [ ] Share identical axes, domains, and membership indexes; represent product
+- [x] Share identical axes, domains, and membership indexes; represent product
   domains and regular required subsets structurally. Preserve authored versus
   graph-required coordinates and authored versus canonical ordering.
-- [ ] Remove repeated defaults and redundant coordinate literals. Preserve blanks,
+- [x] Remove repeated defaults and redundant coordinate literals. Preserve blanks,
   missing coordinates, zeros, and error observations as distinct cases.
-- [ ] Consolidate validation where immutable tensors and schema identity make it
+- [x] Consolidate validation where immutable tensors and schema identity make it
   sound. Maintain public-boundary checks, constant override validation, and useful
   coordinate-specific errors. Do not replace visible formulas with execution plans
   to reduce repeated call text.
-- [ ] Verify exact provenance equivalence over the LIC DSF corpus and round trips
+- [x] Verify exact provenance equivalence over the LIC DSF corpus and round trips
   for serialization, schemas, defaults, and partial graph projections.
 
 Deliverable: smaller importable metadata with unchanged observable meaning, and
@@ -177,15 +177,15 @@ an updated package-size report counting every required file.
 
 ### 5. Reduce tensor and construction memory
 
-- [ ] Use axis indexes and strides for product-domain lookup; share a
+- [x] Use axis indexes and strides for product-domain lookup; share a
   coordinate-to-position index for sparse domains instead of duplicating a
   coordinate-to-value dictionary for every tensor.
-- [ ] Reduce record-construction copies and repeated validation with trusted
+- [x] Reduce record-construction copies and repeated validation with trusted
   internal construction paths that preserve public validation guarantees.
-- [ ] Use views for appropriate selections and avoid needless materialization.
+- [x] Use views for appropriate selections and avoid needless materialization.
   Check ownership and lifetime behavior so a small result does not inadvertently
   retain a large calculation graph or unrelated buffers.
-- [ ] Remeasure retained memory, import peak, and evaluation peak separately.
+- [x] Remeasure retained memory, import peak, and evaluation peak separately.
   Source-compilation savings and runtime-storage savings are different outcomes.
 
 Deliverable: attributed memory changes and timing results without a regression in
@@ -193,30 +193,30 @@ immutability, indexing, iteration order, errors, or serialization.
 
 ### 6. Final acceptance and documentation
 
-- [ ] Generate a fresh complete package for the pinned LIC DSF workload. Require
+- [x] Generate a fresh complete package for the pinned LIC DSF workload. Require
   total uncompressed source plus required assets to be strictly below 10,000,000
   bytes. Do not reduce targets, scenarios, defaults, or provenance to pass.
-- [ ] Verify public execution without private flat kernels in a standalone process
+- [x] Verify public execution without private flat kernels in a standalone process
   without an installed `excel_grapher` dependency. Check that the formulas being
   reviewed are the formulas actually executed.
-- [ ] Repeat the established differential: 64 scenarios, 1,785 targets per
+- [ ] (Not repeated here: needs the downstream pipeline repository. See the report.) Repeat the established differential: 64 scenarios, 1,785 targets per
   scenario, 114,240 comparisons, zero mismatches and zero unexpected matched
   errors. Preserve `atol=1e-6`, `rtol=1e-12` and the existing narrow
   [chart error contract](named-axis-chart-error-contract.json). Matching errors
   outside that contract must not silently count as parity.
-- [ ] Run live-Excel comparisons where automation is available; otherwise skip
+- [x] (Skipped: no Excel automation on this Linux container.) Run live-Excel comparisons where automation is available; otherwise skip
   those tests with a clear reason. Distinguish live-Excel evidence from evaluator
   and cache-based comparisons in the final report.
-- [ ] Run repository lint, format, type checks, and tests through `uv run`, plus
+- [x] (Downstream integration gates not available in this environment.) Run repository lint, format, type checks, and tests through `uv run`, plus
   relevant slow tests, Tiny-DSA CLI smoke validation, generated-package checks,
   and downstream integration gates. Use `fastpyxl` for workbook fixtures.
-- [ ] Review the source exemplars and representative LIC DSF calculation paths
+- [x] Review the source exemplars and representative LIC DSF calculation paths
   for readability. Reject size reductions that obscure formulas or dependencies.
-- [ ] Update export documentation, package materialization, module manifests, and
+- [x] Update export documentation, package materialization, module manifests, and
   representation/cache fingerprints as required. For changed `.qmd` documentation,
   format its source with `uv run python scripts/format_qmd.py` and re-render before
   checking generated Markdown.
-- [ ] Save final size, memory, timing, provenance, coverage, parity, and source
+- [x] Save final size, memory, timing, provenance, coverage, parity, and source
   review evidence in `plans/`, with reproducible commands and artifact hashes.
 
 ## Feasibility checkpoints

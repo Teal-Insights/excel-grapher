@@ -61,6 +61,13 @@ def expected_error(address: str, code: str, contract: Mapping[str, Any] | None) 
     return sheet.strip("'") == "Chart Data" and cell in contract.get("formulas", {})
 
 
+def _published_cells(function: Any, value: Any) -> dict[tuple[object, ...], object]:
+    """Values of the graph-required coordinates, keyed like `__cells__`."""
+    if function.__domain__ is None:
+        return {next(iter(function.__cells__)): value}
+    return {coord: value[coord] for coord in function.__domain__ if coord in function.__cells__}
+
+
 def run(
     package_dir: Path,
     graph_path: Path,
@@ -93,10 +100,7 @@ def run(
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             failures[name] = f"{type(exc).__name__}: {exc}"[:300]
             continue
-        cells = function.__cells__
-        results[name] = (
-            {(): value} if function.__domain__ is None else {coord: value[coord] for coord in cells}
-        )
+        results[name] = _published_cells(function, value)
     timings["compute_seconds"] = time.perf_counter() - started
     addresses = sorted(
         {
@@ -143,6 +147,84 @@ def run(
     }
 
 
+def run_internals(
+    package_dir: Path, graph_path: Path, blank_ranges: Path | None = None
+) -> dict[str, Any]:
+    """Compare every named formula series (not only outputs) with the evaluator.
+
+    Reports the series whose own value disagrees while every series it reads
+    agrees: the root causes of any downstream mismatch.
+    """
+    from excel_grapher.evaluator import FormulaEvaluator
+    from excel_grapher.grapher import load_graph
+    from excel_grapher.grapher.blank_ranges import load_blank_ranges_module
+
+    sys.path.insert(0, str(package_dir.parent))
+    package = importlib.import_module(package_dir.name)
+    data, internals, api = package.data, package.internals, package.api
+    graph = load_graph(graph_path)
+    blanks = None if blank_ranges is None else load_blank_ranges_module(blank_ranges)
+    evaluator = FormulaEvaluator(graph, blank_ranges=blanks)
+    inputs = {
+        name: getattr(data, name.upper() + "_DEFAULT")
+        for name in api.Model.__annotations__
+        if hasattr(data, name.upper() + "_DEFAULT")
+    }
+    model = api.Model(**inputs)
+    series = [
+        name
+        for name in dir(internals)
+        if hasattr(getattr(internals, name), "__cells__") and not name.startswith("scan_")
+    ]
+    values: dict[str, dict[tuple[object, ...], object]] = {}
+    failures: dict[str, str] = {}
+    for name in series:
+        try:
+            values[name] = _published_cells(getattr(internals, name), getattr(model, name))
+        except Exception as exc:  # noqa: BLE001 - reported, not raised
+            failures[name] = f"{type(exc).__name__}: {exc}"[:300]
+    addresses = sorted(
+        {
+            getattr(internals, name).__cells__[coord]
+            for name, cells in values.items()
+            for coord in cells
+        }
+    )
+    expected = evaluator.evaluate(addresses)
+    status: dict[str, list[dict[str, Any]]] = {}
+    for name, cells in values.items():
+        provenance = getattr(internals, name).__cells__
+        bad = []
+        for coord, actual in cells.items():
+            address = provenance[coord]
+            if classify(actual, expected[address]) == "mismatch":
+                bad.append(
+                    {
+                        "coordinate": list(coord),
+                        "address": address,
+                        "actual": actual,
+                        "expected": expected[address],
+                    }
+                )
+        status[name] = bad
+
+    def parameters(name: str) -> tuple[str, ...]:
+        code = getattr(internals, name).__code__
+        return code.co_varnames[: code.co_kwonlyargcount]
+
+    root_causes = {
+        name: bad[:5]
+        for name, bad in status.items()
+        if bad and all(not status.get(dep) for dep in parameters(name) if dep in status)
+    }
+    return {
+        "series": len(series),
+        "failed_series": failures,
+        "mismatched_series": sum(1 for bad in status.values() if bad),
+        "root_causes": root_causes,
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=(__doc__ or "").split("\n\n")[0])
     parser.add_argument("package_dir", type=Path)
@@ -150,8 +232,21 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--contract", type=Path)
     parser.add_argument("--blank-ranges", type=Path, help="Module declaring BLANK_RANGES")
     parser.add_argument("--report", type=Path)
+    parser.add_argument(
+        "--internals", action="store_true", help="Locate the first divergent named series"
+    )
     args = parser.parse_args(argv)
     warnings.simplefilter("ignore")
+    if args.internals:
+        found = run_internals(args.package_dir.resolve(), args.graph, args.blank_ranges)
+        if args.report is not None:
+            args.report.write_text(json.dumps(found, indent=2, default=str), encoding="utf-8")
+        print(json.dumps({k: found[k] for k in ("series", "mismatched_series")}))
+        for name, samples in list(found["root_causes"].items())[:25]:
+            print("root cause", name, samples[:2])
+        if found["failed_series"]:
+            print("failed series", found["failed_series"])
+        return 0 if not found["root_causes"] else 1
     contract = json.loads(args.contract.read_text()) if args.contract else None
     report = run(args.package_dir.resolve(), args.graph, contract, args.blank_ranges)
     if args.report is not None:

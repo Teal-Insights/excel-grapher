@@ -107,13 +107,13 @@ def _value_annotation(series: BoundSeries) -> str:
     """Describe every permitted workbook value, including blanks and errors."""
     types = python_measure_type(series).split(" | ")
     types.append("str")
-    if series.layout != "scalar":
+    if not series.single_valued:
         types.append("None")
     return " | ".join(dict.fromkeys(types))
 
 
 def _annotation(series: BoundSeries) -> str:
-    return _value_annotation(series) if series.layout == "scalar" else f"data.{_facade(series)}"
+    return _value_annotation(series) if series.single_valued else f"data.{_facade(series)}"
 
 
 def _schema_types(series: BoundSeries) -> str:
@@ -249,7 +249,7 @@ def _semantic_body(
     used: set[str] = {"XlError"}
     recursive = deferred
     # A scalar layout publishes one observation: its first bound cell.
-    cells = series.cells[:1] if series.layout == "scalar" else series.cells
+    cells = series.cells[:1] if series.single_valued else series.cells
     for index, cell in enumerate(cells):
         if graph.get_node(cell) is None:
             # Retain authored off-graph metadata, but do not synthesize a
@@ -261,7 +261,7 @@ def _semantic_body(
             deps=deps,
             host_index=index,
             host_cell=cell,
-            coordinate_vars={} if series.layout == "scalar" else names,
+            coordinate_vars={} if series.single_valued else names,
             scc_ids=scc_ids | {series.series_id},
             graph=graph,
             named_axes=named_axes,
@@ -298,7 +298,7 @@ def _semantic_body(
                 expression = expression.replace(source, alias)
         coord = tuple(series.domain[index][field] for field in series.key_fields)
         groups.setdefault(expression, []).append(coord)
-    if literal_tables is not None and series.layout != "scalar":
+    if literal_tables is not None and not series.single_valued:
         literals = {}
         literal_groups = []
         for expression, coordinates in groups.items():
@@ -324,7 +324,7 @@ def _semantic_body(
             selectors = ", ".join(names.values()) + ","
             groups[f"as_measure(data.{table}[{selectors}])"] = list(literals)
     lines = [f"    {alias} = {source}" for source, alias in tables.items()]
-    if series.layout == "scalar":
+    if series.single_valued:
         if len(groups) != 1:
             raise InvertedTreeExportError(
                 f"series {series.series_id!r}: scalar series has no graph formula"
@@ -438,7 +438,7 @@ def _schema_checks(params: Sequence[BoundSeries]) -> list[str]:
     return [
         f"    data.{series.series_id.upper()}_SCHEMA.validate({series.series_id})"
         for series in params
-        if series.layout != "scalar" and series.direction in {"input", "constant"}
+        if not series.single_valued and series.direction in {"input", "constant"}
     ]
 
 
@@ -446,7 +446,7 @@ def _publish_line(series: BoundSeries, constants: str | None = None) -> str:
     name = series.series_id.upper()
     arguments = (
         [f"key={series.key_fields!r}", "domain=None"]
-        if series.layout == "scalar"
+        if series.single_valued
         else [f"data.{name}_SCHEMA"]
     )
     if constants is not None:
@@ -675,7 +675,7 @@ def _emit_recurrence_group(
     lines.append(f"    return {result_type}(")
     for sid in scc:
         series = catalog.get(sid)
-        value = f"{sid}[()]" if series.layout == "scalar" else _materialize(series)
+        value = f"{sid}[()]" if series.single_valued else _materialize(series)
         lines.append(f"        {sid}={value},")
     lines.append("    )")
     return "\n".join(lines), used
@@ -698,12 +698,12 @@ def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
     lines: list[str] = []
     used: set[str] = set()
     series_id = series.series_id
-    if series.layout != "scalar":
+    if not series.single_valued:
         lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
     domain = measure_domain_from_series(series.raw)
     if domain is not None:
         used.add("require_input_domain")
-        if series.layout == "scalar":
+        if series.single_valued:
             lines.append(
                 f"    require_input_domain({series_id}, {domain!r}, series_id={series_id!r})"
             )
@@ -943,7 +943,7 @@ def _provenance_source(series: BoundSeries, named_axes: NamedAxes) -> str:
     """
     cells = series.coordinate_cells
     literal = repr(dict(cells))
-    if not cells or series.layout == "scalar":
+    if not cells or series.single_valued:
         return literal
     rectangle = _rectangle_source(series, cells, named_axes)
     if rectangle is not None:
@@ -1146,7 +1146,7 @@ def emit_named_data(
     for constant, axis in named_axes.items():
         lines.append(f"{constant} = Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})")
     lines.append("")
-    dtypes = sorted({series.python_dtype for series in retained if series.layout != "scalar"})
+    dtypes = sorted({series.python_dtype for series in retained if not series.single_valued})
     lines.extend(f"{dtype.upper()}_VALUES = {_value_types(dtype)}" for dtype in dtypes)
     domain_names: dict[str, str] = {}
     constant_series: list[BoundSeries] = []
@@ -1154,7 +1154,7 @@ def emit_named_data(
         name = series.series_id.upper()
         if series.direction == "constant":
             constant_series.append(series)
-        if series.layout == "scalar":
+        if series.single_valued:
             lines.append(f"{name}_CELLS = {_provenance_source(series, named_axes)}")
             if series.direction in {"input", "constant"}:
                 constant = name + ("_DEFAULT" if series.direction == "input" else "")
@@ -1197,7 +1197,7 @@ def emit_named_data(
     schemas = ", ".join(
         f"{series.series_id.upper()!r}: {series.series_id.upper()}_SCHEMA"
         for series in constant_series
-        if series.layout != "scalar"
+        if not series.single_valued
     )
     lines.extend(
         [
@@ -1247,7 +1247,7 @@ def emit_named_modules(
     named_axes = NamedAxes.plan(
         axis
         for series in _retained(catalog)
-        if series.layout != "scalar"
+        if not series.single_valued
         for axis in series.tensor_domain.axes
     )
     literal_tables: dict[str, dict[tuple[object, ...], object]] = {}
@@ -1292,7 +1292,7 @@ def inventory_named_emission(
     named_axes = NamedAxes.plan(
         axis
         for series in _retained(catalog)
-        if series.layout != "scalar"
+        if not series.single_valued
         for axis in series.tensor_domain.axes
     )
     failures: list[dict[str, object]] = []

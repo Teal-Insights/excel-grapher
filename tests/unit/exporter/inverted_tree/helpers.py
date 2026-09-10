@@ -485,7 +485,7 @@ def named_input_kwargs(
     for series in catalog.input_series():
         if series.graph_cells is not None and not series.graph_cells:
             continue
-        if series.layout == "scalar":
+        if series.single_valued:
             node = graph.get_node(series.cells[0])
             values[series.series_id] = None if node is None else node.value
             continue
@@ -550,7 +550,7 @@ def assert_package_matches_evaluator(
         accepted = set(inspect.signature(function).parameters)
         got = function(**{key: value for key, value in kwargs.items() if key in accepted})
         kwargs[series.series_id] = got
-        if series.layout == "scalar":
+        if series.single_valued:
             pairs = [(series.cells[0], got)]
         else:
             cells_by_coordinate = series.coordinate_cells

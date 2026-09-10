@@ -136,7 +136,7 @@ class EmitContext:
 def python_measure_type(series: BoundSeries) -> str:
     """Return the Python type of one observation (`float | str` for numbers)."""
     base = f"{series.python_dtype} | str" if series.python_dtype != "str" else series.python_dtype
-    if series.has_none_holes or series.layout != "scalar":
+    if series.has_none_holes or not series.single_valued:
         return f"{base} | None"
     return base
 
@@ -215,7 +215,7 @@ def _emit_named_address(
     """Read a producer by semantic coordinate relative to the host coordinate."""
     owner = ctx.catalog.require_series_for(address)
     name = ctx.param(owner.series_id)
-    if owner.layout == "scalar":
+    if owner.single_valued:
         # A scalar member of the recurrence group is a demand-driven reader.
         return f"{name}[()]" if owner.series_id in ctx.scc_ids else name
     index = owner.index_of(address)
@@ -799,7 +799,7 @@ def _named_range_view(
     if not addresses:
         return None
     owner = covering_series(ctx.catalog, addresses)
-    if owner is None or owner.is_scalar or owner.layout == "scalar":
+    if owner is None or owner.is_scalar or owner.single_valued:
         return None
     indices = [owner.index_of(address) for address in addresses]
     if any(index is None for index in indices):
@@ -991,7 +991,7 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
         raise _host_export_error(ctx, "OFFSET anchor must be a cell or range")
     steps = {"row": rows, "col": cols}
     static = {axis for axis, step in steps.items() if step in {"0", "0.0"}}
-    if table.layout == "scalar" or table.is_scalar:
+    if table.single_valued or table.is_scalar:
         if static == {"row", "col"}:
             return name
         # The constrained reference set is this one cell; any other

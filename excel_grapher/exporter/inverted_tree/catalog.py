@@ -182,7 +182,16 @@ class BoundSeries:
     @property
     def is_scalar(self) -> bool:
         """True when the series is a single value."""
-        return self.layout == "scalar" or len(self.cells) == 1
+        return self.single_valued or len(self.cells) == 1
+
+    @property
+    def single_valued(self) -> bool:
+        """True when the series publishes one value rather than a keyed tensor.
+
+        A scalar layout with one authored cell per key (for example one cell
+        per scenario sheet) is a keyed series despite its layout.
+        """
+        return self.layout == "scalar" and len(self.authored_cells or self.cells) <= 1
 
     @property
     def tensor_domain(self) -> Domain:
