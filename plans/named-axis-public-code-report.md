@@ -163,7 +163,28 @@ Excel automation is available on this Linux container.
 
 ## Timing and memory
 
-TIMING_SECTION
+Measured with `scripts/measure_named_export.py --package-dir … --standalone
+--tracemalloc` (fresh subprocess per probe, `excel_grapher` imports blocked) and
+one direct probe, on the final package:
+
+| Measurement | Value |
+| --- | ---: |
+| Bytecode of the package (`__pycache__`, excluded from the source gate) | 8,665,255 bytes |
+| Import with bytecode present, median of 3 fresh processes | 0.27 s |
+| Import while tracing allocations (compiles from source) | 28.0 s |
+| Peak RSS after import | 370.0 MB |
+| Per-output first call (each `compute_*` builds its own `Model`), median | 8.4 s |
+| All 103 outputs, one call each | 811 s |
+| One `Model` evaluating all 1,938 series once | 10.3 s |
+| Peak RSS with every series retained | 434.4 MB |
+| Traced Python allocations, import plus every series retained | 256.1 MB |
+
+The historical flat export recorded a 1.878 s fresh import and a 379.0 MB
+working set on a different machine; the named package imports in a comparable
+footprint. Each public call recomputes its own closure because `Model` memoizes
+per instance; callers evaluating many outputs should read them from one `Model`.
+Tensor memory is bounded by the shared axis and domain indexes (`Domain.position`)
+and tuple-backed values; no coordinate-to-value dictionaries are built per tensor.
 
 ## Checks
 
