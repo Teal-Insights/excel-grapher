@@ -59,11 +59,11 @@ def test_coordinate_reader_memoizes_labels_and_detects_same_coordinate_cycles() 
     domain = Domain.product(Axis("year", (2025, 2027, 2028), int))
     calls = []
 
-    def compute(coordinate):
-        calls.append(coordinate)
-        if coordinate == (2025,):
+    def compute(year):
+        calls.append((year,))
+        if year == 2025:
             return 10
-        if coordinate == (2027,):
+        if year == 2027:
             return reader[2025] + 2
         return reader[2028]
 

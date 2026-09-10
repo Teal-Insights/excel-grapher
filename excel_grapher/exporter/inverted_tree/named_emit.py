@@ -257,7 +257,7 @@ def _semantic_body(
             deps=deps,
             host_index=index,
             host_cell=cell,
-            coordinate_vars=names,
+            coordinate_vars={} if series.layout == "scalar" else names,
             scc_ids=scc_ids | {series.series_id},
             graph=graph,
             named_axes=named_axes,
@@ -337,15 +337,13 @@ def _semantic_body(
             )
             return lines, used
         used.add("CoordinateReader")
-        compute = f"_compute_{series.series_id}"
+        formula = f"{series.series_id}_formula"
         lines.extend(
             [
-                f"    def {compute}(_coordinate: tuple[()]) -> {_value_annotation(series)}:",
-                "        try:",
-                f"            return {expression}",
-                "        except XlError as error:",
-                "            return error.code",
-                f"    {series.series_id} = CoordinateReader({series.series_id!r}, Domain.product(), {compute})",
+                f"    def {formula}() -> {_value_annotation(series)}:",
+                f"        return {expression}",
+                "",
+                f"    {series.series_id} = CoordinateReader({series.series_id!r}, Domain.product(), {formula})",
             ]
         )
         return lines, used
@@ -359,61 +357,39 @@ def _semantic_body(
         occupied.add(candidate)
         return candidate
 
-    coordinate = temporary("_coordinate")
-    records = temporary("_records")
-    value = temporary("_value")
-    error = temporary("_error")
-    compute = temporary(
-        f"_compute_{series.series_id}_coordinate" if deferred else "_compute_coordinate"
+    formula = temporary(f"{series.series_id}_formula" if deferred else "formula")
+    parameters = ", ".join(
+        f"{names[axis.name]}: {axis.key_type.__name__}" for axis in series.tensor_domain.axes
     )
-    if recursive:
-        used.add("CoordinateReader")
-        lines.append(
-            f"    def {compute}({coordinate}: tuple[str | int, ...]) -> {_value_annotation(series)}:"
-        )
-    else:
-        lines.extend([f"    {records} = []", f"    for {coordinate} in data.{name}_REQUIRED:"])
-    for i, axis in enumerate(series.tensor_domain.axes):
-        lines.append(
-            f"        {names[axis.name]} = cast({axis.key_type.__name__}, {coordinate}[{i}])"
-        )
-    lines.append("        try:")
+    lines.append(f"    def {formula}({parameters}) -> {_value_annotation(series)}:")
     all_coordinates = {coord for coordinates in groups.values() for coord in coordinates}
 
     def condition(coordinates: list[tuple[object, ...]]) -> str:
         synthesized = _family_condition(
             coordinates, all_coordinates, series.tensor_domain.axes, names
         )
-        return synthesized if synthesized is not None else f"{coordinate} in {tuple(coordinates)!r}"
+        if synthesized is not None:
+            return synthesized
+        selectors = ", ".join(names[axis.name] for axis in series.tensor_domain.axes)
+        return f"({selectors},) in {tuple(coordinates)!r}"
 
-    # Put the largest family in the final else branch, avoiding an explicit
-    # coordinate list for ordinary forward or backward recurrence periods.
-    for i, (expression, coordinates) in enumerate(
-        sorted(groups.items(), key=lambda item: len(item[1]))
-    ):
-        indent = "            "
-        if len(groups) > 1:
-            lines.append(
-                "            else:"
-                if i == len(groups) - 1
-                else f"            {'if' if i == 0 else 'elif'} {condition(coordinates)}:"
-            )
-            indent += "    "
-        lines.append(f"{indent}{value} = {expression}")
-    lines.extend(
-        [
-            f"        except XlError as {error}:",
-            f"            {value} = {error}.code",
-        ]
-    )
+    # Put the largest family last as the unconditional return, avoiding an
+    # explicit coordinate list for ordinary forward or backward recurrence periods.
+    families = sorted(groups.items(), key=lambda item: len(item[1]))
+    for i, (expression, coordinates) in enumerate(families):
+        if i < len(families) - 1:
+            lines.append(f"        {'if' if i == 0 else 'elif'} {condition(coordinates)}:")
+            lines.append(f"            return {expression}")
+        else:
+            lines.append(f"        return {expression}")
+    lines.append("")
     if recursive:
-        lines.extend(
-            [
-                f"        return {value}",
-                f"    {series.series_id} = CoordinateReader({series.series_id!r}, data.{name}_REQUIRED, {compute})",
-            ]
+        used.add("CoordinateReader")
+        lines.append(
+            f"    {series.series_id} = CoordinateReader({series.series_id!r}, data.{name}_REQUIRED, {formula})"
         )
         if not deferred and deps.is_scan and deps.scan_direction == "reversed":
+            coordinate = temporary("coordinate")
             lines.extend(
                 [
                     f"    for {coordinate} in reversed(tuple(data.{name}_REQUIRED)):",
@@ -423,11 +399,9 @@ def _semantic_body(
         if not deferred:
             lines.append(f"    return {_materialize(series)}")
     else:
-        lines.extend(
-            [
-                f"        {records}.append(({coordinate}, {value}))",
-                f"    return {_annotation(series)}.collect({records})",
-            ]
+        used.add("evaluate")
+        lines.append(
+            f"    return {_annotation(series)}.collect(evaluate({formula}, data.{name}_REQUIRED))"
         )
     return lines, used
 

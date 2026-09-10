@@ -12,7 +12,7 @@ the tuple.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from datetime import date, datetime
 from itertools import product
 from types import MappingProxyType
@@ -683,12 +683,12 @@ def view(
     assembled in the order of the series' axes.
     """
     if isinstance(rows, Mapping) or isinstance(cols, Mapping):
-        if not isinstance(rows, Mapping) or not isinstance(cols, Mapping):
+        if not isinstance(rows or {}, Mapping) or not isinstance(cols or {}, Mapping):
             raise TypeError("view selects rows and columns by field name together")
         return _product_view(
             values,
-            cast(Mapping[str, Sequence[object]], rows),
-            cast(Mapping[str, Sequence[object]], cols),
+            cast(Mapping[str, Sequence[object]], rows or {}),
+            cast(Mapping[str, Sequence[object]], cols or {}),
         )
     row_keys: Sequence[object] = (None,) if rows is None else rows
     col_keys: Sequence[object] = (None,) if cols is None else cols
@@ -873,7 +873,7 @@ class CoordinateReader(Generic[T]):
         self,
         series_id: str,
         domain: Domain,
-        compute: Callable[[tuple[str | int, ...]], T],
+        compute: Callable[..., T],
     ) -> None:
         self._series_id = series_id
         self._domain = domain
@@ -896,11 +896,25 @@ class CoordinateReader(Generic[T]):
             raise InstanceCycleError(f"circular reference at {self._series_id}{coordinate!r}")
         self._active.add(identity)
         try:
-            value = self._compute(coordinate)
+            try:
+                value = self._compute(*coordinate)
+            except XlError as error:
+                value = cast(T, error.code)
             self._memo[identity] = value
             return value
         finally:
             self._active.remove(identity)
+
+
+def evaluate(
+    formula: Callable[..., T], domain: Iterable[tuple[str | int, ...]]
+) -> Iterator[tuple[tuple[str | int, ...], T | str]]:
+    """Apply `formula` to every coordinate of `domain`, storing Excel errors as codes."""
+    for coordinate in domain:
+        try:
+            yield coordinate, formula(*coordinate)
+        except XlError as error:
+            yield coordinate, error.code
 
 
 def eval_instance(

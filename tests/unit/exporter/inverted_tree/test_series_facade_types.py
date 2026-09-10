@@ -19,7 +19,7 @@ def test_facades_are_concrete_and_collect_their_own_records(tmp_path: Path) -> N
     assert "FLOW_DEFAULT = Flow(FLOW_DOMAIN, " in data
     assert "def twice(*, flow: data.Flow) -> data.Twice:" in internals
     assert "@publish(data.TWICE_SCHEMA, cells=data.TWICE_CELLS)" in internals
-    assert "    return data.Twice.collect(_records)" in internals
+    assert "    return data.Twice.collect(evaluate(formula, data.TWICE_REQUIRED))" in internals
     assert "[float | str | None]" not in internals
     pkg = load_package(modules, tmp_path, name="concrete_facades")
     twice = pkg.compute_twice(flow=pkg.data.FLOW_DEFAULT)

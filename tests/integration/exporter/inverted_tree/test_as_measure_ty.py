@@ -121,7 +121,7 @@ def test_as_measure_overloads_type_check_against_measure_lists(tmp_path: Path) -
 def test_inverted_tree_float_helper_append_type_checks(tmp_path: Path) -> None:
     modules = generate_inverted(_add_workbook(tmp_path), _add_bindings())
     internals = modules["internals.py"]
-    assert "_records = []" in internals
+    assert "def formula(time_period: int)" in internals
     assert "as_measure(xl_add(xs[time_period], ys[time_period]))" in internals
 
     pkg = tmp_path / "inv_as_measure"

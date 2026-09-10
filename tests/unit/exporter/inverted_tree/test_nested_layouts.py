@@ -263,3 +263,13 @@ def test_gapped_layouts_are_grids_with_fixed_positions_where_possible() -> None:
         "{'France': 2, 'Kenya': 5, 'Peru': 9}), "
         "cols=(('TIME_PERIOD',), {2024: 'B', 2025: 'C', 2026: 'D'}))"
     )
+
+
+def test_product_view_over_rows_only_has_one_column() -> None:
+    values = Tensor(NESTED, tuple(float(i) for i in range(18)))
+    column = runtime.view(
+        values,
+        rows={"COUNTRY": ("Kenya",), "SCENARIO": SCENARIOS.keys, "TIME_PERIOD": (2024,)},
+    )
+    assert column.shape == (3, 1)
+    assert runtime.xl_sum(column) == 9.0 + 12.0 + 15.0

@@ -109,3 +109,70 @@ def test_longer_horizon_does_not_replicate_formula_bodies(tmp_path: Path) -> Non
         )
         sizes[years] = len(modules["internals.py"].encode())
     assert sizes[40] < sizes[10] * 1.25, sizes
+
+
+def _keyed_scalar_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "keyed_scalar.xlsx",
+        {
+            "C1": {
+                "A1": "AF",
+                "B1": 1.0,
+                "A2": "BR",
+                "B2": 2.0,
+                "A3": "KE",
+                "B3": 3.0,
+                "D1": "=SUM(B1:B3)",
+            }
+        },
+    )
+
+
+def _keyed_scalar_bindings() -> dict[str, Any]:
+    total = {
+        "id": "total",
+        "sheet": "C1",
+        "data_range": "C1!D1",
+        "layout": "scalar",
+        "output": {"compute": {"name": "compute_total"}},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "id": "SCENARIO",
+                    "concept": "SCENARIO",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "sheet_name", "values": {"C1": "base"}},
+                }
+            ],
+        },
+        "key": ["SCENARIO"],
+    }
+    return bindings_document(
+        series_entry(
+            "cov",
+            "C1!B1:B3",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+        total,
+    )
+
+
+def test_keyed_scalar_hosts_have_no_loop_variables(tmp_path: Path) -> None:
+    modules = generate_inverted(_keyed_scalar_workbook(tmp_path), _keyed_scalar_bindings())
+    internals = modules["internals.py"]
+    assert "_total_table_0 = view(cov, rows=data.COUNTRY_AXIS.keys)" in internals
+    assert "scenario" not in internals
+    pkg = assert_package_matches_evaluator(
+        _keyed_scalar_workbook(tmp_path), _keyed_scalar_bindings(), tmp_path, "keyed_scalar"
+    )
+    assert pkg.compute_total(cov=pkg.data.COV_DEFAULT) == 6.0
