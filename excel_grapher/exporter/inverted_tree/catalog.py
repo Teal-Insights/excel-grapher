@@ -161,8 +161,10 @@ class BoundSeries:
         init=False, repr=False, compare=False
     )
     _dimension_binds: Mapping[str, Mapping[str, Any]] = field(init=False, repr=False, compare=False)
+    _emit_cache: dict[Any, Any] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
+        object.__setattr__(self, "_emit_cache", {})
         object.__setattr__(
             self,
             "_cell_indices",

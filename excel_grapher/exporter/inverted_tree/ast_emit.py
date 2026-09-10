@@ -252,12 +252,25 @@ def _neighbor_host_cell(ctx: EmitContext, axis: str) -> CanonicalAddress | None:
     candidates = (
         [(row, col + 1), (row, col - 1)] if axis == "col" else [(row + 1, col), (row - 1, col)]
     )
-    cells = {parse_cell_coords(cell): cell for cell in ctx.host.cells}
+    cache = ctx.host._emit_cache
+    cells = cache.get("positions")
+    if cells is None:
+        cells = cache["positions"] = {parse_cell_coords(cell): cell for cell in ctx.host.cells}
     for candidate_row, candidate_col in candidates:
         cell = cells.get((sheet, candidate_row, candidate_col))
         if cell is not None:
             return cell
     return None
+
+
+def _cell_refs_of(ctx: EmitContext, cell: CanonicalAddress) -> list[CellRef]:
+    """References of the formula at `cell`, cached on the host series."""
+    assert ctx.graph is not None
+    cache = ctx.host._emit_cache
+    refs = cache.get(("refs", cell))
+    if refs is None:
+        refs = cache[("refs", cell)] = list(_iter_cell_refs(try_formula_ast(ctx.graph, cell)))
+    return refs
 
 
 def _reference_stays_put(ctx: EmitContext, ref: CellRef, axis: str) -> bool:
@@ -272,8 +285,8 @@ def _reference_stays_put(ctx: EmitContext, ref: CellRef, axis: str) -> bool:
     neighbor = _neighbor_host_cell(ctx, axis)
     if neighbor is None:
         return False
-    host_refs = list(_iter_cell_refs(try_formula_ast(ctx.graph, ctx.host_cell)))
-    neighbor_refs = list(_iter_cell_refs(try_formula_ast(ctx.graph, neighbor)))
+    host_refs = _cell_refs_of(ctx, ctx.host_cell)
+    neighbor_refs = _cell_refs_of(ctx, neighbor)
     if len(host_refs) != len(neighbor_refs):
         return False
     index = next((i for i, candidate in enumerate(host_refs) if candidate is ref), None)
