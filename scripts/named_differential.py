@@ -171,11 +171,30 @@ def run_internals(
         if hasattr(data, name.upper() + "_DEFAULT")
     }
     model = api.Model(**inputs)
+    from functools import cached_property
+
     series = [
         name
-        for name in dir(internals)
-        if hasattr(getattr(internals, name), "__cells__") and not name.startswith("scan_")
+        for name, attribute in vars(api.Model).items()
+        if isinstance(attribute, cached_property) and not name.startswith("_")
     ]
+    group_params: dict[str, tuple[str, ...]] = {}
+    for name in dir(internals):
+        function = getattr(internals, name)
+        if not name.startswith("scan_") or not callable(function):
+            continue
+        result = getattr(internals, function.__annotations__.get("return", ""), None)
+        code = function.__code__
+        for member in getattr(result, "__dataclass_fields__", {}):
+            group_params[member] = code.co_varnames[: code.co_kwonlyargcount]
+
+    def published(name: str, value: Any) -> dict[tuple[object, ...], object]:
+        cells = getattr(data, name.upper() + "_CELLS")
+        domain = getattr(data, name.upper() + "_REQUIRED", None)
+        if domain is None:
+            return {next(iter(cells)): value}
+        return {coord: value[coord] for coord in domain if coord in cells}
+
     values: dict[str, dict[tuple[object, ...], object]] = {}
     failures: dict[str, str] = {}
     input_cells: dict[str, Any] = {}
@@ -194,12 +213,12 @@ def run_internals(
             values[name] = {next(iter(cells)): default}
     for name in series:
         try:
-            values[name] = _published_cells(getattr(internals, name), getattr(model, name))
+            values[name] = published(name, getattr(model, name))
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             failures[name] = f"{type(exc).__name__}: {exc}"[:300]
 
     def provenance_of(name: str) -> Any:
-        return input_cells[name] if name in input_cells else getattr(internals, name).__cells__
+        return getattr(data, name.upper() + "_CELLS")
 
     addresses = sorted(
         {provenance_of(name)[coord] for name, cells in values.items() for coord in cells}
@@ -225,6 +244,8 @@ def run_internals(
     def parameters(name: str) -> tuple[str, ...]:
         if name in input_cells:
             return ()
+        if name in group_params:
+            return group_params[name]
         code = getattr(internals, name).__code__
         return code.co_varnames[: code.co_kwonlyargcount]
 

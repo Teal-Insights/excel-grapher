@@ -52,3 +52,21 @@ def test_text_cells_and_typed_measures_are_left_alone() -> None:
     )
     assert measure.numeric_text_measure(_Graph({"S!B2": 1.0}), _entry("float"), ("S!B2",)) is False
     assert measure.numeric_text_measure(_Graph({}), _entry("string"), ("S!B2",)) is False
+
+
+def test_integer_measures_over_fractional_cells_become_float() -> None:
+    assert (
+        measure.fractional_int_measure(
+            _Graph({"S!B2": 11.94, "S!C2": 3}), _entry("int"), ("S!B2", "S!C2")
+        )
+        is True
+    )
+    assert (
+        measure.fractional_int_measure(
+            _Graph({"S!B2": 11.0, "S!C2": 3}), _entry("int"), ("S!B2", "S!C2")
+        )
+        is False
+    )
+    assert (
+        measure.fractional_int_measure(_Graph({"S!B2": 11.94}), _entry("float"), ("S!B2",)) is False
+    )

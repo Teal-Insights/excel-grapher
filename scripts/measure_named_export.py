@@ -173,6 +173,19 @@ def numeric_text_measure(graph: Any, entry: Mapping[str, Any], cells: Sequence[s
     )
 
 
+def fractional_int_measure(graph: Any, entry: Mapping[str, Any], cells: Sequence[str]) -> bool:
+    """True when an integer-typed measure binds a cell holding a fractional value."""
+    measure = entry.get("structure", {}).get("measure", {})
+    if measure.get("dtype") not in {"int", "integer"}:
+        return False
+    for cell in cells:
+        node = graph.get_node(cell)
+        value = getattr(node, "value", None)
+        if isinstance(value, float) and not value.is_integer():
+            return True
+    return False
+
+
 def read_as_numbers(entry: dict[str, Any]) -> None:
     """Declare a measure as float so its numeric cells keep Excel number semantics."""
     measure = entry["structure"]["measure"]
@@ -244,6 +257,9 @@ def reconcile_bindings(
         ):
             read_as_numbers(entry)
             retyped[sid] = "text measure over numeric cells read as float"
+        elif fractional_int_measure(graph, entry, cells[sid]):
+            read_as_numbers(entry)
+            retyped[sid] = "integer measure over fractional cells read as float"
     bound = {cell for entry in kept for cell in cells[entry["id"]]}
     roots = [
         cell
