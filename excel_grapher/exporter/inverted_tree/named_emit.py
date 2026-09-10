@@ -14,7 +14,7 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from excel_grapher.exporter.codegen import REPRESENTATION_VERSION
 from excel_grapher.exporter.inverted_tree.ast_emit import (
@@ -381,14 +381,10 @@ def _semantic_body(
     all_coordinates = {coord for coordinates in groups.values() for coord in coordinates}
 
     def condition(coordinates: list[tuple[object, ...]]) -> str:
-        members = set(coordinates)
-        for index, field in enumerate(series.key_fields):
-            keys = {coord[index] for coord in coordinates}
-            if len(keys) == 1:
-                key = next(iter(keys))
-                if {coord for coord in all_coordinates if coord[index] == key} == members:
-                    return f"{names[field]} == {key!r}"
-        return f"{coordinate} in {tuple(coordinates)!r}"
+        synthesized = _family_condition(
+            coordinates, all_coordinates, series.tensor_domain.axes, names
+        )
+        return synthesized if synthesized is not None else f"{coordinate} in {tuple(coordinates)!r}"
 
     # Put the largest family in the final else branch, avoiding an explicit
     # coordinate list for ordinary forward or backward recurrence periods.
@@ -532,6 +528,81 @@ def emit_named_internals(
         "",
     ]
     return "\n".join(lines)
+
+
+def _family_condition(
+    coordinates: Sequence[tuple[object, ...]],
+    universe: set[tuple[object, ...]],
+    axes: Sequence[Any],
+    names: Mapping[str, str],
+) -> str | None:
+    """Describe a formula family by its axis relations rather than a coordinate list.
+
+    A family that is a product of per-axis selections becomes a conjunction of
+    equality, run, or membership tests; a family on one diagonal of two
+    integer axes adds the difference between them. Irregular families keep
+    their explicit coordinate list.
+    """
+    members = set(coordinates)
+    tests: list[str] = []
+    selected: list[set[object]] = []
+    for index, axis in enumerate(axes):
+        present = [key for key in axis.keys if any(coord[index] == key for coord in universe)]
+        keys = [key for key in present if any(coord[index] == key for coord in members)]
+        selected.append(set(keys))
+        name = names[axis.name]
+        if len(keys) == len(present):
+            continue
+        if len(keys) == 1:
+            tests.append(f"{name} == {keys[0]!r}")
+            continue
+        first, last = present.index(keys[0]), present.index(keys[-1])
+        contiguous = present[first : last + 1] == keys
+        ascending = axis.key_type is int and present == sorted(cast(Sequence[int], present))
+        if contiguous and ascending:
+            if last == len(present) - 1:
+                tests.append(f"{name} >= {keys[0]!r}")
+            elif first == 0:
+                tests.append(f"{name} <= {keys[-1]!r}")
+            else:
+                tests.append(f"{keys[0]!r} <= {name} <= {keys[-1]!r}")
+            continue
+        tests.append(f"{name} in {tuple(keys)!r}")
+    product = {
+        coord
+        for coord in universe
+        if all(coord[index] in keys for index, keys in enumerate(selected))
+    }
+    if product == members:
+        return " and ".join(tests) if tests else None
+    integer_axes = [index for index, axis in enumerate(axes) if axis.key_type is int]
+    for position, left in enumerate(integer_axes):
+        for right in integer_axes[position + 1 :]:
+
+            def difference(coord: tuple[object, ...], left: int = left, right: int = right) -> int:
+                return cast(int, coord[right]) - cast(int, coord[left])
+
+            differences = sorted({difference(coord) for coord in members})
+            low, high = differences[0], differences[-1]
+            if differences != list(range(low, high + 1)):
+                continue
+            left_name, right_name = names[axes[left].name], names[axes[right].name]
+            for candidates, prefix in ((universe, []), (product, tests)):
+                if {coord for coord in candidates if low <= difference(coord) <= high} != members:
+                    continue
+                bounds = {difference(coord) for coord in candidates}
+                if low == high == 0:
+                    relation = f"{left_name} == {right_name}"
+                elif low == high:
+                    relation = f"{right_name} - {left_name} == {low}"
+                elif high == max(bounds):
+                    relation = f"{right_name} - {left_name} >= {low}"
+                elif low == min(bounds):
+                    relation = f"{right_name} - {left_name} <= {high}"
+                else:
+                    relation = f"{low} <= {right_name} - {left_name} <= {high}"
+                return " and ".join([*prefix, relation])
+    return None
 
 
 def _emit_recurrence_group(

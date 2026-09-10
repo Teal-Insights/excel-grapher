@@ -164,3 +164,79 @@ def test_label_keys_built_from_the_host_key_are_templates(tmp_path: Path) -> Non
         _terms_workbook(tmp_path), _terms_bindings(), tmp_path, "terms_template"
     )
     assert pkg.compute_doubled(terms=pkg.data.TERMS_DEFAULT)["Kenya"] == 6.0
+
+
+def _aged_workbook(tmp_path: Path) -> Path:
+    cells: dict[str, object] = {"B1": 2024, "C1": 2025, "D1": 2026, "E1": 2027}
+    for row, issued in enumerate((2024, 2025, 2026), start=2):
+        cells[f"A{row}"] = issued
+        cells[f"A{row + 6}"] = issued
+        for offset, column in enumerate("BCDE"):
+            cells[f"{column}{row}"] = float(row * 10 + offset)
+            period = 2024 + offset
+            if period == issued:
+                cells[f"{column}{row + 6}"] = f"={column}{row}"
+            elif period > issued:
+                cells[f"{column}{row + 6}"] = f"={column}{row}*2"
+            else:
+                cells[f"{column}{row + 6}"] = f"={column}{row}*0"
+    return write_workbook(tmp_path / "aged.xlsx", {"Vintage": cells})
+
+
+def _aged_bindings() -> dict[str, Any]:
+    document = _vintage_bindings()
+    vintage = document["series"][0]
+    vintage["data_range"] = "Vintage!B2:E4"
+    aged = {
+        **vintage,
+        "id": "aged",
+        "data_range": "Vintage!B8:E10",
+        "output": {"compute": {"name": "compute_aged"}},
+        "structure": {
+            **vintage["structure"],
+            "dimensions": [
+                {
+                    **vintage["structure"]["dimensions"][0],
+                    "bind": {"kind": "row_label", "label_column": "A", "read": "int"},
+                },
+                vintage["structure"]["dimensions"][1],
+            ],
+        },
+    }
+    del aged["input"]
+    document["series"] = [vintage, aged]
+    return document
+
+
+def test_branch_conditions_name_axis_relations_not_coordinate_lists(tmp_path: Path) -> None:
+    modules = generate_inverted(_aged_workbook(tmp_path), _aged_bindings())
+    internals = modules["internals.py"]
+    assert "if issuance_year == time_period:" in internals
+    assert (
+        "elif time_period - issuance_year >= 1:" in internals
+        or "elif time_period - issuance_year <= -1:" in internals
+    )
+    assert "_coordinate in ((" not in internals
+    pkg = assert_package_matches_evaluator(
+        _aged_workbook(tmp_path), _aged_bindings(), tmp_path, "aged_conditions"
+    )
+    aged = pkg.compute_aged(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert aged[2025, 2027] == 2 * 33.0
+    assert aged[2026, 2024] == 0.0
+
+
+def test_horizon_boundaries_are_period_comparisons(tmp_path: Path) -> None:
+    cells: dict[str, object] = {}
+    for index, column in enumerate("BCDEF"):
+        cells[f"{column}1"] = 2024 + index
+        cells[f"{column}2"] = float(index + 1)
+        cells[f"{column}3"] = f"={column}2*3" if index >= 3 else f"={column}2"
+    workbook = write_workbook(tmp_path / "horizon.xlsx", {"Sheet": cells})
+    document = bindings_document(
+        series_entry("flow", "Sheet!B2:F2", layout="series", direction="input", header_row=1),
+        series_entry("scaled", "Sheet!B3:F3", layout="series", direction="output", header_row=1),
+    )
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "if time_period >= 2027:" in internals
+    assert "_coordinate in ((" not in internals
+    assert_package_matches_evaluator(workbook, document, tmp_path, "horizon_conditions")
