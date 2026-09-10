@@ -39,6 +39,7 @@ from excel_grapher.series_bindings.input_coerce import (
 from excel_grapher.series_bindings.resolve import _WorkbookValues
 
 if TYPE_CHECKING:
+    from excel_grapher.core.address_keys import CanonicalAddress
     from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
     from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
     from excel_grapher.grapher.graph import DependencyGraph
@@ -824,17 +825,30 @@ def _provenance_source(series: BoundSeries, named_axes: NamedAxes) -> str:
     layouts. A rectangle with a few relocated cells keeps those as explicit
     exceptions.
     """
-    from excel_grapher.core.address_keys import format_cell_key
-    from excel_grapher.exporter.export_runtime.provenance import column_letter
-    from excel_grapher.exporter.inverted_tree.catalog import _dense_rect
-
     cells = series.coordinate_cells
     literal = repr(dict(cells))
     if not cells or series.layout == "scalar":
         return literal
+    rectangle = _rectangle_source(series, cells, named_axes)
+    if rectangle is not None:
+        return rectangle
+    grid = _grid_source(series, dict(cells))
+    if grid is not None and len(grid) < len(literal):
+        return grid
+    return literal
+
+
+def _rectangle_source(
+    series: BoundSeries, cells: Mapping[tuple[Any, ...], CanonicalAddress], named_axes: NamedAxes
+) -> str | None:
+    """Describe a dense rectangle over one or two axes, or `None`."""
+    from excel_grapher.core.address_keys import format_cell_key
+    from excel_grapher.exporter.export_runtime.provenance import column_letter
+    from excel_grapher.exporter.inverted_tree.catalog import _dense_rect
+
     rect = _dense_rect(list(cells.values()))
     if rect is None:
-        return literal
+        return None
     sheet, first_row, first_col, last_row, last_col = rect
     height, width = last_row - first_row + 1, last_col - first_col + 1
     axes = series.tensor_domain.axes
@@ -864,7 +878,7 @@ def _provenance_source(series: BoundSeries, named_axes: NamedAxes) -> str:
                     f"column_cells({sheet!r}, {column_letter(first_col)!r}, {first_row}, "
                     f"{named_axes.constant(axis)})"
                 )
-        return literal
+        return None
     if len(axes) == 2:
         for row_position, col_position in ((0, 1), (1, 0)):
             row_axis, col_axis = axes[row_position], axes[col_position]
@@ -892,10 +906,7 @@ def _provenance_source(series: BoundSeries, named_axes: NamedAxes) -> str:
             if exceptions:
                 arguments.append(f"exceptions={exceptions!r}")
             return f"block_cells({', '.join(arguments)})"
-    grid = _grid_source(series, dict(cells))
-    if grid is not None and len(grid) < len(literal):
-        return grid
-    return literal
+    return None
 
 
 def _grid_source(series: BoundSeries, cells: dict[tuple[Any, ...], str]) -> str | None:
@@ -903,13 +914,12 @@ def _grid_source(series: BoundSeries, cells: dict[tuple[Any, ...], str]) -> str 
     from itertools import product
 
     from excel_grapher.core.address_keys import parse_cell_coords
-    from excel_grapher.exporter.export_runtime.provenance import column_letter
 
     fields = series.key_fields
     if not fields:
         return None
     parsed = {coord: parse_cell_coords(address) for coord, address in cells.items()}
-    best: tuple[int, list[list[int]], list[dict[Any, Any]], dict[Any, str]] | None = None
+    best: str | None = None
     for assignment in product(range(3), repeat=len(fields)):
         groups: list[list[int]] = [[], [], []]
         for position, group in enumerate(assignment):
@@ -926,12 +936,20 @@ def _grid_source(series: BoundSeries, cells: dict[tuple[Any, ...], str]) -> str 
                 exceptions[coord] = cells[coord]
         if len(exceptions) * 4 > len(cells):
             continue
-        size = sum(len(mapping) for mapping in mappings) + 4 * len(exceptions)
-        if best is None or size < best[0]:
-            best = (size, groups, mappings, exceptions)
-    if best is None:
-        return None
-    _size, groups, mappings, exceptions = best
+        source = _render_grid(series, fields, groups, mappings, exceptions)
+        if best is None or len(source) < len(best):
+            best = source
+    return best
+
+
+def _render_grid(
+    series: BoundSeries,
+    fields: Sequence[str],
+    groups: Sequence[Sequence[int]],
+    mappings: Sequence[Mapping[Any, Any]],
+    exceptions: Mapping[Any, str],
+) -> str:
+    from excel_grapher.exporter.export_runtime.provenance import column_letter
 
     def render(group: int, value: Any) -> str:
         positions = groups[group]
@@ -952,7 +970,7 @@ def _grid_source(series: BoundSeries, cells: dict[tuple[Any, ...], str]) -> str 
         f"cols={render(2, column_letter)}",
     ]
     if exceptions:
-        arguments.append(f"exceptions={exceptions!r}")
+        arguments.append(f"exceptions={dict(exceptions)!r}")
     return f"grid_cells({', '.join(arguments)})"
 
 

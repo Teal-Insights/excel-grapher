@@ -234,3 +234,32 @@ def test_ragged_domains_list_runs_not_coordinates(tmp_path: Path) -> None:
     assert pkg.compute_total(vintage=pkg.data.VINTAGE_DEFAULT)[2024] == sum(
         row * 10 + (1.0 if row >= 5 else 0.0) for row in range(2, 7)
     )
+
+
+def test_gapped_layouts_are_grids_with_fixed_positions_where_possible() -> None:
+    from types import SimpleNamespace
+
+    from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes
+    from excel_grapher.exporter.inverted_tree.named_emit import _provenance_source
+
+    rows = {"France": 2, "Kenya": 5, "Peru": 9}
+    countries = Axis("COUNTRY", tuple(rows), str)
+    years = Axis("TIME_PERIOD", (2024, 2025, 2026), int)
+    cells = {
+        (country, year): f"Model!{column}{row}"
+        for country, row in rows.items()
+        for year, column in zip(years.keys, "BCD", strict=True)
+    }
+    series = SimpleNamespace(
+        series_id="gapped",
+        layout="matrix",
+        key_fields=("COUNTRY", "TIME_PERIOD"),
+        coordinate_cells=cells,
+        tensor_domain=Domain.explicit(axes=(countries, years), coordinates=tuple(cells)),
+    )
+    source = _provenance_source(series, NamedAxes.plan((countries, years)))  # type: ignore[arg-type]
+    assert source == (
+        "grid_cells('Model', GAPPED_DOMAIN, rows=(('COUNTRY',), "
+        "{'France': 2, 'Kenya': 5, 'Peru': 9}), "
+        "cols=(('TIME_PERIOD',), {2024: 'B', 2025: 'C', 2026: 'D'}))"
+    )
