@@ -6,16 +6,23 @@ Machine-readable evidence: [named-axis-public-code-evidence.json](named-axis-pub
 
 ## Result
 
-The complete standalone LIC DSF package generated at revision `REVISION` is
-**TOTAL_BYTES bytes** of uncompressed source across eight modules, under the
+The complete standalone LIC DSF package generated at revision `4d1ed70` is
+**9,710,332 bytes** of uncompressed source across eight modules, under the
 10,000,000-byte gate. Every public output is computed by generated named formula
 functions; there is no private flat kernel, encoded plan, or generic interpreter.
 The package imports and evaluates without `excel_grapher` installed.
 
 | Module | Bytes | Content |
 | --- | ---: | --- |
-MODULE_ROWS
-| total | TOTAL_BYTES | |
+| `__init__.py` | 12,169 | Package exports |
+| `api.py` | 2,716,723 | 103 `compute_*` functions, `Model`, input checks, constant sets |
+| `internals.py` | 4,502,278 | 1,548 named formula functions and 27 recurrence groups |
+| `data.py` | 2,338,303 | Axes, domains, schemas, series classes, defaults, provenance |
+| `tensor.py` | 21,723 | Immutable axes, domains, tensors, schemas |
+| `provenance.py` | 8,142 | Rectangle and grid cell descriptors |
+| `runtime.py` | 34,217 | Views, spans, readers, publication |
+| `excel.py` | 76,777 | Embedded Excel value semantics |
+| total | 9,710,332 | |
 
 Size history of the same graph projection under this architecture (all bytes):
 
@@ -25,7 +32,8 @@ Size history of the same graph projection under this architecture (all bytes):
 | Memoized `Model` orchestration | 23,647,565 | 3,128,859 | 10,674,801 | 9,696,244 |
 | Grid provenance, product views, folded families, coordinate runs, table views | 10,555,027 | 2,854,361 | 5,181,706 | 2,366,506 |
 | Formula bodies as coordinate functions | 10,225,307 | 2,854,361 | 4,851,460 | 2,366,506 |
-| Shared constant sets and value types, trusted results, union conditions | TOTAL_BYTES | API_BYTES | INTERNALS_BYTES | DATA_BYTES |
+| Shared constant sets and value types, trusted results, union conditions | 9,676,463 | 2,713,615 | 4,485,125 | 2,324,695 |
+| Keyed scalar layouts and sandbox binding retyping (final) | 9,710,332 | 2,716,723 | 4,502,278 | 2,338,303 |
 
 ## Reproduction
 
@@ -43,10 +51,12 @@ uv run python scripts/named_differential.py build/lic_dsf_named \
 ```
 
 `--reconcile-bindings` applies the sandbox binding adjustments recorded in the
-report (214 entries: output bindings without graph formulas dropped, overlapping
-formula bindings resolved to the first binding, scalar constant bindings added
-for unbound closure leaves). The adjustments change which cells are bound, not
-how any bound formula is computed.
+report (239 entries): output bindings without graph formulas are
+dropped, overlapping formula bindings resolve to the first binding, scalar
+constant bindings are added for unbound closure leaves, text-typed input
+measures over numeric cells and integer measures over fractional cells are read
+as floats. The adjustments change which cells are bound and how their values are
+typed, not how any bound formula is computed.
 
 Input fingerprints (SHA-256):
 
@@ -71,11 +81,11 @@ Linux x86_64 container, `uv run`.
   over the series' semantic axes and publishes it with `evaluate()`; recurrence
   groups define one coordinate function per member and read them through
   demand-driven `CoordinateReader`s. Ranges are `view`/`span` selections over
-  named axes (1,710 views, 1,203 spans); positional lookup tables mix views with
+  named axes (1,715 views, 1,207 spans); positional lookup tables mix views with
   per-cell callbacks (165 tables).
 - `data.py`: shared axes, domains (ragged domains as coordinate runs), required
   subdomains, schemas, concrete `Series` classes, defaults, and provenance
-  descriptors (1,432 rectangles, 393 grids, 683 explicit dictionaries).
+  descriptors (1,433 rectangles, 405 grids, 670 explicit dictionaries).
 - `tensor.py`, `provenance.py`, `runtime.py`, `excel.py`: shared primitives and
   the embedded Excel value semantics.
 
@@ -126,7 +136,25 @@ def compute_...(*, input4_interest_rate: data.Input4InterestRate, ...) -> data..
 
 ## Parity
 
-PARITY_SECTION
+`scripts/named_differential.py` evaluates every public output on the workbook
+defaults and compares each published cell with `FormulaEvaluator` on the same
+graph projection and blank ranges (`atol=1e-6`, `rtol=1e-12`; text and booleans
+exact; an Excel error matches only the same code).
+
+| Comparison | Result |
+| --- | ---: |
+| Public outputs evaluated | 103 of 103 |
+| Output cells compared | 1,783 |
+| Mismatches | 0 |
+| Matched errors, all `#N/A` inside the chart error contract | 105 |
+| Matched errors outside the contract | 0 |
+
+`--internals` extends the comparison to every named series and input default
+(1,938 series including recurrence-group members): 0 mismatched series. Three
+classes of sandbox binding defects surfaced on the way and are corrected by the
+recorded reconciliation: scalar layouts with one cell per scenario sheet (now
+keyed series), text-typed inputs over numeric cells, and integer-typed measures
+over fractional cells (both read as floats).
 
 The 64-scenario downstream differential (114,240 comparisons) requires the
 downstream extraction pipeline repository, which is not available in this
@@ -139,4 +167,21 @@ TIMING_SECTION
 
 ## Checks
 
-CHECKS_SECTION
+All run through `uv run` on this branch at the final revision:
+
+| Check | Result |
+| --- | --- |
+| `pytest` (full suite, default deselection of `slow`) | 3,818 passed, 1 skipped, 54 deselected |
+| `ruff check .` | passed |
+| `ruff format --check .` | 616 files already formatted |
+| `ty check excel_grapher tests examples scripts` | no errors; three pre-existing redundant-cast warnings in `tests/unit/core` |
+| Tiny-DSA CLI `bindings validate --smoke-test` | all compute functions passed smoke checks |
+| Public-computation contract tests (`tests/integration/exporter/inverted_tree/test_public_computation_contract.py`) | pass, including the standalone subprocess with `excel_grapher` blocked |
+| Downstream integration gates | not available in this environment |
+
+Every emission change on this branch was made test-first: the new tests under
+`tests/unit/exporter/inverted_tree/` (`test_model_orchestration`,
+`test_nested_layouts`, `test_family_folding`, `test_lookup_tables_compact`,
+`test_formula_functions`, `test_series_facade_types`, `test_keyed_scalars`,
+`test_public_computation_contract`) and `tests/unit/scripts/` were observed
+failing before the corresponding emitter change and passing after it.
