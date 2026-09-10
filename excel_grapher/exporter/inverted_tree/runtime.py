@@ -69,17 +69,44 @@ F = TypeVar("F", bound=Callable[..., object])
 K = TypeVar("K", bound=tuple[object, ...])
 
 
-def lazy_table(rows: tuple[tuple[Callable[[], object], ...], ...]) -> Range:
-    """Expose a formula table without evaluating cells a lookup does not select."""
-    return Range(
-        "",
-        1,
-        1,
-        len(rows),
-        len(rows[0]),
-        lambda address: None,
-        _coord_resolver=lambda row, column: cast(FormulaValue, rows[row - 1][column - 1]()),
-    )
+TablePart = Callable[[], object] | Range
+
+
+def lazy_table(rows: tuple[tuple[TablePart, ...], ...]) -> Range:
+    """Expose a formula table without evaluating cells a lookup does not select.
+
+    Each row lists cell callbacks and one-row views side by side; a view
+    contributes its columns in place, so a run of one series' cells is one
+    part instead of one callback per cell.
+    """
+    layout: list[list[tuple[int, TablePart]]] = []
+    width: int | None = None
+    for row in rows:
+        parts: list[tuple[int, TablePart]] = []
+        column = 0
+        for part in row:
+            parts.append((column, part))
+            if isinstance(part, Range):
+                if part.shape[0] != 1:
+                    raise ValueError("table rows accept one-row views")
+                column += part.shape[1]
+            else:
+                column += 1
+        if width is None:
+            width = column
+        elif width != column:
+            raise ValueError(f"table rows differ in width: {width} and {column}")
+        layout.append(parts)
+
+    def resolve(row: int, column: int) -> FormulaValue:
+        for start, part in reversed(layout[row - 1]):
+            if column - 1 >= start:
+                if isinstance(part, Range):
+                    return part.cell(1, column - start)
+                return cast(FormulaValue, part())
+        raise IndexError(column)
+
+    return Range("", 1, 1, len(rows), width or 1, lambda address: None, _coord_resolver=resolve)
 
 
 class KeyedCompute(Protocol):
@@ -431,6 +458,13 @@ def xl_choose_lazy(index: object, *choices: Callable[[], object]) -> object:
     """Select one CHOOSE branch before evaluating its workbook expression."""
     selected = int(xl_choose(index, *range(len(choices))))
     return choices[selected]()
+
+
+def xl_choose_range(index: object, cells: Range) -> object:
+    """Select the `index`-th cell of a one-row or one-column view, as `CHOOSE` lists it."""
+    rows, cols = cells.shape
+    selected = int(xl_choose(index, *range(rows * cols)))
+    return cells.cell(selected // cols + 1, selected % cols + 1)
 
 
 def xl_index(array: object, row_num: object = None, col_num: object = None) -> object:

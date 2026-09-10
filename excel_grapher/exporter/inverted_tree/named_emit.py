@@ -154,6 +154,27 @@ def _result_type(scc: Sequence[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _outermost_tables(node: ast.AST, local_names: set[str]) -> list[ast.Call]:
+    """Tables and views that can be built once per call, outermost first.
+
+    A table that reads the loop coordinate or a recurrence member is built
+    where it is used; views nested inside a hoisted table go with it.
+    """
+    if (
+        isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Name)
+        and node.func.id in {"lazy_table", "view"}
+        and not any(
+            isinstance(child, ast.Name) and child.id in local_names for child in ast.walk(node)
+        )
+    ):
+        return [node]
+    found: list[ast.Call] = []
+    for child in ast.iter_child_nodes(node):
+        found.extend(_outermost_tables(child, local_names))
+    return found
+
+
 def _hole_expression(
     series: BoundSeries, index: int, ctx: EmitContext, graph: DependencyGraph
 ) -> str:
@@ -259,20 +280,7 @@ def _semantic_body(
             recursive = True
         if "lazy_table(" in expression or "view(" in expression:
             local_names = set(names.values()) | scc_ids | {series.series_id}
-            for item in ast.walk(parsed):
-                if not (
-                    isinstance(item, ast.Call)
-                    and isinstance(item.func, ast.Name)
-                    and item.func.id in {"lazy_table", "view"}
-                ):
-                    continue
-                if any(
-                    isinstance(child, ast.Name) and child.id in local_names
-                    for child in ast.walk(item)
-                ):
-                    # Tables that read the loop coordinate or a recurrence
-                    # member are built where they are used.
-                    continue
+            for item in _outermost_tables(parsed, local_names):
                 source = ast.get_source_segment(expression, item)
                 if source is None:
                     continue

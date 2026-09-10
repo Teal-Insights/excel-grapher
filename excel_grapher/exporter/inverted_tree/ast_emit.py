@@ -616,9 +616,32 @@ def _emit_choose(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         return f"{ctx.use('xl_raise')}('#VALUE!')"
     index = emit_expr(node.args[0], ctx)
+    run = _cell_run(node.args[1:], ctx)
+    if run is not None:
+        view = _named_range_view(run, ctx)
+        if view is not None:
+            return f"{ctx.use('xl_choose_range')}({index}, {view})"
     lazy = ctx
     choices = ", ".join(f"lambda: {emit_expr(arg, lazy)}" for arg in node.args[1:])
     return f"{ctx.use('xl_choose_lazy')}({index}, {choices})"
+
+
+def _cell_run(args: Sequence[AstNode], ctx: EmitContext) -> RangeNode | None:
+    """The range spanned by cell references listed along one worksheet row or column."""
+    if len(args) < 2 or not all(isinstance(arg, CellRefNode) for arg in args):
+        return None
+    refs = [cast(CellRefNode, arg) for arg in args]
+    located = [parse_cell_coords(resolve_cell_ref(ref, ctx.host_cell)) for ref in refs]
+    sheets = {sheet for sheet, _row, _col in located}
+    if len(sheets) != 1:
+        return None
+    rows = [row for _sheet, row, _col in located]
+    cols = [col for _sheet, _row, col in located]
+    across = len(set(rows)) == 1 and cols == list(range(cols[0], cols[0] + len(cols)))
+    down = len(set(cols)) == 1 and rows == list(range(rows[0], rows[0] + len(rows)))
+    if not (across or down):
+        return None
+    return RangeNode(start_ref=refs[0].ref, end_ref=refs[-1].ref)
 
 
 def _emit_aggregate(node: FunctionCallNode, ctx: EmitContext) -> str:
@@ -697,13 +720,34 @@ def _positional_table_source(cells: Sequence[PositionalRangeCell], ctx: EmitCont
     """
     rows = _group_positional_rows(cells)
     table_ctx = replace(ctx, coordinate_vars={})
-    callbacks = _python_tuple(
-        [
-            _python_tuple([f"lambda: {_emit_positional_cell(cell, table_ctx)}" for cell in row])
-            for row in rows
-        ]
-    )
+    callbacks = _python_tuple([_python_tuple(_table_row_parts(row, table_ctx)) for row in rows])
     return f"{ctx.use('lazy_table')}({callbacks})"
+
+
+def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> list[str]:
+    """One view per run of a series' cells in a table row, callbacks elsewhere."""
+    parts: list[str] = []
+    index = 0
+    while index < len(row):
+        cell = row[index]
+        end = index
+        while (
+            cell.series_id is not None
+            and end + 1 < len(row)
+            and row[end + 1].series_id == cell.series_id
+            and not row[end + 1].blank
+        ):
+            end += 1
+        view = None
+        if end > index:
+            view = _named_range_view(RangeNode(cell.address, row[end].address), ctx)
+        if view is not None:
+            parts.append(view)
+            index = end + 1
+            continue
+        parts.append(f"lambda: {_emit_positional_cell(cell, ctx)}")
+        index += 1
+    return parts
 
 
 def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
