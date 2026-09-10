@@ -7,6 +7,7 @@ booleans match exactly; an Excel error matches only the same error code, and a
 matched error counts as expected only inside the chart error contract.
 
     uv run python scripts/named_differential.py PACKAGE_DIR --graph GRAPH.pkl.gz \
+        [--blank-ranges sandbox/lic-dsf/lic_dsf_blank_ranges.py] \
         [--contract plans/named-axis-chart-error-contract.json] [--report out.json]
 """
 
@@ -60,16 +61,23 @@ def expected_error(address: str, code: str, contract: Mapping[str, Any] | None) 
     return sheet.strip("'") == "Chart Data" and cell in contract.get("formulas", {})
 
 
-def run(package_dir: Path, graph_path: Path, contract: Mapping[str, Any] | None) -> dict[str, Any]:
+def run(
+    package_dir: Path,
+    graph_path: Path,
+    contract: Mapping[str, Any] | None,
+    blank_ranges: Path | None = None,
+) -> dict[str, Any]:
     from excel_grapher.evaluator import FormulaEvaluator
     from excel_grapher.grapher import load_graph
+    from excel_grapher.grapher.blank_ranges import load_blank_ranges_module
 
     sys.path.insert(0, str(package_dir.parent))
     package = importlib.import_module(package_dir.name)
     data = package.data
     started = time.perf_counter()
     graph = load_graph(graph_path)
-    evaluator = FormulaEvaluator(graph)
+    blanks = None if blank_ranges is None else load_blank_ranges_module(blank_ranges)
+    evaluator = FormulaEvaluator(graph, blank_ranges=blanks)
     timings = {"graph_load_seconds": time.perf_counter() - started}
     started = time.perf_counter()
     results: dict[str, dict[tuple[object, ...], object]] = {}
@@ -140,11 +148,12 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("package_dir", type=Path)
     parser.add_argument("--graph", type=Path, required=True)
     parser.add_argument("--contract", type=Path)
+    parser.add_argument("--blank-ranges", type=Path, help="Module declaring BLANK_RANGES")
     parser.add_argument("--report", type=Path)
     args = parser.parse_args(argv)
     warnings.simplefilter("ignore")
     contract = json.loads(args.contract.read_text()) if args.contract else None
-    report = run(args.package_dir.resolve(), args.graph, contract)
+    report = run(args.package_dir.resolve(), args.graph, contract, args.blank_ranges)
     if args.report is not None:
         args.report.parent.mkdir(parents=True, exist_ok=True)
         args.report.write_text(json.dumps(report, indent=2, default=str), encoding="utf-8")

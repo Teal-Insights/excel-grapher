@@ -242,7 +242,7 @@ def test_inverted_tree_smoke_rejects_legacy_tuple_result(tmp_path: Path) -> None
         bindings=result["bindings"],
         workbook=workbook,
     )
-    files["api.py"] = files["api.py"].replace("    return z\n", "    return (1, 2)\n")
+    files["api.py"] = files["api.py"].replace("    return Model(**locals()).z\n", "    return (1, 2)\n")
     with pytest.raises(BindingsSmokeError, match=r"scalar or Tensor"):
         smoke_test_bindings_module(
             files,
