@@ -28,3 +28,11 @@ def test_facades_are_concrete_and_collect_their_own_records(tmp_path: Path) -> N
     assert pkg.compute_twice.__domain__ is pkg.data.TWICE_REQUIRED
     assert pkg.internals.twice.__key__ == ("TIME_PERIOD",)
     assert twice[2022] == 6.0
+
+
+def test_schemas_share_one_value_type_tuple_per_dtype(tmp_path: Path) -> None:
+    modules = generate_inverted(_horizon_workbook(tmp_path, 5), _horizon_bindings(5))
+    data = modules["data.py"]
+    assert "FLOAT_VALUES = (int, float, bool, str, type(None))\n" in data
+    assert "TWICE_SCHEMA = TensorSchema('twice', TWICE_REQUIRED, FLOAT_VALUES)\n" in data
+    assert data.count("type(None)") == 1

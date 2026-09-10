@@ -117,7 +117,11 @@ def _annotation(series: BoundSeries) -> str:
 
 
 def _schema_types(series: BoundSeries) -> str:
-    dtype = series.python_dtype
+    """Name of the shared value-type tuple accepted by the series' schema."""
+    return f"{series.python_dtype.upper()}_VALUES"
+
+
+def _value_types(dtype: str) -> str:
     types = (
         ["int", "float", "bool", "str"]
         if dtype == "float"
@@ -126,7 +130,7 @@ def _schema_types(series: BoundSeries) -> str:
         else [dtype]
     )
     # Workbook blanks remain observations; the value is not domain membership.
-    return "(" + ", ".join(dict.fromkeys([*types, "str", "type(None)"])) + ",)"
+    return "(" + ", ".join(dict.fromkeys([*types, "str", "type(None)"])) + ")"
 
 
 def _coordinate_names(series: BoundSeries, reserved: set[str]) -> dict[str, str]:
@@ -769,14 +773,17 @@ def emit_named_api(
             model.extend(_model_recurrence_group(scc, deps, catalog))
             continue
         model.extend(_model_attribute(series, deps, catalog))
-    constant_sets: dict[tuple[str, ...], str] = {}
+    constant_sets: dict[frozenset[str], str] = {}
+    constant_lines: list[str] = []
     functions: list[str] = []
     compute_names: list[str] = []
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
-        constants = tuple(sid for sid in leaves if catalog.get(sid).direction == "constant")
+        constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
         if constants not in constant_sets:
-            constant_sets[constants] = f"_CONSTANTS_{len(constant_sets)}"
+            alias = f"_CONSTANTS_{len(constant_sets)}"
+            constant_lines.append(f"{alias} = {_constant_set_source(constants, constant_sets)}")
+            constant_sets[constants] = alias
         source, name = _public_function(output, leaves, catalog, constant_sets[constants])
         functions.append(source)
         compute_names.append(name)
@@ -794,7 +801,7 @@ def emit_named_api(
         *(f"    {sid!r}: _check_{sid}," for sid in checked),
         "}",
         "",
-        *(f"{name} = {constants!r}" for constants, name in constant_sets.items()),
+        *constant_lines,
         "",
         "\n".join(model),
         "",
@@ -807,6 +814,19 @@ def emit_named_api(
         "",
     ]
     return "\n".join(lines)
+
+
+def _constant_set_source(constants: frozenset[str], known: Mapping[frozenset[str], str]) -> str:
+    """Write a constant set as the largest known subset plus its extra members."""
+
+    def literal(names: frozenset[str]) -> str:
+        return "frozenset({" + ", ".join(repr(name) for name in sorted(names)) + "})"
+
+    bases = [base for base in known if base and base < constants]
+    if not bases:
+        return literal(constants)
+    base = max(bases, key=len)
+    return f"{known[base]} | {literal(constants - base)}"
 
 
 def _public_function(
@@ -1079,6 +1099,8 @@ def emit_named_data(
     for constant, axis in named_axes.items():
         lines.append(f"{constant} = Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})")
     lines.append("")
+    dtypes = sorted({series.python_dtype for series in retained if series.layout != "scalar"})
+    lines.extend(f"{dtype.upper()}_VALUES = {_value_types(dtype)}" for dtype in dtypes)
     domain_names: dict[str, str] = {}
     constant_series: list[BoundSeries] = []
     for series in retained:

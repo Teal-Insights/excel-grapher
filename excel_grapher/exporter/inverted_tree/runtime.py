@@ -123,15 +123,16 @@ def publish(
     key: tuple[str, ...] | None = None,
     domain: object = None,
     holes: tuple[int, ...] = (),
-    constants: tuple[str, ...] | None = None,
+    constants: Iterable[str] | None = None,
     cells: Mapping[K, str] | None = None,
 ) -> Callable[[F], F]:
     """Attach series metadata to a generated helper and return it unchanged.
 
     Sets `__key__`, `__domain__`, and `__holes__` on `fn`; a `schema` supplies
     the key fields and required domain of a tensor series. When `constants`
-    is given, also sets `__constants__`. `cells` publishes immutable
-    coordinate provenance as `__cells__`. Does not wrap `fn`.
+    is given, also sets `__constants__` to their names in sorted order.
+    `cells` publishes immutable coordinate provenance as `__cells__`. Does
+    not wrap `fn`.
     """
     if schema is not None:
         key = tuple(axis.name for axis in schema.domain.axes)
@@ -148,7 +149,7 @@ def publish(
         if cells is not None:
             target.__cells__ = MappingProxyType(dict(cells)) if isinstance(cells, dict) else cells
         if constants is not None:
-            target.__constants__ = constants
+            target.__constants__ = tuple(sorted(constants))
         return fn
 
     return decorator
