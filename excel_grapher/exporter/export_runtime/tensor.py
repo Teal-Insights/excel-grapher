@@ -454,6 +454,11 @@ class Series(Tensor[T]):
         super().__post_init__()
         type(self).schema.validate(self)
 
+    @classmethod
+    def collect(cls, records: Iterable[tuple[Coordinate, T]]) -> Self:
+        """Publish coordinate/value records over the series' required domain."""
+        return cls.from_records(domain=cls.schema.domain, records=records)
+
 
 class YearSeries(Tensor[T]):
     """A schema-enforcing year facade using integer labels."""

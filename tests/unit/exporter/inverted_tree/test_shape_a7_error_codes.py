@@ -69,7 +69,7 @@ def test_mixed_series_returns_error_code_not_abort(tmp_path: Path) -> None:
     workbook = _mixed_workbook(tmp_path)
     modules = generate_inverted(workbook, _mixed_bindings())
     assert "tuple[float, ...]" not in modules["api.py"]
-    assert "float | str" in modules["api.py"]
+    assert "float | str" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a7_mixed")
     got = pkg.compute_output_row(denominators=pkg.data.DENOMINATORS_DEFAULT)
     assert got[1] == 0.1

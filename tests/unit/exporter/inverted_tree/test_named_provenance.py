@@ -86,7 +86,7 @@ def test_data_module_provenance_does_not_grow_with_the_horizon(tmp_path: Path) -
 def test_series_facades_declare_their_schema_once(tmp_path: Path) -> None:
     modules = generate_inverted(_horizon_workbook(tmp_path, 5), _horizon_bindings(5))
     data = modules["data.py"]
-    assert "class Twice(Series[T]):\n" in data
+    assert "class Twice(Series[float | str | None]):\n" in data
     assert "    schema = TWICE_SCHEMA\n" in data
     assert "def __post_init__" not in data
     assert "def __getitem__" not in data

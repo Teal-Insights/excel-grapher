@@ -167,7 +167,7 @@ def test_offset_into_row_is_indexing(tmp_path: Path) -> None:
         dynamic_refs=DynamicRefConfig.from_constraints({"Inputs!A1": Literal[1, 2, 3]}, {}),
     )
     assert "xl_offset" not in modules["internals.py"]
-    assert "shock_magnitudes: data.ShockMagnitudes[" in modules["internals.py"]
+    assert "shock_magnitudes: data.ShockMagnitudes" in modules["internals.py"]
     assert "(_ for _ in ())" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a4_off")
     resolved = pkg.internals.shock_magnitude_resolved

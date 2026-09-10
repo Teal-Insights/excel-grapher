@@ -277,7 +277,7 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     got = pkg.compute_debt()
     assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx((100.0, 102.0, 104.04))
     assert "scan_debt(" in internals
-    assert "data.Debt[" in api
+    assert "-> data.Debt:" in api
     assert not hasattr(pkg.internals, "debt")
     assert not hasattr(pkg.internals, "adjustment")
     assert "class ScanDebtResult:" in internals

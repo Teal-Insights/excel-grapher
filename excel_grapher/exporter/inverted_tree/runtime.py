@@ -56,7 +56,7 @@ from excel_grapher.exporter.export_runtime.math import xl_rank as _shared_rank
 from excel_grapher.exporter.export_runtime.math import xl_round as _shared_round
 from excel_grapher.exporter.export_runtime.math import xl_rounddown as _shared_rounddown
 from excel_grapher.exporter.export_runtime.math import xl_stdev as _shared_stdev
-from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
+from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor, TensorSchema
 from excel_grapher.exporter.export_runtime.text import xl_left as _shared_left
 from excel_grapher.exporter.export_runtime.text import xl_numbervalue as _shared_numbervalue
 from excel_grapher.series_bindings.input_coerce import (
@@ -118,23 +118,31 @@ class KeyedCompute(Protocol):
 
 
 def publish(
+    schema: TensorSchema | None = None,
     *,
-    key: tuple[str, ...],
-    domain: object,
+    key: tuple[str, ...] | None = None,
+    domain: object = None,
     holes: tuple[int, ...] = (),
     constants: tuple[str, ...] | None = None,
     cells: Mapping[K, str] | None = None,
 ) -> Callable[[F], F]:
     """Attach series metadata to a generated helper and return it unchanged.
 
-    Sets `__key__`, `__domain__`, and `__holes__` on `fn`. When `constants` is
-    given, also sets `__constants__`. `cells` publishes immutable coordinate
-    provenance as `__cells__`. Does not wrap `fn`.
+    Sets `__key__`, `__domain__`, and `__holes__` on `fn`; a `schema` supplies
+    the key fields and required domain of a tensor series. When `constants`
+    is given, also sets `__constants__`. `cells` publishes immutable
+    coordinate provenance as `__cells__`. Does not wrap `fn`.
     """
+    if schema is not None:
+        key = tuple(axis.name for axis in schema.domain.axes)
+        domain = schema.domain
+    if key is None:
+        raise TypeError("publish needs a schema or explicit key fields")
+    published_key = key
 
     def decorator(fn: F) -> F:
         target = cast(Any, fn)
-        target.__key__ = key
+        target.__key__ = published_key
         target.__domain__ = domain
         target.__holes__ = holes
         if cells is not None:

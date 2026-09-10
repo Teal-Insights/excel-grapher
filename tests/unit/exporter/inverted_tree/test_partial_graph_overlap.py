@@ -312,7 +312,7 @@ def test_helper_documents_named_coordinate_contract(tmp_path: Path) -> None:
         modules = _emit_from_outputs(workbook, _year_document())
     internals = modules["internals.py"]
     assert "coordinate identities" in internals
-    assert "domain=data.ENGINE_ROW_REQUIRED" in internals
+    assert "@publish(data.ENGINE_ROW_SCHEMA, cells=data.ENGINE_ROW_CELLS)" in internals
     assert "rate[time_period]" in internals
 
 

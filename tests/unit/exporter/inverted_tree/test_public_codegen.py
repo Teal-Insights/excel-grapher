@@ -272,7 +272,8 @@ def test_generated_default_distinguishes_blank_and_zero(tmp_path: Path) -> None:
     assert package.data.SRC_DEFAULT[2025] is None
     assert package.data.SRC_DEFAULT[2026] == 0
     assert package.compute_out(src=package.data.SRC_DEFAULT) == 0
-    assert "data.Src[float | str | None]" in modules["api.py"]
+    assert "data.Src" in modules["api.py"]
+    assert "class Src(Series[float | str | None]):" in modules["data.py"]
 
 
 def test_numeric_input_retains_supplied_boolean_comparison_semantics(tmp_path: Path) -> None:
@@ -310,7 +311,7 @@ def test_generated_schema_preserves_excel_error_values(tmp_path: Path, dtype: st
         )
     package = load_package(modules, tmp_path, name=f"named_error_{dtype}")
     assert package.compute_out()[2025] == "#DIV/0!"
-    assert "str" in package.compute_out.__annotations__["return"]
+    assert "str" in str(package.data.Out.__orig_bases__[0])
 
 
 def test_package_generation_requires_bindings() -> None:

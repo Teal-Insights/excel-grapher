@@ -22,9 +22,9 @@ with CodeGenerator(graph) as gen:
 ```
 
 `generate_modules()` returns a `dict[str, str]` keyed by module filename
-(including `__init__.py`, `api.py`, `data.py`, `runtime.py`, `internals.py`,
-`tensor.py`, and private supporting modules). Write **all** returned files into a package
-directory of your choice, then import the package as usual.
+(`__init__.py`, `api.py`, `data.py`, `internals.py`, `tensor.py`, `provenance.py`,
+`runtime.py`, and `excel.py`). Write **all** returned files into a package directory of your
+choice, then import the package as usual. The package has no dependency on `excel_grapher`.
 
 Package exports use inverted-tree: each `compute_*` takes the input leaves of its output
 as ordinary arguments. `generate_modules()` requires `series_bindings` and
@@ -60,12 +60,13 @@ emitted in `data.py` (`SERIES_DEFAULT`). Smoke checks call the generated compute
 
 | Module | Role |
 |--------|------|
-| `api.py` | Keyword-only `compute_*` orchestrators. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__` and `__domain__`. |
-| `data.py` | Immutable constants and `*_DEFAULT` inputs, reusable authored domains, graph-required domains, value schemas, and generated tensor classes. |
-| `internals.py` | First-level helpers using semantic coordinates, with frozen named results for fused calculations. |
-| `tensor.py` | Immutable `Axis`, `Domain`, `Tensor`, and schema validation. |
-| `runtime.py` | Shared Excel arithmetic, comparisons, lookups, and error semantics. |
-| Private modules | Scheduling and storage implementation; write these files with the public modules. |
+| `api.py` | Keyword-only `compute_*` functions and the `Model` they read. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__`, `__domain__`, and `__cells__`. `Model(**inputs)` validates the bound inputs once and evaluates every formula series on demand as a memoized attribute, so shared intermediate results are computed once per model. |
+| `data.py` | Immutable constants and `*_DEFAULT` inputs, shared axes, reusable authored domains, graph-required domains, value schemas, generated tensor classes, and coordinate-to-cell provenance descriptors. |
+| `internals.py` | One named function per formula series, written over semantic coordinates: loops over the required domain, explicit seed and boundary branches, lazy `view` / `span` selections over bound series, and `scan_*` functions returning frozen named results for recurrence groups. |
+| `tensor.py` | Immutable `Axis`, `Domain`, `Tensor`, `Series`, and schema validation. |
+| `provenance.py` | `row_cells`, `column_cells`, `block_cells`, and `grid_cells` descriptors that resolve a coordinate to its authored worksheet cell without listing every cell. |
+| `runtime.py` | Lazy views over named coordinates, recurrence readers, and the `publish` metadata decorator. |
+| `excel.py` | Excel value semantics (operators, lookups, aggregates, errors) embedded from the shared core so the package runs standalone. |
 
 Construct inputs from coordinate/value records. The generated schema validates axis names,
 key types, required coordinates, and value types. Scalar bindings remain plain scalars.
@@ -128,7 +129,7 @@ records = as_records(compute_output_baseline, result)
 | `input.mode: override` non-leaf setters | Bind the cells as **inputs** if callers must vary them; otherwise they stay formula internals. |
 | Retained graph leaf inside an `internal`/`output` series | Also bind that cell as a separate `input` or `constant` series; otherwise export bakes the workbook literal. See [double-binding retained graph leaves](05-series-bindings.qmd#bound-leaf-double-bind). |
 | `read_<series>()` / `input.reader` | Import `data.SERIES` (constants) or pass the value you would have read. |
-| `input.domain` on setters | Applied to `compute_*` / `_run_N` arguments (`enum`, `between`, `real_between`) ([issue 666](https://github.com/Teal-Insights/excel-grapher/issues/666)). Out-of-domain values raise `ValueError` naming the series. |
+| `input.domain` on setters | Applied to `compute_*` arguments (`enum`, `between`, `real_between`) ([issue 666](https://github.com/Teal-Insights/excel-grapher/issues/666)). Out-of-domain values raise `ValueError` naming the series. |
 | `input.value_map` on scalar inputs | Applied after the domain check, before any expression ([issue 677](https://github.com/Teal-Insights/excel-grapher/issues/677)). Callers pass map keys; internals see workbook needles. |
 | `compute_*(ctx) -> Records` | `compute_*` takes named tensor or scalar inputs and returns a tensor or scalar. Use `as_records(compute, result)` for coordinate/value records. |
 | `output.compute.helper` collapsed helpers | Every output is already a leaf-closure function; drop the helper name. |

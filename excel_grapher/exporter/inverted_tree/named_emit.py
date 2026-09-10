@@ -113,8 +113,7 @@ def _value_annotation(series: BoundSeries) -> str:
 
 
 def _annotation(series: BoundSeries) -> str:
-    inner = _value_annotation(series)
-    return inner if series.layout == "scalar" else f"data.{_facade(series)}[{inner}]"
+    return _value_annotation(series) if series.layout == "scalar" else f"data.{_facade(series)}"
 
 
 def _schema_types(series: BoundSeries) -> str:
@@ -431,7 +430,7 @@ def _semantic_body(
         lines.extend(
             [
                 f"        {records}.append(({coordinate}, {value}))",
-                f"    return {_annotation(series)}.from_records(domain=data.{name}_REQUIRED, records={records})",
+                f"    return {_annotation(series)}.collect({records})",
             ]
         )
     return lines, used
@@ -441,8 +440,8 @@ def _materialize(series: BoundSeries) -> str:
     """Publish a completed demand-driven reader as an immutable tensor."""
     name = series.series_id.upper()
     return (
-        f"{_annotation(series)}.from_records(domain=data.{name}_REQUIRED, "
-        f"records=((coord, {series.series_id}[coord]) for coord in data.{name}_REQUIRED))"
+        f"{_annotation(series)}.collect("
+        f"(coord, {series.series_id}[coord]) for coord in data.{name}_REQUIRED)"
     )
 
 
@@ -465,12 +464,17 @@ def _schema_checks(params: Sequence[BoundSeries]) -> list[str]:
     ]
 
 
-def _publish_line(series: BoundSeries, constants: str = "()") -> str:
-    domain = "None" if series.layout == "scalar" else f"data.{series.series_id.upper()}_REQUIRED"
-    return (
-        f"@publish(key={series.key_fields!r}, domain={domain}, "
-        f"constants={constants}, cells=data.{series.series_id.upper()}_CELLS)"
+def _publish_line(series: BoundSeries, constants: str | None = None) -> str:
+    name = series.series_id.upper()
+    arguments = (
+        [f"key={series.key_fields!r}", "domain=None"]
+        if series.layout == "scalar"
+        else [f"data.{name}_SCHEMA"]
     )
+    if constants is not None:
+        arguments.append(f"constants={constants}")
+    arguments.append(f"cells=data.{name}_CELLS")
+    return f"@publish({', '.join(arguments)})"
 
 
 def emit_named_internals(
@@ -1021,10 +1025,8 @@ def emit_named_data(
         "from collections.abc import Iterator",
         "from contextlib import contextmanager",
         "from datetime import datetime",
-        "from typing import TypeVar",
         "from .provenance import block_cells, column_cells, grid_cells, row_cells",
         "from .tensor import Axis, Domain, Series, TensorSchema, coordinate_runs",
-        "T = TypeVar('T')",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
         "",
@@ -1064,7 +1066,7 @@ def emit_named_data(
                 f"{name}_REQUIRED = {required_source}",
                 f"{name}_CELLS = {_provenance_source(series, named_axes)}",
                 f"{name}_SCHEMA = TensorSchema({series.series_id!r}, {name}_REQUIRED, {_schema_types(series)})",
-                f"class {_facade(series)}(Series[T]):",
+                f"class {_facade(series)}(Series[{_value_annotation(series)}]):",
                 f'    """`{series.series_id}` by {keyed_by}."""',
                 f"    schema = {name}_SCHEMA",
                 "",
@@ -1074,9 +1076,7 @@ def emit_named_data(
             constant = name + ("_DEFAULT" if series.direction == "input" else "")
             cells = series.coordinate_cells
             values = tuple(defaults[series.series_id][cells[coord]] for coord in domain)
-            lines.append(
-                f"{constant} = {_facade(series)}[{_value_annotation(series)}]({name}_DOMAIN, {_py_literal(values)})"
-            )
+            lines.append(f"{constant} = {_facade(series)}({name}_DOMAIN, {_py_literal(values)})")
     for table, values in literal_tables.items():
         lines.append(f"{table} = {dict(values)!r}")
     names = tuple(series.series_id.upper() for series in constant_series)
