@@ -302,7 +302,9 @@ def test_helper_accepts_wider_domain_and_rejects_missing_coordinates(tmp_path: P
         domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2021, 2022, 2024), int)),
         values=(2.0, 3.0, 5.0),
     )
-    with pytest.raises(ValueError, match="engine_row.*2025"):
+    # Results of named functions are trusted Series; a plain tensor missing a
+    # coordinate fails at the coordinate the formula reads.
+    with pytest.raises((ValueError, KeyError), match="2025"):
         pkg.internals.result(rate=rate5, engine_row=missing)
 
 

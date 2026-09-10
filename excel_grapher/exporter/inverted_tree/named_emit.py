@@ -430,11 +430,15 @@ def _signature(name: str, params: Sequence[BoundSeries], returns: str) -> str:
 
 
 def _schema_checks(params: Sequence[BoundSeries]) -> list[str]:
-    """Validate every tensor parameter against its series schema."""
+    """Validate tensor parameters that arrive from outside the generated model.
+
+    Results of other named functions are `Series` instances validated on
+    construction, so only inputs and constants are checked again here.
+    """
     return [
         f"    data.{series.series_id.upper()}_SCHEMA.validate({series.series_id})"
         for series in params
-        if series.layout != "scalar"
+        if series.layout != "scalar" and series.direction in {"input", "constant"}
     ]
 
 
@@ -553,6 +557,21 @@ def _family_condition(
     }
     if product == members:
         return " and ".join(tests) if tests else None
+    relation = _diagonal_condition(members, universe, product, tests, axes, names)
+    if relation is not None:
+        return relation
+    return _union_condition(members, universe, axes, names)
+
+
+def _diagonal_condition(
+    members: set[tuple[object, ...]],
+    universe: set[tuple[object, ...]],
+    product: set[tuple[object, ...]],
+    tests: Sequence[str],
+    axes: Sequence[Any],
+    names: Mapping[str, str],
+) -> str | None:
+    """A family on one diagonal band of two integer axes."""
     integer_axes = [index for index, axis in enumerate(axes) if axis.key_type is int]
     for position, left in enumerate(integer_axes):
         for right in integer_axes[position + 1 :]:
@@ -580,6 +599,34 @@ def _family_condition(
                 else:
                     relation = f"{low} <= {right_name} - {left_name} <= {high}"
                 return " and ".join([*prefix, relation])
+    return None
+
+
+def _union_condition(
+    members: set[tuple[object, ...]],
+    universe: set[tuple[object, ...]],
+    axes: Sequence[Any],
+    names: Mapping[str, str],
+) -> str | None:
+    """A family that splits along one axis into a few expressible sub-families."""
+    for index, axis in enumerate(axes):
+        keys = [key for key in axis.keys if any(coord[index] == key for coord in members)]
+        if not 2 <= len(keys) <= 4:
+            continue
+        parts: list[str] = []
+        for key in keys:
+            group = [coord for coord in members if coord[index] == key]
+            restricted = {coord for coord in universe if coord[index] == key}
+            selector = f"{names[axis.name]} == {key!r}"
+            if set(group) == restricted:
+                parts.append(selector)
+                continue
+            inner = _family_condition(group, restricted, axes, names)
+            if inner is None:
+                break
+            parts.append(f"({selector} and {inner})")
+        else:
+            return " or ".join(parts)
     return None
 
 

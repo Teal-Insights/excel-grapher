@@ -240,3 +240,68 @@ def test_horizon_boundaries_are_period_comparisons(tmp_path: Path) -> None:
     assert "if time_period >= 2027:" in internals
     assert "_coordinate in ((" not in internals
     assert_package_matches_evaluator(workbook, document, tmp_path, "horizon_conditions")
+
+
+def _ledger_workbook(tmp_path: Path) -> Path:
+    cells: dict[str, object] = {"B1": 2024, "C1": 2025, "D1": 2026, "E1": 2027}
+    row = 2
+    for country in ("France", "Kenya"):
+        for scenario in ("base", "high"):
+            cells[f"A{row}"] = scenario
+            for offset, column in enumerate("BCDE"):
+                cells[f"{column}{row}"] = float(row * 10 + offset)
+                # France doubles from 2025 on; Kenya doubles from 2026 on.
+                doubled = offset >= (1 if country == "France" else 2)
+                cells[f"{column}{row + 6}"] = f"={column}{row}*2" if doubled else f"={column}{row}"
+            row += 1
+    for target in range(8, 12):
+        cells[f"A{target}"] = cells[f"A{target - 6}"]
+    return write_workbook(tmp_path / "ledger.xlsx", {"Vintage": cells})
+
+
+def _ledger_bindings() -> dict[str, Any]:
+    from tests.unit.exporter.inverted_tree.test_nested_layouts import _nested_bindings
+
+    document = _nested_bindings()
+    vintage = document["series"][0]
+    vintage["data_range"] = "Vintage!B2:E5"
+    vintage["structure"]["dimensions"][0]["bind"]["values"] = {"France": "2:3", "Kenya": "4:5"}
+    ledger = {
+        **vintage,
+        "id": "ledger",
+        "data_range": "Vintage!B8:E11",
+        "output": {"compute": {"name": "compute_ledger"}},
+        "structure": {
+            **vintage["structure"],
+            "dimensions": [
+                {
+                    **vintage["structure"]["dimensions"][0],
+                    "bind": {
+                        "kind": "value_map",
+                        "values": {"France": "8:9", "Kenya": "10:11"},
+                        "read": "string",
+                    },
+                },
+                vintage["structure"]["dimensions"][1],
+                vintage["structure"]["dimensions"][2],
+            ],
+        },
+    }
+    del ledger["input"]
+    document["series"] = [vintage, ledger]
+    return document
+
+
+def test_unions_of_axis_families_stay_conditions(tmp_path: Path) -> None:
+    modules = generate_inverted(_ledger_workbook(tmp_path), _ledger_bindings())
+    internals = modules["internals.py"]
+    assert (
+        "if (country == 'France' and time_period == 2024) or "
+        "(country == 'Kenya' and time_period <= 2025):"
+    ) in internals
+    assert ") in ((" not in internals
+    pkg = assert_package_matches_evaluator(
+        _ledger_workbook(tmp_path), _ledger_bindings(), tmp_path, "ledger_unions"
+    )
+    ledger = pkg.compute_ledger(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert ledger["Kenya", "base", 2026] == 2 * 42.0
