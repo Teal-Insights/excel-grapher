@@ -1260,7 +1260,8 @@ def emit_named_data(
         if domain_source is None:
             domain_source = _domain_source(series, named_axes)
             domain_names[domain.fingerprint] = f"{name}_DOMAIN"
-        required = tuple(coord for coord in domain if coord in series.required_coordinates)
+        required_coords = series.required_coordinates
+        required = tuple(coord for coord in domain if coord in required_coords)
         required_source = (
             f"{name}_DOMAIN"
             if len(required) == len(domain)

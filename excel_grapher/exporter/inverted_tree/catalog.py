@@ -162,9 +162,19 @@ class BoundSeries:
     )
     _dimension_binds: Mapping[str, Mapping[str, Any]] = field(init=False, repr=False, compare=False)
     _emit_cache: dict[Any, Any] = field(init=False, repr=False, compare=False)
+    _tensor_domain: Domain | None = field(init=False, repr=False, compare=False)
+    _coordinate_cells: Mapping[tuple[Scalar, ...], CanonicalAddress] | None = field(
+        init=False, repr=False, compare=False
+    )
+    _required_coordinates: frozenset[tuple[Scalar, ...]] | None = field(
+        init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_emit_cache", {})
+        object.__setattr__(self, "_tensor_domain", None)
+        object.__setattr__(self, "_coordinate_cells", None)
+        object.__setattr__(self, "_required_coordinates", None)
         object.__setattr__(
             self,
             "_cell_indices",
@@ -196,6 +206,14 @@ class BoundSeries:
     @property
     def tensor_domain(self) -> Domain:
         """The complete authored semantic domain, independent of graph projection."""
+        cached = self._tensor_domain
+        if cached is None:
+            cached = self._build_tensor_domain()
+            object.__setattr__(self, "_tensor_domain", cached)
+        return cached
+
+    def _build_tensor_domain(self) -> Domain:
+        """Construct the authored `Domain` without reading the instance cache."""
         points = self.domain if self.authored_domain is None else self.authored_domain
         if not self.key_fields:
             cells = self.cells if self.authored_cells is None else self.authored_cells
@@ -239,23 +257,33 @@ class BoundSeries:
     @property
     def coordinate_cells(self) -> Mapping[tuple[Scalar, ...], CanonicalAddress]:
         """Authored coordinate provenance, including members outside the graph."""
-        _ = self.tensor_domain
-        points = self.domain if self.authored_domain is None else self.authored_domain
-        cells = self.cells if self.authored_cells is None else self.authored_cells
-        return MappingProxyType(
-            {
-                tuple(point[name] for name in self.key_fields): cell
-                for point, cell in zip(points, cells, strict=True)
-            }
-        )
+        cached = self._coordinate_cells
+        if cached is None:
+            _ = self.tensor_domain
+            points = self.domain if self.authored_domain is None else self.authored_domain
+            cells = self.cells if self.authored_cells is None else self.authored_cells
+            cached = MappingProxyType(
+                {
+                    tuple(point[name] for name in self.key_fields): cell
+                    for point, cell in zip(points, cells, strict=True)
+                }
+            )
+            object.__setattr__(self, "_coordinate_cells", cached)
+        return cached
 
     @property
     def required_coordinates(self) -> frozenset[tuple[Scalar, ...]]:
         """Coordinates required by this extraction, separate from authored membership."""
-        cells = self.graph_cells
-        return frozenset(
-            coord for coord, cell in self.coordinate_cells.items() if cells is None or cell in cells
-        )
+        cached = self._required_coordinates
+        if cached is None:
+            cells = self.graph_cells
+            cached = frozenset(
+                coord
+                for coord, cell in self.coordinate_cells.items()
+                if cells is None or cell in cells
+            )
+            object.__setattr__(self, "_required_coordinates", cached)
+        return cached
 
     @property
     def is_sequence(self) -> bool:
