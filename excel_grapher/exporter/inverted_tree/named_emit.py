@@ -1298,7 +1298,7 @@ def emit_named_data(
             "",
             f"_CONSTANT_NAMES = frozenset({names!r})",
             "_CONSTANT_SCHEMAS = {" + schemas + "}",
-            *([""] + constant_lines if constant_lines else []),
+            *([""] + list(constant_lines) if constant_lines else []),
             "",
             "",
             "@contextmanager",
