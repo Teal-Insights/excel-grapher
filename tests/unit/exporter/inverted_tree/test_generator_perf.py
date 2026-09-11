@@ -520,3 +520,121 @@ def test_key_axis_is_inferred_once_per_series(
     other = replace(series, domain=tuple(KeyPoint((("VINTAGE", 1),)) for _ in series.cells))
     assert deps_mod._key_field_axis(other, field) is None
     assert calls == 2
+
+
+def _matrix_bound_series(n_inst: int, n_year: int) -> BoundSeries:
+    """Rectangular INSTRUMENT × TIME_PERIOD series (issue 830)."""
+    years = tuple(range(2024, 2024 + n_year))
+    instruments = tuple(f"L{i}" for i in range(n_inst))
+    domain = tuple(
+        KeyPoint(items=(("INSTRUMENT", inst), ("TIME_PERIOD", year)))
+        for inst in instruments
+        for year in years
+    )
+    cells = tuple(f"Debt!A{i + 1}" for i in range(len(domain)))
+    return BoundSeries(
+        series_id="ext_debt_new_disbursements_external",
+        layout="matrix",
+        direction="internal",
+        cells=cells,
+        key_fields=("INSTRUMENT", "TIME_PERIOD"),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=domain,
+        statements=(),
+        graph_cells=frozenset(cells),
+        key_types=("string", "int"),
+    )
+
+
+def _count_domain_explicit(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    counts = {"n": 0}
+    original = catalog_mod.Domain.explicit
+
+    def counting(
+        *,
+        axes: object,
+        coordinates: object,
+    ) -> object:
+        counts["n"] += 1
+        return original(axes=axes, coordinates=coordinates)
+
+    monkeypatch.setattr(catalog_mod.Domain, "explicit", staticmethod(counting))
+    return counts
+
+
+def test_bound_series_domain_properties_are_cached(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """tensor_domain / coordinate_cells / required_coordinates build once (#830)."""
+    series = _matrix_bound_series(20, 40)
+    counts = _count_domain_explicit(monkeypatch)
+    domain = series.tensor_domain
+    cells = series.coordinate_cells
+    required = series.required_coordinates
+    assert counts["n"] == 1, counts
+    assert series.tensor_domain is domain
+    assert series.coordinate_cells is cells
+    assert series.required_coordinates is required
+    _ = tuple(coord for coord in domain if coord in series.required_coordinates)
+    assert counts["n"] == 1, counts
+    assert len(required) == len(series.domain)
+
+
+def test_bound_series_domain_cache_resets_on_replace(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """`dataclasses.replace` must not share the previous instance's domain cache."""
+    series = _matrix_bound_series(4, 5)
+    counts = _count_domain_explicit(monkeypatch)
+    original_domain = series.tensor_domain
+    original_cells = series.coordinate_cells
+    original_required = series.required_coordinates
+    assert counts["n"] == 1, counts
+    replaced = replace(series, statements=series.statements)
+    assert replaced.tensor_domain == original_domain
+    assert replaced.tensor_domain is not original_domain
+    assert replaced.coordinate_cells == original_cells
+    assert replaced.coordinate_cells is not original_cells
+    assert replaced.required_coordinates == original_required
+    assert replaced.required_coordinates is not original_required
+    assert counts["n"] == 2, counts
+
+
+def test_emit_named_data_binds_required_coordinates_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Membership tests must not re-enter `required_coordinates` per coordinate (#830)."""
+    from excel_grapher.exporter.export_runtime.tensor import Axis
+    from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes
+    from excel_grapher.exporter.inverted_tree.named_emit import emit_named_data
+
+    n_inst, n_year = 20, 40
+    series = _matrix_bound_series(n_inst, n_year)
+    n = len(series.domain)
+    catalog = make_catalog(
+        series={series.series_id: series},
+        order=(series.series_id,),
+        address_to_id={cell: series.series_id for cell in series.cells},
+    )
+    named_axes = NamedAxes.plan(
+        (
+            Axis("INSTRUMENT", tuple(f"L{i}" for i in range(n_inst)), str),
+            Axis("TIME_PERIOD", tuple(range(2024, 2024 + n_year)), int),
+        )
+    )
+    original = BoundSeries.required_coordinates.fget
+    assert original is not None
+    accesses = {"n": 0}
+
+    def counting(self: BoundSeries) -> frozenset:
+        accesses["n"] += 1
+        return original(self)
+
+    monkeypatch.setattr(BoundSeries, "required_coordinates", property(counting))
+    workbook = write_workbook(tmp_path / "issue_830.xlsx", {"Debt": {"A1": 0}})
+    data = emit_named_data(catalog, workbook, named_axes, {})
+    assert f"{series.series_id.upper()}_REQUIRED" in data
+    assert accesses["n"] < n, accesses
+    assert accesses["n"] <= 2, accesses
