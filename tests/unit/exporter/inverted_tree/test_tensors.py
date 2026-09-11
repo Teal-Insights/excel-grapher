@@ -40,8 +40,9 @@ def test_sparse_domain_order_holes_and_exact_records() -> None:
     domain = Domain.explicit(axes=(years(2026, 2025, 2027),), coordinates=((2027,), (2026,)))
     tensor = Tensor.from_records(domain=domain, records=(((2027,), None), ((2026,), 0)))
     assert list(tensor.items()) == [((2026,), 0), ((2027,), None)]
-    with pytest.raises(CoordinateError, match="2025"):
-        tensor[2025]
+    assert tensor[2025] is None
+    with pytest.raises(CoordinateError, match="2024"):
+        tensor[2024]
     for records in [
         (((2026,), 1),),
         (((2026,), 1), ((2027,), 2), ((2025,), 3)),
@@ -49,6 +50,17 @@ def test_sparse_domain_order_holes_and_exact_records() -> None:
     ]:
         with pytest.raises(DomainError):
             Tensor.from_records(domain=domain, records=records)
+
+
+def test_sparse_get_blank_vs_invalid_key() -> None:
+    domain = Domain.explicit(axes=(years(2026, 2025, 2027),), coordinates=((2027,), (2026,)))
+    assert domain.sparse_get((2026,)) == domain.position((2026,))
+    assert domain.sparse_get((2027,)) == domain.position((2027,))
+    assert domain.sparse_get((2025,)) is None
+    with pytest.raises(CoordinateError, match="2024"):
+        domain.sparse_get((2024,))
+    with pytest.raises(CoordinateError, match="absent from domain"):
+        domain.position((2025,))
 
 
 def test_arbitrary_rank_and_scalar_product() -> None:
@@ -126,8 +138,7 @@ def test_year_scenario_facades_preserve_ragged_paths() -> None:
     assert paths["shock", 2026] == 102
     assert isinstance(paths["shock"], YearSeries)
     assert paths["shock"].years == (2026, 2027)
-    with pytest.raises(CoordinateError):
-        paths["shock", 2025]
+    assert paths["shock", 2025] is None
     with pytest.raises(AxisError):
         YearSeries(years=(True,), values=(1,))
 

@@ -868,7 +868,12 @@ class InstanceCycleError(ValueError):
 
 
 class CoordinateReader(Generic[T]):
-    """Private demand-driven series; only completed tensors are published."""
+    """Private demand-driven series; only completed tensors are published.
+
+    A read of a valid coordinate that is absent from a sparse required
+    domain is a blank (`None`), matching a structural hole Excel evaluates
+    as empty rather than as an out-of-domain error.
+    """
 
     def __init__(
         self,
@@ -889,7 +894,8 @@ class CoordinateReader(Generic[T]):
 
     def __getitem__(self, key: str | int | tuple[str | int, ...]) -> T:
         coordinate = key if isinstance(key, tuple) else (key,)
-        self._domain.require(coordinate)
+        if self._domain.sparse_get(coordinate) is None:
+            return cast(T, None)
         identity = (self._series_id, coordinate)
         if identity in self._memo:
             return self._memo[identity]

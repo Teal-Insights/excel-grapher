@@ -142,6 +142,23 @@ class Domain:
         """Raise a coordinate error unless the complete coordinate exists."""
         self.position(coord)
 
+    def sparse_get(self, coord: Coordinate) -> int | None:
+        """Return the position, or `None` when a sparse domain lacks `coord`.
+
+        Invalid axis keys still raise `CoordinateError`. A missing membership
+        in an explicit domain is a blank, not a bad key.
+        """
+        if self._members is None:
+            return self.position(coord)
+        position = self._members.get(coord)
+        if position is not None:
+            return position
+        try:
+            self._validate_components(coord)
+        except DomainError as exc:
+            raise CoordinateError(str(exc)) from exc
+        return None
+
     def position(self, coord: Coordinate) -> int:
         """Return the canonical position of `coord`, or raise a coordinate error.
 
@@ -150,12 +167,8 @@ class Domain:
         tensor over them.
         """
         if self._members is not None:
-            position = self._members.get(coord)
+            position = self.sparse_get(coord)
             if position is None:
-                try:
-                    self._validate_components(coord)
-                except DomainError as exc:
-                    raise CoordinateError(str(exc)) from exc
                 raise CoordinateError(f"coordinate {coord!r} is absent from domain")
             return position
         if len(coord) != len(self.axes):
@@ -273,8 +286,17 @@ class Tensor(Generic[T]):
         return cls._from_domain(domain, tuple(flat))
 
     def __getitem__(self, key: Any) -> T:
+        """Return the value at `key`, or `None` for a valid sparse hole.
+
+        Invalid axis keys still raise `CoordinateError`. A coordinate whose
+        components are on the axes but missing from an explicit domain is a
+        blank, matching Excel's empty triangle cells.
+        """
         coord = key if isinstance(key, tuple) else (key,)
-        return self._values[self.domain.position(coord)]
+        position = self.domain.sparse_get(coord)
+        if position is None:
+            return cast(T, None)
+        return self._values[position]
 
     def items(self) -> Iterator[tuple[Coordinate, T]]:
         """Iterate complete coordinates and values in canonical order."""
