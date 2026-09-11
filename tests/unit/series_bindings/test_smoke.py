@@ -156,7 +156,7 @@ def test_run_binding_checks_inverted_tree_smoke_with_in_domain_default(
         package_name="inv_domain_pkg",
         smoke_test=True,
     )
-    assert "require_input_domain" in result["generated_files"]["api.py"]
+    assert "require_input_domain" in result["generated_files"]["validation.py"]
 
 
 def test_run_binding_checks_inverted_tree_smoke_with_value_map(tmp_path: Path) -> None:
@@ -207,7 +207,7 @@ def test_run_binding_checks_inverted_tree_smoke_with_value_map(tmp_path: Path) -
         package_name="inv_value_map_pkg",
         smoke_test=True,
     )
-    assert "apply_input_value_map" in result["generated_files"]["api.py"]
+    assert "apply_input_value_map" in result["generated_files"]["validation.py"]
 
 
 def test_inverted_tree_smoke_rejects_legacy_tuple_result(tmp_path: Path) -> None:

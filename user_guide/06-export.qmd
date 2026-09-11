@@ -22,7 +22,7 @@ with CodeGenerator(graph) as gen:
 ```
 
 `generate_modules()` returns a `dict[str, str]` keyed by module filename
-(`__init__.py`, `api.py`, `data.py`, `internals.py`, `tensor.py`, `provenance.py`,
+(`__init__.py`, `api.py`, `data.py`, `internals.py`, `validation.py`, `tensor.py`, `provenance.py`,
 `runtime.py`, and `excel.py`). Write **all** returned files into a package directory of your
 choice, then import the package as usual. The package has no dependency on `excel_grapher`.
 
@@ -60,9 +60,10 @@ emitted in `data.py` (`SERIES_DEFAULT`). Smoke checks call the generated compute
 
 | Module | Role |
 |--------|------|
-| `api.py` | Keyword-only `compute_*` functions and the `Model` they read. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__`, `__domain__`, and `__cells__`. `Model(**inputs)` validates the bound inputs once and evaluates every formula series on demand as a memoized attribute, so shared intermediate results are computed once per model. |
+| `api.py` | Keyword-only `compute_*` functions and the `Model` they read. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__`, `__domain__`, and `__cells__`. `Model(**inputs)` validates the bound inputs once via `validation.CHECKS` and evaluates every formula series on demand as a memoized attribute, so shared intermediate results are computed once per model. |
 | `data.py` | Immutable constants and `*_DEFAULT` inputs, shared axes, reusable authored domains, graph-required domains, value schemas, generated tensor classes, and coordinate-to-cell provenance descriptors. |
 | `internals.py` | One named function per formula series, written over semantic coordinates: loops over the required domain, explicit seed and boundary branches, lazy `view` / `span` selections over bound series, and `scan_*` functions returning frozen named results for recurrence groups. |
+| `validation.py` | Private `_check_*` helpers and the `CHECKS` registry used by `Model` to apply input schemas, `input.domain`, and `input.value_map` once at construction. |
 | `tensor.py` | Immutable `Axis`, `Domain`, `Tensor`, `Series`, and schema validation. |
 | `provenance.py` | `row_cells`, `column_cells`, `block_cells`, and `grid_cells` descriptors that resolve a coordinate to its authored worksheet cell without listing every cell. |
 | `runtime.py` | Lazy views over named coordinates, recurrence readers, and the `publish` metadata decorator. |

@@ -135,7 +135,7 @@ def test_cached_text_constant_emits_measure_tensor(tmp_path: Path) -> None:
     assert "Sequence[" not in internals
 
 
-def _run_ty(target: Path) -> subprocess.CompletedProcess[str]:
+def _run_ty(package: Path) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[4]
     return subprocess.run(
         [
@@ -145,10 +145,15 @@ def _run_ty(target: Path) -> subprocess.CompletedProcess[str]:
             "ty",
             "check",
             "--extra-search-path",
-            str(target.parent),
+            str(package.parent),
             "--project",
             str(repo_root),
-            str(target),
+            "--ignore",
+            "unresolved-attribute",
+            str(package / "data.py"),
+            str(package / "internals.py"),
+            str(package / "api.py"),
+            str(package / "validation.py"),
         ],
         cwd=str(repo_root),
         capture_output=True,

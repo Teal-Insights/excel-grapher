@@ -1,10 +1,11 @@
-"""Emit the public named tensor contract: `data`, `internals`, and `api`.
+"""Emit the public named tensor contract: `data`, `internals`, `validation`, and `api`.
 
 Every formula series becomes one inspectable named function in `internals`
 whose body is the workbook formula family expressed over semantic
 coordinates. Public `compute_*` functions orchestrate those functions in
-dependency order, sharing intermediate results. There is no private
-positional calculation path.
+dependency order, sharing intermediate results. Input schema, domain, and
+value-map checks live in `validation` so `api` stays the user-facing surface.
+There is no private positional calculation path.
 """
 
 from __future__ import annotations
@@ -693,19 +694,55 @@ def _argument_source(series_id: str, catalog: SeriesCatalog) -> str:
     return f"self.{series_id}"
 
 
+# ---------------------------------------------------------------------------
+# validation.py
+# ---------------------------------------------------------------------------
+
+
+def _python_literal(value: object) -> str:
+    """Render a Python literal using double quotes."""
+    if isinstance(value, str):
+        return json.dumps(value)
+    if isinstance(value, frozenset):
+        inner = ", ".join(_python_literal(item) for item in sorted(value, key=repr))
+        return f"frozenset({{{inner}}})"
+    if isinstance(value, dict):
+        items = ", ".join(
+            f"{_python_literal(key)}: {_python_literal(item)}" for key, item in value.items()
+        )
+        return "{" + items + "}"
+    if isinstance(value, tuple):
+        inner = ", ".join(_python_literal(item) for item in value)
+        return f"({inner},)" if len(value) == 1 else f"({inner})"
+    if isinstance(value, list):
+        return "[" + ", ".join(_python_literal(item) for item in value) + "]"
+    return repr(value)
+
+
+def _check_signature(series_id: str, annotation: str) -> str:
+    """Write a check signature, wrapping only when the one-liner exceeds 100 columns."""
+    name = f"_check_{series_id}"
+    one_line = f"def {name}({series_id}: {annotation}) -> {annotation}:"
+    if len(one_line) <= 100:
+        return one_line
+    return f"def {name}(\n    {series_id}: {annotation},\n) -> {annotation}:"
+
+
 def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
     """Validate one input's schema and declared domain, then apply its value map."""
     lines: list[str] = []
     used: set[str] = set()
     series_id = series.series_id
+    quoted_id = _python_literal(series_id)
     if not series.single_valued:
         lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
     domain = measure_domain_from_series(series.raw)
     if domain is not None:
         used.add("require_input_domain")
+        domain_literal = _python_literal(domain)
         if series.single_valued:
             lines.append(
-                f"    require_input_domain({series_id}, {domain!r}, series_id={series_id!r})"
+                f"    require_input_domain({series_id}, {domain_literal}, series_id={quoted_id})"
             )
         else:
             # Restrict validation to this extraction's required domain;
@@ -713,18 +750,77 @@ def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
             lines.extend(
                 [
                     f"    for coordinate in data.{series_id.upper()}_REQUIRED:",
-                    f"        require_input_domain({series_id}[coordinate], {domain!r}, series_id={series_id!r} + repr(coordinate))",
+                    f"        require_input_domain({series_id}[coordinate], {domain_literal}, series_id={quoted_id} + repr(coordinate))",
                 ]
             )
     mapping = input_value_map_from_series(series.raw)
     if mapping is not None:
         used.add("apply_input_value_map")
         lines.append(
-            f"    return apply_input_value_map({series_id}, {mapping!r}, series_id={series_id!r})"
+            f"    return apply_input_value_map({series_id}, {_python_literal(mapping)}, series_id={quoted_id})"
         )
     else:
         lines.append(f"    return {series_id}")
     return lines, used
+
+
+def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str], set[str]]:
+    """Collect non-trivial input check sources and the runtime helpers they use."""
+    checks: list[str] = []
+    checked: list[str] = []
+    used: set[str] = set()
+    for series in _retained(catalog):
+        if series.direction != "input":
+            continue
+        body, check_used = _input_check(series)
+        if len(body) == 1 and body[0] == f"    return {series.series_id}":
+            continue
+        used |= check_used
+        checked.append(series.series_id)
+        annotation = _annotation(series)
+        checks.append(
+            "\n".join(
+                [
+                    _check_signature(series.series_id, annotation),
+                    f'    """Validate `{series.series_id}` before the model reads it."""',
+                    *body,
+                ]
+            )
+        )
+    return checks, checked, used
+
+
+def emit_named_validation(catalog: SeriesCatalog) -> str:
+    """Emit input schema, domain, and value-map checks for `Model` construction."""
+    checks, checked, used = _input_check_functions(catalog)
+    lines = [
+        '"""Input schema, domain, and value-map checks for bound Model arguments."""',
+        "",
+        "from __future__ import annotations",
+        "",
+    ]
+    stdlib: list[str] = []
+    local: list[str] = []
+    if any("datetime" in _annotation(catalog.get(sid)) for sid in checked):
+        stdlib.append("from datetime import datetime")
+    if any(not catalog.get(sid).single_valued for sid in checked):
+        local.append("from . import data")
+    if used:
+        local.append(f"from .runtime import {', '.join(sorted(used))}")
+    extra = [*stdlib, *(["", *local] if stdlib and local else local)]
+    if extra:
+        lines.extend(extra)
+        lines.append("")
+        lines.append("")
+    if checks:
+        lines.append("\n\n\n".join(checks))
+        lines.extend(["", "", "CHECKS = {"])
+        lines.extend(f"    {_python_literal(sid)}: _check_{sid}," for sid in checked)
+        lines.append("}")
+    else:
+        lines.append("CHECKS = {}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def _model_attribute(
@@ -768,25 +864,7 @@ def emit_named_api(
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
     """Emit the memoized `Model` and the public `compute_*` functions over it."""
-    used: set[str] = {"publish"}
     inputs = [s for s in _retained(catalog) if s.direction == "input"]
-    checks: list[str] = []
-    checked: list[str] = []
-    for series in inputs:
-        body, check_used = _input_check(series)
-        if len(body) == 1 and body[0] == f"    return {series.series_id}":
-            continue
-        used |= check_used
-        checked.append(series.series_id)
-        checks.append(
-            "\n".join(
-                [
-                    f"def _check_{series.series_id}({series.series_id}: {_annotation(series)}) -> {_annotation(series)}:",
-                    f'    """Validate `{series.series_id}` before the model reads it."""',
-                    *body,
-                ]
-            )
-        )
     model = [
         "class Model:",
         '    """Formula series of the workbook, evaluated on demand from bound inputs.',
@@ -804,7 +882,7 @@ def emit_named_api(
             "",
             "    def __init__(self, **inputs: object) -> None:",
             "        for name, value in inputs.items():",
-            "            check = _CHECKS.get(name)",
+            "            check = validation.CHECKS.get(name)",
             "            setattr(self, name, value if check is None else check(value))",
         ]
     )
@@ -839,14 +917,8 @@ def emit_named_api(
         "from __future__ import annotations",
         "from datetime import datetime",
         "from functools import cached_property",
-        "from . import data, internals",
-        f"from .runtime import {', '.join(sorted(used))}",
-        "",
-        *checks,
-        "",
-        "_CHECKS = {",
-        *(f"    {sid!r}: _check_{sid}," for sid in checked),
-        "}",
+        "from . import data, internals, validation",
+        "from .runtime import publish",
         "",
         *constant_lines,
         "",
@@ -1252,6 +1324,7 @@ def emit_named_modules(
     )
     literal_tables: dict[str, dict[tuple[object, ...], object]] = {}
     internals = emit_named_internals(catalog, deps, scc_map, graph, named_axes, literal_tables)
+    validation = emit_named_validation(catalog)
     api = emit_named_api(catalog, deps, scc_map)
     data = emit_named_data(catalog, workbook, named_axes, literal_tables)
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
@@ -1264,6 +1337,7 @@ def emit_named_modules(
         + "\nfrom .tensor import Axis, Domain, Tensor, TensorSchema\n"
         + "__all__ += ['Axis', 'Domain', 'Tensor', 'TensorSchema']\n",
         "api.py": api,
+        "validation.py": validation,
         "internals.py": internals,
         "data.py": data,
         "tensor.py": tensor_source,

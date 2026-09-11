@@ -104,11 +104,13 @@ def test_no_input_domain_does_not_emit_domain_guard(tmp_path: Path) -> None:
     modules = generate_inverted(_a1_workbook(tmp_path), _a1_bindings())
     assert "require_input_domain" not in modules["api.py"]
     assert "require_input_domain" not in modules["internals.py"]
+    assert "require_input_domain" not in modules["validation.py"]
 
 
-def test_domain_checks_live_on_orchestrator_not_internals(tmp_path: Path) -> None:
+def test_domain_checks_live_in_validation_not_internals(tmp_path: Path) -> None:
     modules = generate_inverted(_enum_flag_workbook(tmp_path), _enum_flag_bindings())
-    assert "require_input_domain(flag" in modules["api.py"]
+    assert "require_input_domain(flag" in modules["validation.py"]
+    assert "require_input_domain" not in modules["api.py"]
     assert "require_input_domain" not in modules["internals.py"]
 
 
@@ -136,8 +138,9 @@ def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
         series_entry("out_b", "Outputs!B1", layout="scalar", direction="output", dtype="int"),
     )
     modules = generate_inverted(workbook, document)
-    api = modules["api.py"]
-    assert api.count("require_input_domain(flag") == 1
+    validation = modules["validation.py"]
+    assert validation.count("require_input_domain(flag") == 1
+    assert "require_input_domain" not in modules["api.py"]
     assert "require_input_domain" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="domain_shared")
     assert pkg.compute_out_a(flag=0) == 0
