@@ -57,18 +57,29 @@ as in the test harness.
 | `build_runtime_modules` | 16.9 | 26.1 | Fixed ~9 MB `ast` spike embedding the runtime |
 
 Releasing objects at the end attributes the retained total: graph 9.4 MB,
-catalog 2.2 MB, edges and deps 1.4 MB, everything else about 0.2 MB. Per unit
-that is roughly 3.6 KB per graph node, 850 B per bound cell in the catalog,
-and 200 B per dependence edge. Scaled to the LIC DSF workload (about 130,000
-bound cells across 1,938 series, per the migration report), the codegen-owned
-structures are in the low hundreds of megabytes and the graph is larger
-again; the exact split must be measured, not extrapolated.
+catalog 2.2 MB, edges and deps 1.4 MB, everything else about 0.2 MB. A second
+run at 150 formula series and 15 inputs over 50 years (7,500 formula cells,
+8,250 bound cells, 22,337 edges; one-frame tracemalloc) scales linearly:
+
+| Workload | Graph (MB) | Catalog (MB) | Edges and deps (MB) | Emission adds (MB) | `ru_maxrss` at end (MB) |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 60x40 (2,640 bound cells, 7,155 edges) | 9.4 | 2.2 | 1.4 | 0.9 | 187 |
+| 150x50 (8,250 bound cells, 22,337 edges) | 32.7 | 8.0 | 4.3 | 3.3 | 372 |
+
+Per unit that is roughly 3.6 to 4 KB per graph node, 850 to 970 B per bound
+cell in the catalog, and 190 to 200 B per dependence edge. Scaled to the LIC
+DSF workload (about 130,000 bound cells across 1,938 series, per the
+migration report), the codegen-owned structures are in the low hundreds of
+megabytes and the graph is larger again; the exact split must be measured,
+not extrapolated. Process RSS runs several times the traced Python heap in
+both runs (tracemalloc overhead, allocator slack, and the workbook reader),
+so RSS and traced peak must be reported separately.
 
 Two further observations from the same run:
 
 - **Address strings are not shared.** 41,012 strings (2.0 MB) allocated in
   `excel_grapher/core/address_keys.py` survive for about 2,640 distinct
-  addresses. `format_cell_key`, `resolve_cell_ref`, and `as_canonical`
+  addresses; 137,923 strings (6.7 MB) for about 8,300 at the larger size. `format_cell_key`, `resolve_cell_ref`, and `as_canonical`
   (`address_keys.py:221`, a `NewType` over `str`) mint a new `str` each time,
   and the graph, catalog, edge, and schedule maps each hold their own copies.
 - **Domains are rebuilt per reference.** Under cProfile, 60 formula series
