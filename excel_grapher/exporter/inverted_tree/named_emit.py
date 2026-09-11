@@ -613,7 +613,7 @@ def _union_condition(
     """A family that splits along one axis into a few expressible sub-families."""
     for index, axis in enumerate(axes):
         keys = [key for key in axis.keys if any(coord[index] == key for coord in members)]
-        if not 2 <= len(keys) <= 4:
+        if not 2 <= len(keys) <= 8:
             continue
         parts: list[str] = []
         for key in keys:

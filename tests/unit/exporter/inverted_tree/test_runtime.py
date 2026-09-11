@@ -78,6 +78,20 @@ def test_coordinate_reader_memoizes_labels_and_detects_same_coordinate_cycles() 
     assert reader[2025] == 10
 
 
+def test_coordinate_reader_blank_on_sparse_absence() -> None:
+    from excel_grapher.exporter.export_runtime.tensor import Axis, CoordinateError, Domain
+    from excel_grapher.exporter.inverted_tree.runtime import CoordinateReader
+
+    years = Axis("year", (2024, 2025, 2026), int)
+    domain = Domain.explicit(axes=(years,), coordinates=((2024,), (2026,)))
+    reader = CoordinateReader("stock", domain, lambda year: year)
+    assert reader[2024] == 2024
+    assert reader[2025] is None
+    assert reader[2026] == 2026
+    with pytest.raises(CoordinateError, match="2023"):
+        reader[2023]
+
+
 def test_require_aligned_returns_common_length() -> None:
     assert require_aligned((1, 2, 3), ("a", "b", "c")) == 3
 

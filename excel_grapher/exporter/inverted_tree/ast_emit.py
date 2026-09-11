@@ -204,7 +204,16 @@ def _statement_cells(ctx: EmitContext) -> tuple[CanonicalAddress, ...] | None:
 def _emit_address(
     address: CanonicalAddress, ctx: EmitContext, *, ref: CellRefNode | None = None
 ) -> str:
-    if address_in_blank_ranges(address, ctx.blank_rects):
+    """Compile a cell read; bound-series blanks stay named coordinates.
+
+    Unbound `blank_ranges` cells are the literal `None`. A hole that still
+    belongs to a bound series is indexed by coordinate so formula families
+    can fold; the reader returns a blank when that coordinate is absent.
+    """
+    if (
+        address_in_blank_ranges(address, ctx.blank_rects)
+        and ctx.catalog.series_for(address) is None
+    ):
         return "None"
     return _emit_named_address(address, ctx, ref=ref)
 
@@ -373,21 +382,34 @@ def _named_keys(
     A key equal to the host's own key is the loop variable. An integer key
     reached through a moving reference is the host's period variable plus
     the authored difference; formula-family grouping then verifies the same
-    difference at every coordinate sharing the expression. A label that
-    embeds the host's own key is a template over it. Keys reached through a
-    fixed reference (`$`, or the same cell from every host cell) stay literal.
+    difference at every coordinate sharing the expression. A `$` pin onto
+    this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
+    across vintages. Other fixed references stay literal. A label that
+    embeds the host's own key is a template over it.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
     assert ctx.coordinate_vars is not None
     host_point = ctx.host.domain[ctx.host_index].as_mapping()
     pinned = _pinned_axes(ref, ctx)
+    issuance_var = ctx.coordinate_vars.get("ISSUANCE_YEAR")
+    issuance_key = host_point.get("ISSUANCE_YEAR")
     keys = []
     for key_field in owner.key_fields:
         variable = ctx.coordinate_vars.get(key_field)
         current = host_point.get(key_field)
         target = point[key_field]
         field_axis = _key_field_axis(owner, key_field)
+        # A `$` pin onto this vintage's issuance year is `issuance_year`,
+        # not a per-vintage literal. Relative lags stay `time_period ± n`.
+        if (
+            issuance_var is not None
+            and key_field == "TIME_PERIOD"
+            and issuance_key == target
+            and field_axis in pinned
+        ):
+            keys.append(issuance_var)
+            continue
         if field_axis in pinned:
             keys.append(repr(target))
             continue

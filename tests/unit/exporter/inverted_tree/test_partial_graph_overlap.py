@@ -491,8 +491,7 @@ def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> Non
     assert got["France", 2020] == pytest.approx(1.0)
     assert len(pkg.data.PROFILE_TABLE_DOMAIN) == 4
     assert len(got.domain) == 1
-    with pytest.raises(KeyError):
-        got["France", 2021]
+    assert got["France", 2021] is None
 
 
 def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
@@ -578,8 +577,7 @@ def test_matrix_unreferenced_literal_is_embedded(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="matrix_unref_literal")
     got = pkg.internals.profile_table()
     assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
-    with pytest.raises(KeyError):
-        got["France", 2021]
+    assert got["France", 2021] is None
 
 
 def _series_leaf_workbook(tmp_path: Path, *, extra_off_graph: bool = False) -> tuple[Path, str]:
