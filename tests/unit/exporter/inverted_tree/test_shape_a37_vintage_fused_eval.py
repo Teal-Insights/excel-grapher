@@ -334,6 +334,9 @@ def test_vintage_triangle_export_matches_evaluator(tmp_path: Path) -> None:
     internals = modules["internals.py"]
     assert "eval_instance" not in internals
     assert "issuance[time_period]" in internals
+    assert "issuance_year, issuance_year" in internals
+    assert "xl_div(None" not in internals
+    assert "xl_mul(None" not in internals
     pkg = load_package(modules, tmp_path, name="a37_triangle")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     stock = catalog.get("stock")
