@@ -1,9 +1,11 @@
 """Formula families fold across coordinates instead of unrolling per cell.
 
 A reference that points at the same cell from every host cell is a literal
-key even when it was authored without `$`. An integer key of another axis
-that moves with the host period is the period variable plus a difference.
-A label key that embeds the host's own key is a template over it.
+key even when it was authored without `$`. An expanding SUM whose start
+vintage stays put while the host period slides is one `span`, not a
+`TIME_PERIOD` if-ladder. An integer key of another axis that moves with the
+host period is the period variable plus a difference. A label key that
+embeds the host's own key is a template over it.
 """
 
 from __future__ import annotations
@@ -12,6 +14,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from fastpyxl import Workbook
 from fastpyxl.utils.cell import get_column_letter
 
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -120,6 +123,147 @@ def test_triangular_range_end_follows_the_host_period(tmp_path: Path) -> None:
     )
     outstanding = pkg.compute_outstanding(vintage=pkg.data.VINTAGE_DEFAULT)
     assert outstanding[2026] == 22.0 + 32.0 + 42.0
+
+
+_EXPANDING_YEARS = tuple(range(2025, 2030))
+_EXPANDING_VINTAGES = tuple(range(2024, 2030))
+
+
+def _expanding_sum_workbook(tmp_path: Path, *, pin_start: bool) -> Path:
+    """Expanding vintage SUM whose origin is always the first issuance year.
+
+    Relative formulas are `SUM(B2:B3)`, `SUM(C2:C4)`, ... -- the start row stays
+    on vintage 2024 while the column follows `TIME_PERIOD`. `$` pins the same
+    geometry as `SUM(B$2:B3)`, `SUM(C$2:C4)`, ....
+    """
+    path = tmp_path / ("expanding_span_pinned.xlsx" if pin_start else "expanding_span.xlsx")
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Data"
+    for col, year in enumerate(_EXPANDING_YEARS, start=2):
+        sheet.cell(1, col, year)
+        sheet.cell(9, col, year)
+        end_row = 2 + (year - 2024)
+        start = sheet.cell(2, col)
+        end = sheet.cell(end_row, col)
+        start_addr = f"{start.column_letter}$2" if pin_start else start.coordinate
+        sheet.cell(10, col, f"=SUM({start_addr}:{end.coordinate})")
+    for row, vintage in enumerate(_EXPANDING_VINTAGES, start=2):
+        sheet.cell(row, 1, vintage)
+        for col in range(2, 2 + len(_EXPANDING_YEARS)):
+            sheet.cell(row, col, float(row * 10 + col))
+    book.save(path)
+    return path
+
+
+def _expanding_sum_bindings() -> dict[str, Any]:
+    last_col = get_column_letter(1 + len(_EXPANDING_YEARS))
+    last_vintage_row = 1 + len(_EXPANDING_VINTAGES)
+    vintage = {
+        "id": "vintage",
+        "sheet": "Data",
+        "data_range": f"Data!B2:{last_col}{last_vintage_row}",
+        "layout": "series",
+        "input": {"setter": {"name": "set_vintage", "record_contract": "records", "strict": True}},
+        "key": ["ISSUANCE_YEAR", "TIME_PERIOD"],
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "id": "ISSUANCE_YEAR",
+                    "concept": "ISSUANCE_YEAR",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "A", "read": "int"},
+                },
+                {
+                    "id": "TIME_PERIOD",
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                },
+            ],
+        },
+    }
+    document = bindings_document(
+        vintage,
+        series_entry(
+            "interest",
+            f"Data!B10:{last_col}10",
+            layout="series",
+            direction="output",
+            header_row=9,
+        ),
+        schema_version="1.15.0",
+    )
+    document["concept_scheme"]["concepts"].append({"id": "ISSUANCE_YEAR", "dtype": "int"})
+    return document
+
+
+def _assert_expanding_sum_is_one_span(tmp_path: Path, *, pin_start: bool, name: str) -> None:
+    workbook = _expanding_sum_workbook(tmp_path, pin_start=pin_start)
+    document = _expanding_sum_bindings()
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert (
+        "xl_sum(view(vintage, rows=span(data.ISSUANCE_YEAR_AXIS, 2024, time_period), "
+        "cols=(time_period,)))"
+    ) in internals
+    assert internals.count("span(") == 1
+    assert "if time_period ==" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
+    interest = pkg.compute_interest(vintage=pkg.data.VINTAGE_DEFAULT)
+    # 2027 = vintages 2024..2027 in column D (col 4): rows 2-5 -> 24+34+44+54.
+    assert interest[2027] == 24.0 + 34.0 + 44.0 + 54.0
+
+
+def test_expanding_sum_from_fixed_vintage_is_one_span(tmp_path: Path) -> None:
+    _assert_expanding_sum_is_one_span(tmp_path, pin_start=False, name="expanding_rel")
+
+
+def test_expanding_sum_with_pinned_start_row_is_one_span(tmp_path: Path) -> None:
+    _assert_expanding_sum_is_one_span(tmp_path, pin_start=True, name="expanding_abs")
+
+
+def _rolling_vintage_workbook(tmp_path: Path) -> Path:
+    """Rolling last-two-vintages SUM: origin moves with `TIME_PERIOD`."""
+    path = tmp_path / "rolling_span.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Data"
+    for col, year in enumerate(_EXPANDING_YEARS, start=2):
+        sheet.cell(1, col, year)
+        sheet.cell(9, col, year)
+        end_row = 2 + (year - 2024)
+        start_row = end_row - 1
+        start = sheet.cell(start_row, col).coordinate
+        end = sheet.cell(end_row, col).coordinate
+        sheet.cell(10, col, f"=SUM({start}:{end})")
+    for row, vintage in enumerate(_EXPANDING_VINTAGES, start=2):
+        sheet.cell(row, 1, vintage)
+        for col in range(2, 2 + len(_EXPANDING_YEARS)):
+            sheet.cell(row, col, 1.0)
+    book.save(path)
+    return path
+
+
+def test_rolling_vintage_window_keeps_a_moving_origin(tmp_path: Path) -> None:
+    workbook = _rolling_vintage_workbook(tmp_path)
+    document = _expanding_sum_bindings()
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert (
+        "xl_sum(view(vintage, rows=span(data.ISSUANCE_YEAR_AXIS, time_period - 1, time_period), "
+        "cols=(time_period,)))"
+    ) in internals
+    assert "span(data.ISSUANCE_YEAR_AXIS, 2024, time_period)" not in internals
+    assert "if time_period ==" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "rolling_vintage")
+    interest = pkg.compute_interest(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert interest[2027] == 2.0
 
 
 def _terms_workbook(tmp_path: Path) -> Path:
