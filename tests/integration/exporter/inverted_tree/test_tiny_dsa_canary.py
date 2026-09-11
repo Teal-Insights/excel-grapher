@@ -269,10 +269,13 @@ def test_public_computes_require_semantic_coordinate_coverage(tiny_dsa_pkg) -> N
 def test_constant_sets_are_shared_between_outputs(tiny_dsa_pkg) -> None:
     import inspect
 
+    data = inspect.getsource(tiny_dsa_pkg.data)
     api = inspect.getsource(tiny_dsa_pkg.api)
-    assert "_CONSTANTS_0 = frozenset({'country_profile_names'})\n" in api
-    assert "_CONSTANTS_1 = _CONSTANTS_0 | frozenset({'engine_year_labels'})\n" in api
-    assert api.count("frozenset(") == 2
+    assert "_CONSTANTS_0 = frozenset({'country_profile_names'})\n" in data
+    assert "_CONSTANTS_1 = _CONSTANTS_0 | frozenset({'engine_year_labels'})\n" in data
+    assert "from .data import _CONSTANTS_0, _CONSTANTS_1\n" in api
+    assert "_CONSTANTS_0 =" not in api
+    assert api.count("frozenset(") == 0
     assert tiny_dsa_pkg.compute_output_shocked.__constants__ == (
         "country_profile_names",
         "engine_year_labels",

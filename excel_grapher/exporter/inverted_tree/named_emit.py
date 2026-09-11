@@ -5,6 +5,7 @@ whose body is the workbook formula family expressed over semantic
 coordinates. Public `compute_*` functions orchestrate those functions in
 dependency order, sharing intermediate results. Input schema, domain, and
 value-map checks live in `validation` so `api` stays the user-facing surface.
+Shared `_CONSTANTS_*` aliases live in `data` and are imported by `api`.
 There is no private positional calculation path.
 """
 
@@ -862,6 +863,7 @@ def emit_named_api(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
+    constant_sets: Mapping[frozenset[str], str],
 ) -> str:
     """Emit the memoized `Model` and the public `compute_*` functions over it."""
     inputs = [s for s in _retained(catalog) if s.direction == "input"]
@@ -898,29 +900,24 @@ def emit_named_api(
             model.extend(_model_recurrence_group(scc, deps, catalog))
             continue
         model.extend(_model_attribute(series, deps, catalog))
-    constant_sets: dict[frozenset[str], str] = {}
-    constant_lines: list[str] = []
     functions: list[str] = []
     compute_names: list[str] = []
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
-        if constants not in constant_sets:
-            alias = f"_CONSTANTS_{len(constant_sets)}"
-            constant_lines.append(f"{alias} = {_constant_set_source(constants, constant_sets)}")
-            constant_sets[constants] = alias
         source, name = _public_function(output, leaves, catalog, constant_sets[constants])
         functions.append(source)
         compute_names.append(name)
+    aliases = list(constant_sets.values())
     lines = [
         '"""Generated functions accepting and returning named-coordinate values."""',
         "from __future__ import annotations",
         "from datetime import datetime",
         "from functools import cached_property",
         "from . import data, internals, validation",
+        *([_constants_import(aliases)] if aliases else []),
         "from .runtime import publish",
         "",
-        *constant_lines,
         "",
         "\n".join(model),
         "",
@@ -933,6 +930,30 @@ def emit_named_api(
         "",
     ]
     return "\n".join(lines)
+
+
+def _output_constant_sets(
+    catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps]
+) -> tuple[dict[frozenset[str], str], list[str]]:
+    """Alias each public output's constant-leaf set, sharing subset unions."""
+    constant_sets: dict[frozenset[str], str] = {}
+    lines: list[str] = []
+    for output in catalog.output_series():
+        leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
+        constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
+        if constants not in constant_sets:
+            alias = f"_CONSTANTS_{len(constant_sets)}"
+            lines.append(f"{alias} = {_constant_set_source(constants, constant_sets)}")
+            constant_sets[constants] = alias
+    return constant_sets, lines
+
+
+def _constants_import(aliases: Sequence[str]) -> str:
+    """Import shared `_CONSTANTS_*` aliases from `data`, wrapping at 100 columns."""
+    one_line = f"from .data import {', '.join(aliases)}"
+    if len(one_line) <= 100:
+        return one_line
+    return "from .data import (\n    " + ",\n    ".join(aliases) + ",\n)"
 
 
 def _constant_set_source(constants: frozenset[str], known: Mapping[frozenset[str], str]) -> str:
@@ -1197,6 +1218,7 @@ def emit_named_data(
     workbook: Path | str,
     named_axes: NamedAxes,
     literal_tables: Mapping[str, Mapping[tuple[object, ...], object]],
+    constant_lines: Sequence[str] = (),
 ) -> str:
     """Emit shared axes, domains, schemas, facades, provenance, and defaults."""
     from excel_grapher.exporter.inverted_tree.emit import _py_literal
@@ -1276,6 +1298,7 @@ def emit_named_data(
             "",
             f"_CONSTANT_NAMES = frozenset({names!r})",
             "_CONSTANT_SCHEMAS = {" + schemas + "}",
+            *([""] + constant_lines if constant_lines else []),
             "",
             "",
             "@contextmanager",
@@ -1325,8 +1348,9 @@ def emit_named_modules(
     literal_tables: dict[str, dict[tuple[object, ...], object]] = {}
     internals = emit_named_internals(catalog, deps, scc_map, graph, named_axes, literal_tables)
     validation = emit_named_validation(catalog)
-    api = emit_named_api(catalog, deps, scc_map)
-    data = emit_named_data(catalog, workbook, named_axes, literal_tables)
+    constant_sets, constant_lines = _output_constant_sets(catalog, deps)
+    api = emit_named_api(catalog, deps, scc_map, constant_sets)
+    data = emit_named_data(catalog, workbook, named_axes, literal_tables, constant_lines)
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
 
     export_runtime = Path(__file__).parents[1] / "export_runtime"

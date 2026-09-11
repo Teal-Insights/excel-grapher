@@ -641,7 +641,11 @@ def test_code_size_independent_of_constant_series_count(tmp_path: Path) -> None:
     assert large_pkg.compute_result.__constants__ == tuple(f"const_{i}" for i in range(8))
     assert "require_length" not in small_used["api.py"]
     assert "require_length" not in large_used["api.py"]
-    assert "from .data import" not in large_used["api.py"]
+    assert "from .data import _CONSTANTS_0\n" in large_used["api.py"]
+    assert "_CONSTANTS_0 =" not in large_used["api.py"]
+    assert "frozenset(" not in large_used["api.py"]
+    assert "_CONSTANTS_0 = frozenset({'const_0', 'const_1'})\n" in small_used["data.py"]
+    assert "_CONSTANTS_0 =" in large_used["data.py"]
     small_sig_lines = [
         line for line in small_used["api.py"].splitlines() if line.startswith("    ")
     ]

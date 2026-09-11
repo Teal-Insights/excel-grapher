@@ -90,6 +90,17 @@ def _a5_bindings() -> dict:
     )
 
 
+def test_public_constant_sets_live_in_data(tmp_path: Path) -> None:
+    modules = generate_inverted(_a5_workbook(tmp_path), _a5_bindings())
+    data, api = modules["data.py"], modules["api.py"]
+    assert "_CONSTANTS_0 = frozenset({})\n" in data
+    assert "_CONSTANTS_1 = frozenset({'engine_year_labels'})\n" in data
+    assert "from .data import _CONSTANTS_0, _CONSTANTS_1\n" in api
+    assert "_CONSTANTS_0 =" not in api
+    assert "constants=_CONSTANTS_0," in api
+    assert "constants=_CONSTANTS_1," in api
+
+
 def test_year_labels_appear_only_on_shocked_compute(tmp_path: Path) -> None:
     workbook = _a5_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a5_bindings()), tmp_path, name="a5_pkg")

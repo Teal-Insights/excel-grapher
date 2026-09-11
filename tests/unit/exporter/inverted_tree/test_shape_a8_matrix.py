@@ -140,7 +140,8 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _profile_bindings())
     assert "EvalContext" not in modules["api.py"]
     assert "ctx" not in modules["api.py"]
-    assert "from .data import" not in modules["api.py"]
+    assert "from .data import PROFILE_TABLE" not in modules["api.py"]
+    assert "from .data import _CONSTANTS_0\n" in modules["api.py"]
     assert "PROFILE_TABLE" in modules["data.py"]
     assert "(10.0, 11.0, 20.0, 21.0)" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a8_kw")
