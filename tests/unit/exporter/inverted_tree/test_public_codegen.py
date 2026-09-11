@@ -206,8 +206,7 @@ def test_four_axis_sparse_generated_function(tmp_path: Path) -> None:
     assert len(result.domain.axes) == 4
     assert len(result.domain) == 6
     assert result["bond", "foreign", 2025, 2027] == 160
-    with pytest.raises(KeyError):
-        result["bond", "resident", 2025, 2027]
+    assert result["bond", "resident", 2025, 2027] is None
     assert "src[instrument, holder, issuance_year, time_period]" in modules["internals.py"]
     assert package.Tensor.from_json(result.to_json()).domain == result.domain
 
