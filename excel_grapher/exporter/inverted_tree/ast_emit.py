@@ -282,31 +282,53 @@ def _cell_refs_of(ctx: EmitContext, cell: CanonicalAddress) -> list[CellRef]:
     return refs
 
 
-def _reference_stays_put(ctx: EmitContext, ref: CellRef, axis: str) -> bool:
-    """True when the neighbouring host cell reaches the same target through `ref`.
+def _host_neighbors(ctx: EmitContext) -> tuple[CanonicalAddress, ...]:
+    """Host cells one step along each worksheet axis that exist in the series."""
+    return tuple(
+        neighbor
+        for axis in ("row", "col")
+        if (neighbor := _neighbor_host_cell(ctx, axis)) is not None
+    )
 
-    A relative reference authored per cell can still point at one fixed
-    cell; the family then keys that cell literally instead of unrolling a
-    different displacement at every coordinate.
+
+def _axis_coord(address: str, axis: str) -> tuple[str, int]:
+    """Sheet plus the row or column index of `address`."""
+    sheet, row, col = parse_cell_coords(address)
+    return sheet, row if axis == "row" else col
+
+
+def _reference_stays_put(ctx: EmitContext, ref: CellRef, axis: str) -> bool:
+    """True when neighbouring host formulas keep `ref` on the same `axis` coord.
+
+    A relative reference copied across years can still stay on one vintage
+    row (or one period column). Compare that axis coordinate, not the full
+    address: the start of an expanding `SUM` slides with `TIME_PERIOD` while
+    the vintage row stays put. Neighbours along either host axis count, so a
+    one-row host can still pin the start vintage.
     """
     if ctx.graph is None:
         return False
-    neighbor = _neighbor_host_cell(ctx, axis)
-    if neighbor is None:
-        return False
     host_refs = _cell_refs_of(ctx, ctx.host_cell)
-    neighbor_refs = _cell_refs_of(ctx, neighbor)
-    if len(host_refs) != len(neighbor_refs):
-        return False
     index = next((i for i, candidate in enumerate(host_refs) if candidate is ref), None)
     if index is None:
         return False
-    target = resolve_cell_ref(ref, ctx.host_cell)
-    return resolve_cell_ref(neighbor_refs[index], neighbor) == target
+    host_sheet, host_coord = _axis_coord(resolve_cell_ref(ref, ctx.host_cell), axis)
+    saw_neighbor = False
+    for neighbor in _host_neighbors(ctx):
+        neighbor_refs = _cell_refs_of(ctx, neighbor)
+        if len(host_refs) != len(neighbor_refs):
+            return False
+        saw_neighbor = True
+        neighbor_sheet, neighbor_coord = _axis_coord(
+            resolve_cell_ref(neighbor_refs[index], neighbor), axis
+        )
+        if neighbor_sheet != host_sheet or neighbor_coord != host_coord:
+            return False
+    return saw_neighbor
 
 
 def _pinned_axes(ref: CellRefNode | None, ctx: EmitContext) -> set[str]:
-    """Worksheet axes on which `ref` reaches one fixed cell that is not the host."""
+    """Worksheet axes on which `ref` keeps one coordinate that is not the host's."""
     if ref is None:
         return set()
     address = resolve_cell_ref(ref, ctx.host_cell)
