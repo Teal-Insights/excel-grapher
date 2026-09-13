@@ -27,9 +27,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -307,15 +307,13 @@ def test_variant_dual_read_emits_host_scenario_and_matches_evaluator(tmp_path: P
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "stats[2 * i]" in internals
-    assert "stats[2 * i + 1]" in internals
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a31_eval")
     cells = ["Outputs!A1", "Outputs!A2"]
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = (
         _unwrap(call_compute(pkg, "result_shock", kwargs)),
         _unwrap(call_compute(pkg, "result_combo", kwargs)),
@@ -337,9 +335,11 @@ def test_two_year_host_same_pins_is_keyed(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
-    got = pkg.internals.fdi(kwargs["stats"], kwargs["shock_size"])
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    got = pkg.internals.fdi(stats=kwargs["stats"], shock_size=kwargs["shock_size"])
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
     internals = generate_inverted(workbook, document)["internals.py"]
     assert "stats[i + 1]" not in internals
     assert catalog.get("stats").cells == (
@@ -360,15 +360,13 @@ def test_row_pinned_indicator_dual_read_is_keyed(tmp_path: Path) -> None:
     document = _row_indicator_bindings()
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "stats[2 * i]" in internals
-    assert "stats[2 * i + 1]" in internals
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a31_rows")
     cells = ["Outputs!A1", "Outputs!A2"]
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = (
         _unwrap(call_compute(pkg, "result_shock", kwargs)),
         _unwrap(call_compute(pkg, "result_combo", kwargs)),
@@ -393,15 +391,13 @@ def test_cross_sheet_pin_keeps_other_scenario_literal(tmp_path: Path) -> None:
     document = _cross_sheet_bindings()
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "stats[2 * i]" in internals
-    assert "stats[4]" in internals
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a31_cross")
     cells = ["Outputs!A1", "Outputs!A2"]
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = (
         _unwrap(call_compute(pkg, "result_shock", kwargs)),
         _unwrap(call_compute(pkg, "result_combo", kwargs)),

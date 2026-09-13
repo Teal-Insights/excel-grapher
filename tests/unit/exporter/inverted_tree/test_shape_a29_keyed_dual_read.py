@@ -14,14 +14,14 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
@@ -218,9 +218,11 @@ def test_keyed_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((40.0, 44.0))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((40.0, 44.0))
 
 
 def test_adjacent_scenario_pack_is_not_a_lag(tmp_path: Path) -> None:
@@ -244,9 +246,11 @@ def test_adjacent_scenario_pack_is_not_a_lag(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((40.0, 44.0))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx((40.0, 44.0))
     internals = generate_inverted(workbook, document)["internals.py"]
     assert "gdp[i + 1]" not in internals
 
@@ -263,18 +267,15 @@ def test_multi_scenario_host_keyed_dual_read_matches_evaluator(tmp_path: Path) -
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_scaled_exports(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((40.0, 44.0, 10.0 * 200.0 / 60.0, 11.0 * 220.0 / 66.0))
+    got = pkg.compute_scaled_exports(**named_input_kwargs(pkg, catalog, graph))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        (40.0, 44.0, 10.0 * 200.0 / 60.0, 11.0 * 220.0 / 66.0)
+    )
 
 
-def test_unclassifiable_two_positions_name_cells_and_keys(tmp_path: Path) -> None:
+def test_unclassifiable_two_positions_read_by_coordinate(tmp_path: Path) -> None:
     workbook = _non_lag_workbook(tmp_path)
-    with pytest.raises(InvertedTreeExportError, match=r"Engine!A2.*TIME_PERIOD=2009") as exc:
-        generate_inverted(workbook, _non_lag_bindings())
-    message = str(exc.value)
-    assert "Engine!C2" in message
-    assert "TIME_PERIOD=2011" in message
-    assert "direction" in message
-    assert "debt" in message
-    assert "(2, 0)" not in message
+    assert_package_matches_evaluator(workbook, _non_lag_bindings(), tmp_path, "a29_two_positions")

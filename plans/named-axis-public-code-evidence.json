@@ -1,0 +1,1057 @@
+{
+  "revision": "001fbfb1e6094a9b15862742b50d961f056a9411",
+  "generated_at": "2026-09-10T04:00:59+0000",
+  "python": "3.13.12",
+  "platform": "Linux-6.18.44-fc-v24-x86_64-with-glibc2.39",
+  "inputs": {
+    "workbook.xlsm": "3a0a0b80c7cbc95ac953f25ecae0b437129d669ceb8aeefb54ab86dc8727ea86",
+    "graph": "2e61d0ffc5871beea74df71ab420e022fa9f00b77a803972d0c49dad01872702",
+    "bindings": {
+      "constants.bindings.yaml": "c8488bc24508f818fd40e045461696253c383e38fcd96698a3172f43c2bd2580",
+      "dsa-ext.bindings.yaml": "3961297b78250bdc99031b2f5566a1ff771d9a3f084a3100bdd2e55f85051971",
+      "dsa-pub.bindings.yaml": "b06c6fe5b5c40dbbe9221891b9a7a95f900308825d7a6b8cada40f708643a74c",
+      "input4.bindings.yaml": "a499cdc21e45309b6ab1a4b2d48980c87d5a3498bdb9890eb3537ea1575bdf88",
+      "input5.bindings.yaml": "f9f07c5c5147e660169226c8106da046174d807817881ab819852d776e1d7907",
+      "inputs.bindings.yaml": "46e2af423fc761e7334beacfe6d697cea73943ddd30d7eb5752e8c2b2945632e",
+      "internals-a1-pub.bindings.yaml": "996574256a8ba6196812d46abd458187eb2e7b90bdd912297732c86555325af3",
+      "internals-blend.bindings.yaml": "bddc76833be8fae4ae3e6114d42ef1c84f44721f921e1fbda4b17750b0797d20",
+      "internals-chart.bindings.yaml": "ef6d203f53da743f8a5a5c99bb1489283ad31c80ead1df93dbb2037bc423f20b",
+      "internals-ext-debt.bindings.yaml": "0b8c5023298e283b3b671389fb95e314d8db82917f05ae0dc22175d8ed3b0816",
+      "internals-imported.bindings.yaml": "6bb25428c170f0a508c570e9a6a8796723fbb4b82b5831b87b7cb51eb3aec482",
+      "internals-rest.bindings.yaml": "055b63bc7e26371330f1ed943de42b8e8098dc051c96efc999af4a0cd4e6ebb3",
+      "leftovers.bindings.yaml": "addb75779273000110ef639a31654fe4efd7ca5417cd95e8b92cd542ed6e9288",
+      "outputs.bindings.yaml": "c41dbed112e8a4aa40d543eb039c258990d53650c07bf61a480857642dfa6546",
+      "pv-base.bindings.yaml": "4c7440b682b2f66018bebe4995daf954644719f0ccdbc77bf686d060d4d994aa",
+      "pv-lc.bindings.yaml": "22761367821b8384ece1b6c63b2edc2b5f755c2f31ef900e5add709f1c87b427",
+      "pv-stress.bindings.yaml": "c39ed542d6463cd4ade9aa3e585d665a011cf8ff67166cad6077cc3c55e0ecff"
+    },
+    "lic_dsf_blank_ranges.py": "b53e036758077ebecd9e3125f3242a11e4ae9085fc674802dc50b5816fc7dbee",
+    "targets.json": "f715b997c922fec24e060bd15ebde080e91ad820326627d357ea43cf414d51c9"
+  },
+  "binding_adjustments": 239,
+  "modules": {
+    "__init__.py": {
+      "bytes": 12169,
+      "sha256": "e23840a369a7511352531cefee9ee4de66e0e477105480dc1d9ee8611221435c"
+    },
+    "api.py": {
+      "bytes": 2716723,
+      "sha256": "471ab71ebde48826a2e000a9bb35675be730959a28da9c1a17c5c36d25c01dd1"
+    },
+    "data.py": {
+      "bytes": 2338303,
+      "sha256": "e412a9b410e0dc48b95a6f6ee588633394c3931b97b9c886bc6023856ab11326"
+    },
+    "excel.py": {
+      "bytes": 76777,
+      "sha256": "82afae4a079e631f053abeebb9eaaf382bf7a5ac2c1973b7bedf02fddbac2289"
+    },
+    "internals.py": {
+      "bytes": 4502278,
+      "sha256": "7928610a02d71566bfa319f64c9c98047e6eb1ac3dd9f9af10758fe183056155"
+    },
+    "provenance.py": {
+      "bytes": 8142,
+      "sha256": "950a165b1989a6700c9b2137cdc421f192e99f6205f489b8de6c4b7fe509d4c3"
+    },
+    "runtime.py": {
+      "bytes": 34217,
+      "sha256": "570d9e32a6387a53e431b2a88f20b91e2a038e84e687480d226d90a59b642ce7"
+    },
+    "tensor.py": {
+      "bytes": 21723,
+      "sha256": "8a9f9f48f519722813082b44a6ed25e3f8920a6c02a859fe5817654fc4f9d0d7"
+    }
+  },
+  "source_bytes": 9710332,
+  "under_10_mb": true,
+  "attribution": {
+    "internals": {
+      "bytes": 4502278,
+      "functions": 1548,
+      "recurrence_groups": 27,
+      "views": 1715,
+      "spans": 1207,
+      "lazy_tables": 165,
+      "lambdas": 9369,
+      "coordinate_list_conditions": 23,
+      "categories": {
+        "formula bodies and returns": 2422036,
+        "function signatures": 534039,
+        "hoisted tables and views": 375058,
+        "branch conditions": 337526,
+        "publish metadata": 191030,
+        "docstrings": 185642,
+        "other": 155854,
+        "recurrence readers": 124325,
+        "formula signatures": 123700,
+        "input validation": 53018
+      }
+    },
+    "api": {
+      "bytes": 2716723,
+      "compute_functions": 103,
+      "model_attributes": 1965,
+      "categories": {
+        "compute signatures": 1458255,
+        "model attribute bodies": 564776,
+        "constant sets": 232615,
+        "model attribute signatures": 205859,
+        "other": 205439,
+        "input check signatures": 34165,
+        "publish metadata": 15614
+      }
+    },
+    "data": {
+      "bytes": 2338303,
+      "categories": {
+        "provenance grid": {
+          "bytes": 422392,
+          "count": 405
+        },
+        "series classes": {
+          "bytes": 418372,
+          "count": 1878
+        },
+        "SCHEMA": {
+          "bytes": 359130,
+          "count": 1878
+        },
+        "REQUIRED": {
+          "bytes": 328435,
+          "count": 1878
+        },
+        "DOMAIN": {
+          "bytes": 314312,
+          "count": 1878
+        },
+        "provenance rectangle": {
+          "bytes": 177498,
+          "count": 1433
+        },
+        "constant values": {
+          "bytes": 136001,
+          "count": 377
+        },
+        "provenance dict": {
+          "bytes": 71554,
+          "count": 670
+        },
+        "DEFAULT": {
+          "bytes": 55794,
+          "count": 190
+        },
+        "axes": {
+          "bytes": 49671,
+          "count": 264
+        },
+        "VALUES": {
+          "bytes": 2742,
+          "count": 11
+        },
+        "other": {
+          "bytes": 2306,
+          "count": 0
+        }
+      }
+    }
+  },
+  "measurement": {
+    "package": {
+      "modules": {
+        "__init__.py": {
+          "bytes": 12169,
+          "lines": 119,
+          "categories": {
+            "constant value": 6284,
+            "import": 5775,
+            "AugAssign": 55,
+            "Expr": 42
+          },
+          "counts": {
+            "duplicate_function_bodies": 0
+          },
+          "duplicate_body_groups": {},
+          "sha256": "e23840a369a7511352531cefee9ee4de66e0e477105480dc1d9ee8611221435c"
+        },
+        "api.py": {
+          "bytes": 2716723,
+          "lines": 9565,
+          "categories": {
+            "function": 1560050,
+            "class": 882607,
+            "constant value": 257771,
+            "schema validate": 18446,
+            "@publish": 15408,
+            "import": 179,
+            "Expr": 74
+          },
+          "counts": {
+            "functions": 266,
+            "publish": 103,
+            "schema_validate_calls": 144,
+            "duplicate_function_bodies": 0
+          },
+          "duplicate_body_groups": {},
+          "sha256": "471ab71ebde48826a2e000a9bb35675be730959a28da9c1a17c5c36d25c01dd1"
+        },
+        "data.py": {
+          "bytes": 2338303,
+          "lines": 16524,
+          "categories": {
+            "_CELLS": 668936,
+            "class": 415971,
+            "_SCHEMA": 357252,
+            "_REQUIRED": 326557,
+            "_DOMAIN": 312434,
+            "explicit coordinates": 243157,
+            "constant value": 82631,
+            "_LITERALS": 55816,
+            "_DEFAULT": 55604,
+            "_AXIS": 49411,
+            "function": 573,
+            "import": 279,
+            "Expr": 70,
+            "schema validate": 39,
+            "@publish": 14
+          },
+          "counts": {
+            "provenance_entries": 985,
+            "functions": 1,
+            "TensorSchema": 1878,
+            "explicit_domains": 96,
+            "coordinate_tuples": 3597,
+            "schema_validate_calls": 1,
+            "duplicate_function_bodies": 0
+          },
+          "duplicate_body_groups": {},
+          "sha256": "e412a9b410e0dc48b95a6f6ee588633394c3931b97b9c886bc6023856ab11326"
+        },
+        "excel.py": {
+          "bytes": 76777,
+          "lines": 2217,
+          "categories": {
+            "function": 63073,
+            "class": 12391,
+            "import": 396,
+            "AnnAssign": 308,
+            "constant value": 133,
+            "Expr": 68,
+            "_CELLS": 32
+          },
+          "counts": {
+            "functions": 129,
+            "duplicate_function_bodies": 4
+          },
+          "duplicate_body_groups": {
+            "raise_if_sentinel_float": 3,
+            "try_fastpath_arithmetic_array": 3
+          },
+          "sha256": "82afae4a079e631f053abeebb9eaaf382bf7a5ac2c1973b7bedf02fddbac2289"
+        },
+        "internals.py": {
+          "bytes": 4502278,
+          "lines": 21513,
+          "categories": {
+            "function": 4260648,
+            "@publish": 187988,
+            "schema validate": 50518,
+            "class": 45672,
+            "import": 733,
+            "Expr": 65
+          },
+          "counts": {
+            "functions": 1548,
+            "publish": 1521,
+            "schema_validate_calls": 500,
+            "CoordinateReader": 543,
+            "lazy_table": 165,
+            "coordinate_tuples": 5432,
+            "lambdas": 9369,
+            "axis_step": 20,
+            "duplicate_function_bodies": 70
+          },
+          "duplicate_body_groups": {
+            "in6opt_standard_historical_average_baseline_projection": 10,
+            "chart_chart_data_pv_debt_to_gdp_b2_1_primary_balance_market_stress_pat_2": 9,
+            "chart_chart_data_pv_debt_to_exports_c2_natural_disaster_stress_path_ap": 7,
+            "chart_chart_data_pv_debt_to_exports_c3_commodity_price_stress_path_app": 7,
+            "chart_chart_data_pv_debt_to_exports_b2_1_primary_balance_market_stress_2": 7,
+            "chart_chart_data_pv_debt_to_exports_b6_1_combination_of_b1_b5_market_s_2": 7,
+            "b6_combo_mkt_ext_ii_key_macroeconomic_assumptions": 4,
+            "b6_combo_mkt_ext_y1_includes_both_public_pv_total": 4,
+            "pv_lc_nr1_terms_discount": 4,
+            "dsa_ext_standard_test_current_transfers_rule_b6_mkt": 2,
+            "dsa_ext_standard_test_fdi_rule_b6_mkt": 2,
+            "dsa_pub_standard_test_gdp_growth_rule": 2,
+            "dsa_pub_standard_test_pb_rule": 2,
+            "dsa_pub_standard_test_fx_depreciation": 2,
+            "input5_definition_of_external_domestic_debt": 2,
+            "c4_market_path_us_gdp_deflator": 2,
+            "custom_pub_domestic_st": 2,
+            "custom_pub_avg_nominal_interest_rate_new_borrowing_usd": 2,
+            "custom_pub_usd_discount_rate": 2,
+            "custom_pub_avg_real_interest_rate_new_borrowing": 2
+          },
+          "sha256": "7928610a02d71566bfa319f64c9c98047e6eb1ac3dd9f9af10758fe183056155"
+        },
+        "provenance.py": {
+          "bytes": 8142,
+          "lines": 239,
+          "categories": {
+            "class": 5532,
+            "function": 1996,
+            "Expr": 362,
+            "import": 162,
+            "constant value": 53
+          },
+          "counts": {
+            "functions": 7,
+            "coordinate_tuples": 2,
+            "duplicate_function_bodies": 0
+          },
+          "duplicate_body_groups": {},
+          "sha256": "950a165b1989a6700c9b2137cdc421f192e99f6205f489b8de6c4b7fe509d4c3"
+        },
+        "runtime.py": {
+          "bytes": 34217,
+          "lines": 965,
+          "categories": {
+            "function": 28638,
+            "import": 2239,
+            "class": 1876,
+            "constant value": 548,
+            "Expr": 546,
+            "@publish": 40
+          },
+          "counts": {
+            "functions": 84,
+            "lambdas": 3,
+            "duplicate_function_bodies": 0
+          },
+          "duplicate_body_groups": {},
+          "sha256": "570d9e32a6387a53e431b2a88f20b91e2a038e84e687480d226d90a59b642ce7"
+        },
+        "tensor.py": {
+          "bytes": 21723,
+          "lines": 548,
+          "categories": {
+            "class": 20283,
+            "function": 766,
+            "import": 334,
+            "explicit coordinates": 238,
+            "Expr": 76,
+            "constant value": 68,
+            "schema validate": 32
+          },
+          "counts": {
+            "functions": 1,
+            "explicit_domains": 3,
+            "schema_validate_calls": 1,
+            "lambdas": 2,
+            "duplicate_function_bodies": 0
+          },
+          "duplicate_body_groups": {},
+          "sha256": "8a9f9f48f519722813082b44a6ed25e3f8920a6c02a859fe5817654fc4f9d0d7"
+        }
+      },
+      "source_bytes": 9710332,
+      "required_module_bytes": 9710332,
+      "private_modules": [],
+      "under_10_mb": true
+    },
+    "import": {
+      "samples": 3,
+      "fresh_import": {
+        "errors": [],
+        "seconds_median": 0.2683600460004527,
+        "seconds_min": 0.22652222699980484,
+        "seconds_max": 0.2697199849990284,
+        "peak_rss_bytes_median": 369975296.0
+      },
+      "warm_import": {
+        "errors": [],
+        "seconds_median": 0.23794392800118658,
+        "seconds_min": 0.22179064299962192,
+        "seconds_max": 0.2691654579994065,
+        "peak_rss_bytes_median": 369975296.0
+      },
+      "bytecode_bytes": 8665255
+    },
+    "evaluation": {
+      "results": [
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_a1_key_variables_their_historical",
+          "seconds": 8.579400442999031,
+          "cells": 21,
+          "warm_median_seconds": 8.857491110999035
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_a2_alternative_scenario_customize_enter",
+          "seconds": 5.873706155000036,
+          "cells": 21,
+          "warm_median_seconds": 5.97134242500033
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_b1_real_gdp_growth",
+          "seconds": 8.723213582001335,
+          "cells": 21,
+          "warm_median_seconds": 9.380303067000568
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_b2_primary_balance",
+          "seconds": 9.173556113000814,
+          "cells": 21,
+          "warm_median_seconds": 8.433823001998462
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_b3_exports",
+          "seconds": 7.3345526220000465,
+          "cells": 21,
+          "warm_median_seconds": 7.662458768998476
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_b4_other_flows",
+          "seconds": 7.638081645000057,
+          "cells": 21,
+          "warm_median_seconds": 7.84436936900056
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_b5_depreciation",
+          "seconds": 8.49816261199885,
+          "cells": 21,
+          "warm_median_seconds": 9.15389229900029
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_b6_combination_of_b1_b5",
+          "seconds": 9.392563932000485,
+          "cells": 21,
+          "warm_median_seconds": 9.005251148000752
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_baseline_r351",
+          "seconds": 5.863197521999609,
+          "cells": 21,
+          "warm_median_seconds": 5.280661292999866
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_c1_combined_contingent_liab",
+          "seconds": 7.579190954000296,
+          "cells": 21,
+          "warm_median_seconds": 7.087260907999735
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_c2_natdisaster",
+          "seconds": 7.173446140999658,
+          "cells": 21,
+          "warm_median_seconds": 8.461044466001113
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_c3_commodity_price",
+          "seconds": 7.060294901999441,
+          "cells": 21,
+          "warm_median_seconds": 7.021752204000222
+        },
+        {
+          "function": "compute_chart_debt_service_gdp_ratio_c4_mkt_financing",
+          "seconds": 7.249381574001745,
+          "cells": 21,
+          "warm_median_seconds": 6.993968431999747
+        },
+        {
+          "function": "compute_chart_debt_service_to_exports_a2_alternative_scenario_customize_enter",
+          "seconds": 6.354387142999258,
+          "cells": 21,
+          "warm_median_seconds": 6.294916536000528
+        },
+        {
+          "function": "compute_chart_debt_service_to_exports_baseline_r145",
+          "seconds": 7.118433821000508,
+          "cells": 21,
+          "warm_median_seconds": 6.638896182999815
+        },
+        {
+          "function": "compute_chart_debt_service_to_exports_historical_scenario",
+          "seconds": 5.37697796700013,
+          "cells": 21,
+          "warm_median_seconds": 5.4224175330000435
+        },
+        {
+          "function": "compute_chart_debt_service_to_exports_mx_shock_standard_tailored",
+          "seconds": 7.164484629000071,
+          "cells": 21,
+          "warm_median_seconds": 6.9392956320007215
+        },
+        {
+          "function": "compute_chart_debt_service_to_exports_mx_value_1_yr_only_shock_standard",
+          "seconds": 6.947591345000546,
+          "cells": 21,
+          "warm_median_seconds": 7.415636048999659
+        },
+        {
+          "function": "compute_chart_debt_service_to_exports_threshold",
+          "seconds": 0.09035772800052655,
+          "cells": 21,
+          "warm_median_seconds": 0.08663589600109844
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_a1_key_variables_their_historical",
+          "seconds": 8.391062086000602,
+          "cells": 21,
+          "warm_median_seconds": 8.43941637199896
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_a2_alternative_scenario_customize_enter",
+          "seconds": 5.579211439000574,
+          "cells": 21,
+          "warm_median_seconds": 5.364839321000545
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_a2_alternative_scenario_customize_enter_r177",
+          "seconds": 6.134535056999084,
+          "cells": 21,
+          "warm_median_seconds": 6.112478157001533
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_b1_real_gdp_growth",
+          "seconds": 8.777846304999912,
+          "cells": 21,
+          "warm_median_seconds": 8.402770693999628
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_b2_primary_balance",
+          "seconds": 8.756065633999242,
+          "cells": 21,
+          "warm_median_seconds": 9.215589157000068
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_b3_exports",
+          "seconds": 7.01158226699954,
+          "cells": 21,
+          "warm_median_seconds": 5.896576238999842
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_b4_other_flows",
+          "seconds": 6.012094247000277,
+          "cells": 21,
+          "warm_median_seconds": 5.8681597739996505
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_b5_depreciation",
+          "seconds": 6.943430647999776,
+          "cells": 21,
+          "warm_median_seconds": 8.80257530199924
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_b6_combination_of_b1_b5",
+          "seconds": 8.823095779000141,
+          "cells": 21,
+          "warm_median_seconds": 8.754185388001133
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_baseline_r187",
+          "seconds": 6.6057738500003325,
+          "cells": 21,
+          "warm_median_seconds": 6.683175744999971
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_baseline_r318",
+          "seconds": 5.520568537000145,
+          "cells": 21,
+          "warm_median_seconds": 5.315141977000167
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_baseline_r341",
+          "seconds": 5.60527520299911,
+          "cells": 21,
+          "warm_median_seconds": 5.403106249001212
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_c1_combined_contingent_liab",
+          "seconds": 8.682117872000163,
+          "cells": 21,
+          "warm_median_seconds": 8.34136712399959
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_c2_natdisaster",
+          "seconds": 7.971343020000859,
+          "cells": 21,
+          "warm_median_seconds": 7.945490111000254
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_c3_commodity_price",
+          "seconds": 8.519301266000184,
+          "cells": 21,
+          "warm_median_seconds": 8.814849560001676
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_c4_mkt_financing",
+          "seconds": 7.055238435999854,
+          "cells": 21,
+          "warm_median_seconds": 7.258481566999762
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_historical_scenario",
+          "seconds": 6.599236002000907,
+          "cells": 21,
+          "warm_median_seconds": 6.551202069000283
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_historical_scenario_r342",
+          "seconds": 8.19692282700089,
+          "cells": 21,
+          "warm_median_seconds": 8.621846746000301
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_mx_shock_standard_tailored",
+          "seconds": 8.632156875000874,
+          "cells": 21,
+          "warm_median_seconds": 9.320941939000477
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_mx_shock_standard_tailored_r343",
+          "seconds": 8.352692000999014,
+          "cells": 21,
+          "warm_median_seconds": 7.878497862999211
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_mx_value_1_yr_only_shock_standard",
+          "seconds": 7.350379247000092,
+          "cells": 21,
+          "warm_median_seconds": 7.284617256000274
+        },
+        {
+          "function": "compute_chart_debt_service_to_revenue_threshold",
+          "seconds": 0.08317351400000916,
+          "cells": 21,
+          "warm_median_seconds": 0.07777942600114329
+        },
+        {
+          "function": "compute_chart_pv_debt_gdp_ratio_a2_alternative_scenario_customize_enter",
+          "seconds": 6.113287751999451,
+          "cells": 21,
+          "warm_median_seconds": 7.545930696000141
+        },
+        {
+          "function": "compute_chart_pv_debt_gdp_ratio_baseline",
+          "seconds": 7.863851866000914,
+          "cells": 21,
+          "warm_median_seconds": 7.753733364001164
+        },
+        {
+          "function": "compute_chart_pv_debt_gdp_ratio_historical_scenario",
+          "seconds": 8.05783561700082,
+          "cells": 21,
+          "warm_median_seconds": 7.75835229400036
+        },
+        {
+          "function": "compute_chart_pv_debt_gdp_ratio_mx_shock_standard_tailored",
+          "seconds": 10.000087012000222,
+          "cells": 21,
+          "warm_median_seconds": 10.289050756999131
+        },
+        {
+          "function": "compute_chart_pv_debt_gdp_ratio_mx_value_1_yr_only_shock_standard",
+          "seconds": 9.908124796000266,
+          "cells": 21,
+          "warm_median_seconds": 8.931562200999906
+        },
+        {
+          "function": "compute_chart_pv_debt_gdp_ratio_threshold",
+          "seconds": 0.10972628399940731,
+          "cells": 21,
+          "warm_median_seconds": 0.1021300140000676
+        },
+        {
+          "function": "compute_chart_pv_debt_to_exports_a2_alternative_scenario_customize_enter",
+          "seconds": 7.618039261000376,
+          "cells": 21,
+          "warm_median_seconds": 7.559395525000582
+        },
+        {
+          "function": "compute_chart_pv_debt_to_exports_baseline_r103",
+          "seconds": 8.265778443001182,
+          "cells": 21,
+          "warm_median_seconds": 8.722173617999943
+        },
+        {
+          "function": "compute_chart_pv_debt_to_exports_historical_scenario",
+          "seconds": 8.063193799000146,
+          "cells": 21,
+          "warm_median_seconds": 8.106019914001081
+        },
+        {
+          "function": "compute_chart_pv_debt_to_exports_mx_shock_standard_tailored",
+          "seconds": 9.60991919099979,
+          "cells": 21,
+          "warm_median_seconds": 10.525541867000356
+        },
+        {
+          "function": "compute_chart_pv_debt_to_exports_mx_value_1_yr_only_shock_standard",
+          "seconds": 10.907673138999598,
+          "cells": 21,
+          "warm_median_seconds": 10.649015098000746
+        },
+        {
+          "function": "compute_chart_pv_debt_to_exports_threshold",
+          "seconds": 0.10489925100046094,
+          "cells": 21,
+          "warm_median_seconds": 0.09970560999863665
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_a1_key_variables_their_historical",
+          "seconds": 9.94438543599972,
+          "cells": 21,
+          "warm_median_seconds": 10.320759084999736
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_a2_alternative_scenario_customize_enter",
+          "seconds": 8.42128497000158,
+          "cells": 21,
+          "warm_median_seconds": 7.3365930290001415
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_b1_real_gdp_growth",
+          "seconds": 8.365808320000724,
+          "cells": 21,
+          "warm_median_seconds": 10.356804118999207
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_b2_primary_balance",
+          "seconds": 11.1382024179984,
+          "cells": 21,
+          "warm_median_seconds": 10.084529018999092
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_b3_exports",
+          "seconds": 8.290875402999518,
+          "cells": 21,
+          "warm_median_seconds": 8.047579866999513
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_b4_other_flows",
+          "seconds": 7.926524718999644,
+          "cells": 21,
+          "warm_median_seconds": 8.466793212999619
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_b5_depreciation",
+          "seconds": 9.473987203999059,
+          "cells": 21,
+          "warm_median_seconds": 9.64454523600034
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_b6_combination_of_b1_b5",
+          "seconds": 10.457820144001744,
+          "cells": 21,
+          "warm_median_seconds": 10.835407474998647
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_baseline_r239",
+          "seconds": 7.217955690000963,
+          "cells": 21,
+          "warm_median_seconds": 7.2936413010011165
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_c1_combined_contingent_liab",
+          "seconds": 9.860529827999926,
+          "cells": 21,
+          "warm_median_seconds": 10.006015111999659
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_c2_natdisaster",
+          "seconds": 10.30680687200038,
+          "cells": 21,
+          "warm_median_seconds": 9.810621188000368
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_c3_commodity_price",
+          "seconds": 8.510265982999044,
+          "cells": 21,
+          "warm_median_seconds": 9.95621247300005
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_c4_mkt_financing",
+          "seconds": 8.74231204699936,
+          "cells": 21,
+          "warm_median_seconds": 8.455203907000396
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_historical_scenario_r263",
+          "seconds": 9.644764586999372,
+          "cells": 21,
+          "warm_median_seconds": 10.070744949000073
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_mx_shock_standard_tailored",
+          "seconds": 12.34629960699931,
+          "cells": 21,
+          "warm_median_seconds": 10.773114084999179
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_mx_value_1_yr_only_shock_standard",
+          "seconds": 11.550907856000777,
+          "cells": 21,
+          "warm_median_seconds": 10.793192062999879
+        },
+        {
+          "function": "compute_chart_pv_debt_to_gdp_public_debt_benchmark",
+          "seconds": 0.0956334769998648,
+          "cells": 21,
+          "warm_median_seconds": 0.09062375599933148
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_a1_key_variables_their_historical",
+          "seconds": 8.873067152000658,
+          "cells": 21,
+          "warm_median_seconds": 10.272524125999553
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_a2_alternative_scenario_customize_enter",
+          "seconds": 8.13814549199924,
+          "cells": 21,
+          "warm_median_seconds": 6.931794144000378
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_b1_real_gdp_growth",
+          "seconds": 9.381740901999365,
+          "cells": 21,
+          "warm_median_seconds": 9.860969044999365
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_b2_primary_balance",
+          "seconds": 9.626074440000593,
+          "cells": 21,
+          "warm_median_seconds": 10.18304755600002
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_b3_exports",
+          "seconds": 7.088473229001465,
+          "cells": 21,
+          "warm_median_seconds": 8.425291488998482
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_b4_other_flows",
+          "seconds": 7.705463058000532,
+          "cells": 21,
+          "warm_median_seconds": 8.113750653999887
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_b5_depreciation",
+          "seconds": 9.047923008998623,
+          "cells": 21,
+          "warm_median_seconds": 9.172781534000023
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_b6_combination_of_b1_b5",
+          "seconds": 10.245014570000421,
+          "cells": 21,
+          "warm_median_seconds": 10.290791086999889
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_baseline",
+          "seconds": 7.455876832998911,
+          "cells": 21,
+          "warm_median_seconds": 7.023535139998785
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_c1_combined_contingent_liab",
+          "seconds": 8.276909170999716,
+          "cells": 21,
+          "warm_median_seconds": 10.111339839999346
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_c2_natdisaster",
+          "seconds": 10.374490137000976,
+          "cells": 21,
+          "warm_median_seconds": 10.116147241000363
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_c3_commodity_price",
+          "seconds": 8.426454774999002,
+          "cells": 21,
+          "warm_median_seconds": 10.193535520998921
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_c4_mkt_financing",
+          "seconds": 8.9940105149999,
+          "cells": 21,
+          "warm_median_seconds": 8.544112925999798
+        },
+        {
+          "function": "compute_chart_pv_debt_to_revenue_mx_shock_standard_tailored",
+          "seconds": 11.049133132999486,
+          "cells": 21,
+          "warm_median_seconds": 11.466574395000862
+        },
+        {
+          "function": "compute_external_baseline_breach",
+          "seconds": 8.842039732999183,
+          "cells": 1,
+          "warm_median_seconds": 9.26612730999841
+        },
+        {
+          "function": "compute_external_debt_service_to_exports_mx_shock",
+          "seconds": 9.077654007998717,
+          "cells": 1,
+          "warm_median_seconds": 7.577647807000176
+        },
+        {
+          "function": "compute_external_debt_service_to_revenue_mx_shock",
+          "seconds": 8.519714774000022,
+          "cells": 1,
+          "warm_median_seconds": 8.164237697999852
+        },
+        {
+          "function": "compute_external_dsa_risk_rating_numeric",
+          "seconds": 8.90921972400065,
+          "cells": 1,
+          "warm_median_seconds": 9.209805149999738
+        },
+        {
+          "function": "compute_external_dsa_risk_rating_signal",
+          "seconds": 9.624723010001617,
+          "cells": 1,
+          "warm_median_seconds": 10.679446493000796
+        },
+        {
+          "function": "compute_external_pv_debt_to_exports_mx_shock",
+          "seconds": 9.569847271999606,
+          "cells": 1,
+          "warm_median_seconds": 9.518803113000104
+        },
+        {
+          "function": "compute_external_pv_debt_to_gdp_mx_shock",
+          "seconds": 9.411613858999772,
+          "cells": 1,
+          "warm_median_seconds": 9.841541447000054
+        },
+        {
+          "function": "compute_external_shock_breach",
+          "seconds": 8.821113415000582,
+          "cells": 1,
+          "warm_median_seconds": 9.240412322998964
+        },
+        {
+          "function": "compute_fiscal_baseline_breach",
+          "seconds": 6.845336718999533,
+          "cells": 1,
+          "warm_median_seconds": 8.26782478899986
+        },
+        {
+          "function": "compute_fiscal_pv_debt_to_gdp_mx_shock",
+          "seconds": 12.079631890999735,
+          "cells": 1,
+          "warm_median_seconds": 11.828658335
+        },
+        {
+          "function": "compute_fiscal_risk_rating_numeric",
+          "seconds": 11.282858902000953,
+          "cells": 1,
+          "warm_median_seconds": 10.623772803000975
+        },
+        {
+          "function": "compute_fiscal_risk_rating_signal",
+          "seconds": 12.162352045999796,
+          "cells": 1,
+          "warm_median_seconds": 10.760691716999645
+        },
+        {
+          "function": "compute_fiscal_shock_breach",
+          "seconds": 11.852757429000121,
+          "cells": 1,
+          "warm_median_seconds": 10.348579028999666
+        },
+        {
+          "function": "compute_fiscal_space_moderate_risk_signal",
+          "seconds": 8.2917602610014,
+          "cells": 1,
+          "warm_median_seconds": 8.278658078999797
+        },
+        {
+          "function": "compute_overall_risk_rating_numeric",
+          "seconds": 10.947981278000952,
+          "cells": 1,
+          "warm_median_seconds": 10.728677439999956
+        },
+        {
+          "function": "compute_overall_risk_rating_signal",
+          "seconds": 12.064054930999191,
+          "cells": 1,
+          "warm_median_seconds": 11.917402487999425
+        },
+        {
+          "function": "compute_tailored_stress_commodity_price_applicable",
+          "seconds": 0.02610070900118444,
+          "cells": 1,
+          "warm_median_seconds": 0.012622885000382666
+        },
+        {
+          "function": "compute_tailored_stress_market_financing_applicable",
+          "seconds": 0.3485547439995571,
+          "cells": 1,
+          "warm_median_seconds": 0.3386820710002212
+        },
+        {
+          "function": "compute_tailored_stress_natural_disaster_applicable",
+          "seconds": 0.004399821000333759,
+          "cells": 1,
+          "warm_median_seconds": 0.0005881300003238721
+        }
+      ],
+      "peak_rss_bytes": 369975296,
+      "tracemalloc_peak_bytes": 63934926,
+      "summary": {
+        "functions": 103,
+        "failed": 0,
+        "total_first_call_seconds": 811.0753548560078,
+        "cells": 1783
+      }
+    },
+    "timings": {},
+    "command": [
+      "measure_named_export.py",
+      "--package-dir",
+      "/tmp/claude-0/-home-user-excel-grapher/c9503f10-3c56-5014-b817-f1ec0e919932/scratchpad/named_run12",
+      "--report",
+      "/tmp/claude-0/-home-user-excel-grapher/c9503f10-3c56-5014-b817-f1ec0e919932/scratchpad/report_run12.json",
+      "--import-samples",
+      "3",
+      "--evaluate",
+      "0",
+      "--warm-calls",
+      "1",
+      "--standalone",
+      "--tracemalloc"
+    ]
+  },
+  "differential": {
+    "functions": 103,
+    "failed_functions": {},
+    "comparisons": 1783,
+    "counts": {
+      "match": 1678,
+      "matched_error": 105,
+      "unexpected_matched_error": 0,
+      "mismatch": 0
+    },
+    "tolerances": {
+      "atol": 1e-06,
+      "rtol": 1e-12
+    },
+    "timings": {
+      "graph_load_seconds": 26.564995364000424,
+      "compute_seconds": 130.15477756700056,
+      "evaluate_seconds": 13.589893423999456
+    }
+  },
+  "downstream_64_scenario_differential": "not repeated: requires the downstream pipeline repository",
+  "live_excel": "skipped: no Excel automation available on this Linux container",
+  "one_model_probe": {
+    "import_seconds_with_tracemalloc": 28.04,
+    "all_series_seconds": 10.3,
+    "series": 1938,
+    "peak_rss_bytes": 434360320,
+    "tracemalloc_peak_bytes": 256059482
+  }
+}

@@ -102,12 +102,18 @@ def test_splice_indexes_last_growth_then_trajectory(tmp_path: Path) -> None:
     workbook = _splice_workbook(tmp_path)
     modules = generate_inverted(workbook, _splice_bindings())
     internals = modules["internals.py"]
-    assert "as_measure(growth[i + 1])" in internals
-    assert "as_measure(trajectory[i - 1])" in internals
+    assert "as_measure(growth[time_period])" in internals
+    assert "as_measure(trajectory[time_period])" in internals
     pkg = load_package(modules, tmp_path, name="a18_splice")
-    got = pkg.compute_result(gdp=(100.0, 110.0, 121.0))
-    assert got == pytest.approx((121 / 110, 0.02, 0.03, 0.04))
-    assert pkg.compute_growth_keep(gdp=(100.0, 110.0, 121.0)) == pytest.approx((110 / 100,))
+    got = pkg.compute_result(
+        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0))
+    )
+    assert [got[year] for year in (2011, 2012, 2013, 2014)] == pytest.approx(
+        (121 / 110, 0.02, 0.03, 0.04)
+    )
+    assert pkg.compute_growth_keep(
+        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0))
+    ) == pytest.approx(110 / 100)
 
 
 def test_splice_matches_formula_evaluator(tmp_path: Path) -> None:
@@ -116,5 +122,9 @@ def test_splice_matches_formula_evaluator(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, _splice_bindings()), tmp_path, name="a18_eval")
     graph = create_dependency_graph(workbook, targets, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(targets)
-    got = pkg.compute_result(gdp=(100.0, 110.0, 121.0))
-    assert got == pytest.approx(tuple(expected[addr] for addr in targets))
+    got = pkg.compute_result(
+        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0))
+    )
+    assert [got[year] for year in (2011, 2012, 2013, 2014)] == pytest.approx(
+        tuple(expected[addr] for addr in targets)
+    )

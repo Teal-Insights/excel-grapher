@@ -10,7 +10,7 @@ the distance-zero residual to be a DAG per outer-key partition
 from __future__ import annotations
 
 from collections.abc import Callable, Iterable, Sequence
-from contextvars import ContextVar, Token
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Literal
 
@@ -418,182 +418,13 @@ _INDEX_INTERN: ContextVar[IndexSourceIntern | None] = ContextVar(
 )
 
 
-def bind_index_intern(intern: IndexSourceIntern) -> Token[IndexSourceIntern | None]:
-    """Install `intern` for the current inverted-tree emit walk."""
-    return _INDEX_INTERN.set(intern)
-
-
-def reset_index_intern(token: Token[IndexSourceIntern | None]) -> None:
-    """Restore the index intern installed by `bind_index_intern`."""
-    _INDEX_INTERN.reset(token)
-
-
-def index_mapping_source(indices: Sequence[int]) -> str:
-    """Return a compact, possibly interned, expression for `indices`."""
-    intern = _INDEX_INTERN.get()
-    if intern is None:
-        return indices_to_source(indices)
-    return intern.expr(indices)
-
-
 _REPEAT_MIN = 3
 _FAMILY_MIN = 3
 
 
-def _progression_spec(indices: Sequence[int]) -> tuple[int, int, int] | None:
-    """Return `(start, stop, step)` when `indices` is an arithmetic progression."""
-    items = tuple(indices)
-    if len(items) < 2:
-        return None
-    step = items[1] - items[0]
-    if step == 0:
-        return None
-    stop = items[-1] + step
-    if items != tuple(range(items[0], stop, step)):
-        return None
-    return items[0], stop, step
-
-
-def _affine_family_len(specs: Sequence[tuple[int, int, int]]) -> int:
-    """Return the prefix length of `specs` that share one affine range family."""
-    if len(specs) < _FAMILY_MIN:
-        return 0
-    d_start = specs[1][0] - specs[0][0]
-    d_stop = specs[1][1] - specs[0][1]
-    d_step = specs[1][2] - specs[0][2]
-    length = 2
-    for index in range(2, len(specs)):
-        expected = (
-            specs[0][0] + index * d_start,
-            specs[0][1] + index * d_stop,
-            specs[0][2] + index * d_step,
-        )
-        if specs[index] != expected:
-            break
-        length += 1
-    return length if length >= _FAMILY_MIN else 0
-
-
-def _linear_term(intercept: int, slope: int, var: str) -> str:
-    """Return `intercept + slope * var` as a compact Python expression."""
-    if slope == 0:
-        return str(intercept)
-    if slope == 1:
-        if intercept == 0:
-            return var
-        if intercept > 0:
-            return f"{intercept} + {var}"
-        return f"{var} - {-intercept}"
-    if slope == -1:
-        if intercept == 0:
-            return f"-{var}"
-        return f"{intercept} - {var}"
-    if intercept == 0:
-        return f"{slope} * {var}"
-    if slope > 0:
-        return f"{intercept} + {slope} * {var}"
-    return f"{intercept} - {-slope} * {var}"
-
-
-def _range_family_source(specs: Sequence[tuple[int, int, int]]) -> str:
-    start0, stop0, step0 = specs[0]
-    d_start = specs[1][0] - start0
-    d_stop = specs[1][1] - stop0
-    d_step = specs[1][2] - step0
-    start_expr = _linear_term(start0, d_start, "k")
-    stop_expr = _linear_term(stop0, d_stop, "k")
-    if d_step == 0:
-        if step0 == 1:
-            call = f"range({start_expr}, {stop_expr})"
-        else:
-            call = f"range({start_expr}, {stop_expr}, {step0})"
-    else:
-        call = f"range({start_expr}, {stop_expr}, {_linear_term(step0, d_step, 'k')})"
-    return f"tuple({call} for k in range({len(specs)}))"
-
-
-def _display_slot_rows(rows: Sequence[tuple[int, ...]]) -> str:
-    parts = [indices_to_source(row) for row in rows]
-    if len(parts) == 1:
-        return f"({parts[0]},)"
-    return f"({', '.join(parts)})"
-
-
-def _identical_run_len(rows: Sequence[tuple[int, ...]], start: int) -> int:
-    length = 1
-    while start + length < len(rows) and rows[start + length] == rows[start]:
-        length += 1
-    return length
-
-
-def _range_prefix_specs(rows: Sequence[tuple[int, ...]], start: int) -> list[tuple[int, int, int]]:
-    specs: list[tuple[int, int, int]] = []
-    for row in rows[start:]:
-        spec = _progression_spec(row)
-        if spec is None:
-            break
-        specs.append(spec)
-    return specs
-
-
-def slot_table_to_source(slots: Sequence[Sequence[int]]) -> str:
-    """Return a compact Python expression for a per-member `take` index table.
-
-    Identical immutable rows use tuple multiplication. Arithmetic families of
-    `range` rows use a comprehension. Irregular rows stay as literal displays
-    and concatenate with the compact runs around them.
-    """
-    rows = tuple(tuple(item) for item in slots)
-    if not rows:
-        return "()"
-    segments: list[str] = []
-    index = 0
-    n = len(rows)
-    while index < n:
-        ident_len = _identical_run_len(rows, index)
-        specs = _range_prefix_specs(rows, index)
-        family_len = _affine_family_len(specs)
-        if ident_len >= _REPEAT_MIN and ident_len >= family_len:
-            segments.append(f"({indices_to_source(rows[index])},) * {ident_len}")
-            index += ident_len
-            continue
-        if family_len >= _FAMILY_MIN:
-            segments.append(_range_family_source(specs[:family_len]))
-            index += family_len
-            continue
-        display_end = index + 1
-        while display_end < n:
-            next_ident = _identical_run_len(rows, display_end)
-            next_family = _affine_family_len(_range_prefix_specs(rows, display_end))
-            if next_ident >= _REPEAT_MIN and next_ident >= next_family:
-                break
-            if next_family >= _FAMILY_MIN:
-                break
-            display_end += 1
-        segments.append(_display_slot_rows(rows[index:display_end]))
-        index = display_end
-    if len(segments) == 1:
-        return segments[0]
-    return " + ".join(segments)
-
-
-def slot_table_needs_intern(source: str) -> bool:
-    """True when `source` allocates on evaluation and should be bound once."""
-    return source.startswith("tuple(") or " * " in source or " + " in source
-
-
-def wrap_slot_table_source(source: str) -> str:
-    """Parenthesize `source` when a trailing `[index]` would bind too tightly."""
-    if source.isidentifier() or source.startswith("tuple("):
-        return source
-    if " * " in source or " + " in source:
-        return f"({source})"
-    return source
-
-
 def scan_function_name(scc: tuple[str, ...]) -> str:
-    """Return the internals helper name for a fused or demand-driven SCC."""
-    return "scan_" + "_".join(scc)
+    """Return the internals helper name for a recurrence group, after its first member."""
+    return "scan_" + scc[0]
 
 
 def scc_external_params(
@@ -813,6 +644,7 @@ def _statement_at_union(
     series_id: str,
     _union_t: int,
     index: int,
+    partition: tuple[Scalar, ...] | None = None,
 ) -> str:
     """Return the statement covering schedule coordinate `index`.
 
@@ -821,7 +653,11 @@ def _statement_at_union(
     join keys). A miss falls back to the inner `TIME_PERIOD` axis so a
     matrix nest can resolve the covering statement per outer-key block.
     """
-    found = catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
+    found = (
+        catalog.schedule.statement_id_by_coord.get(series_id, {}).get(index)
+        if partition is None
+        else None
+    )
     if found is not None:
         return found
     series = catalog.get(series_id)
@@ -829,7 +665,9 @@ def _statement_at_union(
         return series_id
     for stmt in series.statements:
         for cell in stmt.cells:
-            if schedule_axis_coord(cell, catalog) == index:
+            if schedule_axis_coord(cell, catalog) == index and (
+                partition is None or schedule_partition(cell, catalog) == partition
+            ):
                 return stmt.statement_id
     return series_id
 
@@ -875,6 +713,8 @@ def _index_region_key(
     index_edges: Sequence[DependenceEdge],
     union_t: int,
     index: int,
+    partition: tuple[Scalar, ...] | None = None,
+    statement_ids: Mapping[str, Mapping[int, str]] | None = None,
 ) -> tuple[tuple[str, ...], tuple[tuple[str, str], ...], tuple[tuple[str, str, str], ...]] | None:
     """Return `(body_order, shape_sig, access_sig)` for one union index."""
     active = tuple(sid for sid in scc if domain[sid][0] <= union_t < domain[sid][1])
@@ -883,7 +723,15 @@ def _index_region_key(
     order = _residual_order_at_index(active, index_edges)
     if order is None:
         return None
-    shape_sig = tuple((sid, _statement_at_union(catalog, sid, union_t, index)) for sid in active)
+    shape_sig = tuple(
+        (
+            sid,
+            statement_ids[sid].get(index, sid)
+            if statement_ids is not None
+            else _statement_at_union(catalog, sid, union_t, index, partition),
+        )
+        for sid in active
+    )
     return order, shape_sig, _access_signature(active, index_edges)
 
 
@@ -916,6 +764,15 @@ def _fuse_regions(
 ) -> tuple[FusedRegion, ...] | None:
     """Group contiguous union indices that share residual order and access."""
     by_coord = _bucket_edges_by_consumer_coord(edges, catalog, partition=partition)
+    statement_ids = {
+        sid: {
+            schedule_axis_coord(cell, catalog): statement.statement_id
+            for statement in catalog.get(sid).statements
+            for cell in statement.cells
+            if partition is None or schedule_partition(cell, catalog) == partition
+        }
+        for sid in scc
+    }
     regions: list[FusedRegion] = []
     run_start = 0
     run_key: (
@@ -929,6 +786,8 @@ def _fuse_regions(
             index_edges=by_coord.get(index, ()),
             union_t=union_t,
             index=index,
+            partition=partition,
+            statement_ids=statement_ids,
         )
         if key is None:
             return None

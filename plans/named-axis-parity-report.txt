@@ -1,0 +1,20 @@
+Parity report: exported LIC-DSF 2025-08-12 standalone library vs FormulaEvaluator
+Generated: 2026-09-09T10:39:01+00:00
+Workbook:  C:\Users\chris\AppData\Local\Temp\named-axis-downstream-20260908\data\workbook.xlsm
+Package:   C:\Users\chris\AppData\Local\Temp\named-axis-downstream-20260908\dist\lic_dsf_2025_08_12 (imported as dist.lic_dsf_2025_08_12.api)
+Oracles:   excel-grapher graph + FormulaEvaluator [golden] vs exported package compute_* [mvp]
+Tolerance: atol = 1e-06, rtol = 1e-12
+
+Workbook SHA-256: 3a0a0b80c7cbc95ac953f25ecae0b437129d669ceb8aeefb54ab86dc8727ea86
+
+ENVIRONMENT
+  Python:  3.13.5
+  OS:      Windows-11-10.0.26200-SP0
+  excel-grapher: 14.8.1
+
+Total comparisons: 114240
+Passed:            114240
+Failed:            0
+Pass rate:         100.00%
+Acceptance bar:    100.00%
+Result:            PASS

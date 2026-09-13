@@ -20,9 +20,9 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     oriented_addresses,
     oriented_document,
     series_entry,
@@ -148,8 +148,9 @@ def test_matrix_row_slice_emits_aligned_take(tmp_path: Path, orientation: str) -
     ]
     assert "prior: float | str = shocks" not in internals
     assert "prior = as_measure(prior)" not in internals
-    assert "require_aligned" in internals or "require_length(shocks, 3)" in internals
-    assert "shocks[i]" in internals
+    assert "SHOCKS_SCHEMA.validate(shocks)" in internals
+    assert "shocks[" in internals
+    assert "time_period]" in internals
 
 
 def test_matrix_row_slice_matches_evaluator(tmp_path: Path, orientation: str) -> None:
@@ -167,9 +168,11 @@ def test_matrix_row_slice_matches_evaluator(tmp_path: Path, orientation: str) ->
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    got = pkg.compute_selected(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((4.0, 5.0, 6.0))
+    got = pkg.compute_selected(**named_input_kwargs(pkg, catalog, graph))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx((4.0, 5.0, 6.0))
 
 
 def test_matrix_other_row_slice_matches_evaluator(tmp_path: Path, orientation: str) -> None:
@@ -191,9 +194,11 @@ def test_matrix_other_row_slice_matches_evaluator(tmp_path: Path, orientation: s
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    got = pkg.compute_selected(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((1.0, 2.0, 3.0))
+    got = pkg.compute_selected(**named_input_kwargs(pkg, catalog, graph))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx((1.0, 2.0, 3.0))
 
 
 def test_year0_scalar_seed_is_still_a_scan(tmp_path: Path) -> None:
@@ -227,4 +232,6 @@ def test_year0_scalar_seed_is_still_a_scan(tmp_path: Path) -> None:
     assert path.is_scan is True
     assert path.seed_id == "year0"
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a25_seed")
-    assert pkg.compute_path(year0=10.0) == pytest.approx((11.0, 12.0))
+    assert tuple(value for _, value in pkg.compute_path(year0=10.0).items()) == pytest.approx(
+        (11.0, 12.0)
+    )

@@ -26,6 +26,6 @@ def test_min_export(tmp_path: Path, force_rung: Literal[3] | None, formula: str)
         series_entry("result", "Engine!B1", direction="output"),
     )
     package = load_package(generate_inverted(workbook, document, force_rung=force_rung), tmp_path)
-    assert package.api.compute_result(first=2.0, second=0.0) == (0.0,)
-    assert package.api.compute_result(first=-3.0, second=1.0) == (-3.0,)
-    assert package.api.compute_result(first="#DIV/0!", second=1.0) == ("#DIV/0!",)
+    assert package.api.compute_result(first=2.0, second=0.0) == 0.0
+    assert package.api.compute_result(first=-3.0, second=1.0) == -3.0
+    assert package.api.compute_result(first="#DIV/0!", second=1.0) == "#DIV/0!"

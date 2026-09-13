@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ast
 from collections import deque
+from collections.abc import Sequence
 from pathlib import Path
 
 __all__ = ["emit_runtime", "runtime_cache_seed_symbols"]
@@ -448,6 +449,8 @@ def emit_runtime(
     include_offset_table: bool,
     include_dep_tracking: bool = True,
     include_operators_fastpath: bool = True,
+    extra_modules: Sequence[tuple[str, Path]] = (),
+    modules: Sequence[tuple[str, Path]] | None = None,
 ) -> str:
     """Emit standalone runtime code for generated output.
 
@@ -457,11 +460,18 @@ def emit_runtime(
     When ``include_operators_fastpath`` is False, stub fast-path functions that
     always fall back to the reference loops are embedded instead of the vectorized
     implementation.
+
+    ``extra_modules`` names additional ``(module, path)`` sources whose symbols
+    may be requested; they register after the export runtime. ``modules``
+    replaces the whole module list; later modules override earlier symbols.
     """
     all_modules = (
-        _core_modules(include_operators_fastpath=include_operators_fastpath)
+        list(modules)
+        if modules is not None
+        else _core_modules(include_operators_fastpath=include_operators_fastpath)
         + _RUNTIME_MODULES
         + _EXPORT_RUNTIME_MODULES
+        + list(extra_modules)
     )
     all_module_names = [name for name, _ in all_modules]
 

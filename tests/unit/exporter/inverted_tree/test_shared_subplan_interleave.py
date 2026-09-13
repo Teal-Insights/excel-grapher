@@ -13,8 +13,6 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.emit import _SharedSubplan, emit_orchestrator
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     bindings_document,
@@ -95,9 +93,8 @@ def test_interleaved_consumer_groups_do_not_emit_unbound_helper_params(
     tmp_path: Path,
 ) -> None:
     modules = generate_inverted(_interleave_workbook(tmp_path), _interleave_bindings())
-    api = modules["api.py"]
-    assert "def _shared_" in api
-    assert _kwarg_uses_before_assign(api) == []
+    kernel = modules["api.py"]
+    assert _kwarg_uses_before_assign(kernel) == []
 
 
 def test_interleaved_consumer_groups_evaluate_without_unbound_local(tmp_path: Path) -> None:
@@ -109,34 +106,12 @@ def test_interleaved_consumer_groups_evaluate_without_unbound_local(tmp_path: Pa
     assert required_param_names(pkg.compute_out_mid) == ("x",)
     assert set(required_param_names(pkg.compute_out_shock)) == {"x", "y"}
 
-    assert pkg.compute_out_base(x=1.0) == pytest.approx((13.0,))
-    assert pkg.compute_out_mid(x=1.0) == pytest.approx((12.0,))
-    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx((15.0,))
+    assert pkg.compute_out_base(x=1.0) == pytest.approx(13.0)
+    assert pkg.compute_out_mid(x=1.0) == pytest.approx(12.0)
+    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx(15.0)
 
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1", "Outputs!C1"])
-    assert pkg.compute_out_base(x=1.0) == pytest.approx((expected["Outputs!A1"],))
-    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx((expected["Outputs!B1"],))
-    assert pkg.compute_out_mid(x=1.0) == pytest.approx((expected["Outputs!C1"],))
-
-
-def test_unbound_helper_params_fail_closed_at_emit(tmp_path: Path) -> None:
-    workbook = _interleave_workbook(tmp_path)
-    document = _interleave_bindings()
-    catalog, deps, _graph = inverted_graph_parts(workbook, document)
-    poisoned = _SharedSubplan(
-        name="_shared_bad",
-        formula_ids=("flag", "combo"),
-        consumers=frozenset({"out_base", "out_shock"}),
-        returns=("combo",),
-        param_ids=("x", "ghost"),
-        result_indices={},
-        call_indices={},
-    )
-    with pytest.raises(InvertedTreeExportError, match=r"_shared_bad.*ghost"):
-        emit_orchestrator(
-            catalog.get("out_shock"),
-            catalog=catalog,
-            deps=deps,
-            subplans=(poisoned,),
-        )
+    assert pkg.compute_out_base(x=1.0) == pytest.approx(expected["Outputs!A1"])
+    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx(expected["Outputs!B1"])
+    assert pkg.compute_out_mid(x=1.0) == pytest.approx(expected["Outputs!C1"])

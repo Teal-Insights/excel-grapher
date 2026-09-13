@@ -9,7 +9,6 @@ import pytest
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.core.address_keys import parse_cell_coords
-from excel_grapher.exporter.codegen import CodeGenerator
 from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
 from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
@@ -34,12 +33,9 @@ from excel_grapher.exporter.inverted_tree.schedule import (
     plan_scc,
     residual_body_order,
 )
-from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     inverted_graph_parts,
-    load_package,
     make_catalog,
     series_entry,
     write_workbook,
@@ -276,13 +272,8 @@ def test_plan_fused_scc_for_lookahead_reversed_direction(tmp_path: Path) -> None
     )
 
 
-def test_empty_key_emits_on_expansion_order(tmp_path: Path) -> None:
-    """`key: []` is positional; headers must not silently become the schedule.
-
-    Schema `SeriesBindingLayoutKeyRules` still requires a non-empty key on
-    non-scalar layouts, so this document is not schema-validated. The catalog
-    and emit contract is expansion order once `key` is empty.
-    """
+def test_empty_key_rejects_ambiguous_public_coordinates(tmp_path: Path) -> None:
+    """Public non-scalar series require unambiguous authored coordinates."""
     workbook = write_workbook(
         tmp_path / "keyless_expansion.xlsx",
         {
@@ -327,16 +318,8 @@ def test_empty_key_emits_on_expansion_order(tmp_path: Path) -> None:
     )
     assert schedule_coord("Engine!A2", catalog) == 0
     assert schedule_coord("Engine!B3", catalog) == 0
-    targets = all_series_targets(document, workbook=workbook)
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-    with CodeGenerator(graph) as gen:
-        modules = gen.generate_modules(
-            series_bindings=document,
-            bindings_workbook=workbook,
-        )
-    pkg = load_package(modules, tmp_path, "keyless_expansion")
-    assert pkg.compute_path(values=(1.0, 2.0, 3.0)) == pytest.approx((1.0, 2.0, 3.0))
-    assert pkg.compute_path(values=(10.0, 20.0, 30.0)) == pytest.approx((10.0, 20.0, 30.0))
+    with pytest.raises(InvertedTreeExportError, match="authored semantic keys"):
+        _ = catalog.get("values").tensor_domain
 
 
 def test_partial_key_domain_fails_closed_in_schedule() -> None:

@@ -8,7 +8,6 @@ slice raises. The helper keeps the window; callers pass the unsliced series.
 from __future__ import annotations
 
 import ast
-import re
 from pathlib import Path
 
 import pytest
@@ -111,10 +110,16 @@ def _windowed_prefix_bindings() -> dict:
     )
 
 
-def _helper_name(api: str) -> str:
-    match = re.search(r"^def (_shared_\d+)\(", api, re.MULTILINE)
-    assert match is not None, "expected a shared helper in api.py"
-    return match.group(1)
+def _source(pkg, name: str, values: tuple[float, ...]):
+    domain = getattr(pkg.data, name.upper() + "_DOMAIN")
+    return pkg.Tensor.from_records(
+        domain=domain,
+        records=zip(tuple(domain), values, strict=True),
+    )
+
+
+def _observations(tensor, years: tuple[int, ...]) -> tuple[object, ...]:
+    return tuple(tensor[year] for year in years)
 
 
 def _take_before_helper_call(api: str, helper: str, series_id: str) -> bool:
@@ -153,10 +158,8 @@ def _take_before_helper_call(api: str, helper: str, series_id: str) -> bool:
 def test_shared_helper_owns_window_caller_passes_catalog_series(tmp_path: Path) -> None:
     modules = generate_inverted(_windowed_prefix_workbook(tmp_path), _windowed_prefix_bindings())
     api = modules["api.py"]
-    helper = _helper_name(api)
-    helper_src = api[api.index(f"def {helper}(") :].split("\ndef ", 1)[0]
-    assert "take(emp, range(2, 5))" in helper_src
-    assert not _take_before_helper_call(api, helper, "emp")
+    assert "emp=self.emp" in api
+    assert "take(" not in api
 
 
 def test_windowed_shared_prefix_evaluates_without_double_take(tmp_path: Path) -> None:
@@ -170,14 +173,22 @@ def test_windowed_shared_prefix_evaluates_without_double_take(tmp_path: Path) ->
     assert set(required_param_names(pkg.compute_second)) == {"values", "extra"}
     assert set(required_param_names(pkg.compute_emp_out)) == {"values", "other"}
 
-    first = pkg.compute_first(values=values)
-    second = pkg.compute_second(values=values, extra=extra)
-    second_b = pkg.compute_second_b(values=values, extra=extra)
-    emp_out = pkg.compute_emp_out(values=values, other=other)
-    assert first == pytest.approx((7.0, 11.0, 16.0))
-    assert second == pytest.approx((23.0, 41.0, 61.0))
-    assert second_b == pytest.approx((24.0, 42.0, 62.0))
-    assert emp_out == pytest.approx((1.0, 3.0, 6.0, 10.0, 15.0))
+    first = pkg.compute_first(values=_source(pkg, "values", values))
+    second = pkg.compute_second(
+        values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+    )
+    second_b = pkg.compute_second_b(
+        values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+    )
+    emp_out = pkg.compute_emp_out(
+        values=_source(pkg, "values", values), other=_source(pkg, "other", other)
+    )
+    window = (2012, 2013, 2014)
+    full = (2010, 2011, 2012, 2013, 2014)
+    assert _observations(first, window) == pytest.approx((7.0, 11.0, 16.0))
+    assert _observations(second, window) == pytest.approx((23.0, 41.0, 61.0))
+    assert _observations(second_b, window) == pytest.approx((24.0, 42.0, 62.0))
+    assert _observations(emp_out, full) == pytest.approx((1.0, 3.0, 6.0, 10.0, 15.0))
 
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(
@@ -198,6 +209,12 @@ def test_windowed_shared_prefix_evaluates_without_double_take(tmp_path: Path) ->
             "Engine!F8",
         ]
     )
-    assert first == pytest.approx(tuple(expected[f"Engine!{col}5"] for col in "DEF"))
-    assert second == pytest.approx(tuple(expected[f"Engine!{col}6"] for col in "DEF"))
-    assert emp_out == pytest.approx(tuple(expected[f"Engine!{col}8"] for col in "BCDEF"))
+    assert _observations(first, window) == pytest.approx(
+        tuple(expected[f"Engine!{col}5"] for col in "DEF")
+    )
+    assert _observations(second, window) == pytest.approx(
+        tuple(expected[f"Engine!{col}6"] for col in "DEF")
+    )
+    assert _observations(emp_out, full) == pytest.approx(
+        tuple(expected[f"Engine!{col}8"] for col in "BCDEF")
+    )

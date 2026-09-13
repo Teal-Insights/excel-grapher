@@ -128,5 +128,8 @@ def test_numeric_matches_formula_evaluator(tmp_path: Path) -> None:
     )
     evaluator = FormulaEvaluator(graph)
     expected = evaluator.evaluate(["Outputs!A1", "Outputs!B1"])
-    got = pkg.compute_output_path(initial_debt=60.0, growth=(3.5, 3.5), interest=(4.0, 4.0))
-    assert got == pytest.approx((expected["Outputs!A1"], expected["Outputs!B1"]))
+    got = pkg.compute_output_path(
+        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    )
+    assert got[1] == pytest.approx(expected["Outputs!A1"])
+    assert got[2] == pytest.approx(expected["Outputs!B1"])

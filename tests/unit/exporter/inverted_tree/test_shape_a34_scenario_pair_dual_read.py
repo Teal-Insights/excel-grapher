@@ -22,24 +22,15 @@ from typing import Any, Literal
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import EmitContext, _pair_key_value_expr
-from excel_grapher.exporter.inverted_tree.catalog import (
-    BoundSeries,
-    KeyPoint,
-    SeriesCatalog,
-    Statement,
-    build_schedule_index,
-)
-from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     write_workbook,
 )
 
@@ -203,21 +194,20 @@ def test_scenario_pair_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> 
     assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "paths[i]" in internals
-    assert "paths[i + 2]" in internals
-    assert "paths[i + 4]" in internals
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name="a34_eval")
     cells = ["Engine!C10", "Engine!D10", "Engine!C11", "Engine!D11"]
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = call_compute(pkg, "selected", kwargs)
-    assert got == pytest.approx((10.0, 11.0, 30.0, 31.0))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert tuple(value for _, value in got.items()) == pytest.approx((10.0, 11.0, 30.0, 31.0))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
     flipped = call_compute(pkg, "selected", {**kwargs, "flag": 0})
-    assert flipped == pytest.approx((20.0, 21.0, 40.0, 41.0))
+    assert tuple(value for _, value in flipped.items()) == pytest.approx((20.0, 21.0, 40.0, 41.0))
 
 
 def test_scenario_pair_dual_read_follows_if_branch_order(tmp_path: Path) -> None:
@@ -233,11 +223,13 @@ def test_scenario_pair_dual_read_follows_if_branch_order(tmp_path: Path) -> None
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "paths" in deps["selected"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a34_swap")
-    kwargs = input_kwargs(catalog, graph)
-    assert call_compute(pkg, "selected", kwargs) == pytest.approx((20.0, 21.0, 30.0, 31.0))
-    assert call_compute(pkg, "selected", {**kwargs, "flag": 0}) == pytest.approx(
-        (10.0, 11.0, 40.0, 41.0)
-    )
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    assert tuple(
+        value for _, value in call_compute(pkg, "selected", kwargs).items()
+    ) == pytest.approx((20.0, 21.0, 30.0, 31.0))
+    assert tuple(
+        value for _, value in call_compute(pkg, "selected", {**kwargs, "flag": 0}).items()
+    ) == pytest.approx((10.0, 11.0, 40.0, 41.0))
 
 
 def test_scenario_pair_dual_read_per_row_if_condition(tmp_path: Path) -> None:
@@ -254,15 +246,18 @@ def test_scenario_pair_dual_read_per_row_if_condition(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "paths" in deps["selected"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a34_qcraft")
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     assert _unwrap(kwargs["flag"]) == "B2.1 Market"
-    assert call_compute(pkg, "selected", kwargs) == pytest.approx((10.0, 11.0, 40.0, 41.0))
-    assert call_compute(pkg, "selected", {**kwargs, "flag": "B6.1 Market"}) == pytest.approx(
-        (20.0, 21.0, 30.0, 31.0)
-    )
+    assert tuple(
+        value for _, value in call_compute(pkg, "selected", kwargs).items()
+    ) == pytest.approx((10.0, 11.0, 40.0, 41.0))
+    assert tuple(
+        value
+        for _, value in call_compute(pkg, "selected", {**kwargs, "flag": "B6.1 Market"}).items()
+    ) == pytest.approx((20.0, 21.0, 30.0, 31.0))
 
 
-def test_scenario_pair_sum_without_if_is_unclassifiable(tmp_path: Path) -> None:
+def test_scenario_pair_sum_without_if_reads_both_scenarios(tmp_path: Path) -> None:
     sheets = _mcve_sheets(
         c10="=C3+C4",
         d10="=D3+D4",
@@ -270,54 +265,7 @@ def test_scenario_pair_sum_without_if_is_unclassifiable(tmp_path: Path) -> None:
         d11="=D5+D6",
     )
     workbook = write_workbook(tmp_path / "a34_sum.xlsx", sheets)
-    with pytest.raises(InvertedTreeExportError, match=r"Engine!C10.*B2\.1 Market") as exc:
-        inverted_graph_parts(workbook, _mcve_bindings())
-    message = str(exc.value)
-    assert "Engine!C3" in message
-    assert "Engine!C4" in message
-    assert "B2.2 Non-Market" in message
-
-
-def test_pair_key_value_expr_omits_unpaired_baseline_statement() -> None:
-    """Pair tables cover the current IF statement, not a Baseline direct read (#777)."""
-    cells = ("Engine!A1", "Engine!A2")
-    points = (KeyPoint((("SCENARIO", "Baseline"),)), KeyPoint((("SCENARIO", "B2"),)))
-    host = BoundSeries(
-        "selected",
-        "series",
-        "output",
-        cells,
-        ("SCENARIO",),
-        "float",
-        "compute_selected",
-        {},
-        points,
-        (
-            Statement("direct", "selected", "direct", 0, 1, cells[:1], points[:1]),
-            Statement("paired", "selected", "if", 1, 2, cells[1:], points[1:]),
-        ),
-    )
-    catalog = SeriesCatalog(
-        {"selected": host},
-        ("selected",),
-        {cell: "selected" for cell in cells},
-        build_schedule_index({"selected": host}),
-    )
-    deps = SeriesDeps(
-        "selected",
-        (),
-        False,
-        None,
-        frozenset(),
-        frozenset(),
-        frozenset(),
-        frozenset(),
-        {},
-        {},
-    )
-    ctx = EmitContext(host, catalog, deps, 1, cells[1], "i", None)
-    expression = _pair_key_value_expr("SCENARIO", 0, ctx, {"SCENARIO": {"B2": ("B2.1", "B2.2")}})
-    assert eval(expression, {}, {"i": 1}) == "B2.1"
+    assert_package_matches_evaluator(workbook, _mcve_bindings(), tmp_path, "a34_sum")
 
 
 def _baseline_pair_path_scenario() -> dict[str, Any]:
@@ -389,9 +337,6 @@ def test_direct_baseline_plus_scenario_pairs_emits(
     assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document, force_rung=force_rung)
     internals = modules["internals.py"]
-    assert "paths[i]" in internals
-    assert "paths[i + 2]" in internals
-    assert "paths[i + 4]" in internals
     assert ".index(" not in internals
     pkg = load_package(modules, tmp_path, name=f"a34_baseline_{force_rung}")
     cells = [
@@ -405,9 +350,15 @@ def test_direct_baseline_plus_scenario_pairs_emits(
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     got = call_compute(pkg, "selected", kwargs)
-    assert got == pytest.approx((1.0, 2.0, 10.0, 11.0, 30.0, 31.0))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        (1.0, 2.0, 10.0, 11.0, 30.0, 31.0)
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
     flipped = call_compute(pkg, "selected", {**kwargs, "flag": 0})
-    assert flipped == pytest.approx((1.0, 2.0, 20.0, 21.0, 40.0, 41.0))
+    assert tuple(value for _, value in flipped.items()) == pytest.approx(
+        (1.0, 2.0, 20.0, 21.0, 40.0, 41.0)
+    )

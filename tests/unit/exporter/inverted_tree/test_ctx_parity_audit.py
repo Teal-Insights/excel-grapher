@@ -68,7 +68,7 @@ def test_bool_dtype_round_trips(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, _copy_bindings("Inputs!A1", "Outputs!A1", dtype="bool"))
     pkg = load_package(modules, tmp_path, name="audit_bool")
-    assert pkg.compute_out(src=False) == (False,)
+    assert pkg.compute_out(src=False) is False
     catalog, _deps, graph = inverted_graph_parts(
         workbook, _copy_bindings("Inputs!A1", "Outputs!A1")
     )
@@ -90,7 +90,7 @@ def test_datetime_input_emits_data_literals(tmp_path: Path) -> None:
     assert "from datetime import datetime" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="audit_dt")
     assert stamp == pkg.data.SRC_DEFAULT
-    assert pkg.compute_out(src=stamp) == (stamp,)
+    assert pkg.compute_out(src=stamp) == stamp
 
 
 def test_list_data_range_and_sheet_name_keys_match_evaluator(tmp_path: Path) -> None:
@@ -137,7 +137,16 @@ def test_list_data_range_and_sheet_name_keys_match_evaluator(tmp_path: Path) -> 
     assert scenarios == ["Baseline", "Baseline", "Shock", "Shock"]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_shards")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!Z1"])["Outputs!Z1"]
-    assert _scalar(pkg.compute_out(growth=(1.0, 2.0, 3.0, 4.0))) == expected
+    assert (
+        _scalar(
+            pkg.compute_out(
+                growth=pkg.data.Growth.from_nested(
+                    domain=pkg.data.GROWTH_DOMAIN, values=((1.0, 2.0), (3.0, 4.0))
+                )
+            )
+        )
+        == expected
+    )
 
 
 def test_value_map_key_domain_is_resolved(tmp_path: Path) -> None:
@@ -174,7 +183,14 @@ def test_value_map_key_domain_is_resolved(tmp_path: Path) -> None:
     assert [point["SCENARIO"] for point in catalog.get("src").domain] == ["Base", "Alt"]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_vmap")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!Z1"])["Outputs!Z1"]
-    assert _scalar(pkg.compute_out(src=(10.0, 20.0))) == expected
+    assert (
+        _scalar(
+            pkg.compute_out(
+                src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=((10.0,), (20.0,)))
+            )
+        )
+        == expected
+    )
 
 
 def test_named_range_data_range_exports(tmp_path: Path) -> None:
@@ -208,7 +224,11 @@ def test_named_range_data_range_exports(tmp_path: Path) -> None:
     assert catalog.get("src").cells == ("Inputs!B2", "Inputs!C2")
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_named")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
-    assert pkg.compute_out(src=(1.5, 2.5)) == (expected["Outputs!A1"], expected["Outputs!B1"])
+    result = pkg.compute_out(
+        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.5, 2.5))
+    )
+    assert result[1] == expected["Outputs!A1"]
+    assert result[2] == expected["Outputs!B1"]
 
 
 def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
@@ -297,7 +317,7 @@ def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "sum_if.xlsx",
         {
-            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Inputs": {"Z1": 1, "Z2": 2, "A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
             "Outputs": {"A1": "=SUM(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
         },
     )
@@ -307,21 +327,25 @@ def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
             "Inputs!A1:A2",
             layout="series",
             direction="input",
-            header_row=10,
+            label_column="Z",
         ),
         series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_sum_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
+    assert _scalar(
+        pkg.compute_out(
+            src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
+        )
+    ) == pytest.approx(expected)
 
 
 def test_average_if_array_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "average_if.xlsx",
         {
-            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Inputs": {"Z1": 1, "Z2": 2, "A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
             "Outputs": {"A1": "=AVERAGE(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
         },
     )
@@ -331,21 +355,25 @@ def test_average_if_array_matches_evaluator(tmp_path: Path) -> None:
             "Inputs!A1:A2",
             layout="series",
             direction="input",
-            header_row=10,
+            label_column="Z",
         ),
         series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_average_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
+    assert _scalar(
+        pkg.compute_out(
+            src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
+        )
+    ) == pytest.approx(expected)
 
 
 def test_max_if_array_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "max_if.xlsx",
         {
-            "Inputs": {"A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
+            "Inputs": {"Z1": 1, "Z2": 2, "A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
             "Outputs": {"A1": "=MAX(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
         },
     )
@@ -355,14 +383,18 @@ def test_max_if_array_matches_evaluator(tmp_path: Path) -> None:
             "Inputs!A1:A2",
             layout="series",
             direction="input",
-            header_row=10,
+            label_column="Z",
         ),
         series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_max_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=(-1.0, 2.0))) == pytest.approx(expected)
+    assert _scalar(
+        pkg.compute_out(
+            src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
+        )
+    ) == pytest.approx(expected)
 
 
 def test_cross_sheet_range_matches_evaluator(tmp_path: Path) -> None:
@@ -389,7 +421,16 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
     workbook = write_workbook(
         tmp_path / "agg.xlsx",
         {
-            "Inputs": {"A1": 1.0, "A2": 2.0, "B1": 3.0, "B2": 4.0, "A10": 1, "B10": 2},
+            "Inputs": {
+                "Z1": 1,
+                "Z2": 2,
+                "A1": 1.0,
+                "A2": 2.0,
+                "B1": 3.0,
+                "B2": 4.0,
+                "A10": 1,
+                "B10": 2,
+            },
             "Outputs": {
                 "A1": "=SUM(Inputs!A1:A2)",
                 "B1": "=SUMPRODUCT(Inputs!A1:A2,Inputs!B1:B2)",
@@ -402,14 +443,14 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
             "Inputs!A1:A2",
             layout="series",
             direction="input",
-            header_row=10,
+            label_column="Z",
         ),
         series_entry(
             "right",
             "Inputs!B1:B2",
             layout="series",
             direction="input",
-            header_row=10,
+            label_column="Z",
         ),
         series_entry("sum_out", "Outputs!A1", layout="scalar", direction="output"),
         series_entry("prod_out", "Outputs!B1", layout="scalar", direction="output"),
@@ -417,10 +458,17 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_agg")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
-    assert _scalar(pkg.compute_sum_out(left=(1.0, 2.0))) == pytest.approx(expected["Outputs!A1"])
-    assert _scalar(pkg.compute_prod_out(left=(1.0, 2.0), right=(3.0, 4.0))) == pytest.approx(
-        expected["Outputs!B1"]
-    )
+    assert _scalar(
+        pkg.compute_sum_out(
+            left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 2.0))
+        )
+    ) == pytest.approx(expected["Outputs!A1"])
+    assert _scalar(
+        pkg.compute_prod_out(
+            left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 2.0)),
+            right=pkg.data.Right.from_nested(domain=pkg.data.RIGHT_DOMAIN, values=(3.0, 4.0)),
+        )
+    ) == pytest.approx(expected["Outputs!B1"])
 
 
 def test_input_domain_rejects_out_of_range_argument(tmp_path: Path) -> None:
@@ -443,6 +491,6 @@ def test_input_domain_rejects_out_of_range_argument(tmp_path: Path) -> None:
         series_entry("out", "Outputs!A1", layout="scalar", direction="output", dtype="int"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_domain")
-    assert pkg.compute_out(flag=0) == (0,)
+    assert pkg.compute_out(flag=0) == 0
     with pytest.raises(ValueError, match=r"flag out of domain"):
         pkg.compute_out(flag=2)

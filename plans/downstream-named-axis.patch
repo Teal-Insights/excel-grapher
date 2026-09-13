@@ -1,0 +1,1472 @@
+--- a/src/codegen_cache.py
++++ b/src/codegen_cache.py
+@@ -13,7 +13,9 @@
+ from pathlib import Path
+ from typing import cast
+ 
+-CODEGEN_CACHE_SCHEMA_VERSION = "1.2.0"
++from excel_grapher.exporter import CodeGenerator
++
++CODEGEN_CACHE_SCHEMA_VERSION = "2.0.0"
+ DEFAULT_CODEGEN_CACHE_DIR = Path(__file__).resolve().parents[1] / ".cache" / "codegen"
+ 
+ OPTIONAL_GENERATED_MODULES = frozenset(
+@@ -41,12 +43,15 @@
+     *,
+     projection_cache_key: str,
+     targets: Sequence[str],
++    bindings_fingerprint: str,
+ ) -> str:
+     payload = {
+         "cache_schema_version": CODEGEN_CACHE_SCHEMA_VERSION,
+         "projection_cache_key": projection_cache_key,
+         "targets": sorted(targets),
++        "bindings_fingerprint": bindings_fingerprint,
+         "excel_grapher_version": version("excel-grapher"),
++        "representation_version": CodeGenerator.representation_version,
+     }
+     return hashlib.sha256(stable_json(payload).encode()).hexdigest()
+ 
+@@ -157,6 +162,7 @@
+     *,
+     projection_cache_key: str,
+     targets: Sequence[str],
++    bindings_fingerprint: str,
+     build_modules: Callable[[], Mapping[str, str]],
+     cache_dir: Path | None = None,
+     no_cache: bool = False,
+@@ -166,6 +172,7 @@
+     cache_key = codegen_cache_key(
+         projection_cache_key=projection_cache_key,
+         targets=targets,
++        bindings_fingerprint=bindings_fingerprint,
+     )
+     started = time.perf_counter()
+     if not no_cache and not force_rebuild:
+--- a/src/extraction_pipeline.py
++++ b/src/extraction_pipeline.py
+@@ -1,6 +1,7 @@
+ from __future__ import annotations
+ 
+ import argparse
++import hashlib
+ import json
+ import logging
+ import time
+@@ -706,6 +707,7 @@
+     codegen_result = get_or_build_codegen_modules(
+         projection_cache_key=proj_cache_key,
+         targets=targets,
++        bindings_fingerprint=hashlib.sha256(json.dumps(series_bindings, sort_keys=True, separators=(",", ":"), default=str).encode()).hexdigest(),
+         build_modules=_build_modules,
+         no_cache=no_cache,
+         force_rebuild=force_rebuild,
+--- a/src/package_materialize.py
++++ b/src/package_materialize.py
+@@ -40,6 +40,11 @@
+     "data.py",
+     "runtime.py",
+     "internals.py",
++    "tensor.py",
++    "_tensor_lowering.py",
++    "_data.py",
++    "_kernel.py",
++    "_kernels.py",
+ )
+ 
+ 
+--- a/tests/test_codegen_cache.py
++++ b/tests/test_codegen_cache.py
+@@ -39,6 +39,7 @@
+ class _CodegenKeyKwargs(TypedDict):
+     projection_cache_key: str
+     targets: Sequence[str]
++    bindings_fingerprint: str
+ 
+ 
+ @pytest.fixture
+@@ -50,10 +51,12 @@
+     *,
+     projection_cache_key: str = "proj-key-abc",
+     targets: Sequence[str] = ("Sheet!A1",),
++    bindings_fingerprint: str = "binding-domain-a",
+ ) -> _CodegenKeyKwargs:
+     return {
+         "projection_cache_key": projection_cache_key,
+         "targets": list(targets),
++        "bindings_fingerprint": bindings_fingerprint,
+     }
+ 
+ 
+@@ -69,6 +72,18 @@
+     for name in _DOCSTRING_KEY_KWARGS:
+         assert name not in key_params
+         assert name not in build_params
++
++
++def test_codegen_cache_tracks_representation_version() -> None:
++    from excel_grapher.exporter import CodeGenerator
++
++    before = codegen_cache_key(**_key_kwargs())
++    with patch.object(CodeGenerator, "representation_version", "next-named-schema"):
++        assert codegen_cache_key(**_key_kwargs()) != before
++
++
++def test_codegen_cache_tracks_authored_bindings() -> None:
++    assert codegen_cache_key(**_key_kwargs()) != codegen_cache_key(**_key_kwargs(bindings_fingerprint="binding-domain-b"))
+ 
+ 
+ def test_codegen_cache_roundtrip(codegen_cache_dir: Path) -> None:
+--- a/tests/test_package_materialize.py
++++ b/tests/test_package_materialize.py
+@@ -14,6 +14,7 @@
+     adopt_codegen_cache_from_dist,
+     materialize_package,
+     read_package_cache_keys,
++    _read_package_modules,
+ )
+ from src.pipeline_config import DistProjectMetadata, PipelineConfig
+ 
+@@ -23,6 +24,7 @@
+     "data.py": "DATA = {}\n",
+     "runtime.py": "def run():\n    pass\n",
+     "internals.py": "def cell_a1(ctx):\n    return 1.0\n",
++    **{name: "# named-axis module\n" for name in ("tensor.py", "_tensor_lowering.py", "_data.py", "_kernel.py", "_kernels.py")},
+ }
+ 
+ 
+@@ -74,6 +76,7 @@
+         "comparison_utils.py",
+         "differential_scenario_inputs.py",
+         "binding_adapter.py",
++        "lic_dsf_scenario_matrix.py",
+         "differential_test_exported_library.py",
+     ):
+         (tmp_path / "tests" / "differential" / name).write_text(
+@@ -153,3 +156,11 @@
+         expected_codegen_key="z" * 64,
+         projection_cache_key="proj-key",
+     )
++
++
++def test_adoption_preserves_named_axis_runtime_modules(tmp_path: Path) -> None:
++    for name, source in _SAMPLE_MODULES.items():
++        (tmp_path / name).write_text(source, encoding="utf-8")
++    assert _read_package_modules(tmp_path) == _SAMPLE_MODULES
++    (tmp_path / "tensor.py").unlink()
++    assert _read_package_modules(tmp_path) is None
+--- a/tests/differential/binding_adapter.py
++++ b/tests/differential/binding_adapter.py
+@@ -7,6 +7,7 @@
+ from typing import Any, cast
+ 
+ from excel_grapher.core.address_keys import normalize_key
++from excel_grapher.exporter.export_runtime.tensor import Tensor
+ 
+ _RECORD_VALUE_FIELD = "OBS_VALUE"
+ 
+@@ -47,32 +48,32 @@
+ 
+ def overlay_series_values(
+     series: Mapping[str, Any],
+-    default: Sequence[Any],
++    default: Tensor[Any],
+     records: Sequence[Mapping[str, Any]] = (),
+-) -> tuple[Any, ...]:
+-    """Return catalog-order values with sparse record overlays."""
++) -> Tensor[Any]:
++    """Overlay explicit records by authored coordinate identity."""
+     series_id = str(series["id"])
+-    cells = series["cells"]
+-    if len(default) != len(cells):
+-        raise ValueError(
+-            f"{series_id} default length {len(default)} does not match "
+-            f"{len(cells)} bound cells"
+-        )
+-    values = list(default)
+-    if not records:
+-        return tuple(values)
++    if isinstance(default, Sequence):
++        raise TypeError(f"{series_id}: expected a named tensor default")
+     key_fields = tuple(series["key_fields"])
+-    index = {_cell_key(cell, key_fields): i for i, cell in enumerate(cells)}
++    if tuple(axis.name for axis in default.domain.axes) != key_fields:
++        raise ValueError(f"{series_id}: default axes do not match {key_fields!r}")
++    values = dict(default.items())
++    for cell in series["cells"]:
++        if _cell_key(cell, key_fields) not in values:
++            raise ValueError(f"{series_id}: missing bound coordinate {_cell_key(cell, key_fields)!r}")
++    seen = set()
+     for record in records:
+         key = _record_key(record, key_fields)
+-        try:
+-            position = index[key]
+-        except KeyError as exc:
++        if key in seen:
++            raise ValueError(f"{series_id}: duplicate overlay coordinate {key!r}")
++        seen.add(key)
++        if key not in values:
+             raise LookupError(
+                 f"{series_id} has no cell for {dict(zip(key_fields, key, strict=True))}"
+-            ) from exc
+-        values[position] = record[_RECORD_VALUE_FIELD]
+-    return tuple(values)
++            )
++        values[key] = record[_RECORD_VALUE_FIELD]
++    return type(default).from_records(domain=default.domain, records=values.items())
+ 
+ 
+ def excel_writes_for_inputs(
+@@ -121,7 +122,7 @@
+     """Build keyword args for an inverted-tree ``compute_*`` function.
+ 
+     When ``input_series`` is provided, matrix series overlay ``data.*_DEFAULT``
+-    arrays at catalog index. Otherwise dashboard scalars come from
++    tensors by coordinate identity. Otherwise dashboard scalars come from
+     ``scalar_input_keys`` and required arrays come from ``data`` defaults.
+     Constant kwargs that already have generated defaults are omitted.
+     """
+--- a/tests/test_binding_adapter.py
++++ b/tests/test_binding_adapter.py
+@@ -7,6 +7,7 @@
+ 
+ import pytest
+ from excel_grapher.core.address_keys import normalize_key
++from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
+ 
+ from tests.differential.binding_adapter import (
+     excel_writes_for_inputs,
+@@ -87,17 +88,28 @@
+     assert len(cells) == 4
+ 
+ 
+-def test_overlay_series_values_patches_catalog_index() -> None:
++def _default_shocks() -> Tensor[float]:
++    domain = Domain.explicit(
++        axes=(Axis("SCENARIO", ("stress", "base"), str), Axis("TIME_PERIOD", (2099, 2035, 2030), int)),
++        coordinates=(("base", 2030), ("base", 2035), ("stress", 2099)),
++    )
++    return Tensor.from_records(domain=domain, records=((coord, 0.0) for coord in domain))
++
++
++def test_overlay_series_values_patches_coordinates() -> None:
+     patched = overlay_series_values(
+         _shocks(),
+-        (0.0, 0.0, 0.0),
++        _default_shocks(),
+         ({"SCENARIO": "base", "TIME_PERIOD": 2035, "OBS_VALUE": 1.5},),
+     )
+-    assert patched == (0.0, 1.5, 0.0)
++    assert patched["base", 2035] == 1.5
++    assert patched["base", 2030] == 0.0
++    assert patched["stress", 2099] == 0.0
++    assert tuple(patched.domain) == tuple(_default_shocks().domain)
+ 
+ 
+-def test_overlay_series_values_fail_closed_on_length_mismatch() -> None:
+-    with pytest.raises(ValueError, match="revenue_shocks"):
++def test_overlay_series_values_rejects_flat_defaults() -> None:
++    with pytest.raises(TypeError, match="revenue_shocks"):
+         overlay_series_values(_shocks(), (0.0, 0.0), ())
+ 
+ 
+@@ -105,7 +117,7 @@
+     def compute(*, revenue_shocks: tuple[float, ...]) -> tuple[float, ...]:
+         return (1.0,)
+ 
+-    data = SimpleNamespace(REVENUE_SHOCKS_DEFAULT=(0.0, 0.0, 0.0))
++    data = SimpleNamespace(REVENUE_SHOCKS_DEFAULT=_default_shocks())
+     data.__name__ = "pkg.data"
+     with pytest.raises(TypeError, match="sequence of records"):
+         input_kwargs_for_compute(
+@@ -122,7 +134,7 @@
+     ) -> tuple[float, ...]:
+         return (1.0,)
+ 
+-    data = SimpleNamespace(REVENUE_SHOCKS_DEFAULT=(0.0, 0.0, 0.0))
++    data = SimpleNamespace(REVENUE_SHOCKS_DEFAULT=_default_shocks())
+     data.__name__ = "pkg.data"
+     kwargs = input_kwargs_for_compute(
+         compute,
+@@ -135,10 +147,12 @@
+         },
+         input_series=(_scalar("country_name", "Inputs!A1"), _shocks()),
+     )
+-    assert kwargs == {
+-        "country_name": "France",
+-        "revenue_shocks": (0.0, 2.0, 0.0),
+-    }
++    assert kwargs["country_name"] == "France"
++    result = kwargs["revenue_shocks"]
++    assert isinstance(result, Tensor)
++    assert result["base", 2035] == 2.0
++    assert result["base", 2030] == 0.0
++    assert data.REVENUE_SHOCKS_DEFAULT["base", 2035] == 0.0
+ 
+ 
+ def test_input_kwargs_without_series_keep_data_defaults_for_arrays() -> None:
+@@ -147,7 +161,7 @@
+     ) -> tuple[float, ...]:
+         return (1.0,)
+ 
+-    data = SimpleNamespace(REVENUE_SHOCKS_DEFAULT=(0.0, 0.0, 0.0))
++    data = SimpleNamespace(REVENUE_SHOCKS_DEFAULT=_default_shocks())
+     data.__name__ = "pkg.data"
+     kwargs = input_kwargs_for_compute(
+         compute,
+@@ -157,5 +171,5 @@
+     )
+     assert kwargs == {
+         "country_name": "France",
+-        "revenue_shocks": (0.0, 0.0, 0.0),
++        "revenue_shocks": data.REVENUE_SHOCKS_DEFAULT,
+     }
+--- a/bindings/input5.bindings.yaml
++++ b/bindings/input5.bindings.yaml
+@@ -1348,7 +1348,7 @@
+       record_contract: records
+       strict: true
+     domain:
+-      between:
++      real_between:
+         min: 0
+         max: 1
+   structure:
+--- a/bindings/inputs.bindings.yaml
++++ b/bindings/inputs.bindings.yaml
+@@ -758,7 +758,7 @@
+       record_contract: records
+       strict: true
+     domain:
+-      between:
++      real_between:
+         min: -100
+         max: 100
+   structure:
+@@ -1534,10 +1534,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: TIME_PERIOD
+       concept: TIME_PERIOD
+@@ -2814,10 +2814,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -2858,10 +2858,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -2903,10 +2903,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -2947,10 +2947,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -2992,10 +2992,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -3036,10 +3036,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -3080,10 +3080,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+@@ -3124,10 +3124,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: float
+     dimensions:
+     - id: HOLDER
+       concept: HOLDER
+--- /dev/null
++++ b/tests/test_named_axis_binding_contract.py
+@@ -0,0 +1,158 @@
++"""Named-axis migration checks for authored workbook input contracts."""
++
++from pathlib import Path
++
++import pytest
++import yaml
++from excel_grapher.series_bindings.input_coerce import require_input_domain
++
++
++@pytest.mark.parametrize(
++    "filename,series_id,values",
++    [
++        ("input5.bindings.yaml", "input5_gfn_share", (0.0, 0.05, 0.2, 1.0)),
++        (
++            "inputs.bindings.yaml",
++            "input_1_rer_overvaluation",
++            (-100.0, -0.5, 20.0, 100.0),
++        ),
++    ],
++)
++def test_fractional_measures_accept_declared_float_values(
++    filename, series_id, values
++) -> None:
++    document = yaml.safe_load(Path("bindings", filename).read_text(encoding="utf-8"))
++    series = next(series for series in document["series"] if series["id"] == series_id)
++    require_input_domain(values, series["input"]["domain"], series_id=series_id)
++
++
++@pytest.mark.parametrize(
++    "series_id",
++    [
++        "input3_domestic_outstanding_of_existing_debt_in_lc",
++        "input3_domestic_o_w_st_lc_st",
++        "input3_domestic_outstanding_of_existing_debt_in_fx",
++        "input3_domestic_o_w_st_fc_st",
++        "input3_domestic_interest_payment_from_existing_debt_in_lc",
++        "input3_domestic_interest_payment_from_existing_debt_in_fx",
++        "input3_domestic_principal_payment_from_existing_debt_in_lc",
++        "input3_domestic_principal_payment_from_existing_debt_in_fx",
++    ],
++)
++def test_domestic_debt_measure_contract_preserves_numeric_values(series_id) -> None:
++    document = yaml.safe_load(
++        Path("bindings/inputs.bindings.yaml").read_text(encoding="utf-8")
++    )
++    series = next(series for series in document["series"] if series["id"] == series_id)
++    measure = series["structure"]["measure"]
++    assert measure["dtype"] == "float", (
++        "Debt values must remain numbers for workbook ISNUMBER guards"
++    )
++    assert measure["bind"]["read"] == "float"
++
++
++@pytest.mark.parametrize(
++    "filename,series_id",
++    [
++        ("constants.bindings.yaml", "imported_ppp_kppp"),
++        ("constants.bindings.yaml", "imported_ppp_ratio"),
++        ("constants.bindings.yaml", "data_rem_headers"),
++        ("constants.bindings.yaml", "data_rem_metadata"),
++        ("constants.bindings.yaml", "data_gdpusd_headers"),
++        ("constants.bindings.yaml", "data_gdpusd_metadata"),
++        (
++            "inputs.bindings.yaml",
++            "input3_input_3_macro_public_sector_liquid_assets_stock_e_g_cash_deposits_and_mar_2",
++        ),
++        ("internals-rest.bindings.yaml", "trigger_market_access"),
++        ("leftovers.bindings.yaml", "input6_tailored_params_fuel_label"),
++    ],
++)
++def test_mixed_workbook_measures_keep_numbers_and_text(filename, series_id) -> None:
++    document = yaml.safe_load(Path("bindings", filename).read_text(encoding="utf-8"))
++    series = next(series for series in document["series"] if series["id"] == series_id)
++    measure = series["structure"]["measure"]
++    assert measure["dtype"] == "float", (
++        "Numeric workbook values need the numeric/text measure union"
++    )
++    assert measure["bind"]["read"] == "auto"
++
++
++def test_liquid_asset_sentinel_is_preserved_by_binding_reader() -> None:
++    from excel_grapher.series_bindings.coerce import coerce_scalar
++
++    document = yaml.safe_load(
++        Path("bindings/inputs.bindings.yaml").read_text(encoding="utf-8")
++    )
++    series = next(
++        s
++        for s in document["series"]
++        if s["id"]
++        == "input3_input_3_macro_public_sector_liquid_assets_stock_e_g_cash_deposits_and_mar_2"
++    )
++    reader = series["structure"]["measure"]["bind"]["read"]
++    assert coerce_scalar("n.a.", reader) == "n.a."
++    assert coerce_scalar(8770.39094418668, reader) == 8770.39094418668
++
++
++@pytest.mark.parametrize(
++    "series_id",
++    [
++        "pv_stress_bounds_cumulative_selected_by_t_g_0",
++        "pv_stress_bounds_cumulative_selected_by_t_m_condition",
++        "pv_resfin_pub_output_cumulative_selected_by_t_g_0",
++        "pv_resfin_pub_output_cumulative_selected_by_t_m_condition",
++        "pv_resfin_add_output_cumulative_selected_by_t_g_0",
++        "pv_resfin_add_output_cumulative_selected_by_t_g_0_2",
++        "pv_resfin_add_output_cumulative_selected_by_t_m_condition",
++        "pv_resfin_add_output_cumulative_selected_by_t_m_condition_2",
++        "pv_baseline_com_discount_cumulative_selected_by_t_g_0",
++        "pv_baseline_com_discount_cumulative_selected_by_t_m_condition",
++        "pv_stress_com_discount_cumulative_selected_by_t_g_0",
++        "pv_stress_com_discount_cumulative_selected_by_t_m_condition",
++        "pv_stress_cumulative_selected_t_g_0",
++        "pv_stress_cumulative_selected_t_m_condition",
++    ],
++)
++def test_cumulative_monetary_measures_preserve_fractions(series_id) -> None:
++    from excel_grapher.series_bindings.coerce import coerce_scalar
++
++    document = yaml.safe_load(
++        Path("bindings/pv-stress.bindings.yaml").read_text(encoding="utf-8")
++    )
++    series = next(s for s in document["series"] if s["id"] == series_id)
++    measure = series["structure"]["measure"]
++    assert measure["dtype"] == "float", (
++        "Cumulative debt must preserve fractional monetary amounts"
++    )
++    assert coerce_scalar(298.604747533833, measure["bind"]["read"]) == 298.604747533833
++    year = next(
++        d for d in series["structure"]["dimensions"] if d["id"] == "TIME_PERIOD"
++    )
++    assert year["bind"]["read"] == "int", (
++        "Measure changes must preserve integer year readers"
++    )
++
++
++@pytest.mark.parametrize(
++    "series_id",
++    [
++        "in6opt_standard_one_time_30_percent_nominal_depreciation_of",
++        "in6opt_standard_size_of_fx_depreciation_shock",
++        "in6opt_standard_b6_combination_size_of_fx_depreciation_shock",
++    ],
++)
++def test_fx_depreciation_shock_rules_preserve_fractional_sizes(series_id) -> None:
++    from excel_grapher.series_bindings.coerce import coerce_scalar
++
++    document = yaml.safe_load(
++        Path("bindings/internals-rest.bindings.yaml").read_text(encoding="utf-8")
++    )
++    series = next(s for s in document["series"] if s["id"] == series_id)
++    measure = series["structure"]["measure"]
++    assert measure["dtype"] == "float", (
++        "FX shock formulas can produce fractional percentages"
++    )
++    assert (
++        coerce_scalar(39.278230749954716, measure["bind"]["read"]) == 39.278230749954716
++    )
+--- a/tests/differential/differential_test_exported_library.py
++++ b/tests/differential/differential_test_exported_library.py
+@@ -38,6 +38,10 @@
+ )
+ from .differential_scenario_inputs import collect_scenario_input_addresses
+ from .differential_types import ATOL, RTOL, Axis, AxisPoint, Scenario
++from .lic_dsf_scenario_matrix import (
++    chart_suppression_control_cells,
++    expects_chart_suppression_na,
++)
+ 
+ logger = logging.getLogger(__name__)
+ 
+@@ -308,7 +312,12 @@
+             mvp_outputs.get(cell_label),
+             atol=atol,
+             rtol=rtol,
+-            expects_error_values=scenario.expects_error_values,
++            expects_error_values=(
++                scenario.expects_error_values
++                or expects_chart_suppression_na(
++                    cell_address, graph_outputs.get(cell_address), graph_outputs
++                )
++            ),
+         )
+         for cell_label, cell_address in cell_labels
+     ]
+@@ -508,7 +517,7 @@
+         logger.info("Graph oracle: %s", scenario.id)
+         self._driver.reset_inputs()
+         self._driver.set_inputs(inputs_for_excel(scenario))
+-        return {address: self._driver.read(address) for address in output_addresses}
++        return self._driver.read_many(output_addresses)
+ 
+ 
+ def _verify_paths(config: DifferentialConfig) -> None:
+@@ -553,7 +562,7 @@
+             f"{scenario_id}: {cells}" for scenario_id, cells in offenders.items()
+         )
+         raise RuntimeError(
+-            "Input-symmetry pre-flight failed — these graph writes have no "
++            "Input-symmetry pre-flight failed â€” these graph writes have no "
+             f"compute_* counterpart in the exported API: {details}. "
+             "Either bind them as inputs (and re-export) or remove them from "
+             "the scenario's graph writes."
+@@ -570,8 +579,8 @@
+         if current != exported:
+             raise RuntimeError(
+                 "Workbook SHA-256 mismatch: the workbook has changed since the "
+-                f"package was exported (current {current[:12]}…, export-time "
+-                f"{exported[:12]}…). Re-run the extraction pipeline before "
++                f"package was exported (current {current[:12]}â€¦, export-time "
++                f"{exported[:12]}â€¦). Re-run the extraction pipeline before "
+                 "trusting parity results."
+             )
+         return
+@@ -651,7 +660,14 @@
+     comparisons: list[Comparison] = []
+     for scenario in scenarios:
+         try:
+-            graph_outputs = graph_oracle(scenario, output_addresses)
++            graph_outputs = graph_oracle(
++                scenario,
++                tuple(
++                    dict.fromkeys(
++                        (*output_addresses, *chart_suppression_control_cells())
++                    )
++                ),
++            )
+         except Exception as exc:
+             logger.exception("Graph oracle crashed on %s.", scenario.id)
+             comparisons.extend(
+@@ -751,7 +767,7 @@
+ 
+ 
+ # --------------------------------------------------------------------------
+-# Workbook-specific hooks — LIC-DSF Ghana-vintage matrix.
++# Workbook-specific hooks â€” LIC-DSF Ghana-vintage matrix.
+ # --------------------------------------------------------------------------
+ 
+ from .binding_adapter import input_kwargs_for_compute
+@@ -766,19 +782,51 @@
+ 
+ 
+ def mvp_outputs_for_scenario(api: ModuleType, scenario: Scenario) -> dict[str, Any]:
+-    """Call keyword-only ``compute_*`` helpers and return ``{label: value}``."""
++    """Match workbook targets to generated output coordinates."""
+     overlays = series_inputs_for_scenario(scenario)
+     input_series = shocked_input_series(scenario)
++    producers: dict[str, tuple[Any, tuple[Any, ...]]] = {}
++    for name in sorted(dir(api)):
++        if not name.startswith("compute_"):
++            continue
++        compute = getattr(api, name)
++        if not callable(compute):
++            continue
++        domain = compute.__domain__
++        required = None if domain is None else frozenset(domain)
++        for coordinate, address in compute.__cells__.items():
++            if required is None or coordinate in required:
++                producers.setdefault(address, (compute, coordinate))
++    constant_values: dict[str, Any] = {}
++    for name in getattr(api.data, "_CONSTANT_NAMES", ()):
++        value = getattr(api.data, name)
++        domain = getattr(value, "domain", None)
++        for coordinate, address in getattr(api.data, name + "_CELLS").items():
++            if domain is None or coordinate in domain:
++                constant_values[address] = (
++                    value if domain is None else value[coordinate]
++                )
++    evaluated: dict[Any, Any] = {}
+     values: dict[str, Any] = {}
+-    for label, _address in output_cell_labels():
+-        compute = getattr(api, f"compute_{label}")
+-        kwargs = input_kwargs_for_compute(
+-            compute,
+-            api.data,
+-            inputs=overlays,
+-            input_series=input_series,
+-        )
+-        values[label] = compute(**kwargs)
++    for label, address in output_cell_labels():
++        if address not in producers and address in constant_values:
++            values[label] = constant_values[address]
++            continue
++        if address not in producers:
++            raise ValueError(
++                f"No generated output coordinate covers target {address!r}"
++            )
++        compute, coordinate = producers[address]
++        if compute not in evaluated:
++            kwargs = input_kwargs_for_compute(
++                compute,
++                api.data,
++                inputs=overlays,
++                input_series=input_series,
++            )
++            evaluated[compute] = compute(**kwargs)
++        result = evaluated[compute]
++        values[label] = result if compute.__domain__ is None else result[coordinate]
+     return values
+ 
+ 
+--- a/tests/test_lic_dsf_scenario_matrix.py
++++ b/tests/test_lic_dsf_scenario_matrix.py
+@@ -4,6 +4,7 @@
+ 
+ from types import SimpleNamespace
+ 
++import pytest
+ from excel_grapher.core.address_keys import normalize_key
+ 
+ from src.chart_data_targets import chart_data_target_cells
+@@ -197,6 +198,8 @@
+     def compute_rating(*, discount_rate: float, country: str) -> str:
+         return f"{country}:{discount_rate}"
+ 
++    compute_rating.__cells__ = {(): "'Chart Data'!D10"}
++    compute_rating.__domain__ = None
+     api = SimpleNamespace(data=data, compute_rating=compute_rating)
+     labels = (("rating", "'Chart Data'!D10"),)
+     from tests.differential import differential_test_exported_library as harness
+@@ -210,3 +213,110 @@
+         assert mvp_outputs_for_scenario(api, baseline) == {"rating": "Ghana:0.05"}
+     finally:
+         harness.output_cell_labels = original
++
++
++def test_mvp_outputs_selects_named_coordinates_and_calls_each_producer_once(
++    monkeypatch,
++):
++    from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
++
++    from tests.differential import differential_test_exported_library as harness
++
++    domain = Domain.product(Axis("TIME_PERIOD", (2027, 2025), int))
++    result = Tensor.from_records(
++        domain=domain, records=(((2025,), 10.0), ((2027,), 30.0))
++    )
++    calls = []
++
++    def compute_path():
++        calls.append(True)
++        return result
++
++    compute_path.__cells__ = {(2025,): "S!B2", (2027,): "S!D2"}
++    compute_path.__domain__ = domain
++    api = SimpleNamespace(data=SimpleNamespace(), compute_path=compute_path)
++    monkeypatch.setattr(
++        harness, "output_cell_labels", lambda: (("early", "S!B2"), ("late", "S!D2"))
++    )
++    assert harness.mvp_outputs_for_scenario(
++        api, Scenario(id="baseline", inputs={})
++    ) == {"early": 10.0, "late": 30.0}
++    assert calls == [True]
++
++
++def test_mvp_outputs_include_authored_constant_targets(monkeypatch):
++    from tests.differential import differential_test_exported_library as harness
++
++    data = SimpleNamespace(
++        _CONSTANT_NAMES=frozenset({"FISCAL_SPACE_THRESHOLD"}),
++        FISCAL_SPACE_THRESHOLD=0.35,
++        FISCAL_SPACE_THRESHOLD_CELLS={(): "S!E26"},
++    )
++    api = SimpleNamespace(data=data)
++    monkeypatch.setattr(
++        harness, "output_cell_labels", lambda: (("threshold", "S!E26"),)
++    )
++    assert harness.mvp_outputs_for_scenario(
++        api, Scenario(id="baseline", inputs={})
++    ) == {"threshold": 0.35}
++
++
++@pytest.mark.parametrize(
++    "address,value,controls,expected",
++    [
++        ("'Chart Data'!D51", "#N/A", {"'Customized Scenario-External'!D3": "No"}, True),
++        (
++            "'Chart Data'!X364",
++            "#N/A",
++            {"'Customized Scenario - public'!C3": "No"},
++            True,
++        ),
++        (
++            "'Chart Data'!D252",
++            "#N/A",
++            {"'Customized Scenario - public'!C3": "Yes"},
++            False,
++        ),
++        ("'Chart Data'!D64", "#N/A", {"'Chart Data'!AK51": 1}, True),
++        (
++            "'Chart Data'!D64",
++            "#N/A",
++            {"'Chart Data'!AK51": 0, "'Chart Data'!AF51": 0, "'Chart Data'!AF54": 1},
++            True,
++        ),
++        (
++            "'Chart Data'!D64",
++            "#N/A",
++            {"'Chart Data'!AK51": 0, "'Chart Data'!AF51": 1, "'Chart Data'!AF54": 1},
++            False,
++        ),
++        ("'Chart Data'!D64", "#REF!", {"'Chart Data'!AK51": 1}, False),
++        ("'Chart Data'!D65", "#N/A", {"'Chart Data'!AK51": 1}, False),
++        ("'Chart Data'!D64", "#N/A", {}, False),
++        (
++            "'Chart Data'!D64",
++            "#N/A",
++            {
++                "'Chart Data'!AK51": 0,
++                "'Chart Data'!AF51": "#VALUE!",
++                "'Chart Data'!AF54": 1,
++            },
++            False,
++        ),
++    ],
++)
++def test_authored_chart_suppression_is_coordinate_value_and_branch_specific(
++    address, value, controls, expected
++):
++    from tests.differential import differential_test_exported_library as harness
++
++    result = harness.compare_scenario(
++        Scenario(id="suppression", inputs={}),
++        {**controls, address: value},
++        {address: value},
++        ((address, address),),
++        atol=1e-9,
++        rtol=1e-9,
++    )[0]
++    assert result.passed
++    assert result.flagged_matched_error is not expected
+--- a/bindings/constants.bindings.yaml
++++ b/bindings/constants.bindings.yaml
+@@ -3632,10 +3632,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: REF_AREA
+       concept: REF_AREA
+@@ -3688,10 +3688,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: REF_AREA
+       concept: REF_AREA
+@@ -5488,10 +5488,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: VARIANT
+       concept: VARIANT
+@@ -5536,10 +5536,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: VARIANT
+       concept: VARIANT
+@@ -5565,10 +5565,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: VARIANT
+       concept: VARIANT
+@@ -5613,10 +5613,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: VARIANT
+       concept: VARIANT
+--- a/bindings/internals-rest.bindings.yaml
++++ b/bindings/internals-rest.bindings.yaml
+@@ -1909,10 +1909,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: REF_AREA
+       concept: REF_AREA
+@@ -7920,10 +7920,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions: []
+   key: []
+   series_context:
+@@ -7967,10 +7967,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: VARIANT
+       concept: VARIANT
+@@ -8194,10 +8194,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: VARIANT
+       concept: VARIANT
+--- a/bindings/leftovers.bindings.yaml
++++ b/bindings/leftovers.bindings.yaml
+@@ -2634,10 +2634,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: string
+-      bind:
+-        kind: data_cell
+-        read: string
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: PARAMETER
+       concept: PARAMETER
+--- a/tests/differential/differential_test_graph.py
++++ b/tests/differential/differential_test_graph.py
+@@ -18,7 +18,7 @@
+ form (e.g. ``'Discrete Risks'!H2``). Human-authored scenario matrices and
+ bindings may use unquoted spellings (``Discrete Risks!H2``). Harness drivers
+ normalize with ``normalize_key`` before graph lookup and use
+-``parse_address(normalize_key(...))`` for xlwings/COM writes — never
++``parse_address(normalize_key(...))`` for xlwings/COM writes â€” never
+ ``split("!", 1)`` on sheet-qualified addresses.
+ 
+ Workbook-specific scenario definitions live in the ``Workbook-specific hooks``
+@@ -363,6 +363,16 @@
+     def read(self, cell: str) -> Any:
+         return self._evaluator.evaluate(normalize_key(cell))
+ 
++    def read_many(self, cells: tuple[str, ...]) -> dict[str, Any]:
++        """Evaluate the ordered output request with one changed-input scan."""
++        targets = [normalize_key(cell) for cell in cells]
++        values = self._evaluator.evaluate(targets)
++        if not isinstance(values, dict):
++            raise TypeError("Batch evaluation must return a coordinate/value mapping")
++        return {
++            cell: values[target] for cell, target in zip(cells, targets, strict=True)
++        }
++
+ 
+ def _resolve_axes() -> tuple[Axis, ...]:
+     axes = build_axes()
+@@ -574,7 +584,7 @@
+         lines.append(f"FAILURES (top {min(50, len(fails))} by abs_diff)")
+         lines.append("-" * 78)
+         for trial in fails[:50]:
+-            abs_str = "" if trial.abs_diff is None else f"  Δ={trial.abs_diff:.3e}"
++            abs_str = "" if trial.abs_diff is None else f"  Î”={trial.abs_diff:.3e}"
+             block = [
+                 f"{trial.axis} :: {trial.point_label}",
+                 f"  output: {trial.output_label}  ({_short_addr(trial.cell)})",
+@@ -738,7 +748,7 @@
+ 
+ 
+ # --------------------------------------------------------------------------
+-# Workbook-specific hooks — LIC-DSF starter matrix.
++# Workbook-specific hooks â€” LIC-DSF starter matrix.
+ # --------------------------------------------------------------------------
+ 
+ from .lic_dsf_scenario_matrix import (
+--- /dev/null
++++ b/tests/test_graph_oracle_batching.py
+@@ -0,0 +1,51 @@
++"""Compare every output while scanning changed graph inputs only once per scenario."""
++
++from types import SimpleNamespace
++
++from tests.differential import differential_test_exported_library as harness
++from tests.differential.differential_test_graph import MvpGraphDriver
++
++
++def test_graph_driver_evaluates_all_requested_cells_in_one_batch():
++    calls = []
++
++    def evaluate(targets):
++        calls.append(targets)
++        return {"M!A1": 12.0, "M!B1": "#N/A"}
++
++    driver = object.__new__(MvpGraphDriver)
++    driver._evaluator = SimpleNamespace(evaluate=evaluate)
++    assert driver.read_many(("M!A1", "M!B1")) == {"M!A1": 12.0, "M!B1": "#N/A"}
++    assert len(calls) == 1
++    assert tuple(calls[0]) == ("M!A1", "M!B1")
++
++
++def test_exported_library_oracle_batches_the_complete_output_request(monkeypatch):
++    calls = []
++    driver = SimpleNamespace(
++        reset_inputs=lambda: calls.append("reset"),
++        set_inputs=lambda values: calls.append(("set", values)),
++        read_many=lambda addresses: (
++            calls.append(addresses) or {"M!A1": 12.0, "M!B1": "#N/A"}
++        ),
++    )
++    oracle = object.__new__(harness.FormulaEvaluatorGraphOracle)
++    oracle._driver = driver
++    oracle._baselines_recorded = True
++    monkeypatch.setattr(harness, "inputs_for_excel", lambda scenario: {"M!C1": 2.0})
++    outputs = ("M!A1", "M!B1")
++    assert oracle(SimpleNamespace(id="batch"), outputs) == {
++        "M!A1": 12.0,
++        "M!B1": "#N/A",
++    }
++    assert calls == ["reset", ("set", {"M!C1": 2.0}), outputs]
++
++
++def test_graph_driver_changes_invalidate_parity_cache(tmp_path):
++    from src.differential_validation import harness_fingerprint
++
++    driver = tmp_path / "differential_test_graph.py"
++    driver.write_text("original driver", encoding="utf-8")
++    before = harness_fingerprint(tmp_path)
++    driver.write_text("updated batch driver", encoding="utf-8")
++    assert harness_fingerprint(tmp_path) != before
+--- a/src/differential_validation.py
++++ b/src/differential_validation.py
+@@ -19,6 +19,7 @@
+ REFERENCE_REPORT_FILES = ("parity_report.csv", "parity_report.txt")
+ EXPORTED_LIBRARY_HARNESS_FILES = (
+     "differential_test_exported_library.py",
++    "differential_test_graph.py",
+     "differential_types.py",
+     "differential_excel.py",
+     "comparison_utils.py",
+--- a/bindings/pv-stress.bindings.yaml
++++ b/bindings/pv-stress.bindings.yaml
+@@ -608,10 +608,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: SCENARIO
+       concept: SCENARIO
+@@ -704,10 +704,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: SCENARIO
+       concept: SCENARIO
+@@ -2491,10 +2491,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -2727,10 +2727,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -4134,10 +4134,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -4196,10 +4196,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -4461,10 +4461,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -4523,10 +4523,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -5364,10 +5364,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -5458,10 +5458,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -6515,10 +6515,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -6609,10 +6609,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: INSTRUMENT
+       concept: INSTRUMENT
+@@ -7488,10 +7488,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: SCENARIO
+       concept: SCENARIO
+@@ -7576,10 +7576,10 @@
+   structure:
+     measure:
+       concept: OBS_VALUE
+-      dtype: int
+-      bind:
+-        kind: data_cell
+-        read: int
++      dtype: float
++      bind:
++        kind: data_cell
++        read: auto
+     dimensions:
+     - id: SCENARIO
+       concept: SCENARIO
+--- a/tests/differential/lic_dsf_scenario_matrix.py
++++ b/tests/differential/lic_dsf_scenario_matrix.py
+@@ -201,3 +201,62 @@
+ def expressible_shock_cells() -> frozenset[str]:
+     """Addresses the library harness may write as ``compute_*`` arguments."""
+     return frozenset(SHOCK_SERIES_BY_ADDRESS)
++
++
++# These are authored NA() branches in Chart Data, not a blanket allowance for
++# matched errors. Controls are evaluated independently by the graph oracle.
++_CHART_CUSTOM_EXTERNAL_ROWS = frozenset({51, 93, 135, 177})
++_CHART_CUSTOM_PUBLIC_ROWS = frozenset({252, 294, 331, 364})
++_CHART_BOUND_ROWS = {64: 51, 106: 93, 148: 135, 190: 177, 265: 252}
++
++
++def chart_suppression_control_cells() -> tuple[str, ...]:
++    """Return cells controlling explicit chart NA() branches."""
++    return (
++        "'Customized Scenario-External'!D3",
++        "'Customized Scenario - public'!C3",
++        *(
++            address
++            for base in _CHART_BOUND_ROWS.values()
++            for address in (
++                f"'Chart Data'!AK{base}",
++                f"'Chart Data'!AF{base}",
++                f"'Chart Data'!AF{base + 3}",
++            )
++        ),
++    )
++
++
++def expects_chart_suppression_na(
++    address: str, value: Any, controls: dict[str, Any]
++) -> bool:
++    """Recognize only #N/A from an active authored chart-suppression branch.
++
++    Missing/error-valued controls fail closed. An INDEX/MATCH #N/A in the
++    nonsuppressed branch is still unexpected, even in these same chart rows.
++    """
++    import re
++
++    if value != "#N/A":
++        return False
++    match = re.fullmatch(r"'Chart Data'!([D-X])(\d+)", address)
++    if match is None:
++        return False
++    row = int(match.group(2))
++    if row in _CHART_CUSTOM_EXTERNAL_ROWS:
++        return controls.get("'Customized Scenario-External'!D3") == "No"
++    if row in _CHART_CUSTOM_PUBLIC_ROWS:
++        return controls.get("'Customized Scenario - public'!C3") == "No"
++    base = _CHART_BOUND_ROWS.get(row)
++    if base is None:
++        return False
++    top = controls.get(f"'Chart Data'!AK{base}")
++    if type(top) not in (int, float):
++        return False
++    if top == 1:
++        return True
++    first = controls.get(f"'Chart Data'!AF{base}")
++    second = controls.get(f"'Chart Data'!AF{base + 3}")
++    if type(first) not in (int, float) or type(second) not in (int, float):
++        return False
++    return not (first > 0 and second == 1)

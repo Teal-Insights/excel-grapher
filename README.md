@@ -118,7 +118,7 @@ write_workbook(graph, Path("edited.xlsx"))
 ### Series bindings
 
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs for **exported**
-code — inverted-tree `compute_*` functions over catalog-order tuples (`as_records` for a Records
+code — inverted-tree `compute_*` functions over named tensors and scalars (`as_records` for a Records
 view). Validate sidecars from the shell with
 `excel-grapher bindings validate`. See the
 [Series bindings guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html)

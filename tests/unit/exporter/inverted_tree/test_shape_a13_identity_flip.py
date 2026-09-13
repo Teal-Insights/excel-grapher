@@ -186,8 +186,9 @@ def test_identity_flip_emits_region_local_fused_scan(
         FusedRegion(start=1, stop=2, body_order=("x", "y")),
     )
     pkg = load_package(modules, tmp_path, name=pkg_name)
-    assert pkg.compute_x() == pytest.approx((2.0, 10.0))
-    assert pkg.compute_y() == pytest.approx((2.0, 10.0))
+    x, y = pkg.compute_x(), pkg.compute_y()
+    assert (x[2009], x[2010]) == pytest.approx((2.0, 10.0))
+    assert (y[2009], y[2010]) == pytest.approx((2.0, 10.0))
 
 
 @pytest.mark.parametrize(
@@ -223,8 +224,9 @@ def test_identity_flip_matches_formula_evaluator(
     targets = [*x_cells, *y_cells]
     graph = create_dependency_graph(workbook, targets, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(targets)
-    assert pkg.compute_x() == pytest.approx(tuple(expected[cell] for cell in x_cells))
-    assert pkg.compute_y() == pytest.approx(tuple(expected[cell] for cell in y_cells))
+    x, y = pkg.compute_x(), pkg.compute_y()
+    assert (x[2009], x[2010]) == pytest.approx(tuple(expected[cell] for cell in x_cells))
+    assert (y[2009], y[2010]) == pytest.approx(tuple(expected[cell] for cell in y_cells))
 
 
 def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> None:
@@ -283,17 +285,20 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     )
     pkg = load_package(modules, tmp_path, name="a13_qc")
     expected = FormulaEvaluator(graph).evaluate(targets)
-    assert pkg.compute_employment_growth() == pytest.approx(
+    employment = pkg.compute_employment_growth()
+    productivity = pkg.compute_labour_productivity_growth()
+    growth = pkg.compute_real_gdp_growth()
+    assert tuple(employment[year] for year in (2009, 2010, 2011)) == pytest.approx(
         (expected["Engine!A3"], expected["Engine!B3"], expected["Engine!C3"])
     )
-    assert pkg.compute_labour_productivity_growth() == pytest.approx(
+    assert tuple(productivity[year] for year in (2009, 2010, 2011)) == pytest.approx(
         (expected["Engine!A4"], expected["Engine!B4"], expected["Engine!C4"])
     )
-    assert pkg.compute_real_gdp_growth() == pytest.approx(
+    assert tuple(growth[year] for year in (2009, 2010, 2011)) == pytest.approx(
         (expected["Engine!A5"], expected["Engine!B5"], expected["Engine!C5"])
     )
-    real_gdp_lcu, *_rest = getattr(pkg.internals, scan_function_name(_qcraft_scc()))()
-    assert real_gdp_lcu == pytest.approx(
+    result = getattr(pkg.internals, scan_function_name(_qcraft_scc()))()
+    assert tuple(result.real_gdp_lcu[year] for year in (2009, 2010, 2011)) == pytest.approx(
         (expected["Engine!A2"], expected["Engine!B2"], expected["Engine!C2"])
     )
 
@@ -318,8 +323,9 @@ def test_look_ahead_fuses_with_reversed_loop(tmp_path: Path) -> None:
     assert plan.direction == "reversed"
     modules = generate_inverted(workbook, _two_series_bindings())
     pkg = load_package(modules, tmp_path, name="a13_lookahead")
-    assert pkg.compute_x() == (10.0, 10.0)
-    assert pkg.compute_y() == (1.0, 10.0)
+    x, y = pkg.compute_x(), pkg.compute_y()
+    assert (x[2009], x[2010]) == (10.0, 10.0)
+    assert (y[2009], y[2010]) == (1.0, 10.0)
 
 
 def test_mixed_direction_stays_on_rung3(tmp_path: Path) -> None:

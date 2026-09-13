@@ -95,5 +95,9 @@ def test_offset_anchor_inference_stays_in_statement(
         force_rung=force_rung,
     )
     pkg = load_package(modules, tmp_path, name=f"offset_stmt_{force_rung}")
-    assert pkg.compute_labels(selector=0) == pytest.approx((1.0, 10.0))
-    assert pkg.compute_labels(selector=1) == pytest.approx((2.0, 20.0))
+    assert tuple(value for _, value in pkg.compute_labels(selector=0).items()) == pytest.approx(
+        (1.0, 10.0)
+    )
+    assert tuple(value for _, value in pkg.compute_labels(selector=1).items()) == pytest.approx(
+        (2.0, 20.0)
+    )

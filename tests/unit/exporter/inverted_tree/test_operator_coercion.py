@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -13,6 +15,21 @@ from tests.unit.exporter.inverted_tree.helpers import (
     series_entry,
     write_workbook,
 )
+
+
+@pytest.mark.parametrize(
+    "value,expected",
+    [(45345.0, "45345Brent"), (None, "Brent"), (True, "TRUEBrent"), ("#N/A", "#N/A")],
+)
+def test_concatenation_uses_excel_value_formatting(tmp_path: Path, value, expected) -> None:
+    workbook = write_workbook(tmp_path / "concat.xlsx", {"M": {"A1": 1, "B1": '=A1&"Brent"'}})
+    document = bindings_document(
+        series_entry("source", "M!A1", direction="input"),
+        series_entry("result", "M!B1", direction="output", dtype="string"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="concat")
+    assert pkg.compute_result(source=value) == expected
+    assert pkg.internals.result(source=value) == expected
 
 
 def _arith_workbook(tmp_path: Path) -> Path:
@@ -108,7 +125,7 @@ def test_emitted_compare_uses_runtime_helper(tmp_path: Path) -> None:
     modules = generate_inverted(_compare_workbook(tmp_path), _compare_bindings())
     assert "xl_lt(" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="op_compare")
-    assert pkg.compute_ordered(num=1, text="a") == (1.0,)
+    assert pkg.compute_ordered(num=1, text="a") == 1.0
 
 
 def test_text_cell_arithmetic_matches_formula_evaluator(tmp_path: Path) -> None:
@@ -121,6 +138,10 @@ def test_text_cell_arithmetic_matches_formula_evaluator(tmp_path: Path) -> None:
         tmp_path,
         name="op_coerce_eval",
     )
-    got = pkg.compute_output_row(inputs=("abc", '"', 4.0))
-    assert got == (expected["Engine!B1"], expected["Engine!C1"], expected["Engine!D1"])
-    assert got == ("#VALUE!", "#VALUE!", 8.0)
+    got = pkg.compute_output_row(
+        inputs=pkg.data.Inputs.from_records(
+            domain=pkg.data.INPUTS_REQUIRED, records=(((1,), "abc"), ((2,), '"'), ((3,), 4.0))
+        )
+    )
+    assert tuple(got[year] for year in (1, 2, 3)) == tuple(expected[cell] for cell in cells)
+    assert dict(got.items()) == {(1,): "#VALUE!", (2,): "#VALUE!", (3,): 8.0}

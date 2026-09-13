@@ -185,15 +185,19 @@ def test_absolute_selector_is_not_a_scan_and_matches_evaluator(
     pkg = load_package(modules, tmp_path, name=f"a24_sel_{orientation[0]}")
     got = pkg.compute_selected(
         mode="Nominal",
-        nominal=(4.0, 5.0, 6.0),
-        other=(1.0, 2.0, 3.0),
+        nominal=pkg.data.Nominal.from_nested(
+            domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
+        ),
+        other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
     )
     cells = oriented_addresses(("Engine!B2", "Engine!C2", "Engine!D2"), orientation)
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((4.0, 5.0, 6.0))
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx((4.0, 5.0, 6.0))
 
 
 def test_relative_previous_period_seed_is_still_a_scan(tmp_path: Path, orientation: str) -> None:
@@ -216,8 +220,18 @@ def test_relative_previous_period_seed_is_still_a_scan(tmp_path: Path, orientati
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    assert pkg.compute_debt(seed=100.0) == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert pkg.compute_debt(seed=100.0) == pytest.approx((102.0, 104.04, 106.1208))
+    assert tuple(
+        value
+        for _, value in pkg.compute_debt(
+            seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
+        ).items()
+    ) == pytest.approx(tuple(expected[cell] for cell in cells))
+    assert tuple(
+        value
+        for _, value in pkg.compute_debt(
+            seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
+        ).items()
+    ) == pytest.approx((102.0, 104.04, 106.1208))
 
 
 def test_descending_seed_classifies_via_schedule_coord(tmp_path: Path, orientation: str) -> None:
@@ -241,9 +255,13 @@ def test_descending_seed_classifies_via_schedule_coord(tmp_path: Path, orientati
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    got = pkg.compute_debt(seed=100.0)
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((106.1208, 104.04, 102.0))
+    got = pkg.compute_debt(
+        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
+    )
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[cell] for cell in cells)
+    )
+    assert [value for _, value in got.items()] == pytest.approx((106.1208, 104.04, 102.0))
 
 
 def test_successor_terminal_uses_schedule_not_orientation_guess(tmp_path: Path) -> None:
@@ -290,7 +308,12 @@ def test_successor_terminal_uses_schedule_not_orientation_guess(tmp_path: Path) 
     last = max(range(len(value.cells)), key=lambda i: schedule_coord(value.cells[i], catalog))
     assert successor_address(value, last, catalog, graph) == catalog.get("terminal").cells[0]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a24_term")
-    assert pkg.compute_value(terminal=100.0) == pytest.approx((72.9, 81.0, 90.0))
+    assert tuple(
+        value
+        for _, value in pkg.compute_value(
+            terminal=pkg.data.Terminal.from_nested(domain=pkg.data.TERMINAL_DOMAIN, values=(100.0,))
+        ).items()
+    ) == pytest.approx((72.9, 81.0, 90.0))
 
 
 def test_two_unkeyed_scalars_are_not_an_ambiguous_seed(tmp_path: Path) -> None:
@@ -395,5 +418,12 @@ def test_two_schedule_adjacent_seeds_are_not_a_unique_seed(tmp_path: Path) -> No
         modules = generate_inverted(workbook, document)
     assert deps["path"].seed_id is None
     pkg = load_package(modules, tmp_path, name="a24_two_seeds")
-    got = pkg.compute_path(seed_a=10.0, seed_b=20.0)
-    assert got == pytest.approx((30.0,))
+    got = pkg.compute_path(
+        seed_a=pkg.data.SeedA.from_records(
+            domain=pkg.data.SEED_A_DOMAIN, records=[(("US", 2008), 10.0)]
+        ),
+        seed_b=pkg.data.SeedB.from_records(
+            domain=pkg.data.SEED_B_DOMAIN, records=[(("EU", 2008), 20.0)]
+        ),
+    )
+    assert [value for _, value in got.items()] == pytest.approx((30.0,))

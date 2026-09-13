@@ -1,0 +1,108 @@
+{
+  "legacy": {
+    "package": "benchmark_flat_20260909",
+    "import_seconds": 1.8777476999675855,
+    "tracemalloc_enabled": false,
+    "import_peak_python_bytes": null,
+    "peak_working_set_bytes": 378970112,
+    "source_sizes": {
+      "api.py": 1723565,
+      "data.py": 392066,
+      "internals.py": 5062661,
+      "runtime.py": 24220,
+      "__init__.py": 4172
+    },
+    "source_bytes": 7206684,
+    "evaluations": [
+      {
+        "function": "compute_tailored_stress_commodity_price_applicable",
+        "seconds": 0.0008160999277606606,
+        "records": [
+          {
+            "OBS_VALUE": 1.0
+          }
+        ],
+        "warm_median_seconds": 0.0005623999750241637,
+        "warm_samples": 20
+      },
+      {
+        "function": "compute_tailored_stress_market_financing_applicable",
+        "seconds": 0.0349443000741303,
+        "error": "TypeError(\"'NoneType' object is not iterable\")"
+      },
+      {
+        "function": "compute_tailored_stress_natural_disaster_applicable",
+        "seconds": 7.179996464401484e-05,
+        "records": [
+          {
+            "OBS_VALUE": 0.0
+          }
+        ],
+        "warm_median_seconds": 3.964995266869664e-05,
+        "warm_samples": 20
+      }
+    ]
+  },
+  "named": {
+    "package": "benchmark_named_fx_20260909",
+    "import_seconds": 5.243826899910346,
+    "tracemalloc_enabled": false,
+    "import_peak_python_bytes": null,
+    "peak_working_set_bytes": 853798912,
+    "source_sizes": {
+      "api.py": 2605777,
+      "data.py": 11829252,
+      "internals.py": 8974556,
+      "runtime.py": 26456,
+      "tensor.py": 18974,
+      "_data.py": 392133,
+      "_kernel.py": 2833716,
+      "_kernels.py": 5808230,
+      "_tensor_lowering.py": 958,
+      "__init__.py": 4237
+    },
+    "source_bytes": 32494289,
+    "evaluations": [
+      {
+        "function": "compute_tailored_stress_commodity_price_applicable",
+        "seconds": 0.003041400108486414,
+        "records": [
+          {
+            "OBS_VALUE": 1.0
+          }
+        ],
+        "warm_median_seconds": 0.002959350007586181,
+        "warm_samples": 20
+      },
+      {
+        "function": "compute_tailored_stress_market_financing_applicable",
+        "seconds": 0.13343299995176494,
+        "records": [
+          {
+            "OBS_VALUE": 1.0
+          }
+        ],
+        "warm_median_seconds": 0.10953374998643994,
+        "warm_samples": 20
+      },
+      {
+        "function": "compute_tailored_stress_natural_disaster_applicable",
+        "seconds": 0.00016960001084953547,
+        "records": [
+          {
+            "OBS_VALUE": 0.0
+          }
+        ],
+        "warm_median_seconds": 0.0001047999830916524,
+        "warm_samples": 20
+      }
+    ]
+  },
+  "method": {
+    "import": "Fresh process, source-only package, bytecode writing disabled; one sample per package.",
+    "memory": "Windows peak process working set, including interpreter and dependencies.",
+    "evaluation": "Identical workbook defaults; median of 20 warm calls for comparable successful functions.",
+    "scope": "Same workbook graph projection; sampled evaluations are not a whole-model speed comparison.",
+    "equivalence": "named-axis-generated-equivalence.json records the final metadata-only rebuild."
+  }
+}

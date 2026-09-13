@@ -1,0 +1,585 @@
+"""Formula families fold across coordinates instead of unrolling per cell.
+
+A reference that points at the same cell from every host cell is a literal
+key even when it was authored without `$`. An expanding SUM whose start
+vintage stays put while the host period slides is one `span`, not a
+`TIME_PERIOD` if-ladder. An integer key of another axis that moves with the
+host period is the period variable plus a difference. A string producer key
+equal to a host coordinate is that host variable even when the field names
+differ. A label key that embeds the host's own key is a template over it.
+"""
+
+from __future__ import annotations
+
+import re
+from pathlib import Path
+from typing import Any
+
+from fastpyxl import Workbook
+from fastpyxl.utils.cell import get_column_letter
+
+from excel_grapher.core.address_keys import as_canonical
+from excel_grapher.exporter.inverted_tree.ast_emit import _neighbor_host_cells
+from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
+    bindings_document,
+    generate_inverted,
+    series_entry,
+    write_workbook,
+)
+
+
+def _cumulative_workbook(tmp_path: Path, years: int) -> Path:
+    cells: dict[str, object] = {}
+    for index in range(years):
+        column = get_column_letter(index + 2)
+        cells[f"{column}1"] = 2020 + index
+        cells[f"{column}2"] = float(index + 1)
+        cells[f"{column}3"] = f"=SUM(B2:{column}2)"
+    return write_workbook(tmp_path / "cumulative_relative.xlsx", {"Sheet": cells})
+
+
+def _cumulative_bindings(years: int) -> dict[str, Any]:
+    last = get_column_letter(years + 1)
+    return bindings_document(
+        series_entry("flow", f"Sheet!B2:{last}2", layout="series", direction="input", header_row=1),
+        series_entry(
+            "cumulative", f"Sheet!B3:{last}3", layout="series", direction="output", header_row=1
+        ),
+    )
+
+
+def test_relative_range_start_pinned_to_the_first_column_is_literal(tmp_path: Path) -> None:
+    modules = generate_inverted(_cumulative_workbook(tmp_path, 6), _cumulative_bindings(6))
+    internals = modules["internals.py"]
+    assert "span(data.TIME_PERIOD_AXIS, 2020, time_period)" in internals
+    assert "time_period ==" not in internals
+    assert_package_matches_evaluator(
+        _cumulative_workbook(tmp_path, 6), _cumulative_bindings(6), tmp_path, "cumulative_rel"
+    )
+
+
+def _vintage_workbook(tmp_path: Path) -> Path:
+    cells: dict[str, object] = {"B1": 2024, "C1": 2025, "D1": 2026}
+    for row, issued in enumerate((2024, 2025, 2026), start=2):
+        cells[f"A{row}"] = issued
+        for offset, column in enumerate("BCD"):
+            cells[f"{column}{row}"] = float(row * 10 + offset)
+    for row, column in enumerate("BCD", start=2):
+        cells[f"{column}6"] = f"=SUM({column}$2:{column}{row})"
+    return write_workbook(tmp_path / "vintage.xlsx", {"Vintage": cells})
+
+
+def _vintage_bindings() -> dict[str, Any]:
+    vintage = {
+        "id": "vintage",
+        "sheet": "Vintage",
+        "data_range": "Vintage!B2:D4",
+        "layout": "matrix",
+        "input": {"setter": {"name": "set_vintage"}},
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "id": "ISSUANCE_YEAR",
+                    "concept": "ISSUANCE_YEAR",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "A", "read": "int"},
+                },
+                {
+                    "id": "TIME_PERIOD",
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                },
+            ],
+        },
+        "key": ["ISSUANCE_YEAR", "TIME_PERIOD"],
+    }
+    document = bindings_document(
+        vintage,
+        series_entry(
+            "outstanding", "Vintage!B6:D6", layout="series", direction="output", header_row=1
+        ),
+        schema_version="1.15.0",
+    )
+    document["concept_scheme"]["concepts"].append({"id": "ISSUANCE_YEAR", "dtype": "int"})
+    return document
+
+
+def test_triangular_range_end_follows_the_host_period(tmp_path: Path) -> None:
+    modules = generate_inverted(_vintage_workbook(tmp_path), _vintage_bindings())
+    internals = modules["internals.py"]
+    assert (
+        "xl_sum(view(vintage, rows=span(data.ISSUANCE_YEAR_AXIS, 2024, time_period), "
+        "cols=(time_period,)))"
+    ) in internals
+    assert "time_period ==" not in internals
+    pkg = assert_package_matches_evaluator(
+        _vintage_workbook(tmp_path), _vintage_bindings(), tmp_path, "vintage_triangle"
+    )
+    outstanding = pkg.compute_outstanding(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert outstanding[2026] == 22.0 + 32.0 + 42.0
+
+
+_EXPANDING_YEARS = tuple(range(2025, 2030))
+_EXPANDING_VINTAGES = tuple(range(2024, 2030))
+
+
+def _expanding_sum_workbook(tmp_path: Path, *, pin_start: bool) -> Path:
+    """Expanding vintage SUM whose origin is always the first issuance year.
+
+    Relative formulas are `SUM(B2:B3)`, `SUM(C2:C4)`, ... -- the start row stays
+    on vintage 2024 while the column follows `TIME_PERIOD`. `$` pins the same
+    geometry as `SUM(B$2:B3)`, `SUM(C$2:C4)`, ....
+    """
+    path = tmp_path / ("expanding_span_pinned.xlsx" if pin_start else "expanding_span.xlsx")
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Data"
+    for col, year in enumerate(_EXPANDING_YEARS, start=2):
+        sheet.cell(1, col, year)
+        sheet.cell(9, col, year)
+        end_row = 2 + (year - 2024)
+        start = sheet.cell(2, col)
+        end = sheet.cell(end_row, col)
+        start_addr = f"{start.column_letter}$2" if pin_start else start.coordinate
+        sheet.cell(10, col, f"=SUM({start_addr}:{end.coordinate})")
+    for row, vintage in enumerate(_EXPANDING_VINTAGES, start=2):
+        sheet.cell(row, 1, vintage)
+        for col in range(2, 2 + len(_EXPANDING_YEARS)):
+            sheet.cell(row, col, float(row * 10 + col))
+    book.save(path)
+    return path
+
+
+def _expanding_sum_bindings() -> dict[str, Any]:
+    last_col = get_column_letter(1 + len(_EXPANDING_YEARS))
+    last_vintage_row = 1 + len(_EXPANDING_VINTAGES)
+    vintage = {
+        "id": "vintage",
+        "sheet": "Data",
+        "data_range": f"Data!B2:{last_col}{last_vintage_row}",
+        "layout": "series",
+        "input": {"setter": {"name": "set_vintage", "record_contract": "records", "strict": True}},
+        "key": ["ISSUANCE_YEAR", "TIME_PERIOD"],
+        "structure": {
+            "measure": {
+                "concept": "OBS_VALUE",
+                "dtype": "float",
+                "bind": {"kind": "data_cell", "read": "float"},
+            },
+            "dimensions": [
+                {
+                    "id": "ISSUANCE_YEAR",
+                    "concept": "ISSUANCE_YEAR",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "A", "read": "int"},
+                },
+                {
+                    "id": "TIME_PERIOD",
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                },
+            ],
+        },
+    }
+    document = bindings_document(
+        vintage,
+        series_entry(
+            "interest",
+            f"Data!B10:{last_col}10",
+            layout="series",
+            direction="output",
+            header_row=9,
+        ),
+        schema_version="1.15.0",
+    )
+    document["concept_scheme"]["concepts"].append({"id": "ISSUANCE_YEAR", "dtype": "int"})
+    return document
+
+
+def _assert_expanding_sum_is_one_span(tmp_path: Path, *, pin_start: bool, name: str) -> None:
+    workbook = _expanding_sum_workbook(tmp_path, pin_start=pin_start)
+    document = _expanding_sum_bindings()
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert (
+        "xl_sum(view(vintage, rows=span(data.ISSUANCE_YEAR_AXIS, 2024, time_period), "
+        "cols=(time_period,)))"
+    ) in internals
+    assert internals.count("span(") == 1
+    assert "if time_period ==" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
+    interest = pkg.compute_interest(vintage=pkg.data.VINTAGE_DEFAULT)
+    # 2027 = vintages 2024..2027 in column D (col 4): rows 2-5 -> 24+34+44+54.
+    assert interest[2027] == 24.0 + 34.0 + 44.0 + 54.0
+
+
+def test_expanding_sum_from_fixed_vintage_is_one_span(tmp_path: Path) -> None:
+    _assert_expanding_sum_is_one_span(tmp_path, pin_start=False, name="expanding_rel")
+
+
+def test_expanding_sum_with_pinned_start_row_is_one_span(tmp_path: Path) -> None:
+    _assert_expanding_sum_is_one_span(tmp_path, pin_start=True, name="expanding_abs")
+
+
+def test_reference_stability_checks_both_host_neighbors() -> None:
+    """An interior formula must be compared with hosts on both sides."""
+    cells = tuple(as_canonical(f"Data!{column}10") for column in "BCD")
+    host = type("Host", (), {"cells": cells, "_emit_cache": {}})()
+    ctx = type("Context", (), {"host": host, "host_cell": cells[1]})()
+
+    assert _neighbor_host_cells(ctx, "col") == (cells[2], cells[0])
+
+
+def _rolling_vintage_workbook(tmp_path: Path) -> Path:
+    """Rolling last-two-vintages SUM: origin moves with `TIME_PERIOD`."""
+    path = tmp_path / "rolling_span.xlsx"
+    book = Workbook()
+    sheet = book.active
+    sheet.title = "Data"
+    for col, year in enumerate(_EXPANDING_YEARS, start=2):
+        sheet.cell(1, col, year)
+        sheet.cell(9, col, year)
+        end_row = 2 + (year - 2024)
+        start_row = end_row - 1
+        start = sheet.cell(start_row, col).coordinate
+        end = sheet.cell(end_row, col).coordinate
+        sheet.cell(10, col, f"=SUM({start}:{end})")
+    for row, vintage in enumerate(_EXPANDING_VINTAGES, start=2):
+        sheet.cell(row, 1, vintage)
+        for col in range(2, 2 + len(_EXPANDING_YEARS)):
+            sheet.cell(row, col, 1.0)
+    book.save(path)
+    return path
+
+
+def test_rolling_vintage_window_keeps_a_moving_origin(tmp_path: Path) -> None:
+    workbook = _rolling_vintage_workbook(tmp_path)
+    document = _expanding_sum_bindings()
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert (
+        "xl_sum(view(vintage, rows=span(data.ISSUANCE_YEAR_AXIS, time_period - 1, time_period), "
+        "cols=(time_period,)))"
+    ) in internals
+    assert "span(data.ISSUANCE_YEAR_AXIS, 2024, time_period)" not in internals
+    assert "if time_period ==" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "rolling_vintage")
+    interest = pkg.compute_interest(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert interest[2027] == 2.0
+
+
+def _terms_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "terms.xlsx",
+        {
+            "Terms": {"A1": "Grace France", "B1": 5.0, "A2": "Grace Kenya", "B2": 3.0},
+            "Model": {"A1": "France", "B1": "=Terms!B1*2", "A2": "Kenya", "B2": "=Terms!B2*2"},
+        },
+    )
+
+
+def _terms_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry(
+            "terms",
+            "Terms!B1:B2",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="SCENARIO",
+            key_read="string",
+        ),
+        series_entry(
+            "doubled",
+            "Model!B1:B2",
+            layout="series",
+            direction="output",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+    )
+
+
+def test_label_keys_built_from_the_host_key_are_templates(tmp_path: Path) -> None:
+    modules = generate_inverted(_terms_workbook(tmp_path), _terms_bindings())
+    internals = modules["internals.py"]
+    assert "terms[f'Grace {country}']" in internals
+    assert not re.search(r"if country ==", internals)
+    pkg = assert_package_matches_evaluator(
+        _terms_workbook(tmp_path), _terms_bindings(), tmp_path, "terms_template"
+    )
+    assert pkg.compute_doubled(terms=pkg.data.TERMS_DEFAULT)["Kenya"] == 6.0
+
+
+def _aged_workbook(tmp_path: Path) -> Path:
+    cells: dict[str, object] = {"B1": 2024, "C1": 2025, "D1": 2026, "E1": 2027}
+    for row, issued in enumerate((2024, 2025, 2026), start=2):
+        cells[f"A{row}"] = issued
+        cells[f"A{row + 6}"] = issued
+        for offset, column in enumerate("BCDE"):
+            cells[f"{column}{row}"] = float(row * 10 + offset)
+            period = 2024 + offset
+            if period == issued:
+                cells[f"{column}{row + 6}"] = f"={column}{row}"
+            elif period > issued:
+                cells[f"{column}{row + 6}"] = f"={column}{row}*2"
+            else:
+                cells[f"{column}{row + 6}"] = f"={column}{row}*0"
+    return write_workbook(tmp_path / "aged.xlsx", {"Vintage": cells})
+
+
+def _aged_bindings() -> dict[str, Any]:
+    document = _vintage_bindings()
+    vintage = document["series"][0]
+    vintage["data_range"] = "Vintage!B2:E4"
+    aged = {
+        **vintage,
+        "id": "aged",
+        "data_range": "Vintage!B8:E10",
+        "output": {"compute": {"name": "compute_aged"}},
+        "structure": {
+            **vintage["structure"],
+            "dimensions": [
+                {
+                    **vintage["structure"]["dimensions"][0],
+                    "bind": {"kind": "row_label", "label_column": "A", "read": "int"},
+                },
+                vintage["structure"]["dimensions"][1],
+            ],
+        },
+    }
+    del aged["input"]
+    document["series"] = [vintage, aged]
+    return document
+
+
+def test_branch_conditions_name_axis_relations_not_coordinate_lists(tmp_path: Path) -> None:
+    modules = generate_inverted(_aged_workbook(tmp_path), _aged_bindings())
+    internals = modules["internals.py"]
+    assert "if issuance_year == time_period:" in internals
+    assert (
+        "elif time_period - issuance_year >= 1:" in internals
+        or "elif time_period - issuance_year <= -1:" in internals
+    )
+    assert "_coordinate in ((" not in internals
+    pkg = assert_package_matches_evaluator(
+        _aged_workbook(tmp_path), _aged_bindings(), tmp_path, "aged_conditions"
+    )
+    aged = pkg.compute_aged(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert aged[2025, 2027] == 2 * 33.0
+    assert aged[2026, 2024] == 0.0
+
+
+def test_horizon_boundaries_are_period_comparisons(tmp_path: Path) -> None:
+    cells: dict[str, object] = {}
+    for index, column in enumerate("BCDEF"):
+        cells[f"{column}1"] = 2024 + index
+        cells[f"{column}2"] = float(index + 1)
+        cells[f"{column}3"] = f"={column}2*3" if index >= 3 else f"={column}2"
+    workbook = write_workbook(tmp_path / "horizon.xlsx", {"Sheet": cells})
+    document = bindings_document(
+        series_entry("flow", "Sheet!B2:F2", layout="series", direction="input", header_row=1),
+        series_entry("scaled", "Sheet!B3:F3", layout="series", direction="output", header_row=1),
+    )
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "if time_period >= 2027:" in internals
+    assert "_coordinate in ((" not in internals
+    assert_package_matches_evaluator(workbook, document, tmp_path, "horizon_conditions")
+
+
+def _ledger_workbook(tmp_path: Path) -> Path:
+    cells: dict[str, object] = {"B1": 2024, "C1": 2025, "D1": 2026, "E1": 2027}
+    row = 2
+    for country in ("France", "Kenya"):
+        for scenario in ("base", "high"):
+            cells[f"A{row}"] = scenario
+            for offset, column in enumerate("BCDE"):
+                cells[f"{column}{row}"] = float(row * 10 + offset)
+                # France doubles from 2025 on; Kenya doubles from 2026 on.
+                doubled = offset >= (1 if country == "France" else 2)
+                cells[f"{column}{row + 6}"] = f"={column}{row}*2" if doubled else f"={column}{row}"
+            row += 1
+    for target in range(8, 12):
+        cells[f"A{target}"] = cells[f"A{target - 6}"]
+    return write_workbook(tmp_path / "ledger.xlsx", {"Vintage": cells})
+
+
+def _ledger_bindings() -> dict[str, Any]:
+    from tests.unit.exporter.inverted_tree.test_nested_layouts import _nested_bindings
+
+    document = _nested_bindings()
+    vintage = document["series"][0]
+    vintage["data_range"] = "Vintage!B2:E5"
+    vintage["structure"]["dimensions"][0]["bind"]["values"] = {"France": "2:3", "Kenya": "4:5"}
+    ledger = {
+        **vintage,
+        "id": "ledger",
+        "data_range": "Vintage!B8:E11",
+        "output": {"compute": {"name": "compute_ledger"}},
+        "structure": {
+            **vintage["structure"],
+            "dimensions": [
+                {
+                    **vintage["structure"]["dimensions"][0],
+                    "bind": {
+                        "kind": "value_map",
+                        "values": {"France": "8:9", "Kenya": "10:11"},
+                        "read": "string",
+                    },
+                },
+                vintage["structure"]["dimensions"][1],
+                vintage["structure"]["dimensions"][2],
+            ],
+        },
+    }
+    del ledger["input"]
+    document["series"] = [vintage, ledger]
+    return document
+
+
+def test_unions_of_axis_families_stay_conditions(tmp_path: Path) -> None:
+    modules = generate_inverted(_ledger_workbook(tmp_path), _ledger_bindings())
+    internals = modules["internals.py"]
+    assert (
+        "if (country == 'France' and time_period == 2024) or "
+        "(country == 'Kenya' and time_period <= 2025):"
+    ) in internals
+    assert ") in ((" not in internals
+    pkg = assert_package_matches_evaluator(
+        _ledger_workbook(tmp_path), _ledger_bindings(), tmp_path, "ledger_unions"
+    )
+    ledger = pkg.compute_ledger(vintage=pkg.data.VINTAGE_DEFAULT)
+    assert ledger["Kenya", "base", 2026] == 2 * 42.0
+
+
+_STRING_LABELS = ("1 Year", "2 Year", "10 Year")
+_LEFT_WIDTHS_CONSTANT = (1, 1, 1)
+_LEFT_WIDTHS_SPLIT = (1, 1, 2)
+
+
+def _string_passthrough_workbook(
+    tmp_path: Path, *, widths: tuple[int, ...] = _LEFT_WIDTHS_CONSTANT, name: str = "labels.xlsx"
+) -> Path:
+    """Host `NUMBERVALUE(LEFT(label, width))` over bound string labels."""
+    cells: dict[str, object] = {}
+    for row, (label, width) in enumerate(zip(_STRING_LABELS, widths, strict=True), start=2):
+        cells[f"A{row}"] = label
+        cells[f"B{row}"] = f"=NUMBERVALUE(LEFT(A{row},{width}))"
+    return write_workbook(tmp_path / name, {"Data": cells})
+
+
+def _string_passthrough_bindings(*, label_key: str, year_key: str) -> dict[str, Any]:
+    document = bindings_document(
+        series_entry(
+            "labels",
+            "Data!A2:A4",
+            layout="series",
+            direction="input",
+            dtype="string",
+            label_column="A",
+            key_concept=label_key,
+            key_read="string",
+        ),
+        series_entry(
+            "years",
+            "Data!B2:B4",
+            layout="series",
+            direction="output",
+            dtype="int",
+            label_column="A",
+            key_concept=year_key,
+            key_read="string",
+        ),
+        schema_version="1.15.0",
+    )
+    for field in (label_key, year_key):
+        if field not in {concept["id"] for concept in document["concept_scheme"]["concepts"]}:
+            document["concept_scheme"]["concepts"].append({"id": field, "dtype": "string"})
+    return document
+
+
+def _assert_string_passthrough_folds(
+    tmp_path: Path,
+    *,
+    label_key: str,
+    year_key: str,
+    name: str,
+) -> None:
+    workbook = _string_passthrough_workbook(tmp_path, name=f"{name}.xlsx")
+    document = _string_passthrough_bindings(label_key=label_key, year_key=year_key)
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "labels[tenor]" in internals
+    assert not re.search(r"if tenor ==", internals)
+    for label in _STRING_LABELS:
+        assert f"labels[{label!r}]" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
+    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    assert years["1 Year"] == 1
+    assert years["2 Year"] == 2
+    assert years["10 Year"] == 1
+
+
+def test_string_key_same_field_name_passes_through_host_driver(tmp_path: Path) -> None:
+    _assert_string_passthrough_folds(
+        tmp_path, label_key="TENOR", year_key="TENOR", name="string_same_id"
+    )
+
+
+def test_string_key_mismatched_field_names_pass_through_host_driver(tmp_path: Path) -> None:
+    _assert_string_passthrough_folds(
+        tmp_path, label_key="VARIANT", year_key="TENOR", name="string_mismatch"
+    )
+
+
+def test_string_key_left_width_split_keeps_two_families(tmp_path: Path) -> None:
+    workbook = _string_passthrough_workbook(
+        tmp_path, widths=_LEFT_WIDTHS_SPLIT, name="labels_split.xlsx"
+    )
+    document = _string_passthrough_bindings(label_key="VARIANT", year_key="TENOR")
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert internals.count("labels[tenor]") == 2
+    assert "xl_left(labels[tenor], 1)" in internals
+    assert "xl_left(labels[tenor], 2)" in internals
+    assert re.search(r"if tenor == '10 Year':", internals)
+    for label in _STRING_LABELS:
+        assert f"labels[{label!r}]" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "string_left_split")
+    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    assert years["1 Year"] == 1
+    assert years["2 Year"] == 2
+    assert years["10 Year"] == 10
+
+
+def test_string_key_unequal_to_host_stays_literal(tmp_path: Path) -> None:
+    """A producer key that is not the host's own value stays a literal."""
+    cells: dict[str, object] = {
+        "A2": "1 Year",
+        "A3": "2 Year",
+        "A4": "10 Year",
+        "B2": "=NUMBERVALUE(LEFT(A3,1))",
+        "B3": "=NUMBERVALUE(LEFT(A4,1))",
+        "B4": "=NUMBERVALUE(LEFT(A2,1))",
+    }
+    workbook = write_workbook(tmp_path / "labels_cross.xlsx", {"Data": cells})
+    document = _string_passthrough_bindings(label_key="VARIANT", year_key="TENOR")
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "labels[tenor]" not in internals
+    assert "labels['2 Year']" in internals
+    assert "labels['10 Year']" in internals
+    assert "labels['1 Year']" in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "string_unequal")
+    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    assert years["1 Year"] == 2
+    assert years["2 Year"] == 1
+    assert years["10 Year"] == 1

@@ -1,11 +1,10 @@
 #!/usr/bin/env python3
-"""Pass a tidy pandas DataFrame as catalog-order input to a matrix compute.
+"""Pass a tidy pandas DataFrame as named-coordinate input to a matrix compute.
 
-Inverted-tree packages take sequences in catalog order (row-major over the
-matrix keys), not ctx setters. Convert a tidy table (binding ``key`` columns
-plus ``OBS_VALUE``) into that tuple, then call ``compute_*``.
+Convert a tidy table (binding `key` columns plus `OBS_VALUE`) into an immutable
+tensor, then call `compute_*`. DataFrame row order does not determine identity.
 
-See also ``setter_dataframe_example.py`` for single-key series.
+See also `setter_dataframe_example.py` for single-key series.
 
 Run from the repo root::
 
@@ -84,18 +83,19 @@ def wide_matrix_to_tidy(df_wide: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def apply_tidy_updates(
-    default: tuple[object, ...],
-    domain: tuple[object, ...],
-    keys: tuple[str, ...],
-    tidy: pd.DataFrame,
-) -> tuple[object, ...]:
-    """Overlay tidy OBS_VALUE rows onto a catalog-order default tuple."""
-    values = list(default)
+def apply_tidy_updates(default: Any, tidy: pd.DataFrame) -> Any:
+    """Overlay unique, valid coordinate records onto an immutable tensor."""
+    keys = tuple(axis.name for axis in default.domain.axes)
+    values = dict(default.items())
+    seen = set()
     for row in tidy.to_dict(orient="records"):
         point = tuple(row[key] for key in keys)
-        values[domain.index(point)] = float(row["OBS_VALUE"])
-    return tuple(values)
+        default.domain.require(point)
+        if point in seen:
+            raise ValueError(f"duplicate update for {point!r}")
+        seen.add(point)
+        values[point] = float(row["OBS_VALUE"])
+    return type(default).from_records(domain=default.domain, records=values.items())
 
 
 def main() -> None:
@@ -118,8 +118,6 @@ def main() -> None:
             (pkg_dir / filename).write_text(content, encoding="utf-8")
         sys.path.insert(0, str(tmp_path))
         pkg = importlib.import_module("matrix_df_pkg")
-        domain = pkg.compute_macro_result.__domain__
-        keys = pkg.compute_macro_result.__key__
         default = pkg.data.MACRO_MATRIX_DEFAULT
 
         # --- 1. Tidy DataFrame (partial update: two cells only) ---
@@ -134,7 +132,7 @@ def main() -> None:
         print(updates.to_string(index=False))
         print()
 
-        overlay = apply_tidy_updates(default, domain, keys, updates)
+        overlay = apply_tidy_updates(default, updates)
         result = pkg.compute_macro_result(macro_matrix=overlay)
         records = pkg.as_records(pkg.compute_macro_result, result)
         by_key = {(row["INDICATOR"], row["TIME_PERIOD"]): row["OBS_VALUE"] for row in records}
@@ -162,7 +160,7 @@ def main() -> None:
         print("Tidy rows for 'GDP growth':")
         print(tidy_row.to_string(index=False))
         print()
-        overlay = apply_tidy_updates(default, domain, keys, tidy_row)
+        overlay = apply_tidy_updates(default, tidy_row)
         result = pkg.compute_macro_result(macro_matrix=overlay)
         records = pkg.as_records(pkg.compute_macro_result, result)
         by_key = {(row["INDICATOR"], row["TIME_PERIOD"]): row["OBS_VALUE"] for row in records}

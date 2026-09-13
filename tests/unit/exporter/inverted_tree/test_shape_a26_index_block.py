@@ -22,9 +22,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     oriented_addresses,
     oriented_document,
     series_entry,
@@ -295,10 +295,11 @@ def _export_matches_evaluator(
     )
     cells = oriented_addresses(("Engine!B2", "Engine!C2", "Engine!D2"), orientation)
     expected = FormulaEvaluator(graph).evaluate(list(cells))
-    got = call_compute(pkg, "picked", input_kwargs(catalog, graph))
+    got = call_compute(pkg, "picked", named_input_kwargs(pkg, catalog, graph))
     want = tuple(expected[cell] for cell in cells)
-    assert got == pytest.approx(want)
-    return got, want
+    assert set(got.domain) == catalog.get("picked").required_coordinates
+    assert tuple(value for _, value in got.items()) == pytest.approx(want)
+    return tuple(value for _, value in got.items()), want
 
 
 def test_sliding_index_window_is_one_affine_statement(tmp_path: Path, orientation: str) -> None:

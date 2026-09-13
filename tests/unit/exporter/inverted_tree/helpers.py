@@ -12,6 +12,7 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Literal
 
+import pytest
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
 
 from excel_grapher.core.address_keys import (
@@ -249,7 +250,7 @@ def load_package(
         if key == name or key.startswith(name + "."):
             del sys.modules[key]
     pkg = importlib.import_module(name)
-    for sub in ("api", "internals", "runtime", "data"):
+    for sub in ("api", "internals", "runtime", "data", "validation"):
         importlib.import_module(f"{name}.{sub}")
     return pkg
 
@@ -476,21 +477,88 @@ def oriented_addresses(addresses: Sequence[str], orientation: str) -> tuple[str,
     return tuple(transpose_address(address) for address in addresses)
 
 
-def input_kwargs(catalog: SeriesCatalog, graph: DependencyGraph) -> dict[str, object]:
-    """Build `compute_*` keyword arguments from loaded input-series values."""
-    kwargs: dict[str, object] = {}
+def named_input_kwargs(
+    pkg: Any, catalog: SeriesCatalog, graph: DependencyGraph
+) -> dict[str, object]:
+    """Supply graph values by coordinate without changing Excel input types."""
+    values = {}
     for series in catalog.input_series():
-        values: list[object] = []
-        for cell in series.cells:
-            node = graph.get_node(cell)
-            values.append(None if node is None else node.value)
-        kwargs[series.series_id] = values[0] if series.is_scalar else tuple(values)
-    return kwargs
+        if series.graph_cells is not None and not series.graph_cells:
+            continue
+        if series.single_valued:
+            node = graph.get_node(series.cells[0])
+            values[series.series_id] = None if node is None else node.value
+            continue
+        domain = getattr(pkg.data, series.series_id.upper() + "_REQUIRED")
+        records = []
+        cells = series.coordinate_cells
+        for coordinate in domain:
+            node = graph.get_node(cells[coordinate])
+            records.append((coordinate, None if node is None else node.value))
+        values[series.series_id] = pkg.Tensor.from_records(domain=domain, records=records)
+    return values
 
 
-def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, object]) -> object:
+def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, object]) -> Any:
     """Call `pkg.compute_<series_id>` with the intersection of `kwargs`."""
     name = f"compute_{series_id}"
     function = getattr(pkg, name)
     accepted = set(inspect.signature(function).parameters)
     return function(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def assert_package_matches_evaluator(
+    workbook: Path,
+    document: dict[str, Any],
+    tmp_path: Path,
+    name: str,
+    *,
+    dynamic_refs: DynamicRefConfig | None = None,
+    blank_ranges: Sequence[str] | None = None,
+) -> types.ModuleType:
+    """Export `document`, then compare every formula series with the evaluator.
+
+    Formula series are evaluated in statement order; each computed tensor feeds
+    later helpers, so the first divergence names the root cause.
+    """
+    from excel_grapher.evaluator import FormulaEvaluator
+
+    catalog, deps, graph = inverted_graph_parts(
+        workbook, document, dynamic_refs=dynamic_refs, blank_ranges=blank_ranges
+    )
+    modules = generate_inverted(
+        workbook, document, dynamic_refs=dynamic_refs, blank_ranges=blank_ranges
+    )
+    pkg = load_package(modules, tmp_path, name=name)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    for series in catalog.constant_series():
+        kwargs[series.series_id] = getattr(pkg.data, series.series_id.upper())
+    cells = [cell for series in catalog.formula_series() for cell in series.cells]
+    expected = FormulaEvaluator(graph).evaluate(cells)
+    from excel_grapher.exporter.inverted_tree.deps import formula_closure
+
+    ordered = sorted(
+        catalog.formula_series(),
+        key=lambda series: len(formula_closure(series.series_id, catalog=catalog, deps=deps)),
+    )
+    for series in ordered:
+        function = getattr(pkg, series.compute_name or f"compute_{series.series_id}", None)
+        if function is None:
+            function = getattr(pkg.internals, series.series_id, None)
+        if function is None:
+            continue
+        accepted = set(inspect.signature(function).parameters)
+        got = function(**{key: value for key, value in kwargs.items() if key in accepted})
+        kwargs[series.series_id] = got
+        if series.single_valued:
+            pairs = [(series.cells[0], got)]
+        else:
+            cells_by_coordinate = series.coordinate_cells
+            pairs = [(cells_by_coordinate[coord], got[coord]) for coord in got.domain]
+        for cell, value in pairs:
+            want = expected[cell]
+            if isinstance(want, float) and isinstance(value, float):
+                assert value == pytest.approx(want), f"{series.series_id} {cell}"
+            else:
+                assert value == want, f"{series.series_id} {cell}: {value!r} != {want!r}"
+    return pkg

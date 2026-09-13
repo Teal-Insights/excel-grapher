@@ -88,8 +88,15 @@ def test_grouped_export_omits_list_groups(workbook: Path, tmp_path: Path) -> Non
     joined = "\n".join(modules.values())
     assert "def list_groups(" not in joined
     assert "def set_primary_balance(" not in joined
-    result = pkg.compute_primary_balance_out(primary_balance=(-1.0, -0.5, 0.0, 7.5, 1.0))
-    assert result == pytest.approx((-1.0, -0.5, 0.0, 7.5, 1.0))
+    result = pkg.compute_primary_balance_out(
+        primary_balance=pkg.data.PrimaryBalance.from_records(
+            domain=pkg.data.PRIMARY_BALANCE_DOMAIN,
+            records=zip(((1,), (2,), (3,), (4,), (5,)), (-1.0, -0.5, 0.0, 7.5, 1.0), strict=True),
+        )
+    )
+    assert tuple(result[period] for period in (1, 2, 3, 4, 5)) == pytest.approx(
+        (-1.0, -0.5, 0.0, 7.5, 1.0)
+    )
 
 
 def test_ungrouped_bindings_export_omits_list_groups(workbook: Path, tmp_path: Path) -> None:

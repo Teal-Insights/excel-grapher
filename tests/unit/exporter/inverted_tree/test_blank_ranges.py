@@ -26,14 +26,44 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     call_compute,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     series_entry,
     write_workbook,
 )
 
 _BLANK = ("Lookup!A1:C3",)
+
+
+def test_named_domain_excludes_structural_blank_coordinates(tmp_path: Path) -> None:
+    from excel_grapher.exporter.inverted_tree.catalog import build_catalog
+
+    workbook = write_workbook(
+        tmp_path / "structural_hole.xlsx",
+        {
+            "Inputs": {"B1": 2025, "C1": 2026, "D1": 2027, "B2": 0, "D2": 4},
+            "Outputs": {"A1": "=SUM(Inputs!B2:D2)"},
+        },
+    )
+    bindings = validate_bindings_document(
+        bindings_document(
+            series_entry("src", "Inputs!B2:D2", layout="series", direction="input", header_row=1),
+            series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
+        )
+    )
+    blanks = ("Inputs!C2",)
+    graph = create_dependency_graph(workbook, ["Outputs!A1"], load_values=True, blank_ranges=blanks)
+    series = build_catalog(bindings, workbook=workbook, graph=graph, blank_ranges=blanks).get("src")
+    assert tuple(series.tensor_domain) == ((2025,), (2027,))
+    assert series.required_coordinates == frozenset({(2025,), (2027,)})
+    assert "Inputs!C2" not in series.coordinate_cells.values()
+    assert graph.get_node("Inputs!C2") is None
+    empty = build_catalog(
+        bindings, workbook=workbook, graph=graph, blank_ranges=("Inputs!B2:D2",)
+    ).get("src")
+    assert len(empty.tensor_domain) == 0
+    assert not empty.coordinate_cells
 
 
 def _mcve_workbook(tmp_path: Path) -> Path:
@@ -144,7 +174,7 @@ def test_generate_inverted_tree_modules_accepts_blank_vlookup_table(tmp_path: Pa
     workbook = _mcve_workbook(tmp_path)
     modules = generate_inverted(workbook, _mcve_bindings(), blank_ranges=_BLANK)
     assert "xl_vlookup(" in modules["internals.py"]
-    assert "(None,)" in modules["internals.py"]
+    assert "None" in modules["internals.py"]
 
 
 def test_generate_modules_forwards_blank_ranges_to_inverted_tree(tmp_path: Path) -> None:
@@ -175,7 +205,9 @@ def test_blank_vlookup_package_matches_evaluator(tmp_path: Path) -> None:
     )
     with FormulaEvaluator(graph, blank_ranges=_BLANK) as ev:
         expected = ev.evaluate(["Outputs!B1"])["Outputs!B1"]
-    got = call_compute(pkg, catalog.output_series()[0].series_id, input_kwargs(catalog, graph))
+    got = call_compute(
+        pkg, catalog.output_series()[0].series_id, named_input_kwargs(pkg, catalog, graph)
+    )
     assert _scalar(got) == expected
 
 
@@ -191,7 +223,9 @@ def test_if_vlookup_uses_bound_table_when_blank_branch_is_unused(tmp_path: Path)
     )
     with FormulaEvaluator(graph, blank_ranges=_BLANK) as ev:
         expected = ev.evaluate(["Outputs!B1"])["Outputs!B1"]
-    got = call_compute(pkg, catalog.output_series()[0].series_id, input_kwargs(catalog, graph))
+    got = call_compute(
+        pkg, catalog.output_series()[0].series_id, named_input_kwargs(pkg, catalog, graph)
+    )
     assert _scalar(got) == pytest.approx(expected)
     assert _scalar(got) == pytest.approx(100)
 
@@ -207,7 +241,7 @@ def test_sum_drops_blank_interior_from_ownership_check(tmp_path: Path) -> None:
     )
     with FormulaEvaluator(graph, blank_ranges=blank) as ev:
         expected = ev.evaluate(["Outputs!Z1"])["Outputs!Z1"]
-    got = call_compute(pkg, catalog.output_series()[0].series_id, input_kwargs(catalog, graph))
+    got = pkg.compute_out(src=pkg.data.SRC_DEFAULT)
     assert _scalar(got) == pytest.approx(expected)
 
 
@@ -434,7 +468,9 @@ def test_blank_cellref_package_matches_evaluator(tmp_path: Path) -> None:
     )
     with FormulaEvaluator(graph, blank_ranges=_BLANK_CELL) as ev:
         expected = ev.evaluate(["Outputs!B1"])["Outputs!B1"]
-    got = call_compute(pkg, catalog.output_series()[0].series_id, input_kwargs(catalog, graph))
+    got = call_compute(
+        pkg, catalog.output_series()[0].series_id, named_input_kwargs(pkg, catalog, graph)
+    )
     assert _scalar(got) == expected
     assert _scalar(got) == pytest.approx(1)
 
@@ -573,3 +609,43 @@ def test_issue_703_mcve_generate_does_not_raise(tmp_path: Path) -> None:
         bindings_workbook=workbook_path,
         blank_ranges=blank,
     )
+
+
+@pytest.mark.parametrize("force_rung", [None, 2, 3])
+def test_formula_region_stops_at_structural_blank_reference(tmp_path: Path, force_rung) -> None:
+    from tests.unit.exporter.inverted_tree.test_shape_a20_matrix_join import _matrix_entry
+
+    workbook = write_workbook(
+        tmp_path / "blank_boundary.xlsx",
+        {
+            "M": {
+                "B1": 2025,
+                "C1": 2026,
+                "D1": 2027,
+                "A2": "a",
+                "A3": "b",
+                "A5": "a",
+                "A6": "b",
+                "B2": 1,
+                "C2": 2,
+                "D2": 3,
+                "D3": 1 / 29,
+                "B5": "=B2",
+                "C5": "=C2",
+                "D5": "=D2",
+                "B6": "=B3",
+                "C6": "=C3",
+                "D6": "=D3",
+            }
+        },
+    )
+    document = bindings_document(
+        _matrix_entry("source", "M!B2:D3", header_row=1, direction="constant"),
+        _matrix_entry("result", "M!B5:D6", header_row=1, direction="output"),
+    )
+    package = load_package(
+        generate_inverted(workbook, document, force_rung=force_rung, blank_ranges=("M!B3:C3",)),
+        tmp_path,
+        name="blank_boundary",
+    )
+    assert package.compute_result()["b", 2027] == pytest.approx(1 / 29)

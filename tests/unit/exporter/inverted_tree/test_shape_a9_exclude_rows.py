@@ -141,7 +141,7 @@ def test_interleaved_matrices_emit_and_match_evaluator(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a9_rows")
     assert required_param_names(pkg.compute_output_cell) == ("revenue_shocks",)
     assert "expenditure_shocks" not in all_param_names(pkg.compute_output_cell)
-    got = _measure(pkg.compute_output_cell(revenue_shocks=(1.0, 2.0)))
+    got = pkg.compute_output_cell(revenue_shocks=pkg.data.REVENUE_SHOCKS_DEFAULT)
     graph = create_dependency_graph(workbook, ["Outputs!A1"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
     assert got == pytest.approx(expected["Outputs!A1"])

@@ -9,15 +9,13 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.ast_emit import KeyedReadIntern
-from excel_grapher.exporter.inverted_tree.domains import DomainEmitPlan
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    input_kwargs,
     inverted_graph_parts,
     load_package,
+    named_input_kwargs,
     write_workbook,
 )
 
@@ -146,9 +144,16 @@ def test_repeated_keyed_reads_match_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx(tuple(float(row + row * 2) for row in range(2, size + 2)))
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert dict(got.items()) == pytest.approx(
+        {
+            coordinate: expected[cell]
+            for coordinate, cell in catalog.get("result").coordinate_cells.items()
+        }
+    )
+    assert tuple(value for _, value in got.items()) == pytest.approx(
+        tuple(float(row + row * 2) for row in range(2, size + 2))
+    )
 
 
 def _shuffled_workbook(tmp_path: Path) -> Path:
@@ -206,47 +211,17 @@ def test_non_affine_keyed_reads_intern_slot_table_once(tmp_path: Path) -> None:
     assert "values" in deps["result"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    domain = (
-        ("Country 2", 2020),
-        ("Country 2", 2021),
-        ("Country 4", 2020),
-        ("Country 4", 2021),
-        ("Country 3", 2020),
-        ("Country 3", 2021),
-    )
-    assert internals.count(repr(domain)) <= 1
     assert internals.count(".index(") == 0
-    assert "4 * i" in internals
-    assert "values[2]" in internals
     pkg = load_package(modules, tmp_path, name="keyed_shuffled")
     cells = ["Out!E2", "Out!E3", "Out!E4"]
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**input_kwargs(catalog, graph))
-    assert got == pytest.approx(tuple(expected[cell] for cell in cells))
-    assert got == pytest.approx((6.0, 9.0, 12.0))
-
-
-def test_keyed_read_intern_reuses_sequences_and_maps() -> None:
-    plan = DomainEmitPlan(
-        field_domains={"COUNTRY": ("A", "B")},
-        interned=(),
-        series_expr={"values": "data.COUNTRY_DOMAIN"},
-        series_key={"values": ("COUNTRY",)},
-        scc_expr={},
-        scc_key={},
+    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    assert dict(got.items()) == pytest.approx(
+        {
+            coordinate: expected[cell]
+            for coordinate, cell in catalog.get("result").coordinate_cells.items()
+        }
     )
-    intern = KeyedReadIntern(plan)
-    assert intern.sequence(("A", "B"), field="COUNTRY") == "data.COUNTRY_DOMAIN"
-    assert intern.sequence(("X", "Y")) == "_KEYS_0"
-    assert intern.sequence(("X", "Y")) == "_KEYS_0"
-    assert intern.slot_map("values") == "_INDEX_values"
-    assert intern.slot_map("values") == "_INDEX_values"
-    assert intern.slots((0, 4, 2)) == "_SLOTS_0"
-    assert intern.slots((0, 4, 2)) == "_SLOTS_0"
-    lines = intern.emit_lines()
-    assert "_KEYS_0 = ('X', 'Y')" in lines
-    assert "_SLOTS_0 = (0, 4, 2)" in lines
-    assert any(line.startswith("_INDEX_values = ") for line in lines)
-    assert intern.uses_data
+    assert tuple(value for _, value in got.items()) == pytest.approx((6.0, 9.0, 12.0))

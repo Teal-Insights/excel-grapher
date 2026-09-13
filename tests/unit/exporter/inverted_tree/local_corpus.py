@@ -33,7 +33,7 @@ from excel_grapher.series_bindings.load import load_series_bindings
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.paths import FIXTURES_ROOT, LOCAL_CORPUS
 from tests.unit.exporter.inverted_tree.helpers import (
-    input_kwargs,
+    named_input_kwargs,
 )
 
 _MANIFEST = LOCAL_CORPUS / "corpus.toml"
@@ -178,20 +178,16 @@ def _output_cells(series: BoundSeries) -> tuple[str, ...]:
 
 
 def compare_package_to_evaluator(
-    pkg: object,
+    pkg: ModuleType,
     catalog: SeriesCatalog,
     graph: DependencyGraph,
     *,
     topo: Sequence[str],
 ) -> list[str]:
     """Return divergence lines in statement-graph order (root series first)."""
-    kwargs = input_kwargs(catalog, graph)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
     for series in catalog.constant_series():
-        values = []
-        for cell in series.cells:
-            node = graph.get_node(cell)
-            values.append(None if node is None else node.value)
-        kwargs[series.series_id] = values[0] if series.is_scalar else tuple(values)
+        kwargs[series.series_id] = getattr(pkg.data, series.series_id.upper())
     cells = [cell for series in catalog.formula_series() for cell in series.cells]
     expected = FormulaEvaluator(graph).evaluate(cells)
     lines: list[str] = []
@@ -208,9 +204,14 @@ def compare_package_to_evaluator(
         accepted = set(inspect.signature(function).parameters)
         got = function(**{key: value for key, value in kwargs.items() if key in accepted})
         kwargs[series.series_id] = got
-        if not isinstance(got, tuple):
+        if series.layout == "scalar":
             got = (got,)
-        want = tuple(expected[cell] for cell in _output_cells(series))
+            want = (expected[series.cells[0]],)
+        else:
+            coordinates = tuple(got.domain)
+            cells_by_coordinate = series.coordinate_cells
+            want = tuple(expected[cells_by_coordinate[coordinate]] for coordinate in coordinates)
+            got = tuple(got[coordinate] for coordinate in coordinates)
         if not _values_close(got, want):
             lines.append(f"{series_id}: export={got!r} evaluator={want!r}")
     return lines
