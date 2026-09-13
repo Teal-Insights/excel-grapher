@@ -372,6 +372,35 @@ def _integer_driver(
     return variable, cast(int, host_point[field])
 
 
+def _string_driver(
+    ctx: EmitContext, key_field: str, field_axis: str | None, target: str
+) -> str | None:
+    """The host loop variable a string key of `key_field` equals.
+
+    Unlike `_integer_driver`, this only binds when the host coordinate value
+    equals `target`. Field names need not match: a producer key still uses
+    the host variable when both cells hold the same label.
+    """
+    from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
+
+    host_point = ctx.host.domain[ctx.host_index].as_mapping()
+    candidates = [
+        (field, variable)
+        for field, variable in ctx.coordinate_vars.items()
+        if type(value := host_point.get(field)) is str and value == target
+    ]
+    if not candidates:
+        return None
+    ranked = sorted(
+        candidates,
+        key=lambda item: (
+            item[0] != key_field,
+            _key_field_axis(ctx.host, item[0]) != field_axis,
+        ),
+    )
+    return ranked[0][1]
+
+
 def _key_template(target: str, ctx: EmitContext) -> str | None:
     """An f-string over a host key embedded in the label `target`."""
     host_point = ctx.host.domain[ctx.host_index].as_mapping()
@@ -401,13 +430,15 @@ def _named_keys(
 ) -> list[str]:
     """Express each key of `point` relative to the host loop variables.
 
-    A key equal to the host's own key is the loop variable. An integer key
+    A key equal to a host coordinate value is the loop variable, including
+    when the producer field name differs from the host's. An integer key
     reached through a moving reference is the host's period variable plus
     the authored difference; formula-family grouping then verifies the same
     difference at every coordinate sharing the expression. A `$` pin onto
     this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
     across vintages. Other fixed references stay literal. A label that
-    embeds the host's own key is a template over it.
+    embeds the host's own key is a template over it; exact string equality
+    is pass-through, not a template.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -447,6 +478,10 @@ def _named_keys(
                 keys.append(variable if difference == 0 else f"{variable} {sign} {abs(difference)}")
                 continue
         if isinstance(target, str):
+            driver = _string_driver(ctx, key_field, field_axis, target)
+            if driver is not None:
+                keys.append(driver)
+                continue
             template = _key_template(target, ctx)
             if template is not None:
                 keys.append(template)

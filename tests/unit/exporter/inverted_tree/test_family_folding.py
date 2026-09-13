@@ -4,8 +4,9 @@ A reference that points at the same cell from every host cell is a literal
 key even when it was authored without `$`. An expanding SUM whose start
 vintage stays put while the host period slides is one `span`, not a
 `TIME_PERIOD` if-ladder. An integer key of another axis that moves with the
-host period is the period variable plus a difference. A label key that
-embeds the host's own key is a template over it.
+host period is the period variable plus a difference. A string producer key
+equal to a host coordinate is that host variable even when the field names
+differ. A label key that embeds the host's own key is a template over it.
 """
 
 from __future__ import annotations
@@ -449,3 +450,125 @@ def test_unions_of_axis_families_stay_conditions(tmp_path: Path) -> None:
     )
     ledger = pkg.compute_ledger(vintage=pkg.data.VINTAGE_DEFAULT)
     assert ledger["Kenya", "base", 2026] == 2 * 42.0
+
+
+_STRING_LABELS = ("1 Year", "2 Year", "10 Year")
+_LEFT_WIDTHS_CONSTANT = (1, 1, 1)
+_LEFT_WIDTHS_SPLIT = (1, 1, 2)
+
+
+def _string_passthrough_workbook(
+    tmp_path: Path, *, widths: tuple[int, ...] = _LEFT_WIDTHS_CONSTANT, name: str = "labels.xlsx"
+) -> Path:
+    """Host `NUMBERVALUE(LEFT(label, width))` over bound string labels."""
+    cells: dict[str, object] = {}
+    for row, (label, width) in enumerate(zip(_STRING_LABELS, widths, strict=True), start=2):
+        cells[f"A{row}"] = label
+        cells[f"B{row}"] = f"=NUMBERVALUE(LEFT(A{row},{width}))"
+    return write_workbook(tmp_path / name, {"Data": cells})
+
+
+def _string_passthrough_bindings(*, label_key: str, year_key: str) -> dict[str, Any]:
+    document = bindings_document(
+        series_entry(
+            "labels",
+            "Data!A2:A4",
+            layout="series",
+            direction="input",
+            dtype="string",
+            label_column="A",
+            key_concept=label_key,
+            key_read="string",
+        ),
+        series_entry(
+            "years",
+            "Data!B2:B4",
+            layout="series",
+            direction="output",
+            dtype="int",
+            label_column="A",
+            key_concept=year_key,
+            key_read="string",
+        ),
+        schema_version="1.15.0",
+    )
+    for field in (label_key, year_key):
+        if field not in {concept["id"] for concept in document["concept_scheme"]["concepts"]}:
+            document["concept_scheme"]["concepts"].append({"id": field, "dtype": "string"})
+    return document
+
+
+def _assert_string_passthrough_folds(
+    tmp_path: Path,
+    *,
+    label_key: str,
+    year_key: str,
+    name: str,
+) -> None:
+    workbook = _string_passthrough_workbook(tmp_path, name=f"{name}.xlsx")
+    document = _string_passthrough_bindings(label_key=label_key, year_key=year_key)
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "labels[tenor]" in internals
+    assert not re.search(r"if tenor ==", internals)
+    for label in _STRING_LABELS:
+        assert f"labels[{label!r}]" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
+    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    assert years["1 Year"] == 1
+    assert years["2 Year"] == 2
+    assert years["10 Year"] == 1
+
+
+def test_string_key_same_field_name_passes_through_host_driver(tmp_path: Path) -> None:
+    _assert_string_passthrough_folds(
+        tmp_path, label_key="TENOR", year_key="TENOR", name="string_same_id"
+    )
+
+
+def test_string_key_mismatched_field_names_pass_through_host_driver(tmp_path: Path) -> None:
+    _assert_string_passthrough_folds(
+        tmp_path, label_key="VARIANT", year_key="TENOR", name="string_mismatch"
+    )
+
+
+def test_string_key_left_width_split_keeps_two_families(tmp_path: Path) -> None:
+    workbook = _string_passthrough_workbook(
+        tmp_path, widths=_LEFT_WIDTHS_SPLIT, name="labels_split.xlsx"
+    )
+    document = _string_passthrough_bindings(label_key="VARIANT", year_key="TENOR")
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert internals.count("labels[tenor]") == 2
+    assert "xl_left(labels[tenor], 1)" in internals
+    assert "xl_left(labels[tenor], 2)" in internals
+    assert re.search(r"if tenor == '10 Year':", internals)
+    for label in _STRING_LABELS:
+        assert f"labels[{label!r}]" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "string_left_split")
+    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    assert years["1 Year"] == 1
+    assert years["2 Year"] == 2
+    assert years["10 Year"] == 10
+
+
+def test_string_key_unequal_to_host_stays_literal(tmp_path: Path) -> None:
+    """A producer key that is not the host's own value stays a literal."""
+    cells: dict[str, object] = {
+        "A2": "1 Year",
+        "A3": "2 Year",
+        "A4": "10 Year",
+        "B2": "=NUMBERVALUE(LEFT(A3,1))",
+        "B3": "=NUMBERVALUE(LEFT(A4,1))",
+        "B4": "=NUMBERVALUE(LEFT(A2,1))",
+    }
+    workbook = write_workbook(tmp_path / "labels_cross.xlsx", {"Data": cells})
+    document = _string_passthrough_bindings(label_key="VARIANT", year_key="TENOR")
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "labels[tenor]" not in internals
+    assert "labels['2 Year']" in internals
+    assert "labels['10 Year']" in internals
+    assert "labels['1 Year']" in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "string_unequal")
+    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    assert years["1 Year"] == 2
+    assert years["2 Year"] == 1
+    assert years["10 Year"] == 1
