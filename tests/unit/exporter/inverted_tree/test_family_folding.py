@@ -17,6 +17,8 @@ from typing import Any
 from fastpyxl import Workbook
 from fastpyxl.utils.cell import get_column_letter
 
+from excel_grapher.core.address_keys import as_canonical
+from excel_grapher.exporter.inverted_tree.ast_emit import _neighbor_host_cells
 from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
@@ -227,6 +229,15 @@ def test_expanding_sum_from_fixed_vintage_is_one_span(tmp_path: Path) -> None:
 
 def test_expanding_sum_with_pinned_start_row_is_one_span(tmp_path: Path) -> None:
     _assert_expanding_sum_is_one_span(tmp_path, pin_start=True, name="expanding_abs")
+
+
+def test_reference_stability_checks_both_host_neighbors() -> None:
+    """An interior formula must be compared with hosts on both sides."""
+    cells = tuple(as_canonical(f"Data!{column}10") for column in "BCD")
+    host = type("Host", (), {"cells": cells, "_emit_cache": {}})()
+    ctx = type("Context", (), {"host": host, "host_cell": cells[1]})()
+
+    assert _neighbor_host_cells(ctx, "col") == (cells[2], cells[0])
 
 
 def _rolling_vintage_workbook(tmp_path: Path) -> Path:

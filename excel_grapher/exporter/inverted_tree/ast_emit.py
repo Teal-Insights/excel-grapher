@@ -255,8 +255,8 @@ def _iter_cell_refs(node: AstNode | None) -> Iterator[CellRef]:
             return
 
 
-def _neighbor_host_cell(ctx: EmitContext, axis: str) -> CanonicalAddress | None:
-    """The host series cell one step along `axis`, or the previous one at the edge."""
+def _neighbor_host_cells(ctx: EmitContext, axis: str) -> tuple[CanonicalAddress, ...]:
+    """Host series cells immediately before and after the host along `axis`."""
     sheet, row, col = parse_cell_coords(ctx.host_cell)
     candidates = (
         [(row, col + 1), (row, col - 1)] if axis == "col" else [(row + 1, col), (row - 1, col)]
@@ -265,11 +265,11 @@ def _neighbor_host_cell(ctx: EmitContext, axis: str) -> CanonicalAddress | None:
     cells = cache.get("positions")
     if cells is None:
         cells = cache["positions"] = {parse_cell_coords(cell): cell for cell in ctx.host.cells}
-    for candidate_row, candidate_col in candidates:
-        cell = cells.get((sheet, candidate_row, candidate_col))
-        if cell is not None:
-            return cell
-    return None
+    return tuple(
+        cell
+        for candidate_row, candidate_col in candidates
+        if (cell := cells.get((sheet, candidate_row, candidate_col))) is not None
+    )
 
 
 def _cell_refs_of(ctx: EmitContext, cell: CanonicalAddress) -> list[CellRef]:
@@ -285,9 +285,7 @@ def _cell_refs_of(ctx: EmitContext, cell: CanonicalAddress) -> list[CellRef]:
 def _host_neighbors(ctx: EmitContext) -> tuple[CanonicalAddress, ...]:
     """Host cells one step along each worksheet axis that exist in the series."""
     return tuple(
-        neighbor
-        for axis in ("row", "col")
-        if (neighbor := _neighbor_host_cell(ctx, axis)) is not None
+        neighbor for axis in ("row", "col") for neighbor in _neighbor_host_cells(ctx, axis)
     )
 
 
