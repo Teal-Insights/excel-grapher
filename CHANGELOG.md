@@ -7,6 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v16.0.0 (2026-09-13)
+
+### Bug Fixes
+
+- **export**: Compare formula neighbors symmetrically
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Describe gapped layouts as grids
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Fold expanding vintage SUM into one span (#831)
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Fold vintage opening stock and blank zipper indexes
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Fold vintage opening stock and blank zipper indexes (#828)
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: List-concatenate constant-set lines for ty
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Pass string keys through the host driver when field names differ
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Scalar layouts keyed by sheet are keyed series
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **tests**: Patch the Model return in the smoke test; evaluator blank ranges in the differential
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+### Chores
+
+- Exclude plans/ from ruff so evidence snippets stay as generated
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+### Documentation
+
+- **plans**: Add a second synthetic scaling point to the peak-heap plan
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **plans**: Evidence report for readable public named-axis computation
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **plans**: Final size, parity, timing, and memory evidence for the LIC DSF package
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **plans**: Plan to reduce peak heap during named-axis code generation
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+### Features
+
+- Named-axis inverted-tree replacement
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Compute named public outputs through inspectable named formulas
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Fold formula families across fixed, moving, and templated keys
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Formula series as functions of their coordinates
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Grid provenance and product views for nested layouts
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: List ragged domains as coordinate runs
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Name formula families by axis relations
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Orchestrate public outputs through a memoized Model
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Views inside lookup tables and CHOOSE lists
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **exporter**: Emit named-axis input checks in validation.py
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **scripts**: Compare input defaults in the root-cause differential
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **scripts**: Compare recurrence-group members; read fractional integer measures as float
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **scripts**: Differential of a generated named package against the evaluator
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **scripts**: Read text-typed numeric input cells as numbers in sandbox reconciliation
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+### Performance Improvements
+
+- **export**: Cache BoundSeries domain properties (#830)
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Cache host positions and formula references during emission
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+### Refactoring
+
+- **export**: Concrete series classes and schema-based publication
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Emit _CONSTANTS_* aliases in data.py
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Prune flat-domain code paths and lower dual reads as keyed
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Share value-type tuples and constant sets
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Trust named results in internals and name unions of families
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+### Testing
+
+- Type-check named generated modules without excel.py
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Adapt merged shared-subplan tests to named-axis
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Assert INSTRUMENT×vintage zipper uses issuance-year opening
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+- **export**: Treat sparse tensor holes as blanks
+  ([#837](https://github.com/Teal-Insights/excel-grapher/pull/837),
+  [`336f3df`](https://github.com/Teal-Insights/excel-grapher/commit/336f3dfd54a05d48c861e6ba3d2822a9208ed2f0))
+
+
 ## v15.7.1 (2026-09-09)
 
 ### Bug Fixes

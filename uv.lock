@@ -680,7 +680,7 @@ wheels = [
 
 [[package]]
 name = "excel-grapher"
-version = "15.7.1"
+version = "16.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "fastpyxl" },
