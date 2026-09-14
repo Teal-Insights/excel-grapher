@@ -181,5 +181,3 @@ def test_reader_index_keys_narrowed_contiguous_range(tmp_path: Path) -> None:
     assert "Demo!B2:C4" in index["ranges"]
     assert index["ranges"]["Demo!B2:C4"]["reader"] == "read_demo_range"
     assert "Demo!B2:D5" not in index["ambiguous"]
-
-

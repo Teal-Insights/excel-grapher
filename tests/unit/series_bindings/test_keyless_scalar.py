@@ -91,4 +91,3 @@ def test_keyless_scalar_multi_leaf_fails_resolution(tmp_path: Path) -> None:
     assert resolved["ok"] is False
     codes = {issue["code"] for issue in resolved["issues"]}
     assert "keyless_scalar_ambiguous" in codes
-

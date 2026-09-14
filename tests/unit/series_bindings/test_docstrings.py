@@ -597,7 +597,7 @@ def test_derive_doc_contract_positional_values_match_key_order(tmp_path: Path) -
 
     assert len(contract.example_records) == 2
     assert contract.positional_example_values == (-2.0, -1.0, 0.0, 1.0, 2.0)
-    assert len(contract.positional_example_values) == len(key_order)
+    assert len(contract.positional_example_values) == len(resolved["leaves"])
 
     rendered = GoogleSeriesDocstringRenderer().render(
         contract,

@@ -14,9 +14,9 @@ from typing import Literal, NotRequired, TypedDict
 
 from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.codegen_literals import dimension_id_to_param_name
 from excel_grapher.series_bindings.normalize import has_output_direction
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
-from excel_grapher.series_bindings.codegen_literals import dimension_id_to_param_name
 from excel_grapher.series_bindings.types import Scalar, WorkbookSeriesBindings
 
 OutputHelperCallMode = Literal["helper", "xl_cell"]

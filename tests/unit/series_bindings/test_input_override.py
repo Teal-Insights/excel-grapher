@@ -297,5 +297,3 @@ def test_derive_input_series_from_override_binding(tmp_path: Path) -> None:
 
     assert len(input_series) == 1
     assert [cell["address"] for cell in input_series[0]["cells"]] == ["Engine!B1"]
-
-

@@ -10,8 +10,8 @@ from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.input_series import derive_input_series
-from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
+from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.ranges import (
     expand_bound_series_addresses,
     expand_bound_series_addresses_for_graph,

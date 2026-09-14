@@ -26,7 +26,7 @@ from excel_grapher.series_bindings import (
     validate_bindings_document,
     validate_series_bindings,
 )
-from excel_grapher.series_bindings.workflow import reader_names, input_ids
+from excel_grapher.series_bindings.workflow import input_ids, reader_names
 
 
 def _write_constant_workbook(path: Path) -> None:
