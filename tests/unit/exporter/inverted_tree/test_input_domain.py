@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from importlib import import_module
 from pathlib import Path
 
 import pytest
@@ -183,3 +184,53 @@ def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
     assert pkg.compute_out_a(flag=0) == 0
     with pytest.raises(ValueError, match=r"flag out of domain"):
         pkg.compute_out_b(flag=2)
+
+
+def test_compute_float_real_between_coerces_int_like_setters(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "share.xlsx",
+        {
+            "Inputs": {"A1": 0.0},
+            "Outputs": {"B1": "=Inputs!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "share",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="float",
+            domain={"real_between": {"min": 0, "max": 1}},
+        ),
+        series_entry("result", "Outputs!B1", layout="scalar", direction="output"),
+    )
+    modules = generate_inverted(workbook, document)
+    assert "coerce_input_measure(share" in modules["validation.py"]
+    assert modules["validation.py"].index("coerce_input_measure(share") < modules[
+        "validation.py"
+    ].index("require_input_domain(share")
+    assert "coerce_input_measure" not in modules["api.py"]
+    assert "coerce_input_measure" not in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="share_coerce")
+    zero = pkg.compute_result(share=0)
+    assert zero == 0.0
+    assert type(zero) is float
+    assert pkg.compute_result(share=0.0) == 0.0
+    assert pkg.compute_result(share=pkg.data.SHARE_DEFAULT) == 0.0
+    with pytest.raises(ValueError, match=r"share out of domain"):
+        pkg.compute_result(share=1.1)
+
+
+def test_compute_series_float_coerces_int_members(tmp_path: Path) -> None:
+    workbook = _rate_workbook(tmp_path)
+    modules = generate_inverted(workbook, _rate_bindings())
+    assert "coerce_input_measure(rate" in modules["validation.py"]
+    pkg = load_package(modules, tmp_path, name="rate_coerce")
+    rate = pkg.data.Rate.from_nested(domain=pkg.data.RATE_DOMAIN, values=(0, 1))
+    assert type(rate[1]) is int
+    checked = import_module(f"{pkg.__name__}.validation").CHECKS["rate"](rate)
+    assert type(checked[1]) is float
+    assert type(checked[2]) is float
+    result = pkg.compute_out(rate=rate)
+    assert (result[1], result[2]) == pytest.approx((0.0, 1.0))

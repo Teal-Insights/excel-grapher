@@ -829,7 +829,9 @@ domain kind does not match the measure dtype (for example a 0–1 share
 authored as `dtype: float` with `between` instead of `real_between`).
 
 Domain checks run on each required `compute_*` / `Model` argument
-(scalar or every sequence member) before the evaluation walk.
+(scalar or every sequence member) before the evaluation walk, after the same
+safe dtype coercion setters use (`int` becomes `float` when the measure
+dtype is `float`; `float` is never narrowed to `int`).
 A value of the wrong type raises `ValueError` naming the type, not a
 bounds failure.
 

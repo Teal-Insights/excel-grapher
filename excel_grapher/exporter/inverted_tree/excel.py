@@ -55,6 +55,9 @@ from excel_grapher.exporter.export_runtime.text import xl_numbervalue as _shared
 from excel_grapher.series_bindings.input_coerce import (
     apply_input_value_map as apply_input_value_map,
 )
+from excel_grapher.series_bindings.input_coerce import (
+    coerce_input_measure as coerce_input_measure,
+)
 from excel_grapher.series_bindings.input_coerce import require_input_domain as require_input_domain
 
 T = TypeVar("T")

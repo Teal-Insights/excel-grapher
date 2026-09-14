@@ -3,8 +3,9 @@
 Every formula series becomes one inspectable named function in `internals`
 whose body is the workbook formula family expressed over semantic
 coordinates. Public `compute_*` functions orchestrate those functions in
-dependency order, sharing intermediate results. Input schema, domain, and
-value-map checks live in `validation` so `api` stays the user-facing surface.
+dependency order, sharing intermediate results. Input dtype coercion, schema,
+domain, and value-map checks live in `validation` so `api` stays the
+user-facing surface.
 Shared `_CONSTANTS_*` aliases live in `data` and are imported by `api`.
 There is no private positional calculation path.
 """
@@ -766,14 +767,25 @@ def _check_signature(series_id: str, annotation: str) -> str:
     return f"def {name}(\n    {series_id}: {annotation},\n) -> {annotation}:"
 
 
+def _binding_dtype(series: BoundSeries) -> str:
+    """Return the setter dtype used to coerce a public compute argument."""
+    raw = series.dtype
+    return {"str": "string", "integer": "int", "date": "datetime"}.get(raw, raw)
+
+
 def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
-    """Validate one input's schema and declared domain, then apply its value map."""
+    """Coerce dtype, validate schema and domain, then apply the value map."""
     lines: list[str] = []
     used: set[str] = set()
     series_id = series.series_id
     quoted_id = _python_literal(series_id)
     if not series.single_valued:
         lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
+    used.add("coerce_input_measure")
+    lines.append(
+        f"    {series_id} = coerce_input_measure("
+        f"{series_id}, dtype={_python_literal(_binding_dtype(series))}, series_id={quoted_id})"
+    )
     domain = measure_domain_from_series(series.raw)
     if domain is not None:
         used.add("require_input_domain")
@@ -829,7 +841,7 @@ def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str]
 
 
 def emit_named_validation(catalog: SeriesCatalog) -> str:
-    """Emit input schema, domain, and value-map checks for `Model` construction."""
+    """Emit input schema, dtype, domain, and value-map checks for `Model` construction."""
     checks, checked, used = _input_check_functions(catalog)
     lines = [
         '"""Input schema, domain, and value-map checks for bound Model arguments."""',

@@ -29,6 +29,7 @@ __all__ = [
     "Layout",
     "SeriesInput",
     "apply_input_value_map",
+    "coerce_input_measure",
     "coerce_setter_input",
     "input_value_map_from_series",
     "measure_domain_from_series",
@@ -325,6 +326,51 @@ def _reject_out_of_domain(
         raise ValueError(
             f"{label} out of domain: {value!r} not in {_format_measure_domain(domain)}"
         )
+
+
+def _coerce_one(value: object, dtype: str) -> object:
+    """Rewrite `int` to `float` when `dtype` is `float`; otherwise return `value`."""
+    if dtype == "float" and not isinstance(value, bool) and isinstance(value, int):
+        return float(value)
+    return value
+
+
+def _coerce_named_tensor(value: object, dtype: str) -> object | None:
+    """Rewrite tensor members when `value` looks like a generated `Series`."""
+    domain = getattr(value, "domain", None)
+    items = getattr(value, "items", None)
+    if domain is None or not callable(items) or _is_mapping(value):
+        return None
+    coerced = tuple(_coerce_one(member, dtype) for _coord, member in items())
+    return cast(Any, type(value))(domain, coerced)
+
+
+def coerce_input_measure(value: object, dtype: str, *, series_id: str) -> object:
+    """Rewrite a public compute input using setter dtype rules.
+
+    `int` becomes `float` when `dtype` is `float`. Sequences and tensors are
+    rewritten memberwise. Other measure values (`str` error codes, bools,
+    `None`) pass through. `float` is never narrowed to `int`.
+
+    Args:
+        value: One measure, a catalog-order sequence, or a named tensor.
+        dtype: Binding measure dtype (`float`, `int`, `number`, ...).
+        series_id: Binding series id; reserved for type-error messages.
+
+    Returns:
+        The value, possibly after a safe `int` -> `float` coercion.
+    """
+    tensor = _coerce_named_tensor(value, dtype)
+    if tensor is not None:
+        return tensor
+    if _is_measure_sequence(value):
+        members = [_coerce_one(member, dtype) for member in value]
+        if isinstance(value, tuple):
+            return tuple(members)
+        if isinstance(value, list):
+            return members
+        return type(value)(members)
+    return _coerce_one(value, dtype)
 
 
 def apply_input_value_map(

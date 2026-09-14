@@ -117,6 +117,16 @@ def test_require_input_domain_reexports_shared_helper() -> None:
         require_input_domain(2, {"enum": frozenset({0, 1})}, series_id="flag")
 
 
+def test_coerce_input_measure_reexports_shared_helper() -> None:
+    from excel_grapher.exporter.inverted_tree.excel import coerce_input_measure
+    from excel_grapher.series_bindings.input_coerce import (
+        coerce_input_measure as shared,
+    )
+
+    assert coerce_input_measure is shared
+    assert type(coerce_input_measure(0, dtype="float", series_id="share")) is float
+
+
 def test_apply_input_value_map_reexports_shared_helper() -> None:
     from excel_grapher.exporter.inverted_tree.excel import apply_input_value_map
     from excel_grapher.series_bindings.input_coerce import (

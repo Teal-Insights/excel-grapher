@@ -9,6 +9,7 @@ import pytest
 
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings.input_coerce import (
+    coerce_input_measure,
     coerce_setter_input,
     measure_domain_from_series,
     require_input_domain,
@@ -411,3 +412,15 @@ def test_require_input_domain_scalar_and_sequence() -> None:
         require_input_domain((0.0, 1.1), bounds, series_id="rate")
     with pytest.raises(ValueError, match=r"not in real_between"):
         require_input_domain((0.0, 1.1), bounds, series_id="rate")
+
+
+def test_coerce_input_measure_float_rewrites_int() -> None:
+    assert coerce_input_measure(0, dtype="float", series_id="share") == 0.0
+    assert type(coerce_input_measure(0, dtype="float", series_id="share")) is float
+    assert coerce_input_measure(0.5, dtype="float", series_id="share") == 0.5
+    assert coerce_input_measure(None, dtype="float", series_id="share") is None
+    assert coerce_input_measure("#N/A", dtype="float", series_id="share") == "#N/A"
+    assert coerce_input_measure(True, dtype="float", series_id="share") is True
+    assert coerce_input_measure((0, 1), dtype="float", series_id="share") == (0.0, 1.0)
+    assert coerce_input_measure(0, dtype="int", series_id="years") == 0
+    assert coerce_input_measure(0.0, dtype="int", series_id="years") == 0.0
