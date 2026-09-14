@@ -813,17 +813,25 @@ input:
 ```yaml
 input:
   domain:
-    real_between: {min: 0, max: 300}   # inclusive
+    real_between: {min: 0, max: 300}   # inclusive; measure dtype float or number
 ```
 
 ```yaml
 input:
   domain:
-    between: {min: 0, max: 100}   # inclusive integers
+    between: {min: 0, max: 100}   # inclusive integers; measure dtype int
 ```
+
+`between` is a closed integer interval and requires measure dtype `int`.
+`real_between` is a closed real interval and requires measure dtype `float`
+or `number`. Bind validation and inverted-tree export fail closed when the
+domain kind does not match the measure dtype (for example a 0–1 share
+authored as `dtype: float` with `between` instead of `real_between`).
 
 Domain checks run on each required `compute_*` / `Model` argument
 (scalar or every sequence member) before the evaluation walk.
+A value of the wrong type raises `ValueError` naming the type, not a
+bounds failure.
 
 ## Scalar input maps (1.15.0)
 
