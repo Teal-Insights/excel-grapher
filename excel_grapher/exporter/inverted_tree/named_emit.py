@@ -766,13 +766,16 @@ def _check_signature(series_id: str, annotation: str) -> str:
     return f"def {name}(\n    {series_id}: {annotation},\n) -> {annotation}:"
 
 
-def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
+def _input_check(series: BoundSeries, catalog: SeriesCatalog) -> tuple[list[str], set[str]]:
     """Validate one input's schema and declared domain, then apply its value map."""
     lines: list[str] = []
     used: set[str] = set()
     series_id = series.series_id
     quoted_id = _python_literal(series_id)
-    if not series.single_valued:
+    is_labelled = any(
+        catalog.labeller_for(axis.name, axis.keys) is not None for axis in series.tensor_domain.axes
+    )
+    if not series.single_valued and not is_labelled:
         lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
     domain = measure_domain_from_series(series.raw)
     if domain is not None:
@@ -781,6 +784,13 @@ def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
         if series.single_valued:
             lines.append(
                 f"    require_input_domain({series_id}, {domain_literal}, series_id={quoted_id})"
+            )
+        elif is_labelled:
+            lines.extend(
+                [
+                    f"    for coordinate, value in {series_id}.items():",
+                    f"        require_input_domain(value, {domain_literal}, series_id={quoted_id} + repr(coordinate))",
+                ]
             )
         else:
             # Restrict validation to this extraction's required domain;
@@ -810,7 +820,7 @@ def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str]
     for series in _retained(catalog):
         if series.direction != "input":
             continue
-        body, check_used = _input_check(series)
+        body, check_used = _input_check(series, catalog)
         if len(body) == 1 and body[0] == f"    return {series.series_id}":
             continue
         used |= check_used
@@ -913,7 +923,13 @@ def emit_named_api(
         '    """',
         "",
     ]
+    labelled_inputs: dict[str, tuple[str, BoundSeries]] = {}
     for series in inputs:
+        for axis in series.tensor_domain.axes:
+            labeller = catalog.labeller_for(axis.name, axis.keys)
+            if labeller is not None:
+                labelled_inputs[series.series_id] = (axis.name, labeller)
+                break
         model.append(f"    {series.series_id}: {_annotation(series)}")
     model.extend(
         [
@@ -921,9 +937,19 @@ def emit_named_api(
             "    def __init__(self, **inputs: object) -> None:",
             "        for name, value in inputs.items():",
             "            check = validation.CHECKS.get(name)",
-            "            setattr(self, name, value if check is None else check(value))",
+            "            value = value if check is None else check(value)",
+            "            setattr(self, '_raw_' + name if name in data.LABELLED_INPUTS else name, value)",
         ]
     )
+    for series_id, (axis, labeller) in labelled_inputs.items():
+        model.extend(
+            [
+                "",
+                "    @cached_property",
+                f"    def {series_id}(self) -> {_annotation(catalog.get(series_id))}:",
+                f"        return relabel_input(self._raw_{series_id}, self.{labeller.series_id}, {axis!r}, series_id={series_id!r})",
+            ]
+        )
     emitted_groups: set[tuple[str, ...]] = set()
     for series in _retained_formula_series(catalog):
         scc = scc_map.get(series.series_id, (series.series_id,))
@@ -941,7 +967,7 @@ def emit_named_api(
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
-        source, name = _public_function(output, leaves, catalog, constant_sets[constants])
+        source, name = _public_function(output, leaves, catalog, constant_sets[constants], deps)
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
@@ -953,6 +979,7 @@ def emit_named_api(
         "from . import data, internals, validation",
         *([_constants_import(aliases)] if aliases else []),
         "from .runtime import publish",
+        "from .tensor import relabel_input",
         "",
         "",
         "\n".join(model),
@@ -1010,15 +1037,38 @@ def _public_function(
     leaves: Sequence[str],
     catalog: SeriesCatalog,
     constants: str,
+    deps: Mapping[str, SeriesDeps],
 ) -> tuple[str, str]:
-    inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
+    expanded = list(leaves)
+    labellers: dict[str, BoundSeries] = {}
+    for axis in output.tensor_domain.axes:
+        labeller = catalog.labeller_for(axis.name, axis.keys)
+        if labeller is None:
+            continue
+        labellers[axis.name] = labeller
+        for sid in leaf_closure(labeller.series_id, catalog=catalog, deps=dict(deps)):
+            if sid not in expanded:
+                expanded.append(sid)
+    inputs = [catalog.get(sid) for sid in expanded if catalog.get(sid).direction == "input"]
     name = output.compute_name or f"compute_{output.series_id}"
+    result_lines = (
+        [
+            "    model = Model(**locals())",
+            f"    return model.{output.series_id}.relabel("
+            + ", ".join(
+                f"{axis}=model.{labeller.series_id}" for axis, labeller in labellers.items()
+            )
+            + ")",
+        ]
+        if labellers
+        else [f"    return Model(**locals()).{output.series_id}"]
+    )
     source = "\n".join(
         [
             _publish_line(output, constants),
             _signature(name, inputs, _annotation(output)),
             f'    """Compute `{output.series_id}` using authored coordinate identities."""',
-            f"    return Model(**locals()).{output.series_id}",
+            *result_lines,
         ]
     )
     return source, name
@@ -1271,6 +1321,8 @@ def emit_named_data(
         "from .tensor import Axis, Domain, Series, TensorSchema, coordinate_runs",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
+        f"LABELLED_AXES = { {series.axis_labels: series.series_id for series in retained if series.axis_labels}!r}",
+        f"LABELLED_INPUTS = {frozenset(series.series_id for series in retained if series.direction == 'input' and any(catalog.labeller_for(axis.name, axis.keys) for axis in series.tensor_domain.axes))!r}",
         "",
     ]
     for constant, axis in named_axes.items():

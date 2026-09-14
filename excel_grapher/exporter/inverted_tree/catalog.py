@@ -149,6 +149,7 @@ class BoundSeries:
     raw: Mapping[str, Any]
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
+    axis_labels: str | None = None
     holes: tuple[SeriesHole, ...] = ()
     authored_cells: tuple[CanonicalAddress, ...] | None = None
     authored_domain: tuple[KeyPoint, ...] | None = None
@@ -721,6 +722,22 @@ class SeriesCatalog:
     def constant_series(self) -> list[BoundSeries]:
         """Return constant series in bindings order."""
         return [self.series[sid] for sid in self.order if self.series[sid].direction == "constant"]
+
+    def labeller_for(self, axis_name: str, keys: Sequence[str | int]) -> BoundSeries | None:
+        """Return the authored labeller covering `keys` for `axis_name`."""
+        requested = set(keys)
+        matches = [
+            series
+            for series in self.series.values()
+            if series.axis_labels == axis_name
+            and series.tensor_domain.axes
+            and requested <= set(series.tensor_domain.axes[0].keys)
+        ]
+        if len(matches) > 1:
+            raise InvertedTreeExportError(
+                f"axis {axis_name!r}: multiple labellers cover keys {tuple(keys)!r}"
+            )
+        return matches[0] if matches else None
 
 
 def _direction_of(entry: Mapping[str, Any]) -> Direction:
@@ -1295,6 +1312,7 @@ def build_catalog(
                 key_fields=key_fields,
                 dtype=_dtype_of(entry),
                 compute_name=_compute_name_of(entry, series_id),
+                axis_labels=str(entry["axis_labels"]) if entry.get("axis_labels") else None,
                 raw=entry,
                 domain=domain,
                 statements=(_whole_statement(series_id, cell_tuple, domain),),

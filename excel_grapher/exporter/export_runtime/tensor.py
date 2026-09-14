@@ -302,6 +302,54 @@ class Tensor(Generic[T]):
         """Iterate complete coordinates and values in canonical order."""
         return zip(self.domain, self._values, strict=True)
 
+    def relabel(self, **labels: Tensor[Any]) -> Tensor[T]:
+        """Replace named axis keys with values from one-dimensional labellers."""
+        axes = list(self.domain.axes)
+        names = {axis.name for axis in axes}
+        if unknown := labels.keys() - names:
+            raise AxisError(f"unknown labelled axes: {sorted(unknown)!r}")
+        replacements: dict[str, dict[str | int, str | int]] = {}
+        for index, axis in enumerate(axes):
+            labeller = labels.get(axis.name)
+            if labeller is None:
+                continue
+            if len(labeller.domain.axes) != 1 or labeller.domain.axes[0].name != axis.name:
+                raise AxisError(f"axis {axis.name!r}: labeller must have only this axis")
+            try:
+                values = tuple(labeller[key] for key in axis.keys)
+            except CoordinateError as exc:
+                raise AxisError(f"axis {axis.name!r}: labeller is missing snapshot keys") from exc
+            for value in values:
+                if type(value) is not axis.key_type:
+                    raise AxisError(
+                        f"axis {axis.name!r}: label {value!r} must be {axis.key_type.__name__}"
+                    )
+            if len(set(values)) != len(values):
+                duplicate = next(value for value in values if values.count(value) > 1)
+                raise AxisError(f"axis {axis.name!r}: duplicate label {duplicate!r}")
+            axes[index] = Axis(axis.name, cast(tuple[str | int, ...], values), axis.key_type)
+            replacements[axis.name] = dict(zip(axis.keys, values, strict=True))
+        return self._replace_axes(tuple(axes), replacements)
+
+    def _replace_axes(
+        self,
+        axes: tuple[Axis, ...],
+        replacements: dict[str, dict[str | int, str | int]],
+    ) -> Tensor[T]:
+        """Return this tensor over replacement axes, preserving value positions."""
+        if self.domain.coordinates is None:
+            domain = Domain.product(*axes)
+        else:
+            coordinates = tuple(
+                tuple(
+                    replacements.get(old_axis.name, {}).get(key, key)
+                    for old_axis, key in zip(self.domain.axes, coord, strict=True)
+                )
+                for coord in self.domain
+            )
+            domain = Domain.explicit(axes=axes, coordinates=coordinates)
+        return self._from_domain(domain, self._values)
+
     def sel(self, **selectors: str | int) -> Tensor[T] | T:
         """Select exact named keys, dropping the fixed axes."""
         axes = self.domain.axes
@@ -403,6 +451,48 @@ class Tensor(Generic[T]):
                     raise SchemaError("unsupported serialized workbook value type")
             records.append((coord, value))
         return cls.from_records(domain=domain, records=records)
+
+
+def relabel_input(
+    tensor: Tensor[T], labels: Tensor[Any], axis: str, *, series_id: str
+) -> Tensor[T]:
+    """Map a caller tensor's runtime labels back to snapshot axis keys."""
+    public_axis = next(
+        (candidate for candidate in tensor.domain.axes if candidate.name == axis), None
+    )
+    if public_axis is None:
+        raise SchemaError(f"series {series_id!r}: missing labelled axis {axis!r}")
+    if len(labels.domain.axes) != 1 or labels.domain.axes[0].name != axis:
+        raise SchemaError(f"series {series_id!r}: invalid labeller for axis {axis!r}")
+    snapshot_axis = labels.domain.axes[0]
+    public_to_snapshot = {labels[key]: key for key in snapshot_axis.keys}
+    unknown = tuple(key for key in public_axis.keys if key not in public_to_snapshot)
+    if unknown:
+        raise SchemaError(
+            f"series {series_id!r}: axis {axis!r} has unknown labels {unknown!r}; "
+            f"accepted labels are {tuple(public_to_snapshot)!r}"
+        )
+    axes = tuple(
+        snapshot_axis if candidate.name == axis else candidate for candidate in tensor.domain.axes
+    )
+    replacements = {axis: {key: public_to_snapshot[key] for key in public_axis.keys}}
+    translated = [
+        (
+            tuple(
+                replacements.get(old_axis.name, {}).get(key, key)
+                for old_axis, key in zip(tensor.domain.axes, coordinate, strict=True)
+            ),
+            value,
+        )
+        for coordinate, value in tensor.items()
+    ]
+    coordinates = tuple(coordinate for coordinate, _value in translated)
+    domain = (
+        Domain.product(*axes)
+        if tensor.domain.coordinates is None and len(coordinates) == len(Domain.product(*axes))
+        else Domain.explicit(axes=axes, coordinates=coordinates)
+    )
+    return Tensor.from_records(domain=domain, records=translated)
 
 
 @dataclass(frozen=True, slots=True)

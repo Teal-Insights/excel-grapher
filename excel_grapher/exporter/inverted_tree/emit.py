@@ -16,6 +16,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     bind_blank_rects,
     collect_all_deps,
     collect_catalog_edges,
+    leaf_closure,
     reset_blank_rects,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -220,6 +221,51 @@ def plan_inverted_tree(
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
     catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
     deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
+    labellers = [series for series in catalog.series.values() if series.axis_labels]
+    identities: set[tuple[str, tuple[str | int, ...]]] = set()
+    for labeller in labellers:
+        axis = labeller.tensor_domain.axes[0]
+        identity = (axis.name, axis.keys)
+        if identity in identities:
+            raise InvertedTreeExportError(
+                f"axis {axis.name!r}: multiple labellers declare snapshot keys {axis.keys!r}"
+            )
+        identities.add(identity)
+        authored = labeller.authored_cells or labeller.cells
+        if labeller.graph_cells is not None and not set(authored) <= labeller.graph_cells:
+            missing = tuple(cell for cell in authored if cell not in labeller.graph_cells)
+            raise InvertedTreeExportError(
+                f"labeller {labeller.series_id!r}: cells are outside the extracted graph: {missing!r}"
+            )
+        nodes = tuple(graph.get_node(cell) for cell in authored)
+        if any(node is None for node in nodes):
+            raise InvertedTreeExportError(
+                f"labeller {labeller.series_id!r}: every cell must be in the extracted graph"
+            )
+        cached = tuple(node.value for node in nodes if node is not None)
+        if cached != axis.keys:
+            raise InvertedTreeExportError(
+                f"labeller {labeller.series_id!r}: cached values {cached!r} do not equal snapshot keys {axis.keys!r}"
+            )
+        for leaf_id in leaf_closure(labeller.series_id, catalog=catalog, deps=deps):
+            leaf = catalog.get(leaf_id)
+            if leaf.direction == "input" and any(
+                candidate.name == axis.name for candidate in leaf.tensor_domain.axes
+            ):
+                raise InvertedTreeExportError(
+                    f"labeller {labeller.series_id!r}: input {leaf_id!r} is keyed on labelled axis {axis.name!r}"
+                )
+    for series in catalog.series.values():
+        for axis in series.tensor_domain.axes:
+            candidates = [item for item in labellers if item.axis_labels == axis.name]
+            if candidates and catalog.labeller_for(axis.name, axis.keys) is None:
+                covered = set().union(
+                    *(set(item.tensor_domain.axes[0].keys) for item in candidates)
+                )
+                missing = tuple(key for key in axis.keys if key not in covered)
+                raise InvertedTreeExportError(
+                    f"axis {axis.name!r}: labeller is missing snapshot keys {missing!r}"
+                )
     scc_map = build_scc_map(catalog, deps)
     # Recurrence groups and nested self recurrences read external producers
     # by coordinate; their producers are never compacted to a host window.

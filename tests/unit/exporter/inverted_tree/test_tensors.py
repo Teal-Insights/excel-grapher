@@ -12,6 +12,7 @@ from excel_grapher.exporter.export_runtime.tensor import (
     SchemaError,
     Tensor,
     TensorSchema,
+    relabel_input,
 )
 
 
@@ -34,6 +35,49 @@ def test_product_label_access_selection_and_immutability() -> None:
         tensor["base"]
     with pytest.raises(FrozenInstanceError):
         tensor.domain = Domain.product()  # ty: ignore[invalid-assignment]
+
+
+def test_relabel_replaces_axis_keys_without_moving_values() -> None:
+    scenario = Axis("scenario", ("base", "shock"), str)
+    year = years(2024, 2025)
+    tensor = Tensor.from_nested(domain=Domain.product(scenario, year), values=((1, 2), (3, 4)))
+    labels = Tensor.from_nested(domain=Domain.product(year), values=(2026, 2027))
+
+    relabelled = tensor.relabel(year=labels)
+
+    assert list(relabelled.items()) == [
+        (("base", 2026), 1),
+        (("base", 2027), 2),
+        (("shock", 2026), 3),
+        (("shock", 2027), 4),
+    ]
+    assert tensor.domain.axes[1].keys == (2024, 2025)
+
+
+def test_relabel_rejects_invalid_labels() -> None:
+    tensor = Tensor.from_nested(domain=Domain.product(years(2024, 2025)), values=(1, 2))
+    for values, match in [((2026, 2026), "duplicate.*2026"), ((2026, "2027"), "year.*int")]:
+        labels = Tensor.from_nested(domain=tensor.domain, values=values)
+        with pytest.raises(AxisError, match=match):
+            tensor.relabel(year=labels)
+
+
+def test_relabel_input_maps_public_labels_to_snapshot_keys() -> None:
+    labels = Tensor.from_nested(domain=Domain.product(years(2024, 2025)), values=(2026, 2027))
+    public = Tensor.from_nested(domain=Domain.product(years(2026, 2027)), values=(10, 20))
+
+    internal = relabel_input(public, labels, "year", series_id="investment")
+
+    assert list(internal.items()) == [((2024,), 10), ((2025,), 20)]
+    stale = Tensor.from_nested(domain=Domain.product(years(2024, 2025)), values=(10, 20))
+    with pytest.raises(SchemaError, match="investment.*2024.*2026.*2027"):
+        relabel_input(stale, labels, "year", series_id="investment")
+
+    reversed_public = Tensor.from_nested(domain=Domain.product(years(2027, 2026)), values=(20, 10))
+    assert list(relabel_input(reversed_public, labels, "year", series_id="investment").items()) == [
+        ((2024,), 10),
+        ((2025,), 20),
+    ]
 
 
 def test_sparse_domain_order_holes_and_exact_records() -> None:
