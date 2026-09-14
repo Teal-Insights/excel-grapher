@@ -1,9 +1,13 @@
 """Build the self-contained runtime modules of a generated package.
 
-The generated package must run without `excel_grapher` installed. The
-inverted-tree runtime imports its Excel semantics from the shared core; this
-module embeds exactly those symbols into an `excel.py` module and rewrites the
-runtime's imports to point at it.
+The generated package must run without `excel_grapher` installed. That takes
+two complementary modules, not one duplicated runtime:
+
+- `excel.py` embeds the shared Excel value semantics (`core` operators, lookups,
+  aggregates, errors) that the inverted-tree runtime imports.
+- `runtime.py` is the inverted-tree source with those imports rewritten to
+  `.excel` (and `.tensor`). It wraps the embedded operators into error-code
+  measures and adds named-axis primitives (`view`, `span`, `take`, `publish`).
 """
 
 from __future__ import annotations
