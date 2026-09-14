@@ -1,4 +1,4 @@
-"""Runtime primitives for inverted-tree codegen (`take`, `require_aligned`, `xl_*`)."""
+"""Named-axis primitives and Excel operators for inverted-tree codegen."""
 
 from __future__ import annotations
 
@@ -9,19 +9,10 @@ from typing import Any, cast
 
 import pytest
 
-from excel_grapher.exporter.inverted_tree.runtime import (
-    InstanceCycleError,
+from excel_grapher.exporter.inverted_tree.excel import (
     XlError,
     as_measure,
-    as_records,
-    demand_instance,
-    eval_instance,
     is_error,
-    live_measure,
-    publish,
-    require_aligned,
-    require_length,
-    take,
     xl_add,
     xl_and,
     xl_at,
@@ -49,6 +40,17 @@ from excel_grapher.exporter.inverted_tree.runtime import (
     xl_sum,
     xl_sumproduct,
     xl_vlookup,
+)
+from excel_grapher.exporter.inverted_tree.runtime import (
+    InstanceCycleError,
+    as_records,
+    demand_instance,
+    eval_instance,
+    live_measure,
+    publish,
+    require_aligned,
+    require_length,
+    take,
 )
 
 
@@ -116,7 +118,7 @@ def test_require_length_rejects_mismatch() -> None:
 
 
 def test_require_input_domain_reexports_shared_helper() -> None:
-    from excel_grapher.exporter.inverted_tree.runtime import require_input_domain
+    from excel_grapher.exporter.inverted_tree.excel import require_input_domain
     from excel_grapher.series_bindings.input_coerce import (
         require_input_domain as shared,
     )
@@ -128,7 +130,7 @@ def test_require_input_domain_reexports_shared_helper() -> None:
 
 
 def test_apply_input_value_map_reexports_shared_helper() -> None:
-    from excel_grapher.exporter.inverted_tree.runtime import apply_input_value_map
+    from excel_grapher.exporter.inverted_tree.excel import apply_input_value_map
     from excel_grapher.series_bindings.input_coerce import (
         apply_input_value_map as shared,
     )

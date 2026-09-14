@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, NotRequired, TypedDict
 
@@ -16,7 +16,6 @@ from excel_grapher.series_bindings.ranges import (
     expand_bound_series_addresses,
     expand_bound_series_addresses_for_graph,
 )
-from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import (
     InputSeries,
     ValidationReport,
@@ -131,35 +130,6 @@ def series_binding_public_addresses(
                 workbook=workbook,
             )
         )
-    return frozenset(addresses)
-
-
-def output_binding_covered_addresses(
-    graph: DependencyGraph,
-    bindings: WorkbookSeriesBindings,
-    *,
-    workbook: Path | str,
-    export_addresses: Iterable[str] | None = None,
-) -> frozenset[str]:
-    """Return addresses covered by successfully resolved output computes.
-
-    Uses the same resolution path as compute codegen (including `exclude_rows` /
-    `exclude_columns` and optional export-closure intersection), so coverage
-    matches the addresses semantic `compute_*` functions actually return.
-    """
-    report = resolve_series_bindings(
-        graph,
-        bindings,
-        workbook=workbook,
-        direction="output",
-        export_addresses=export_addresses,
-    )
-    addresses: set[str] = set()
-    for resolved in report["series"]:
-        if not resolved["ok"]:
-            continue
-        for leaf in resolved["leaves"]:
-            addresses.add(normalize_address(leaf["address"]))
     return frozenset(addresses)
 
 

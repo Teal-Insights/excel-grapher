@@ -495,7 +495,3 @@ class OptimalCompressionRecord:
         self.inlined_to[removed] = retained
         self.removal_order.append(removed)
         self.snapshots_by_removed[removed] = snapshot
-
-    def ensure_snapshot(self, key: NodeKey, snapshot: ProjectedNodeSnapshot) -> None:
-        if key not in self.snapshots_by_removed:
-            self.snapshots_by_removed[key] = snapshot

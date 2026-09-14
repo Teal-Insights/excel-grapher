@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Iterator
-from math import isfinite
 from typing import TypeAlias, cast
 
 from excel_grapher.core import XlError
@@ -25,28 +24,6 @@ def as_scalar(value: CellValue) -> Scalar:
     if isinstance(value, (Range, ExcelRange, list, tuple)):
         return XlError.VALUE
     return value
-
-
-def _convergence_delta(prev: CellValue, curr: CellValue) -> float:
-    if isinstance(prev, (Range, list)) or isinstance(curr, (Range, list)):
-        prev_rows = prev.rows_raw() if isinstance(prev, Range) else prev
-        curr_rows = curr.rows_raw() if isinstance(curr, Range) else curr
-        return 0.0 if prev_rows == curr_rows else float("inf")
-
-    if isinstance(prev, bool) or isinstance(curr, bool):
-        return 0.0 if prev == curr else float("inf")
-    if isinstance(prev, (int, float)) and isinstance(curr, (int, float)):
-        pf = float(prev)
-        cf = float(curr)
-        if isfinite(pf) and isfinite(cf):
-            return abs(cf - pf)
-    try:
-        eq = prev == curr
-    except Exception:
-        return float("inf")
-    if isinstance(eq, bool):
-        return 0.0 if eq else float("inf")
-    return float("inf")
 
 
 def flatten(*args: CellValue) -> Iterator[Scalar]:
