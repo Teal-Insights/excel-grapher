@@ -277,16 +277,26 @@ def _in_closed_bounds(value: int | float, bounds: Mapping[str, Any]) -> bool:
     return (lo is None or value >= lo) and (hi is None or value <= hi)
 
 
+def _is_between_int(value: object) -> TypeGuard[int]:
+    """Return whether `value` is a non-bool integer (`between` membership)."""
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def _is_real_number(value: object) -> TypeGuard[int | float]:
+    """Return whether `value` is a non-bool int or float (`real_between`)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
 def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
     """Return whether `value` is inside a measure domain declaration."""
     if "enum" in domain:
         return value in domain["enum"]
     if "between" in domain:
-        if isinstance(value, bool) or not isinstance(value, int):
+        if not _is_between_int(value):
             return False
         return _in_closed_bounds(value, domain["between"])
     if "real_between" in domain:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
+        if not _is_real_number(value):
             return False
         return _in_closed_bounds(value, domain["real_between"])
     return True
@@ -305,6 +315,12 @@ def _reject_out_of_domain(
     """Raise `ValueError` when a non-null `value` is outside `domain`."""
     if value is None:
         return
+    if "between" in domain and not _is_between_int(value):
+        raise ValueError(f"{label} has type {type(value).__name__}; between requires int")
+    if "real_between" in domain and not _is_real_number(value):
+        raise ValueError(
+            f"{label} has type {type(value).__name__}; real_between requires int or float"
+        )
     if not _value_in_measure_domain(value, domain):
         raise ValueError(
             f"{label} out of domain: {value!r} not in {_format_measure_domain(domain)}"
@@ -353,7 +369,8 @@ def require_input_domain(
         series_id: Binding series id used in the error message.
 
     Raises:
-        ValueError: When any non-`None` member is outside `domain`.
+        ValueError: When any non-`None` member is outside `domain`, or has a
+            type the domain kind does not accept (`between` requires `int`).
     """
     if _is_measure_sequence(value):
         for index, member in enumerate(value):

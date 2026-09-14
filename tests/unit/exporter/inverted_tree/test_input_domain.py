@@ -6,6 +6,11 @@ from pathlib import Path
 
 import pytest
 
+from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.series_bindings import validate_series_bindings
+from excel_grapher.series_bindings.schema import validate_bindings_document
+from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
@@ -71,6 +76,38 @@ def _rate_bindings() -> dict:
             header_row=10,
         ),
     )
+
+
+def test_emit_refuses_float_dtype_with_between_domain(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "share.xlsx",
+        {
+            "Inputs": {"A1": 0.0},
+            "Outputs": {"B1": "=Inputs!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "share",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="float",
+            domain={"between": {"min": 0, "max": 1}},
+        ),
+        series_entry("result", "Outputs!B1", layout="scalar", direction="output"),
+    )
+    bindings = validate_bindings_document(document)
+    graph = create_dependency_graph(
+        workbook,
+        all_series_targets(bindings, workbook=workbook),
+        load_values=True,
+    )
+    report = validate_series_bindings(graph, bindings, workbook=workbook)
+    assert report["ok"] is False
+    assert any(issue["code"] == "domain_dtype_mismatch" for issue in report["issues"])
+    with pytest.raises(InvertedTreeExportError, match="domain_dtype_mismatch"):
+        generate_inverted(workbook, document)
 
 
 def test_scalar_enum_domain_accepts_and_rejects(tmp_path: Path) -> None:

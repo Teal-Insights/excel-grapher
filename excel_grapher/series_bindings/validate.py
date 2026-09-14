@@ -43,6 +43,8 @@ from excel_grapher.series_bindings.versions import IMPLEMENTED_BIND_KINDS, IMPLE
 _KNOWN_BIND_KINDS = IMPLEMENTED_BIND_KINDS
 _A1_RECTANGLE_RE = re.compile(r"_[a-z]{1,3}\d+_[a-z]{1,3}\d+")
 _A1_TRAILING_CELL_RE = re.compile(r"_[a-z]{1,3}\d+$")
+_INTEGER_MEASURE_DTYPES = frozenset({"int", "integer"})
+_REAL_MEASURE_DTYPES = frozenset({"float", "number"})
 
 
 def _issue(
@@ -798,6 +800,62 @@ def _concept_dtype_map(bindings: WorkbookSeriesBindings) -> dict[str, str]:
     return result
 
 
+def _authored_measure_dtype(series: dict[str, Any]) -> str | None:
+    """Return the measure dtype export will use, or `None` when omitted."""
+    structure = series.get("structure") or {}
+    measure = structure.get("measure")
+    if not isinstance(measure, dict):
+        return None
+    if measure.get("dtype") is not None:
+        return str(measure["dtype"])
+    bind = measure.get("bind")
+    if isinstance(bind, dict):
+        read = bind.get("read")
+        if read not in (None, "auto"):
+            return str(read)
+    return None
+
+
+def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Reject `between` / `real_between` when the kind does not match measure dtype."""
+    if not has_input_direction(series):
+        return []
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return []
+    domain = input_block.get("domain")
+    if not isinstance(domain, dict):
+        return []
+    series_id = str(series.get("id", "")) or None
+    dtype = _authored_measure_dtype(series)
+    if "between" in domain:
+        if dtype in _INTEGER_MEASURE_DTYPES:
+            return []
+        got = repr(dtype) if dtype is not None else "omitted (export defaults to float)"
+        return [
+            _issue(
+                "error",
+                "domain_dtype_mismatch",
+                "input.domain between requires integer measure dtype 'int'; "
+                f"got {got} (use real_between for float/number)",
+                series_id=series_id,
+            )
+        ]
+    if "real_between" in domain:
+        if dtype is None or dtype in _REAL_MEASURE_DTYPES:
+            return []
+        return [
+            _issue(
+                "error",
+                "domain_dtype_mismatch",
+                "input.domain real_between requires measure dtype 'float' or "
+                f"'number'; got {dtype!r} (use between for int)",
+                series_id=series_id,
+            )
+        ]
+    return []
+
+
 def _read_matches_dtype(read: str, dtype: str) -> bool:
     if read == "auto":
         return True
@@ -929,6 +987,7 @@ def validate_series_bindings(
             issues.extend(_validate_input_value_map(series))
             issues.extend(_validate_implementation_support(series))
             issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
+            issues.extend(_validate_input_domain_dtype(series))
 
             if not series_data_ranges(series):
                 continue
