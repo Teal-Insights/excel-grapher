@@ -148,6 +148,13 @@ def _output_cells_in_export_order(series: BoundSeries) -> tuple[str, ...]:
     return tuple(cell for _key, cell in keyed)
 
 
+def _axis_key(value: object, key_type: type) -> object:
+    """Coerce an evaluator label onto the labeller's axis key type."""
+    if key_type is int and isinstance(value, float) and value.is_integer():
+        return int(value)
+    return value
+
+
 def _package_matches_evaluator(
     pkg: object,
     catalog: SeriesCatalog,
@@ -155,6 +162,11 @@ def _package_matches_evaluator(
 ) -> None:
     kwargs = named_input_kwargs(pkg, catalog, graph)
     cells = [cell for series in catalog.output_series() for cell in series.cells]
+    for series in catalog.output_series():
+        for axis in series.tensor_domain.axes:
+            labeller = catalog.labeller_for(axis.name, axis.keys)
+            if labeller is not None:
+                cells.extend(labeller.coordinate_cells.values())
     expected = FormulaEvaluator(graph).evaluate(cells)
     for series in catalog.output_series():
         name = series.compute_name or f"compute_{series.series_id}"
@@ -168,13 +180,22 @@ def _package_matches_evaluator(
                 index: catalog.labeller_for(axis.name, axis.keys)
                 for index, axis in enumerate(series.tensor_domain.axes)
             }
+            required = tuple(
+                coord for coord in series.tensor_domain if coord in series.required_coordinates
+            )
+            if any(labeller is not None for labeller in labellers.values()):
+                assert len(tuple(got.domain)) == len(required)
+            else:
+                assert tuple(got.domain) == required
             for coordinate, value in got.items():
                 snapshot = list(coordinate)
                 for index, labeller in labellers.items():
                     if labeller is None:
                         continue
+                    key_type = labeller.tensor_domain.axes[0].key_type
                     public_to_snapshot = {
-                        expected[cell]: key[0] for key, cell in labeller.coordinate_cells.items()
+                        _axis_key(expected[cell], key_type): key[0]
+                        for key, cell in labeller.coordinate_cells.items()
                     }
                     snapshot[index] = public_to_snapshot[coordinate[index]]
                 snapshot_coordinate = tuple(snapshot)
@@ -191,6 +212,50 @@ def _emit_and_compare(
     modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name=name)
     _package_matches_evaluator(pkg, catalog, graph)
+
+
+def _labelled_year_workbook(tmp_path: Path) -> Path:
+    import xlsxwriter
+
+    path = tmp_path / "labelled_oracle.xlsx"
+    with xlsxwriter.Workbook(path) as book:
+        sheet = book.add_worksheet("Sheet1")
+        sheet.write_number("A1", 2025)
+        sheet.write_formula("B1", "=$A$1", None, 2025.0)
+        sheet.write_formula("C1", "=B1+1", None, 2026.0)
+        sheet.write_number("B2", 3)
+        sheet.write_number("C2", 4)
+        sheet.write_formula("B3", "=B2*2", None, 6)
+        sheet.write_formula("C3", "=C2*2", None, 8)
+    return path
+
+
+def _labelled_year_bindings() -> dict[str, Any]:
+    first_year = series_entry(
+        "first_year", "Sheet1!A1", layout="scalar", direction="input", dtype="int"
+    )
+    labels = series_entry(
+        "year_labels",
+        "Sheet1!B1:C1",
+        layout="series",
+        direction="internal",
+        dtype="int",
+        header_row=1,
+    )
+    labels["axis_labels"] = "TIME_PERIOD"
+    source = series_entry("src", "Sheet1!B2:C2", layout="series", direction="input", header_row=1)
+    output = series_entry("out", "Sheet1!B3:C3", layout="series", direction="output", header_row=1)
+    return bindings_document(first_year, labels, source, output, schema_version="1.17.0")
+
+
+def test_labelled_output_oracle_evaluates_labeller_cells(tmp_path: Path) -> None:
+    """Compare a labelled output to the evaluator using header cells that are not outputs."""
+    _emit_and_compare(
+        _labelled_year_workbook(tmp_path),
+        _labelled_year_bindings(),
+        tmp_path,
+        "labelled_oracle",
+    )
 
 
 def _a22_shift_k_workbook(tmp_path: Path) -> Path:
