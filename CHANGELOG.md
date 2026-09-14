@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v17.0.1 (2026-09-14)
+
+### Bug Fixes
+
+- **export**: Keep generated excel.py imports at module top
+  ([#844](https://github.com/Teal-Insights/excel-grapher/pull/844),
+  [`2a81563`](https://github.com/Teal-Insights/excel-grapher/commit/2a81563401c83883a44d09aec9c39c668dbbb239))
+
+### Chores
+
+- Remove unused library symbols from the dead-code audit
+  ([#844](https://github.com/Teal-Insights/excel-grapher/pull/844),
+  [`2a81563`](https://github.com/Teal-Insights/excel-grapher/commit/2a81563401c83883a44d09aec9c39c668dbbb239))
+
+### Refactoring
+
+- **export**: Give generated excel.py the sole xl_add
+  ([#844](https://github.com/Teal-Insights/excel-grapher/pull/844),
+  [`2a81563`](https://github.com/Teal-Insights/excel-grapher/commit/2a81563401c83883a44d09aec9c39c668dbbb239))
+
+### Testing
+
+- **export**: Lock generated excel.py and runtime.py as distinct layers
+  ([#844](https://github.com/Teal-Insights/excel-grapher/pull/844),
+  [`2a81563`](https://github.com/Teal-Insights/excel-grapher/commit/2a81563401c83883a44d09aec9c39c668dbbb239))
+
+
 ## v17.0.0 (2026-09-14)
 
 ### Features
