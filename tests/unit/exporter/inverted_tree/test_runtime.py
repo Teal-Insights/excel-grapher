@@ -44,12 +44,9 @@ from excel_grapher.exporter.inverted_tree.excel import (
 from excel_grapher.exporter.inverted_tree.runtime import (
     InstanceCycleError,
     as_records,
-    demand_instance,
     eval_instance,
-    live_measure,
     publish,
     require_aligned,
-    require_length,
     take,
 )
 
@@ -106,15 +103,6 @@ def test_require_aligned_rejects_mismatched_lengths() -> None:
 def test_require_aligned_rejects_empty_call() -> None:
     with pytest.raises(ValueError, match="at least one"):
         require_aligned()
-
-
-def test_require_length_accepts_catalog_size() -> None:
-    require_length((1, 2, 3), 3)
-
-
-def test_require_length_rejects_mismatch() -> None:
-    with pytest.raises(ValueError, match="expected length 3"):
-        require_length((1, 2), 3)
 
 
 def test_require_input_domain_reexports_shared_helper() -> None:
@@ -219,20 +207,6 @@ def test_xl_div_string_measure_is_value_error() -> None:
     assert exc.value.code == "#VALUE!"
     with pytest.raises(XlError) as exc:
         xl_div(1, '"')
-    assert exc.value.code == "#VALUE!"
-    with pytest.raises(XlError) as exc:
-        xl_div(live_measure('"'), 100)
-    assert exc.value.code == "#VALUE!"
-
-
-def test_live_measure_does_not_coerce_text() -> None:
-    assert live_measure('"') == '"'
-    assert live_measure("abc") == "abc"
-    with pytest.raises(XlError) as exc:
-        live_measure("#REF!")
-    assert exc.value.code == "#REF!"
-    with pytest.raises(XlError) as exc:
-        xl_div(live_measure('"'), 100)
     assert exc.value.code == "#VALUE!"
 
 
@@ -408,7 +382,7 @@ def test_eval_instance_memos_and_detects_cycles() -> None:
         eval_instance("c", 0, loop, memo, stack)
 
 
-def test_demand_instance_reraises_stored_error_codes() -> None:
+def test_eval_instance_stores_error_codes() -> None:
     memo: dict[tuple[str, int], float | str] = {}
     stack: set[tuple[str, int]] = set()
 
@@ -416,17 +390,8 @@ def test_demand_instance_reraises_stored_error_codes() -> None:
         del index
         return "#REF!"
 
-    with pytest.raises(XlError) as exc:
-        demand_instance("s", 0, compute, memo, stack)
-    assert exc.value.code == "#REF!"
     assert eval_instance("s", 0, compute, memo, stack) == "#REF!"
 
-
-def test_live_measure_reraises_error_codes() -> None:
-    assert live_measure(1.5) == 1.5
-    with pytest.raises(XlError) as exc:
-        live_measure("#REF!")
-    assert exc.value.code == "#REF!"
 
 
 def test_xl_sum_over_sequence_and_stored_errors() -> None:

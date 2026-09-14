@@ -20,7 +20,7 @@ from excel_grapher.core.range_shorthand import (
     resolve_whole_row,
 )
 from excel_grapher.core.types import ExcelRange
-from excel_grapher.grapher.parser import parse_range_refs, parse_range_refs_with_spans
+from excel_grapher.grapher.parser import parse_range_refs_with_spans
 
 
 @pytest.mark.parametrize(
@@ -109,18 +109,18 @@ def test_expand_whole_column_row_for_parse_quoted_sheet() -> None:
 
 
 def test_parse_range_refs_whole_column_quoted() -> None:
-    refs = parse_range_refs("=INDEX('Data'!C:C,1)")
+    refs = parse_range_refs_with_spans("=INDEX('Data'!C:C,1)")
     assert len(refs) == 1
-    start, end = refs[0]
+    start, end, _span = refs[0]
     assert start.sheet == "Data"
     assert start.column == end.column == "C"
     assert start.range_kind == "whole_column"
 
 
 def test_parse_range_refs_whole_row() -> None:
-    refs = parse_range_refs("=SUM('Data'!5:5)")
+    refs = parse_range_refs_with_spans("=SUM('Data'!5:5)")
     assert len(refs) == 1
-    start, end = refs[0]
+    start, end, _span = refs[0]
     assert start.sheet == "Data"
     assert start.row == end.row == 5
     assert start.range_kind == "whole_row"

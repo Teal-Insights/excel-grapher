@@ -72,21 +72,12 @@ from excel_grapher.series_bindings.versions import (
     is_bind_implemented,
     is_layout_implemented,
 )
-
-_LAZY_WORKFLOW_EXPORTS = {
-    "BindingsCheckResult",
-    "run_binding_checks",
-    "series_binding_public_addresses",
-    "validate_bindings_workbook",
-}
-
-
-def __getattr__(name: str):
-    if name in _LAZY_WORKFLOW_EXPORTS:
-        from excel_grapher.series_bindings import workflow as workflow_module
-
-        return getattr(workflow_module, name)
-    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+from excel_grapher.series_bindings.workflow import (
+    BindingsCheckResult,
+    run_binding_checks,
+    series_binding_public_addresses,
+    validate_bindings_workbook,
+)
 
 
 __all__ = [

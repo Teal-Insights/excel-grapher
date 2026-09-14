@@ -1092,35 +1092,7 @@ def assemble_lightweight_viz_payload(
     )
 
 
-# --- Flat view (core + partition overlay) for tools, tests, force layout ------
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizStats:
-    node_count: int
-    scc_count: int
-    module_count: int
-    module_edge_count: int
-    local_edge_count: int
-    truncated_local_nodes: int
-    dense_bucket_count: int
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizNodeColumns:
-    sheet_index: tuple[int, ...]
-    row: tuple[int, ...]
-    column: tuple[str, ...]
-    is_leaf: tuple[bool, ...]
-    formula: tuple[str | None, ...]
-    in_degree: tuple[int, ...]
-    out_degree: tuple[int, ...]
-    module_id: tuple[int, ...]
-    rank: tuple[int, ...]
-    x: tuple[float, ...]
-    y: tuple[float, ...]
-    bucket_density: tuple[int, ...]
-
+# --- Partition modules ----------------------------------------------------------
 
 @dataclass(frozen=True, slots=True)
 class LightweightVizModule:
@@ -1139,18 +1111,6 @@ class LightweightVizModuleEdge:
     target_module_id: int
     unconditional_weight: int
     guarded_weight: int
-
-
-@dataclass(frozen=True, slots=True)
-class LightweightVizFlat:
-    stats: LightweightVizStats
-    sheets: tuple[str, ...]
-    nodes: LightweightVizNodeColumns
-    modules: tuple[LightweightVizModule, ...]
-    module_edges: tuple[LightweightVizModuleEdge, ...]
-    local_edges: LightweightVizLocalEdges
-    max_local_nodes: int | None
-    max_local_edges: int | None
 
 
 def derive_partition_modules_table(
@@ -1206,96 +1166,6 @@ def derive_partition_modules_table(
             )
         )
     return tuple(modules)
-
-
-def lightweight_viz_flat(payload: LightweightVizPayload) -> LightweightVizFlat:
-    if payload.version != VIZ_PAYLOAD_VERSION:
-        raise ValueError(f"Unsupported lightweight viz payload version: {payload.version}")
-    core = payload.core
-    n = core.stats.node_count
-
-    mod_ov: LightweightVizOverlay | None = None
-    for ov in payload.overlays:
-        if ov.overlay_id == WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID:
-            mod_ov = ov
-            break
-
-    if mod_ov is not None:
-        data = mod_ov.data
-        module_id = tuple(int(x) for x in data["node_module_id"])
-        node_rank_out = tuple(int(x) for x in data["node_rank"])
-        raw_edges = data["module_edges"]
-        module_edges = tuple(
-            LightweightVizModuleEdge(
-                source_module_id=int(e["source_module_id"]),
-                target_module_id=int(e["target_module_id"]),
-                unconditional_weight=int(e["unconditional_weight"]),
-                guarded_weight=int(e["guarded_weight"]),
-            )
-            for e in raw_edges
-        )
-        raw_mods = data["modules"]
-        modules = tuple(
-            LightweightVizModule(
-                id=int(m["id"]),
-                node_count=int(m["node_count"]),
-                rank_min=int(m["rank_min"]),
-                rank_max=int(m["rank_max"]),
-                centroid_x=float(m["centroid_x"]),
-                centroid_y=float(m["centroid_y"]),
-                density_mode=bool(m["density_mode"]),
-            )
-            for m in raw_mods
-        )
-        stats = LightweightVizStats(
-            node_count=n,
-            scc_count=int(data["scc_count"]),
-            module_count=len(modules),
-            module_edge_count=len(module_edges),
-            local_edge_count=core.stats.local_edge_count,
-            truncated_local_nodes=core.stats.truncated_local_nodes,
-            dense_bucket_count=core.stats.dense_bucket_count,
-        )
-    else:
-        module_id = (0,) * n if n else tuple()
-        node_rank_out = tuple(core.nodes.rank)
-        modules = derive_partition_modules_table(core, module_id, node_rank_out)
-        module_edges = tuple()
-        stats = LightweightVizStats(
-            node_count=n,
-            scc_count=0,
-            module_count=len(modules) if n else 0,
-            module_edge_count=0,
-            local_edge_count=core.stats.local_edge_count,
-            truncated_local_nodes=core.stats.truncated_local_nodes,
-            dense_bucket_count=core.stats.dense_bucket_count,
-        )
-
-    nodes = LightweightVizNodeColumns(
-        sheet_index=core.nodes.sheet_index,
-        row=core.nodes.row,
-        column=core.nodes.column,
-        is_leaf=core.nodes.is_leaf,
-        formula=core.nodes.formula,
-        in_degree=core.nodes.in_degree,
-        out_degree=core.nodes.out_degree,
-        module_id=module_id,
-        rank=node_rank_out,
-        x=core.nodes.x,
-        y=core.nodes.y,
-        bucket_density=core.nodes.bucket_density,
-    )
-
-    return LightweightVizFlat(
-        stats=stats,
-        sheets=core.sheets,
-        nodes=nodes,
-        modules=modules,
-        module_edges=module_edges,
-        local_edges=core.local_edges,
-        max_local_nodes=core.max_local_nodes,
-        max_local_edges=core.max_local_edges,
-    )
 
 
 # --- Serialization ------------------------------------------------------------

@@ -22,7 +22,6 @@ from excel_grapher.core.excel_function_names import excel_function_call_prefixes
 from excel_grapher.core.formula_normalization import (
     NamedRangeReplacementState,
     build_named_range_replacement_state,
-    normalize_excel_formula,
     normalize_excel_formula_with_name_state,
 )
 from excel_grapher.core.range_shorthand import (
@@ -140,7 +139,8 @@ def _reject_unmasked_ranges(formula: str, *, allow_unmasked_ranges: bool) -> Non
 def parse_cell_refs(formula: str, *, allow_unmasked_ranges: bool = False) -> list[CellRef]:
     """Extract single-cell references from a formula.
 
-    This function does not expand ranges. Use parse_range_refs + expand_range.
+    This function does not expand ranges. Use `parse_range_refs_with_spans`
+    plus expand_range.
     By default it refuses formula text that still contains range spans — prefer
     `parse_standalone_cell_refs` (or mask spans yourself). Pass
     `allow_unmasked_ranges=True` only when intentionally inspecting raw text
@@ -213,94 +213,6 @@ def parse_standalone_cell_refs_with_spans(
     """
     spans = [span for _start, _end, span in parse_range_refs_with_spans(formula)]
     return parse_cell_refs_with_spans(mask_spans(formula, spans))
-
-
-def parse_range_refs(formula: str) -> list[tuple[CellRef, CellRef]]:
-    """Extract range references from a formula as (start, end) CellRef pairs."""
-    if not isinstance(formula, str) or not formula.startswith("="):
-        return []
-
-    out: list[tuple[CellRef, CellRef]] = []
-
-    for m in _RANGE_WHOLE_COL_QUOTED_RE.finditer(formula):
-        sheet = _sheet_from_quoted_group(m)
-        col = m.group("col").upper()
-        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
-        out.append((ref, ref))
-
-    for m in _RANGE_WHOLE_COL_UNQUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
-        col = m.group("col").upper()
-        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
-        out.append((ref, ref))
-
-    for m in _RANGE_WHOLE_COL_LOCAL_RE.finditer(formula):
-        col = m.group("col").upper()
-        ref = CellRef(sheet=None, column=col, row=0, range_kind="whole_column")
-        out.append((ref, ref))
-
-    for m in _RANGE_WHOLE_ROW_QUOTED_RE.finditer(formula):
-        sheet = _sheet_from_quoted_group(m)
-        row = int(m.group("row"))
-        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
-        out.append((ref, ref))
-
-    for m in _RANGE_WHOLE_ROW_UNQUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
-        row = int(m.group("row"))
-        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
-        out.append((ref, ref))
-
-    for m in _RANGE_WHOLE_ROW_LOCAL_RE.finditer(formula):
-        row = int(m.group("row"))
-        ref = CellRef(sheet=None, column="", row=row, range_kind="whole_row")
-        out.append((ref, ref))
-
-    for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
-        sheet = _sheet_from_quoted_group(m)
-        out.append(
-            (
-                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
-                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
-            )
-        )
-
-    for m in _RANGE_UNQUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
-        sheet = m.group("sheet")
-        out.append(
-            (
-                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
-                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
-            )
-        )
-
-    for m in _RANGE_QUOTED_RE.finditer(formula):
-        sheet = _sheet_from_quoted_group(m)
-        out.append(
-            (
-                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
-                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
-            )
-        )
-
-    for m in _RANGE_UNQUOTED_RE.finditer(formula):
-        sheet = m.group("sheet")
-        out.append(
-            (
-                CellRef(sheet=sheet, column=m.group("c1"), row=int(m.group("r1"))),
-                CellRef(sheet=sheet, column=m.group("c2"), row=int(m.group("r2"))),
-            )
-        )
-
-    for m in _RANGE_LOCAL_RE.finditer(formula):
-        out.append(
-            (
-                CellRef(sheet=None, column=m.group("c1"), row=int(m.group("r1"))),
-                CellRef(sheet=None, column=m.group("c2"), row=int(m.group("r2"))),
-            )
-        )
-
-    return out
 
 
 def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tuple[int, int]]]:
@@ -516,31 +428,6 @@ def mask_ref_only_function_calls(formula: str) -> str:
     return mask_spans(formula, ref_only_function_spans(formula))
 
 
-def normalize_formula(
-    formula: str,
-    current_sheet: str,
-    named_ranges: dict[str, tuple[str, str]] | None = None,
-    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
-) -> str:
-    """Regex-normalize a formula (transitional; not the AST render dialect).
-
-    - Replace same-sheet refs (A1) with sheet-qualified refs (Sheet1!A1)
-    - Resolve named ranges to their targets
-    - Strip absolute markers ($)
-    - Qualify range endpoints
-
-    Returns:
-        The regex-normalized formula string. Do not record provenance spans
-        against this text and later apply them to `Node.normalized_formula`.
-    """
-    return normalize_excel_formula(
-        formula,
-        current_sheet,
-        named_ranges=named_ranges,
-        named_range_ranges=named_range_ranges,
-    )
-
-
 class FormulaNormalizer:
     """Cached regex formula normalizer (transitional, non-authoritative).
 
@@ -548,7 +435,7 @@ class FormulaNormalizer:
     Use this class for unparseable-cell fallback and for string-based ref
     scans. Do not treat its output as a peer of `Node.normalized_formula`.
 
-    Compared to calling `normalize_formula` repeatedly:
+    Compared to calling `normalize_excel_formula` repeatedly:
 
     - Named-range substitution is done in a **single regex pass** over the
       formula string (one compiled alternation pattern for all names), rather

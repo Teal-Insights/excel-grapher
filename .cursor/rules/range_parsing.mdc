@@ -11,7 +11,6 @@ alwaysApply: false
   For formula text:
   - `parse_range_refs_with_spans(...)` returns (`start_ref`, `end_ref`, `span`), where `span` is the matched range's character offsets in the original formula as (`start`, `end`) (end-exclusive).
   - Prefer `parse_standalone_cell_refs(...)` (or `parse_standalone_cell_refs_with_spans`) when combining range parsing with single-cell parsing so bare endpoints in single-prefix ranges are not double-counted or mis-sheeted. `parse_cell_refs` refuses formula text that still contains range spans unless `allow_unmasked_ranges=True`.
-  - `parse_range_refs(...)` returns (`start_ref`, `end_ref`) when spans are unnecessary.
   - `expand_range(...)` enumerates cells within a range.
 
 - **Keep expansion limits consistent across call paths.**  
@@ -48,5 +47,5 @@ Not every colon split belongs in `parse_range_refs*`—some paths parse **addres
 - **`INDIRECT` text / sheet-qualified address strings:** `split_sheet_qualified_address` or `indirect_text_to_range` (`excel_grapher.core.addressing`); named-range resolver INDIRECT shares this.
 - **Exported `xl_range(...)` runtime addresses:** `runtime/cache.py` uses `split_sheet_qualified_address` so quoted-sheet escaping matches other paths.
 - **Config / CLI specs (non-formula):** `blank_ranges.py`, codegen constant-range parsing — sheet+`cell_part` split after `!`; acceptable when input is not normalized formula text.
-- **Dynamic-ref constraint addresses:** `dynamic_refs._expand_sheet_qualified_range` — splits local `A1:A3` after sheet is fixed; cell expansion uses `expand_range`.
+- **Dynamic-ref range expansion:** `dynamic_refs._expanded_range_keys` wraps `parser.expand_range`.
 - **Examples / one-off scripts:** ad-hoc splits OK if outside evaluator/export parity surface.

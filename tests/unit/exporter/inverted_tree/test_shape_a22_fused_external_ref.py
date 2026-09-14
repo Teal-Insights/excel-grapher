@@ -1,9 +1,9 @@
 """Layer A22 — fused refs to cells off the SCC union schedule (#623).
 
 `coord_to_t` only maps SCC-member coordinates. An external seed (or any
-producer whose join-key is not on that union) must emit `live_measure` in
-the producer's catalog index space — never `KeyError`. Reversed #614
-schedules must use the opposite step so subscripts stay in catalog order.
+producer whose join-key is not on that union) must index the producer's
+catalog without raising `KeyError`. Reversed #614 schedules must use the
+opposite step so subscripts stay in catalog order.
 """
 
 from __future__ import annotations

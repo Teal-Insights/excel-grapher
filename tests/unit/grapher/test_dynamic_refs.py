@@ -18,7 +18,6 @@ from excel_grapher.core.cell_types import (
     EnumDomain,
     GreaterThanCell,
     IntervalDomain,
-    IntIntervalDomain,
     NotEqualCell,
 )
 from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
@@ -33,7 +32,6 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefError,
     DynamicRefLimits,
     FromWorkbook,
-    _apply_constraint_to_schema,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -180,12 +178,6 @@ def test_parse_dynamic_range_refs_uses_injected_normalizer(monkeypatch: pytest.M
         def normalize(self, formula: str, current_sheet: str) -> str:
             self.calls.append((formula, current_sheet))
             return super().normalize(formula, current_sheet)
-
-    def fail_normalize_formula(*args: object, **kwargs: object) -> str:
-        raise AssertionError("legacy normalize_formula path should not be used")
-
-    monkeypatch.setattr(parser_mod, "normalize_formula", fail_normalize_formula)
-    normalizer = TrackingNormalizer()
 
     out = parse_dynamic_range_refs_with_spans(
         "=OFFSET(B1,0,1)",
@@ -1107,45 +1099,6 @@ def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_pa
     assert env["Sheet1!B2"].enum == EnumDomain(values=frozenset({"Afghanistan"}))
 
 
-def test_apply_constraint_to_schema_sets_single_cell_annotation() -> None:
-    from typing import Literal
-
-    schema: dict[str, Any] = {}
-    _apply_constraint_to_schema(schema, "Sheet1!B2", Literal["English"])
-
-    assert schema["Sheet1!B2"] == Literal["English"]
-
-
-def test_apply_constraint_to_schema_sets_all_cells_in_range() -> None:
-    from typing import Literal
-
-    schema: dict[str, Any] = {}
-    _apply_constraint_to_schema(schema, "lookup!BB4:BC5", Literal["English", "French"])
-
-    expected_keys = {"lookup!BB4", "lookup!BC4", "lookup!BB5", "lookup!BC5"}
-    assert expected_keys <= set(schema.keys())
-    for key in expected_keys:
-        assert schema[key] == Literal["English", "French"]
-
-
-def test_apply_constraint_to_schema_accepts_quoted_sheet_range() -> None:
-    from typing import Literal
-
-    schema: dict[str, Any] = {}
-    _apply_constraint_to_schema(schema, "'Chart Data'!I21:I22", Literal[1])
-
-    assert schema["'Chart Data'!I21"] == Literal[1]
-    assert schema["'Chart Data'!I22"] == Literal[1]
-
-
-def test_apply_constraint_to_schema_requires_sheet_qualified_address() -> None:
-    from typing import Literal
-
-    schema: dict[str, Any] = {}
-    with pytest.raises(DynamicRefError):
-        _apply_constraint_to_schema(schema, "B2", Literal["English"])
-
-
 def test_from_constraints_rejects_legacy_typeddict_schema() -> None:
     from typing import TypedDict
 
@@ -1851,7 +1804,7 @@ def test_expand_leaf_env_wide_interval_no_interval_branch_limit_error() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10**15),
+                interval=IntervalDomain(min=0, max=10**15),
             )
         }
     )
@@ -1880,7 +1833,7 @@ def test_domain_from_cell_type_any_interval_is_numeric_domain() -> None:
     lo, hi = -(10**15), 10**15
     ct = CellType(
         kind=CellKind.ANY,
-        interval=IntIntervalDomain(min=lo, max=hi),
+        interval=IntervalDomain(min=lo, max=hi),
     )
     d = dynamic_refs_mod._domain_from_cell_type(ct, limits)
     assert isinstance(d, dynamic_refs_mod._IntBounds)
@@ -1929,7 +1882,7 @@ def test_expand_leaf_env_if_isnumber_wide_any_interval_summarizes_to_number() ->
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.ANY,
-                interval=IntIntervalDomain(min=lo, max=hi),
+                interval=IntervalDomain(min=lo, max=hi),
             )
         }
     )
@@ -1963,7 +1916,7 @@ def test_expand_leaf_env_sum_wide_range_no_branch_limit_error() -> None:
     hi = 10**15
     financial = CellType(
         kind=CellKind.ANY,
-        interval=IntIntervalDomain(min=0, max=hi),
+        interval=IntervalDomain(min=0, max=hi),
     )
     leaf_env = _make_env({f"Sheet1!{c}1": financial for c in ("A", "B", "C", "D", "E", "F")})
 
@@ -1994,7 +1947,7 @@ def test_expand_leaf_env_reports_unsupported_construct_in_fallback_error() -> No
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10**9),
+                interval=IntervalDomain(min=0, max=10**9),
             )
         }
     )
@@ -2025,7 +1978,7 @@ def test_expand_leaf_env_division_wide_interval_no_branch_limit_error() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10**15),
+                interval=IntervalDomain(min=0, max=10**15),
             )
         }
     )
@@ -2056,7 +2009,7 @@ def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-(10**9), max=10**9),
+                interval=IntervalDomain(min=-(10**9), max=10**9),
             )
         }
     )
@@ -2164,19 +2117,19 @@ def test_expand_leaf_env_uses_ast_range_cells_when_ref_collector_only_reports_en
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10),
+                interval=IntervalDomain(min=0, max=10),
             ),
             "Sheet1!B1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10),
+                interval=IntervalDomain(min=0, max=10),
             ),
             "Sheet1!C1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10),
+                interval=IntervalDomain(min=0, max=10),
             ),
             "Sheet1!D1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=10),
+                interval=IntervalDomain(min=0, max=10),
             ),
         }
     )
@@ -2275,19 +2228,19 @@ def test_infer_numeric_domain_result_reports_divisor_may_include_zero() -> None:
     env: CellTypeEnv = {
         "Sheet1!B9": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=0, max=50),
+            interval=IntervalDomain(min=0, max=50),
         ),
         "Sheet1!B10": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=1, max=100),
+            interval=IntervalDomain(min=1, max=100),
         ),
         "Sheet1!Q17": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-10, max=20),
+            interval=IntervalDomain(min=-10, max=20),
         ),
         "Sheet1!Q19": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-10, max=20),
+            interval=IntervalDomain(min=-10, max=20),
         ),
     }
     ast = parse_ast("=(Sheet1!Q17-Sheet1!Q19)/(Sheet1!B10-Sheet1!B9)")
@@ -2311,19 +2264,19 @@ def test_expand_leaf_env_division_zero_risk_error_points_to_divisor_cells() -> N
         {
             "Sheet1!B9": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=50),
+                interval=IntervalDomain(min=0, max=50),
             ),
             "Sheet1!B10": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=1, max=100),
+                interval=IntervalDomain(min=1, max=100),
             ),
             "Sheet1!Q17": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-(10**16), max=10**16),
+                interval=IntervalDomain(min=-(10**16), max=10**16),
             ),
             "Sheet1!Q19": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-(10**16), max=10**16),
+                interval=IntervalDomain(min=-(10**16), max=10**16),
             ),
         }
     )
@@ -2357,20 +2310,20 @@ def test_infer_numeric_domain_result_uses_relational_cell_constraint_for_divisor
     env: CellTypeEnv = {
         "Sheet1!B9": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=0, max=50),
+            interval=IntervalDomain(min=0, max=50),
         ),
         "Sheet1!B10": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=1, max=100),
+            interval=IntervalDomain(min=1, max=100),
             relations=(GreaterThanCell("Sheet1!B9"),),
         ),
         "Sheet1!Q17": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-10, max=20),
+            interval=IntervalDomain(min=-10, max=20),
         ),
         "Sheet1!Q19": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-10, max=20),
+            interval=IntervalDomain(min=-10, max=20),
         ),
     }
     ast = parse_ast("=(Sheet1!Q17-Sheet1!Q19)/(Sheet1!B10-Sheet1!B9)")
@@ -2393,20 +2346,20 @@ def test_infer_numeric_domain_result_greater_than_relation_matches_quoted_sheet_
     env: CellTypeEnv = {
         f"{sheet}!B9": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=0, max=50),
+            interval=IntervalDomain(min=0, max=50),
         ),
         f"{sheet}!B10": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=1, max=100),
+            interval=IntervalDomain(min=1, max=100),
             relations=(GreaterThanCell(f"{sheet}!B9"),),
         ),
         f"{sheet}!Q17": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-10, max=20),
+            interval=IntervalDomain(min=-10, max=20),
         ),
         f"{sheet}!Q19": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=-10, max=20),
+            interval=IntervalDomain(min=-10, max=20),
         ),
     }
     ast = parse_ast(f"=('{sheet}'!Q17-'{sheet}'!Q19)/('{sheet}'!B10-'{sheet}'!B9)")
@@ -2453,20 +2406,20 @@ def test_expand_leaf_env_division_relational_constraint_avoids_zero_risk_error()
         {
             "Sheet1!B9": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=50),
+                interval=IntervalDomain(min=0, max=50),
             ),
             "Sheet1!B10": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=1, max=100),
+                interval=IntervalDomain(min=1, max=100),
                 relations=(GreaterThanCell("Sheet1!B9"),),
             ),
             "Sheet1!Q17": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-(10**16), max=10**16),
+                interval=IntervalDomain(min=-(10**16), max=10**16),
             ),
             "Sheet1!Q19": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=-(10**16), max=10**16),
+                interval=IntervalDomain(min=-(10**16), max=10**16),
             ),
         }
     )
@@ -2488,7 +2441,7 @@ def test_expand_leaf_env_division_relational_constraint_avoids_zero_risk_error()
 
     out = env["Sheet1!Q28"]
     assert out.kind is CellKind.NUMBER
-    assert out.interval == IntIntervalDomain(min=-(2 * 10**16), max=2 * 10**16)
+    assert out.interval == IntervalDomain(min=-(2 * 10**16), max=2 * 10**16)
 
 
 def test_expand_leaf_env_percent_expression_stays_in_abstract_path() -> None:
@@ -2496,11 +2449,11 @@ def test_expand_leaf_env_percent_expression_stays_in_abstract_path() -> None:
         {
             "Sheet1!A1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=2000),
+                interval=IntervalDomain(min=0, max=2000),
             ),
             "Sheet1!B1": CellType(
                 kind=CellKind.NUMBER,
-                interval=IntIntervalDomain(min=0, max=1),
+                interval=IntervalDomain(min=0, max=1),
             ),
         }
     )

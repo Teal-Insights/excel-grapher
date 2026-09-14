@@ -4,11 +4,11 @@ from __future__ import annotations
 
 import time
 
-from excel_grapher.grapher.parser import FormulaNormalizer, normalize_formula
+from excel_grapher.grapher.parser import FormulaNormalizer
 
 
 class TestFormulaNormalizerBasicNormalization:
-    """FormulaNormalizer must produce identical output to normalize_formula."""
+    """FormulaNormalizer must produce the regex-normalized formula dialect."""
 
     def test_same_sheet_ref_qualified(self) -> None:
         n = FormulaNormalizer()
@@ -28,7 +28,6 @@ class TestFormulaNormalizerBasicNormalization:
         f = "='C3_commodity_prices_pub'!$E$13"
         expected = "=C3_commodity_prices_pub!E13"
         assert n.normalize(f, "Sheet1") == expected
-        assert normalize_formula(f, "Sheet1") == expected
 
     def test_local_range_qualified(self) -> None:
         n = FormulaNormalizer()

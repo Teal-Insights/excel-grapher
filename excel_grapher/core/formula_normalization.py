@@ -483,30 +483,4 @@ def normalize_excel_formula(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class PreparedFormula:
-    """Result of preparing a cell formula for AST parsing."""
 
-    normalized_formula: str
-
-
-def prepare_formula(
-    formula: str,
-    current_sheet: str,
-    *,
-    named_ranges: dict[str, tuple[str, str]] | None = None,
-    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
-) -> PreparedFormula:
-    """Regex-normalize *formula* for the cell on *current_sheet*.
-
-    Transitional helper. Prefer `parse_preserving_axes` plus `render_formula`
-    when an AST is available.
-    """
-    return PreparedFormula(
-        normalized_formula=normalize_excel_formula(
-            formula,
-            current_sheet,
-            named_ranges=named_ranges,
-            named_range_ranges=named_range_ranges,
-        )
-    )

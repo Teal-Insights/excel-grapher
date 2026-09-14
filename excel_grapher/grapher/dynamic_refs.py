@@ -181,14 +181,6 @@ def _raise_cell_limit(count: int, limit: int, *, what: str) -> None:
     )
 
 
-def _apply_constraint_to_schema(schema: dict[str, Any], address: str, annotation: Any) -> None:
-    """Assign *annotation* to every sheet-qualified cell implied by *address* in *schema*."""
-    sheet_name, range_a1 = _split_addr_sheet_coord(address)
-    cells = _expand_sheet_qualified_range(sheet_name, range_a1)
-    for key in cells:
-        schema[key] = annotation
-
-
 @dataclass(frozen=True)
 class DynamicRefLimits:
     """Tuneable safety limits for dynamic-reference inference.
@@ -379,39 +371,6 @@ def _infer_kind_from_value(value: Any) -> CellKind:
     if isinstance(value, str):
         return CellKind.STRING
     return CellKind.ANY
-
-
-def _expand_sheet_qualified_range(sheet_name: str, range_a1: str) -> list[str]:
-    """Expand a single-cell or A1 range into sheet-qualified keys."""
-    range_a1 = range_a1.strip()
-    if ":" in range_a1:
-        start_a1, end_a1 = range_a1.split(":", 1)
-        start_a1 = _strip_optional_sheet_prefix(start_a1.strip(), sheet_name)
-        end_a1 = _strip_optional_sheet_prefix(end_a1.strip(), sheet_name)
-    else:
-        start_a1 = end_a1 = _strip_optional_sheet_prefix(range_a1, sheet_name)
-
-    start_col, start_row = coordinate_from_string(start_a1)
-    end_col, end_row = coordinate_from_string(end_a1)
-    cells = expand_range(
-        sheet=sheet_name,
-        start_col=start_col,
-        start_row=start_row,
-        end_col=end_col,
-        end_row=end_row,
-        max_cells=10_000_000,
-    )
-    return [format_key(sheet, a1) for sheet, a1 in cells]
-
-
-def _strip_optional_sheet_prefix(part: str, expected_sheet: str) -> str:
-    """Accept `A1` and `Sheet!A1` forms for range endpoints."""
-    if "!" not in part:
-        return part
-    sheet_name, coord = _split_addr_sheet_coord(part)
-    if sheet_name != expected_sheet:
-        raise DynamicRefError(f"Range endpoint {part!r} must use sheet {expected_sheet!r}")
-    return coord
 
 
 @dataclass(frozen=True)

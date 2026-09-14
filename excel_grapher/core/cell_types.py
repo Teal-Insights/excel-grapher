@@ -25,10 +25,6 @@ class IntervalDomain:
     max: int | None = None
 
 
-# Backwards-compatible alias
-IntIntervalDomain = IntervalDomain
-
-
 @dataclass(frozen=True, slots=True)
 class RealIntervalDomain:
     """Closed real-valued interval metadata; not enumerable for dynamic-ref branching."""
