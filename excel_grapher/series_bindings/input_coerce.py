@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
 from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding_scalar
-from excel_grapher.series_bindings.types import Record, Records, Scalar
+from excel_grapher.series_bindings.types import Record, Records
 
 Layout: TypeAlias = Literal["scalar", "series", "matrix"]
 EmptyMeasure: TypeAlias = Literal["skip", "write", "error"]
@@ -19,8 +20,9 @@ if TYPE_CHECKING:
 else:
     DataFrameInput: TypeAlias = object
 
-SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput
-SetterInput: TypeAlias = SeriesInput | Scalar
+_Scalar: TypeAlias = str | int | float | bool | datetime | None
+SeriesInput: TypeAlias = Records | Record | Sequence[_Scalar] | DataFrameInput
+SetterInput: TypeAlias = SeriesInput | _Scalar
 
 __all__ = [
     "EmptyMeasure",
