@@ -135,4 +135,3 @@ def test_intern_formula_shapes_collapses_autofill_family() -> None:
     assert copied.shapes is not table.shapes
     assert copied.lookup("Sheet1!A4") is not None
     assert table.lookup("=missing") is None
-

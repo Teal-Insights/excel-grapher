@@ -100,4 +100,3 @@ def test_identity_alias_plus_singleton_domain_kills_mismatched_equality() -> Non
     )
     assert graph.cycle_report().has_may_cycles is True
     assert graph.cycle_report(cell_type_env=env).has_may_cycles is False
-

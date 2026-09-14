@@ -79,7 +79,6 @@ from excel_grapher.series_bindings.workflow import (
     validate_bindings_workbook,
 )
 
-
 __all__ = [
     "ConstantSeries",
     "ConstantSeriesCell",

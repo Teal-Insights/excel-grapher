@@ -169,7 +169,7 @@ def test_offset_argument_references_are_dependencies(tmp_path: Path) -> None:
     assert deps == {"Sheet1!C1", "START!M10"}
 
 
-def test_parse_dynamic_range_refs_uses_injected_normalizer(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_parse_dynamic_range_refs_uses_injected_normalizer() -> None:
     class TrackingNormalizer(FormulaNormalizer):
         def __init__(self) -> None:
             super().__init__()
@@ -179,6 +179,7 @@ def test_parse_dynamic_range_refs_uses_injected_normalizer(monkeypatch: pytest.M
             self.calls.append((formula, current_sheet))
             return super().normalize(formula, current_sheet)
 
+    normalizer = TrackingNormalizer()
     out = parse_dynamic_range_refs_with_spans(
         "=OFFSET(B1,0,1)",
         current_sheet="Sheet1",

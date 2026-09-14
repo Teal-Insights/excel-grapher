@@ -396,4 +396,3 @@ def eval_instance(
         stack.remove(key)
     memo[key] = value
     return value
-

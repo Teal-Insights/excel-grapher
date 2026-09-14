@@ -481,6 +481,3 @@ def normalize_excel_formula(
         replacements=state.replacements,
         names_re=state.names_re,
     )
-
-
-

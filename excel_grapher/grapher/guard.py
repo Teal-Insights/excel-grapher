@@ -733,5 +733,3 @@ def rewrite_guard_aliases(expr: GuardExpr, aliases: Mapping[NodeKey, NodeKey]) -
         return intern_guard(node)
 
     return walk(expr)
-
-

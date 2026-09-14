@@ -393,7 +393,6 @@ def test_eval_instance_stores_error_codes() -> None:
     assert eval_instance("s", 0, compute, memo, stack) == "#REF!"
 
 
-
 def test_xl_sum_over_sequence_and_stored_errors() -> None:
     assert xl_sum((1.0, 2.0, 3.0)) == 6.0
     assert xl_sum(1.0, 2.0) == 3.0

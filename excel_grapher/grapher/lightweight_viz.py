@@ -1094,6 +1094,7 @@ def assemble_lightweight_viz_payload(
 
 # --- Partition modules ----------------------------------------------------------
 
+
 @dataclass(frozen=True, slots=True)
 class LightweightVizModule:
     id: int
