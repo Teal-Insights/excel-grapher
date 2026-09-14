@@ -185,20 +185,10 @@ def test_pickle_does_not_contain_per_edge_wrapper_dicts() -> None:
         "Sheet1!A1",
         provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
     )
-    state = g.__getstate__()
+    state = pickle.dumps(g, protocol=pickle.HIGHEST_PROTOCOL)
 
-    # The state should NOT contain '_edge_attrs' (old format with wrapper dicts)
-    assert "_edge_attrs" not in state, (
-        "Serialized state still contains _edge_attrs; expected compact representation"
-    )
-    assert "_edge_extra" not in state, (
-        "Serialized state still contains _edge_extra; expected typed _edge_provenance"
-    )
-    # The state should contain '_guards' (compact representation)
-    assert "_guards" in state
-    assert "_edge_provenance" in state
-    for _a, _b, prov in state["_edge_provenance"]:
-        assert isinstance(prov, EdgeProvenance)
+    assert b"_edge_attrs" not in state
+    assert b"_edge_extra" not in state
 
 
 # -------------------------------------------------------------------
@@ -268,9 +258,9 @@ def _synthetic_graph_for_memory(n: int = 10_000) -> DependencyGraph:
 def test_unpickle_peak_memory_near_final_resident_size() -> None:
     """Unpickling must not peak near 2x final size (issue #513).
 
-    Legacy `__getstate__` kept indexed adjacency in the pickle memo while
-    `__setstate__` rebuilt string-keyed maps (~2.4x). The multipart reduce
-    path plus `load_graph` keep peak near final resident size.
+    A single state-dict pickle would keep indexed adjacency in the memo while
+    live string-keyed maps are rebuilt (~2.4x). The multipart reduce path plus
+    `load_graph` keep peak near final resident size.
     """
     import gc
     import tempfile
@@ -336,22 +326,3 @@ def test_dump_graph_load_graph_round_trip(tmp_path: Path) -> None:
         assert restored.get_dependents(key) == original.get_dependents(key)
     assert restored.get_edge_guard("Sheet1!D1", "Sheet1!A1") is not None
     assert restored.named_ranges == {"OneCell": ("Sheet1", "A1")}
-
-
-def test_load_graph_reads_legacy_pickle_stream(tmp_path: Path) -> None:
-    """`load_graph` falls back to a legacy single-object pickle file."""
-    from excel_grapher.grapher.graph_pickle import load_graph
-
-    original = _make_test_graph()
-    path = tmp_path / "legacy.pkl"
-
-    # Emit a setstate-shaped pickle without touching `__reduce_ex__` on the class.
-    class _LegacyGraphProxy:
-        def __reduce__(self) -> tuple[object, ...]:
-            return (DependencyGraph.__new__, (DependencyGraph,), original.__getstate__())
-
-    path.write_bytes(pickle.dumps(_LegacyGraphProxy(), protocol=pickle.HIGHEST_PROTOCOL))
-
-    restored: DependencyGraph = load_graph(path)
-    assert len(restored) == len(original)
-    assert restored.get_dependencies("Sheet1!D1") == original.get_dependencies("Sheet1!D1")

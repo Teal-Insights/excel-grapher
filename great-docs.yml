@@ -282,8 +282,6 @@ reference:
       - DependencyGraph.cycle_report
       - DependencyGraph.evaluation_order
       - DependencyGraph.compress_identity_transits
-      - DependencyGraph.__getstate__
-      - DependencyGraph.__setstate__
 
   - title: Enumerations
     desc: Enumeration types

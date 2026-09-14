@@ -422,33 +422,6 @@ def test_json_cache_omits_normalized_formula_and_keeps_unparseable_text() -> Non
     assert loaded.has_formula
 
 
-def test_json_cache_loads_legacy_normalized_formula_without_ast() -> None:
-    graph = DependencyGraph()
-    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
-    payload = dependency_graph_to_json(graph)
-    payload["nodes"].append(
-        {
-            "key": "Sheet1!B1",
-            "address": "Sheet1!B1",
-            "sheet": "Sheet1",
-            "column": "B",
-            "row": 1,
-            "formula": "=A1+1",
-            "normalized_formula": "=Sheet1!A1+1",
-            "value": {"t": "none", "v": None},
-            "is_leaf": False,
-            "is_target": False,
-            "metadata": {},
-        }
-    )
-    restored = dependency_graph_from_json(payload)
-    loaded = restored.get_node("Sheet1!B1")
-    assert loaded is not None
-    assert loaded.formula_ast == parse("=Sheet1!A1+1")
-    assert loaded.normalized_formula == "=Sheet1!A1+1"
-    assert loaded._unparseable_formula is None
-
-
 def test_is_graph_formula_node_follows_has_formula() -> None:
     from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node
 

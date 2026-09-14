@@ -104,9 +104,8 @@ coordinate-to-workbook provenance. Data metadata preserves the authored domain s
 from the coordinates required by the extracted graph. Supplied tensors may retain additional
 source coordinates; generated results are eager and complete over their declared result domain.
 
-The representation is versioned as `named-axis-v1`. Flat arguments are rejected. An explicit
-`Tensor.from_legacy` adapter requires a unique catalog coordinate order and exact length;
-`to_legacy` maps back by those coordinates. This adapter is only for a declared boundary.
+The representation is versioned as `named-axis-v1`. Flat arguments are rejected.
+Use `Tensor.from_records` with an explicit domain when adapting an ordered buffer.
 
 ### Records view (`as_records`)
 

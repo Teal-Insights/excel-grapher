@@ -59,8 +59,6 @@ NodeHook = Callable[[NodeKey, Node], None]
 
 EdgeKey = tuple[NodeKey, NodeKey]
 
-_PICKLE_VERSION = 4
-
 
 def _or_merge_optional_guards(parts: list[GuardExpr | None]) -> GuardExpr | None:
     """OR-merge guards; `None` (unconditional) wins, matching `add_edge`."""
@@ -1274,88 +1272,6 @@ class DependencyGraph:
         """Pickle via a multipart blob so unpickle peak stays near final size."""
         del protocol
         return (loads_graph_blob, (dumps_graph_blob(self),))
-
-    def __getstate__(self) -> dict[str, Any]:
-        """Legacy compact state dict (kept for direct callers and old tests)."""
-        keys_sorted = _collect_graph_keys(self)
-        idx = {k: i for i, k in enumerate(keys_sorted)}
-        return {
-            "v": _PICKLE_VERSION,
-            "keys": keys_sorted,
-            "_nodes": {idx[k]: n for k, n in self._nodes.items()},
-            "_edges": {idx[k]: {idx[d] for d in ds} for k, ds in self._edges.items()},
-            "_reverse_edges": {
-                idx[k]: {idx[d] for d in ds} for k, ds in self._reverse_edges.items()
-            },
-            "_guards": [(idx[a], idx[b], g) for (a, b), g in self._guards.items()],
-            "_edge_provenance": [
-                (idx[a], idx[b], p) for (a, b), p in self._edge_provenance.items()
-            ],
-            "_hooks": self._hooks,
-            "leaf_classification": self.leaf_classification,
-            "sheet_order": list(self.sheet_order) if self.sheet_order is not None else None,
-            "named_ranges": dict(self.named_ranges) if self.named_ranges else None,
-            "named_range_ranges": (
-                dict(self.named_range_ranges) if self.named_range_ranges else None
-            ),
-        }
-
-    def __setstate__(self, state: dict[str, Any]) -> None:
-        """Restore from a legacy v3 state dict, clearing intermediates as we go."""
-        if not isinstance(state, dict) or state.get("v") != _PICKLE_VERSION:
-            raise TypeError(
-                "Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache."
-            )
-        keys = state.pop("keys")
-        key_index = {s: i for i, s in enumerate(keys)}
-
-        nodes_raw = state.pop("_nodes")
-        self._nodes = {keys[i]: n for i, n in nodes_raw.items()}
-        nodes_raw.clear()
-
-        edges_raw = state.pop("_edges")
-        self._edges = {}
-        for i, ds in edges_raw.items():
-            self._edges[keys[i]] = {keys[d] for d in ds}
-            ds.clear()
-        edges_raw.clear()
-
-        reverse_raw = state.pop("_reverse_edges")
-        self._reverse_edges = {}
-        for i, ds in reverse_raw.items():
-            self._reverse_edges[keys[i]] = {keys[d] for d in ds}
-            ds.clear()
-        reverse_raw.clear()
-
-        guards_raw = state.pop("_guards")
-        self._guards = {
-            (keys[a], keys[b]): _intern_guard_cell_refs(g, keys, key_index=key_index)
-            for a, b, g in guards_raw
-        }
-        guards_raw.clear()
-
-        provenance_raw = state.pop("_edge_provenance")
-        self._edge_provenance = {(keys[a], keys[b]): p for a, b, p in provenance_raw}
-        provenance_raw.clear()
-
-        self._hooks = state.pop("_hooks")
-        lc = state.pop("leaf_classification")
-        if lc:
-            self.leaf_classification = {keys[key_index[k]]: v for k, v in lc.items()}
-        else:
-            self.leaf_classification = None
-        sheet_order = state.pop("sheet_order", None)
-        self.sheet_order = list(sheet_order) if sheet_order else None
-        nr = state.pop("named_ranges", None)
-        self.named_ranges = dict(nr) if nr else None
-        nrr = state.pop("named_range_ranges", None)
-        self.named_range_ranges = dict(nrr) if nrr else None
-        self.sheet_bounds = None
-        self.preparsed_formulas = None
-        self.formula_shapes = None
-        self.cell_type_env = None
-        self._value_generation = 0
-        state.clear()
 
     def _invalidate_formula_shapes(self) -> None:
         """Drop interned shapes after a formula rewrite.
