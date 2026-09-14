@@ -80,6 +80,23 @@ def test_relabel_input_maps_public_labels_to_snapshot_keys() -> None:
     ]
 
 
+def test_relabel_input_rejects_duplicate_runtime_labels() -> None:
+    labels = Tensor.from_nested(domain=Domain.product(years(2024, 2025)), values=(2026, 2026))
+    public = Tensor.from_nested(domain=Domain.product(years(2026)), values=(10,))
+
+    with pytest.raises(AxisError, match="duplicate.*2026"):
+        relabel_input(public, labels, "year", series_id="investment")
+
+
+def test_schema_can_validate_structure_before_runtime_coordinates_exist() -> None:
+    schema = TensorSchema("investment", Domain.product(years(2024, 2025)), value_types=(int,))
+    shifted = Tensor.from_nested(domain=Domain.product(years(2026, 2027)), values=(10, 20))
+
+    schema.validate_structure(shifted)
+    with pytest.raises(SchemaError, match="missing required coordinate"):
+        schema.validate(shifted)
+
+
 def test_sparse_domain_order_holes_and_exact_records() -> None:
     domain = Domain.explicit(axes=(years(2026, 2025, 2027),), coordinates=((2027,), (2026,)))
     tensor = Tensor.from_records(domain=domain, records=(((2027,), None), ((2026,), 0)))

@@ -16,6 +16,7 @@ from excel_grapher.series_bindings import (
 )
 from excel_grapher.series_bindings.schema import validate_bindings_document
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+from excel_grapher.series_bindings.validate import _validate_axis_labels
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
@@ -33,6 +34,50 @@ def _write_borvelia_workbook(path: Path) -> None:
 def test_expand_data_range_row() -> None:
     addresses = expand_data_range("Inputs!F5:H5")
     assert addresses == ["Inputs!F5", "Inputs!G5", "Inputs!H5"]
+
+
+def _labeller_entry(*, measure_dtype: str | None = "int") -> dict[str, object]:
+    measure: dict[str, object] = {
+        "concept": "OBS_VALUE",
+        "bind": {"kind": "data_cell", "read": "int"},
+    }
+    if measure_dtype is not None:
+        measure["dtype"] = measure_dtype
+    return {
+        "id": "year_labels",
+        "axis_labels": "TIME_PERIOD",
+        "key": ["TIME_PERIOD"],
+        "structure": {
+            "measure": measure,
+            "dimensions": [
+                {
+                    "concept": "TIME_PERIOD",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                }
+            ],
+        },
+    }
+
+
+def test_axis_labeller_requires_its_named_axis_as_the_only_key() -> None:
+    entry = _labeller_entry()
+    entry["key"] = ["TIME_PERIOD", "SCENARIO"]
+    assert [issue["code"] for issue in _validate_axis_labels(entry)] == ["invalid_axis_labels_key"]
+
+
+def test_axis_labeller_requires_matching_axis_and_measure_types() -> None:
+    missing = _labeller_entry()
+    missing["axis_labels"] = "SCENARIO"
+    missing["key"] = ["SCENARIO"]
+    wrong_type = _labeller_entry(measure_dtype="float")
+    assert _validate_axis_labels(missing)[0]["code"] == "invalid_axis_labels_axis"
+    assert _validate_axis_labels(wrong_type)[0]["code"] == "invalid_axis_labels_dtype"
+
+
+def test_axis_labeller_measure_type_falls_back_to_bind_read() -> None:
+    assert _validate_axis_labels(_labeller_entry(measure_dtype=None)) == []
 
 
 def test_validate_series_bindings_happy_path(tmp_path: Path) -> None:

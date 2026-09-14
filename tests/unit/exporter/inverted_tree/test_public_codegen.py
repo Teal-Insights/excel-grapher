@@ -109,6 +109,93 @@ def test_public_codegen_requires_labels_and_returns_tensor(tmp_path: Path) -> No
     ]
 
 
+def test_dynamic_axis_labels_translate_complete_public_boundary(tmp_path: Path) -> None:
+    import xlsxwriter
+
+    workbook = tmp_path / "dynamic_labels.xlsx"
+    with xlsxwriter.Workbook(workbook) as book:
+        sheet = book.add_worksheet("Sheet1")
+        sheet.write_number("A1", 2025)
+        sheet.write_formula("B1", "=$A$1", None, 2025.0)
+        sheet.write_formula("C1", "=B1+1", None, 2026.0)
+        sheet.write_number("B2", 3)
+        sheet.write_number("C2", 4)
+        sheet.write_formula("B3", "=B2*2", None, 6)
+        sheet.write_formula("C3", "=C2*2", None, 8)
+    first_year = series_entry(
+        "first_year", "Sheet1!A1", layout="scalar", direction="input", dtype="int"
+    )
+    labels = series_entry(
+        "year_labels",
+        "Sheet1!B1:C1",
+        layout="series",
+        direction="internal",
+        dtype="int",
+        header_row=1,
+    )
+    labels["axis_labels"] = "TIME_PERIOD"
+    source = series_entry("src", "Sheet1!B2:C2", layout="series", direction="input", header_row=1)
+    output = series_entry("out", "Sheet1!B3:C3", layout="series", direction="output", header_row=1)
+    modules = generate_inverted(
+        workbook, bindings_document(first_year, labels, source, output, schema_version="1.17.0")
+    )
+    snapshot_labels = dict(labels)
+    snapshot_labels.pop("axis_labels")
+    snapshot_modules = generate_inverted(
+        workbook,
+        bindings_document(first_year, snapshot_labels, source, output, schema_version="1.17.0"),
+    )
+    assert modules["internals.py"] == snapshot_modules["internals.py"]
+    assert modules["data.py"] != snapshot_modules["data.py"]
+    package = load_package(modules, tmp_path, name="dynamic_labels")
+    shifted_domain = package.Domain.product(package.Axis("TIME_PERIOD", (2030, 2031), int))
+    shifted_input = package.Tensor.from_nested(domain=shifted_domain, values=(3, 4))
+
+    result = package.compute_out(first_year=2030, src=shifted_input)
+    model = package.api.Model(first_year=2030, src=shifted_input)
+
+    assert tuple(result.domain.axes[0].keys) == (2030, 2031)
+    assert list(result.items()) == [((2030,), 6), ((2031,), 8)]
+    assert result.sel(TIME_PERIOD=2031) == 8
+    assert package.Tensor.from_json(result.to_json()) == result
+    assert model.src is shifted_input
+    assert tuple(model.out.domain.axes[0].keys) == (2030, 2031)
+    assert package.as_records(package.compute_out, result) == [
+        {"TIME_PERIOD": 2030, "OBS_VALUE": 6},
+        {"TIME_PERIOD": 2031, "OBS_VALUE": 8},
+    ]
+    partial = package.Tensor.from_nested(
+        domain=package.Domain.product(package.Axis("TIME_PERIOD", (2030,), int)), values=(3,)
+    )
+    with pytest.raises(ValueError, match="src.*missing required coordinate"):
+        package.compute_out(first_year=2030, src=partial)
+    with pytest.raises(ValueError, match="accepted labels.*2030.*2031"):
+        package.compute_out(first_year=2030, src=package.data.SRC_DEFAULT)
+
+
+def test_input_direction_labeller_is_allowed(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "input_labels.xlsx",
+        {"Sheet1": {"B1": 2025, "C1": 2026, "B2": "=B1", "C2": "=C1"}},
+    )
+    labels = series_entry(
+        "labels", "Sheet1!B1:C1", layout="series", direction="input", dtype="int", header_row=1
+    )
+    labels["axis_labels"] = "TIME_PERIOD"
+    output = series_entry(
+        "out", "Sheet1!B2:C2", layout="series", direction="output", dtype="int", header_row=1
+    )
+
+    modules = generate_inverted(
+        workbook, bindings_document(labels, output, schema_version="1.17.0")
+    )
+    package = load_package(modules, tmp_path, name="input_labels")
+    assert tuple(package.compute_out(labels=package.data.LABELS_DEFAULT).domain.axes[0].keys) == (
+        2025,
+        2026,
+    )
+
+
 def test_generate_modules_signature_is_bindings_only() -> None:
     params = inspect.signature(CodeGenerator.generate_modules).parameters
     assert list(params) == ["self", "series_bindings", "bindings_workbook", "blank_ranges"]

@@ -242,12 +242,18 @@ def plan_inverted_tree(
             raise InvertedTreeExportError(
                 f"labeller {labeller.series_id!r}: every cell must be in the extracted graph"
             )
-        cached = tuple(node.value for node in nodes if node is not None)
+        cached = tuple(
+            _coerce_cached_value(node.value, labeller.dtype, cell)
+            for node, cell in zip(nodes, authored, strict=True)
+            if node is not None
+        )
         if cached != axis.keys:
             raise InvertedTreeExportError(
                 f"labeller {labeller.series_id!r}: cached values {cached!r} do not equal snapshot keys {axis.keys!r}"
             )
         for leaf_id in leaf_closure(labeller.series_id, catalog=catalog, deps=deps):
+            if leaf_id == labeller.series_id:
+                continue
             leaf = catalog.get(leaf_id)
             if leaf.direction == "input" and any(
                 candidate.name == axis.name for candidate in leaf.tensor_domain.axes

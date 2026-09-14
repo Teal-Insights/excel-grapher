@@ -797,6 +797,41 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.14.0** | Complementary shards: same series `id` with different `sheet` / `data_range` merge when direction, `key`, and dimension shape match (`data_range` may be a list). `bind.kind: sheet_name` (optional `values` map from worksheet name to code). |
 | **1.15.0** | Optional `input.value_map` on **scalar input** series: map public `compute_*` values to workbook cell needles (MATCH/IF labels). Distinct from bind kind `value_map`. |
 | **1.16.0** | `input` no longer requires a setter block. Empty `input: {}` marks an editable series. Package export takes inputs as `compute_*` / `Model` arguments. |
+| **1.17.0** | `axis_labels` identifies a one-axis series whose values replace snapshot keys at the generated package's public boundary. |
+
+## Dynamic axis labels (1.17.0)
+
+Formula-derived headers can change when a model input changes. Bind the header cells as an
+`internal`, `constant`, or `input` series and name their sole key axis with `axis_labels`:
+
+```yaml
+- id: engine_year_labels
+  sheet: Engine
+  data_range: Engine!C5:G5
+  internal: {}
+  axis_labels: TIME_PERIOD
+  structure:
+    measure:
+      concept: OBS_VALUE
+      dtype: int
+      bind: {kind: data_cell, read: int}
+    dimensions:
+      - id: TIME_PERIOD
+        concept: TIME_PERIOD
+        role: key
+        scope: cell
+        bind: {kind: column_header, header_row: 5, read: int}
+  key: [TIME_PERIOD]
+```
+
+Generated calculation functions retain the saved header values as positional snapshot keys.
+`Model` inputs and outputs and public `compute_*` results use the evaluated labeller values.
+Runtime labels must be unique and have the axis key type; duplicate labels fail rather than
+silently selecting one worksheet position.
+
+`axis_labels` does not translate `input.domain` enum literals or `input.value_map` needles;
+those remain snapshot strings. Non-scalar and non-injective header formulas are unsupported.
+Excel permits duplicate displayed headers, but generated tensors require unique coordinates.
 
 ## Input domains (1.13.0)
 

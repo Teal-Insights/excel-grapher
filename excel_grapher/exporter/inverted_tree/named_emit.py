@@ -123,6 +123,7 @@ def named_codegen_fingerprint(catalog: SeriesCatalog) -> str:
                 "domain": domain.to_dict(),
                 "required": [coord for coord in domain if coord in required],
                 "provenance": list(series.coordinate_cells.items()),
+                "axis_labels": series.axis_labels,
             }
         )
     payload = json.dumps(
@@ -729,7 +730,14 @@ def _argument_source(series_id: str, catalog: SeriesCatalog) -> str:
     series = catalog.get(series_id)
     if series.direction == "constant":
         return f"data.{series_id.upper()}"
+    if _needs_internal_alias(series, catalog):
+        return f"self._internal_{series_id}"
     return f"self.{series_id}"
+
+
+def _needs_internal_alias(series: BoundSeries, catalog: SeriesCatalog) -> bool:
+    """True when a public Model attribute differs from its internal value."""
+    return series.direction in {"input", "output"} and bool(_runtime_labellers(series, catalog))
 
 
 # ---------------------------------------------------------------------------
@@ -772,11 +780,10 @@ def _input_check(series: BoundSeries, catalog: SeriesCatalog) -> tuple[list[str]
     used: set[str] = set()
     series_id = series.series_id
     quoted_id = _python_literal(series_id)
-    is_labelled = any(
-        catalog.labeller_for(axis.name, axis.keys) is not None for axis in series.tensor_domain.axes
-    )
-    if not series.single_valued and not is_labelled:
-        lines.append(f"    data.{series_id.upper()}_SCHEMA.validate({series_id})")
+    is_labelled = bool(_runtime_labellers(series, catalog))
+    if not series.single_valued:
+        check = "validate_structure" if is_labelled else "validate"
+        lines.append(f"    data.{series_id.upper()}_SCHEMA.{check}({series_id})")
     domain = measure_domain_from_series(series.raw)
     if domain is not None:
         used.add("require_input_domain")
@@ -875,11 +882,34 @@ def _model_attribute(
 ) -> list[str]:
     series_id = series.series_id
     args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids)
-    return [
+    labellers = dict(_runtime_labellers(series, catalog))
+    internal_name = (
+        f"_internal_{series_id}" if series.direction == "output" and labellers else series_id
+    )
+    lines = [
         "    @cached_property",
-        f"    def {series_id}(self) -> {_annotation(series)}:",
+        f"    def {internal_name}(self) -> {_annotation(series)}:",
         f"        return internals.{series_id}({args})",
     ]
+    if internal_name == series_id:
+        return lines
+    value = f"self.{internal_name}" + (
+        ".relabel("
+        + ", ".join(
+            f"{axis}={_argument_source(labeller.series_id, catalog)}"
+            for axis, labeller in labellers.items()
+        )
+        + ")"
+    )
+    lines.extend(
+        [
+            "",
+            "    @cached_property",
+            f"    def {series_id}(self) -> {_annotation(series)}:",
+            f"        return {value}",
+        ]
+    )
+    return lines
 
 
 def _model_recurrence_group(
@@ -894,14 +924,36 @@ def _model_recurrence_group(
         f"        return internals.{name}({args})",
     ]
     for sid in scc:
+        series = catalog.get(sid)
+        labellers = {axis: labeller for axis, labeller in _runtime_labellers(series, catalog)}
+        internal_name = f"_internal_{sid}" if series.direction == "output" and labellers else sid
+        value = f"self.{internal_name}"
+        if internal_name != sid:
+            value += (
+                ".relabel("
+                + ", ".join(
+                    f"{axis}={_argument_source(labeller.series_id, catalog)}"
+                    for axis, labeller in labellers.items()
+                )
+                + ")"
+            )
         lines.extend(
             [
                 "",
                 "    @cached_property",
-                f"    def {sid}(self) -> {_annotation(catalog.get(sid))}:",
+                f"    def {internal_name}(self) -> {_annotation(series)}:",
                 f"        return self._{name}.{sid}",
             ]
         )
+        if internal_name != sid:
+            lines.extend(
+                [
+                    "",
+                    "    @cached_property",
+                    f"    def {sid}(self) -> {_annotation(series)}:",
+                    f"        return {value}",
+                ]
+            )
     return lines
 
 
@@ -923,13 +975,12 @@ def emit_named_api(
         '    """',
         "",
     ]
-    labelled_inputs: dict[str, tuple[str, BoundSeries]] = {}
+    labelled_inputs: dict[str, list[tuple[str, BoundSeries]]] = {}
     for series in inputs:
         for axis in series.tensor_domain.axes:
             labeller = catalog.labeller_for(axis.name, axis.keys)
-            if labeller is not None:
-                labelled_inputs[series.series_id] = (axis.name, labeller)
-                break
+            if labeller is not None and labeller is not series:
+                labelled_inputs.setdefault(series.series_id, []).append((axis.name, labeller))
         model.append(f"    {series.series_id}: {_annotation(series)}")
     model.extend(
         [
@@ -941,13 +992,23 @@ def emit_named_api(
             "            setattr(self, '_raw_' + name if name in data.LABELLED_INPUTS else name, value)",
         ]
     )
-    for series_id, (axis, labeller) in labelled_inputs.items():
+    for series_id, axes in labelled_inputs.items():
+        value = f"self._raw_{series_id}"
+        for axis, labeller in axes:
+            labeller_source = _argument_source(labeller.series_id, catalog)
+            value = f"relabel_input({value}, {labeller_source}, {axis!r}, series_id={series_id!r})"
         model.extend(
             [
                 "",
                 "    @cached_property",
+                f"    def _internal_{series_id}(self) -> {_annotation(catalog.get(series_id))}:",
+                f"        value = {value}",
+                f"        data.{series_id.upper()}_SCHEMA.validate(value)",
+                "        return value",
+                "",
+                "    @property",
                 f"    def {series_id}(self) -> {_annotation(catalog.get(series_id))}:",
-                f"        return relabel_input(self._raw_{series_id}, self.{labeller.series_id}, {axis!r}, series_id={series_id!r})",
+                f"        return self._raw_{series_id}",
             ]
         )
     emitted_groups: set[tuple[str, ...]] = set()
@@ -1051,14 +1112,21 @@ def _public_function(
                 expanded.append(sid)
     inputs = [catalog.get(sid) for sid in expanded if catalog.get(sid).direction == "input"]
     name = output.compute_name or f"compute_{output.series_id}"
+    key_inputs = [
+        sid
+        for labeller in labellers.values()
+        for sid in leaf_closure(labeller.series_id, catalog=catalog, deps=dict(deps))
+        if catalog.get(sid).direction == "input"
+    ]
+    key_note = (
+        f" Axis labels are determined by inputs {tuple(dict.fromkeys(key_inputs))!r}."
+        if key_inputs
+        else ""
+    )
     result_lines = (
         [
             "    model = Model(**locals())",
-            f"    return model.{output.series_id}.relabel("
-            + ", ".join(
-                f"{axis}=model.{labeller.series_id}" for axis, labeller in labellers.items()
-            )
-            + ")",
+            f"    return model.{output.series_id}",
         ]
         if labellers
         else [f"    return Model(**locals()).{output.series_id}"]
@@ -1067,7 +1135,7 @@ def _public_function(
         [
             _publish_line(output, constants),
             _signature(name, inputs, _annotation(output)),
-            f'    """Compute `{output.series_id}` using authored coordinate identities."""',
+            f'    """Compute `{output.series_id}` using authored coordinate identities.{key_note}"""',
             *result_lines,
         ]
     )
@@ -1090,6 +1158,18 @@ def _retained(catalog: SeriesCatalog) -> list[BoundSeries]:
 
 def _retained_formula_series(catalog: SeriesCatalog) -> list[BoundSeries]:
     return [series for series in _retained(catalog) if series.is_formula_series]
+
+
+def _runtime_labellers(
+    series: BoundSeries, catalog: SeriesCatalog
+) -> list[tuple[str, BoundSeries]]:
+    """Return labellers that translate this series rather than itself."""
+    result: list[tuple[str, BoundSeries]] = []
+    for axis in series.tensor_domain.axes:
+        labeller = catalog.labeller_for(axis.name, axis.keys)
+        if labeller is not None and labeller is not series:
+            result.append((axis.name, labeller))
+    return result
 
 
 def _read_defaults(catalog: SeriesCatalog, workbook: Path | str) -> dict[str, dict[str, object]]:
@@ -1321,8 +1401,8 @@ def emit_named_data(
         "from .tensor import Axis, Domain, Series, TensorSchema, coordinate_runs",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
-        f"LABELLED_AXES = { {series.axis_labels: series.series_id for series in retained if series.axis_labels}!r}",
-        f"LABELLED_INPUTS = {frozenset(series.series_id for series in retained if series.direction == 'input' and any(catalog.labeller_for(axis.name, axis.keys) for axis in series.tensor_domain.axes))!r}",
+        f"LABELLED_AXES = { {(series.axis_labels, series.tensor_domain.axes[0].keys): series.series_id for series in retained if series.axis_labels}!r}",
+        f"LABELLED_INPUTS = {frozenset(series.series_id for series in retained if series.direction == 'input' and _runtime_labellers(series, catalog))!r}",
         "",
     ]
     for constant, axis in named_axes.items():

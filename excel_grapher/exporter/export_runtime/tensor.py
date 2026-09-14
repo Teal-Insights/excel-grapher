@@ -324,9 +324,11 @@ class Tensor(Generic[T]):
                     raise AxisError(
                         f"axis {axis.name!r}: label {value!r} must be {axis.key_type.__name__}"
                     )
-            if len(set(values)) != len(values):
-                duplicate = next(value for value in values if values.count(value) > 1)
-                raise AxisError(f"axis {axis.name!r}: duplicate label {duplicate!r}")
+            seen: set[object] = set()
+            for value in values:
+                if value in seen:
+                    raise AxisError(f"axis {axis.name!r}: duplicate label {value!r}")
+                seen.add(value)
             axes[index] = Axis(axis.name, cast(tuple[str | int, ...], values), axis.key_type)
             replacements[axis.name] = dict(zip(axis.keys, values, strict=True))
         return self._replace_axes(tuple(axes), replacements)
@@ -348,7 +350,7 @@ class Tensor(Generic[T]):
                 for coord in self.domain
             )
             domain = Domain.explicit(axes=axes, coordinates=coordinates)
-        return self._from_domain(domain, self._values)
+        return Tensor._from_domain(domain, self._values)
 
     def sel(self, **selectors: str | int) -> Tensor[T] | T:
         """Select exact named keys, dropping the fixed axes."""
@@ -465,7 +467,12 @@ def relabel_input(
     if len(labels.domain.axes) != 1 or labels.domain.axes[0].name != axis:
         raise SchemaError(f"series {series_id!r}: invalid labeller for axis {axis!r}")
     snapshot_axis = labels.domain.axes[0]
-    public_to_snapshot = {labels[key]: key for key in snapshot_axis.keys}
+    public_to_snapshot: dict[object, str | int] = {}
+    for key in snapshot_axis.keys:
+        label = labels[key]
+        if label in public_to_snapshot:
+            raise AxisError(f"axis {axis!r}: duplicate label {label!r}")
+        public_to_snapshot[label] = key
     unknown = tuple(key for key in public_axis.keys if key not in public_to_snapshot)
     if unknown:
         raise SchemaError(
@@ -512,12 +519,8 @@ class TensorSchema:
 
     def validate(self, tensor: object, *, exact: bool = False) -> None:
         """Check semantic axes, required coordinates, and values."""
-        if not isinstance(tensor, Tensor):
-            raise SchemaError(f"{self.series_id}: expected Tensor")
-        expected = tuple((axis.name, axis.key_type) for axis in self.domain.axes)
-        actual = tuple((axis.name, axis.key_type) for axis in tensor.domain.axes)
-        if actual != expected:
-            raise SchemaError(f"{self.series_id}: expected axes {expected!r}, received {actual!r}")
+        self.validate_structure(tensor)
+        assert isinstance(tensor, Tensor)
         for coord in self.domain:
             try:
                 tensor.domain.require(coord)
@@ -527,6 +530,15 @@ class TensorSchema:
                 ) from exc
         if exact and len(tensor.domain) != len(self.domain):
             raise SchemaError(f"{self.series_id}: result must exactly cover its declared domain")
+
+    def validate_structure(self, tensor: object) -> None:
+        """Check axis identities, key types, and values without coordinate membership."""
+        if not isinstance(tensor, Tensor):
+            raise SchemaError(f"{self.series_id}: expected Tensor")
+        expected = tuple((axis.name, axis.key_type) for axis in self.domain.axes)
+        actual = tuple((axis.name, axis.key_type) for axis in tensor.domain.axes)
+        if actual != expected:
+            raise SchemaError(f"{self.series_id}: expected axes {expected!r}, received {actual!r}")
         for coord, value in tensor.items():
             if type(value) not in self.value_types:
                 raise SchemaError(

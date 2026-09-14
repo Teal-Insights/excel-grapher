@@ -164,11 +164,21 @@ def _package_matches_evaluator(
         if series.layout == "scalar":
             _values_close(got, expected[series.cells[0]])
         else:
-            assert tuple(got.domain) == tuple(
-                coord for coord in series.tensor_domain if coord in series.required_coordinates
-            )
+            labellers = {
+                index: catalog.labeller_for(axis.name, axis.keys)
+                for index, axis in enumerate(series.tensor_domain.axes)
+            }
             for coordinate, value in got.items():
-                _values_close(value, expected[series.coordinate_cells[coordinate]])
+                snapshot = list(coordinate)
+                for index, labeller in labellers.items():
+                    if labeller is None:
+                        continue
+                    public_to_snapshot = {
+                        expected[cell]: key[0] for key, cell in labeller.coordinate_cells.items()
+                    }
+                    snapshot[index] = public_to_snapshot[coordinate[index]]
+                snapshot_coordinate = tuple(snapshot)
+                _values_close(value, expected[series.coordinate_cells[snapshot_coordinate]])
 
 
 def _emit_and_compare(

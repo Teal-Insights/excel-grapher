@@ -289,8 +289,10 @@ def as_records(
     keys = compute.__key__
     domain = compute.__domain__
     if isinstance(domain, Domain):
-        if not isinstance(result, Tensor) or result.domain != domain:
+        if not isinstance(result, Tensor):
             raise ValueError("result must be a Tensor over the declared result domain")
+        if tuple(axis.name for axis in result.domain.axes) != keys:
+            raise ValueError("result axes must match the declared result keys")
         return [
             dict(zip(keys, coord, strict=True)) | {measure: value}
             for coord, value in result.items()

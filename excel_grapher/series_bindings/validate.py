@@ -159,7 +159,8 @@ def _validate_axis_labels(series: dict[str, Any]) -> list[ValidationIssue]:
             )
         )
         return issues
-    measure_dtype = (structure.get("measure") or {}).get("dtype")
+    measure = structure.get("measure") or {}
+    measure_dtype = measure.get("dtype") or (measure.get("bind") or {}).get("read")
     dimension_dtype = dimension.get("dtype") or (dimension.get("bind") or {}).get("read")
     aliases = {"integer": "int", "str": "string"}
     measure_dtype = aliases.get(measure_dtype, measure_dtype)
