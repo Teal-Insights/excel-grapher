@@ -291,15 +291,6 @@ class BoundSeries:
         return not self.is_scalar
 
     @property
-    def is_time_series(self) -> bool:
-        """True when the series is a 1-D `TIME_PERIOD` sequence.
-
-        Country×year `layout: matrix` series include `TIME_PERIOD` in
-        `key_fields` but are not treated as 1-D year prefixes.
-        """
-        return "TIME_PERIOD" in self.key_fields and self.layout == "series"
-
-    @property
     def is_formula_series(self) -> bool:
         """True when inverted codegen emits a helper for this series."""
         return self.direction in {"internal", "output"}
@@ -331,11 +322,6 @@ class BoundSeries:
         if index is None or index >= len(self.domain):
             return None
         return self.domain[index]
-
-    @property
-    def hole_indices(self) -> tuple[int, ...]:
-        """0-based catalog indexes of cells that are not on-graph formulas."""
-        return tuple(hole.index for hole in self.holes)
 
     @property
     def has_none_holes(self) -> bool:
@@ -473,8 +459,7 @@ class ScheduleIndex:
 
     `index_by_coord` maps series id to schedule coordinate to member indices
     so identity joins do not rescan producer cells. `statement_id_by_coord`
-    maps series id to schedule coordinate to the covering statement id so
-    fused-region planning is an O(1) lookup per union index.
+    maps series id to schedule coordinate to the covering statement id.
     `partition_of` / `axis_of` split a multi-key domain into the outer
     instance partition and the inner `TIME_PERIOD` schedule axis (#638).
     `coords_of` is the set of schedule coordinates per series so peer tests
@@ -672,8 +657,7 @@ class SeriesCatalog:
 
     Graph node identity stays `CellKey`. Use `key_point_for` and `binds_for`
     to reach per-cell key coordinates and series-level dimension binds
-    without copying them onto `Node.metadata`. Unbound cells return `None`;
-    `require_key_point_for` / `require_binds_for` fail closed.
+    without copying them onto `Node.metadata`. Unbound cells return `None`.
     """
 
     series: dict[str, BoundSeries]
@@ -711,13 +695,6 @@ class SeriesCatalog:
             return None
         return series.key_point_for(address)
 
-    def require_key_point_for(self, address: CanonicalAddress) -> KeyPoint:
-        """Return resolved key coordinates for `address`, or fail closed."""
-        found = self.key_point_for(address)
-        if found is None:
-            raise InvertedTreeExportError(f"cell {address} has no key point")
-        return found
-
     def binds_for(self, address: CanonicalAddress) -> Mapping[str, Mapping[str, Any]] | None:
         """Return series-level dimension binds for the owner of `address`.
 
@@ -728,13 +705,6 @@ class SeriesCatalog:
         if series is None:
             return None
         return series.dimension_binds()
-
-    def require_binds_for(self, address: CanonicalAddress) -> Mapping[str, Mapping[str, Any]]:
-        """Return dimension binds for `address`, or fail closed."""
-        found = self.binds_for(address)
-        if found is None:
-            raise InvertedTreeExportError(f"cell {address} is not in any bound series")
-        return found
 
     def formula_series(self) -> list[BoundSeries]:
         """Return internals and outputs in bindings order."""
@@ -751,10 +721,6 @@ class SeriesCatalog:
     def constant_series(self) -> list[BoundSeries]:
         """Return constant series in bindings order."""
         return [self.series[sid] for sid in self.order if self.series[sid].direction == "constant"]
-
-    def bound_addresses(self) -> frozenset[str]:
-        """Every cell owned by a bound series."""
-        return frozenset(self.address_to_id)
 
 
 def _direction_of(entry: Mapping[str, Any]) -> Direction:

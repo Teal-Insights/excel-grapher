@@ -113,7 +113,6 @@ def test_catalog_resolves_matrix_as_named_domain(tmp_path: Path) -> None:
     assert series.cells == ("Profile!B2", "Profile!C2", "Profile!B3", "Profile!C3")
     assert series.is_sequence
     assert not series.is_scalar
-    assert not series.is_time_series
     assert series.key_fields == ("COUNTRY", "TIME_PERIOD")
     assert tuple(axis.name for axis in series.tensor_domain.axes) == ("COUNTRY", "TIME_PERIOD")
     assert tuple(series.tensor_domain) == (
