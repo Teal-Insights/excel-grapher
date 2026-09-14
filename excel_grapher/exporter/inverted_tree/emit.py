@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 _RUNTIME_PATH = Path(__file__).with_name("runtime.py")
+_EXCEL_PATH = Path(__file__).with_name("excel.py")
 
 
 def _py_literal(value: object) -> str:
@@ -281,6 +282,7 @@ def generate_inverted_tree_modules(
             blank_ranges=blank_ranges,
         )
         runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
+        excel_py = _EXCEL_PATH.read_text(encoding="utf-8")
         return emit_named_modules(
             catalog,
             deps,
@@ -289,6 +291,7 @@ def generate_inverted_tree_modules(
             bindings_workbook,
             init_source=emit_init_module(catalog),
             runtime_source=runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
+            excel_source=excel_py if excel_py.endswith("\n") else excel_py + "\n",
         )
     finally:
         reset_blank_rects(token)

@@ -27,7 +27,7 @@ from excel_grapher.core.formula_ast import (
     WholeRowNode,
     resolve_cell_ref,
 )
-from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
+from excel_grapher.exporter.inverted_tree import excel as inverted_excel
 from excel_grapher.exporter.inverted_tree.access import (
     indirect_argument_addresses,
     indirect_target_addresses,
@@ -83,7 +83,7 @@ _UNARY_HELPERS = {
 }
 _RUNTIME_FUNCTIONS = frozenset(
     name
-    for name, value in vars(inverted_runtime).items()
+    for name, value in vars(inverted_excel).items()
     if name.startswith("xl_") and callable(value)
 )
 _AGGREGATE_FUNCTIONS = frozenset(

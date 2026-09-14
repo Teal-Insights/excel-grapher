@@ -90,14 +90,14 @@ def _arith_bindings() -> dict:
     )
 
 
-def test_emitted_arithmetic_uses_runtime_helpers(tmp_path: Path) -> None:
+def test_emitted_arithmetic_uses_excel_helpers(tmp_path: Path) -> None:
     modules = generate_inverted(_arith_workbook(tmp_path), _arith_bindings())
     internals = modules["internals.py"]
     assert "xl_add(" in internals
     assert "xl_div(" in internals
     assert "xl_mul(" in internals
-    assert "def xl_add" in modules["runtime.py"]
-    assert "def xl_div" in modules["runtime.py"]
+    assert "def xl_add" in modules["excel.py"]
+    assert "def xl_div" in modules["excel.py"]
 
 
 def _compare_workbook(tmp_path: Path) -> Path:

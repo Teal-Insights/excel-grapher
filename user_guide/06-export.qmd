@@ -66,10 +66,10 @@ emitted in `data.py` (`SERIES_DEFAULT`). Smoke checks call the generated compute
 | `validation.py` | Private `_check_*` helpers and the `CHECKS` registry used by `Model` to apply input schemas, `input.domain`, and `input.value_map` once at construction. |
 | `tensor.py` | Immutable `Axis`, `Domain`, `Tensor`, `Series`, and schema validation. |
 | `provenance.py` | `row_cells`, `column_cells`, `block_cells`, and `grid_cells` descriptors that resolve a coordinate to its authored worksheet cell without listing every cell. |
-| `runtime.py` | Lazy views over named coordinates, recurrence readers, and the `publish` metadata decorator. Wraps `excel.py` operators into inverted-tree error-code measures. |
-| `excel.py` | Excel value semantics (operators, lookups, aggregates, errors) embedded from the shared core so the package runs standalone. |
+| `runtime.py` | Lazy views over named coordinates, recurrence readers, and the `publish` metadata decorator. |
+| `excel.py` | Excel value semantics and inverted-tree adapters (`xl_add`, `XlError`, `as_measure`, lookups, aggregates) embedded from the shared core so the package runs standalone. |
 
-These two files are complementary, not duplicates. Generated `internals.py` imports helpers from `runtime.py`; `runtime.py` imports value semantics from `excel.py`.
+These two files are complementary, not duplicates. Generated `internals.py` imports Excel operators from `excel.py` and named-axis helpers from `runtime.py`; `runtime.py` imports value semantics from `excel.py`.
 
 Construct inputs from coordinate/value records. The generated schema validates axis names,
 key types, required coordinates, and value types. Scalar bindings remain plain scalars.

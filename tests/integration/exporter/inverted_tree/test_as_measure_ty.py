@@ -21,7 +21,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[4]
 _HELPER_SNIPPET = """\
 from datetime import datetime
 
-from excel_grapher.exporter.inverted_tree.runtime import as_measure
+from excel_grapher.exporter.inverted_tree.excel import as_measure
 
 
 def float_default() -> None:

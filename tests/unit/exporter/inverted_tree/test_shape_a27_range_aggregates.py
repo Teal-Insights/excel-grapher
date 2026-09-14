@@ -3,7 +3,7 @@
 `SUM` / `SUMPRODUCT` of a bound series, whole-column / whole-row refs, and
 cross-sheet ranges lower with graph-derived access (`covering_series`,
 `take` for a window). `xl_sum` / `xl_sumproduct` live in inverted-tree
-`runtime.py` (core wrappers); do not embed ctx `export_runtime/`.
+`excel.py` (core wrappers); do not embed ctx `export_runtime/`.
 Array-style `SUM(IF(range,…))` and `SUMPRODUCT(IF(range,…))` lower as
 `xl_if` over positional range tables when interiors are element-aligned
 (#732); `AVERAGE(IF)` / `MAX(IF)` reuse that emit (#749). Unsound
@@ -90,7 +90,7 @@ def test_sum_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     workbook = range_sum_workbook(tmp_path)
     modules = generate_inverted(workbook, range_sum_bindings())
     assert "xl_sum(" in modules["internals.py"]
-    assert "def xl_sum" in modules["runtime.py"]
+    assert "def xl_sum" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_emit")
     assert pkg.compute_out(
         src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.5, 2.5))
@@ -153,7 +153,7 @@ def test_sumproduct_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document)
     assert "xl_sumproduct(" in modules["internals.py"]
-    assert "def xl_sumproduct" in modules["runtime.py"]
+    assert "def xl_sumproduct" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sumproduct")
     assert pkg.compute_out(
         left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 2.0)),
@@ -290,7 +290,7 @@ def test_sum_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     workbook = range_sum_if_workbook(tmp_path)
     modules = generate_inverted(workbook, range_sum_if_bindings())
     assert "xl_if(" in modules["internals.py"]
-    assert "def xl_if" in modules["runtime.py"]
+    assert "def xl_if" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_if_emit")
     assert pkg.compute_out(
         src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
@@ -592,7 +592,7 @@ def test_average_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None
     modules = generate_inverted(workbook, range_average_if_bindings())
     assert "xl_if(" in modules["internals.py"]
     assert "xl_average(" in modules["internals.py"]
-    assert "def xl_average" in modules["runtime.py"]
+    assert "def xl_average" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_average_if_emit")
     # Omitted else is FALSE; AVERAGE skips logicals, so only the matching 2.0.
     assert pkg.compute_out(
@@ -615,7 +615,7 @@ def test_max_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, range_max_if_bindings())
     assert "xl_if(" in modules["internals.py"]
     assert "xl_max(" in modules["internals.py"]
-    assert "def xl_max" in modules["runtime.py"]
+    assert "def xl_max" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_max_if_emit")
     assert pkg.compute_out(
         src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))

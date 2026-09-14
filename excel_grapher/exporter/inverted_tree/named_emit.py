@@ -70,6 +70,43 @@ _RESERVED_NAMES = frozenset(
 )
 
 
+def _generated_helper_imports(used: set[str]) -> list[str]:
+    """Split generated helper imports across `.excel` and `.runtime`.
+
+    Names defined independently in both modules fail closed. A name runtime
+    only re-exports from excel is imported from `.excel`. Missing names also
+    fail closed.
+    """
+    from excel_grapher.exporter.inverted_tree import excel as inverted_excel
+    from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
+
+    excel_ns = vars(inverted_excel)
+    runtime_ns = vars(inverted_runtime)
+    excel_names: list[str] = []
+    runtime_names: list[str] = []
+    for name in sorted(used):
+        in_excel = name in excel_ns
+        in_runtime = name in runtime_ns
+        if in_excel and in_runtime:
+            if excel_ns[name] is not runtime_ns[name]:
+                raise ValueError(f"{name} is defined independently in excel and runtime")
+            excel_names.append(name)
+            continue
+        if in_excel:
+            excel_names.append(name)
+            continue
+        if in_runtime:
+            runtime_names.append(name)
+            continue
+        raise ValueError(f"{name} is not exported by excel or runtime")
+    lines: list[str] = []
+    if excel_names:
+        lines.append(f"from .excel import {', '.join(excel_names)}")
+    if runtime_names:
+        lines.append(f"from .runtime import {', '.join(runtime_names)}")
+    return lines
+
+
 def named_codegen_fingerprint(catalog: SeriesCatalog) -> str:
     """Identify the representation, authored provenance, and graph projection."""
     entries = []
@@ -506,7 +543,7 @@ def emit_named_internals(
         "from typing import cast",
         "from . import data",
         "from .tensor import Domain",
-        f"from .runtime import {', '.join(sorted(used))}",
+        *_generated_helper_imports(used),
         "",
         "\n\n".join(functions),
         "",
@@ -806,8 +843,7 @@ def emit_named_validation(catalog: SeriesCatalog) -> str:
         stdlib.append("from datetime import datetime")
     if any(not catalog.get(sid).single_valued for sid in checked):
         local.append("from . import data")
-    if used:
-        local.append(f"from .runtime import {', '.join(sorted(used))}")
+    local.extend(_generated_helper_imports(used))
     extra = [*stdlib, *(["", *local] if stdlib and local else local)]
     if extra:
         lines.extend(extra)
@@ -1338,6 +1374,7 @@ def emit_named_modules(
     *,
     init_source: str,
     runtime_source: str,
+    excel_source: str,
 ) -> dict[str, str]:
     """Assemble the standalone named package."""
     named_axes = NamedAxes.plan(
@@ -1367,7 +1404,7 @@ def emit_named_modules(
         "data.py": data,
         "tensor.py": tensor_source,
         "provenance.py": provenance_source,
-        **build_runtime_modules(runtime_source),
+        **build_runtime_modules(runtime_source, excel_source),
     }
 
 

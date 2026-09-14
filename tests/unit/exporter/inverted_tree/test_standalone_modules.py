@@ -1,4 +1,4 @@
-"""Generated `excel.py` and `runtime.py` are layered, not duplicates (#843)."""
+"""Generated `excel.py` holds Excel ops; `runtime.py` holds named-axis primitives."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
 )
 
 _NAMED_AXIS_HELPERS = frozenset(
-    {"publish", "view", "span", "take", "CoordinateReader", "as_records"}
+    {"publish", "view", "span", "take", "CoordinateReader", "as_records", "lazy_table"}
 )
 
 
@@ -41,7 +41,18 @@ def _top_level_names(source: str) -> set[str]:
     }
 
 
-def test_generated_excel_and_runtime_are_distinct_layers(tmp_path: Path) -> None:
+def _imported_modules(source: str) -> set[str]:
+    tree = ast.parse(source)
+    modules: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module:
+            modules.add(node.module)
+        elif isinstance(node, ast.Import):
+            modules.update(alias.name for alias in node.names)
+    return modules
+
+
+def test_generated_excel_owns_operators_runtime_owns_named_axis(tmp_path: Path) -> None:
     modules = _add_modules(tmp_path)
     excel = modules["excel.py"]
     runtime = modules["runtime.py"]
@@ -49,18 +60,27 @@ def test_generated_excel_and_runtime_are_distinct_layers(tmp_path: Path) -> None
     excel_names = _top_level_names(excel)
     runtime_names = _top_level_names(runtime)
 
-    assert excel != runtime
-    assert "excel_grapher" not in excel
-    assert "excel_grapher" not in runtime
-    assert "from .excel import" in runtime
-    assert "from .runtime import" not in excel
-    assert "from .runtime import" in internals
-    assert "from .excel import" not in internals
-
+    assert "xl_add" in excel_names
+    assert "xl_add" not in runtime_names
+    assert excel.count("def xl_add") == 1
+    assert "def xl_add" not in runtime
     assert runtime_names >= _NAMED_AXIS_HELPERS
     assert excel_names.isdisjoint(_NAMED_AXIS_HELPERS)
-    assert "xl_add" in runtime_names
-    assert "xl_add" in excel_names
-    assert "Range" in excel_names
-    assert "xl_add as _core_add" in runtime
-    assert "_adapt_core(_core_add(" in runtime
+
+    assert "excel_grapher" not in _imported_modules(excel)
+    assert "excel_grapher" not in _imported_modules(runtime)
+    assert "from .excel import" in runtime
+    assert "from .runtime import" not in excel
+    assert "from .excel import" in internals
+    assert "from .runtime import" in internals
+    excel_import = next(
+        line for line in internals.splitlines() if line.startswith("from .excel import")
+    )
+    runtime_import = next(
+        line for line in internals.splitlines() if line.startswith("from .runtime import")
+    )
+    assert "xl_add" in excel_import
+    assert "publish" in runtime_import
+    assert "xl_add" not in runtime_import
+    assert "publish" not in excel_import
+    assert "def _core_add" in excel

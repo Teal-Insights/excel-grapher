@@ -5,7 +5,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal, get_overloads, get_type_hints
 
-from excel_grapher.exporter.inverted_tree.runtime import as_measure
+from excel_grapher.exporter.inverted_tree.excel import as_measure
 
 
 def test_as_measure_declares_literal_dtype_overloads() -> None:
