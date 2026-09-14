@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 _RUNTIME_PATH = Path(__file__).with_name("runtime.py")
+_EXCEL_PATH = Path(__file__).with_name("excel.py")
 
 
 def _py_literal(value: object) -> str:
@@ -134,15 +135,6 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
     if value is None:
         return 0 if dtype in {"int", "integer", "float", "number"} else ""
     return _coerce_cached_value(value, dtype, address)
-
-
-_HOLE_DOC_LABELS = {
-    "blank": "blank",
-    "off_closure": "not computed",
-    "literal": "cached literal",
-    "graph_leaf": "cached literal",
-    "bound_leaf": "bound leaf",
-}
 
 
 def emit_init_module(catalog: SeriesCatalog) -> str:
@@ -289,6 +281,7 @@ def generate_inverted_tree_modules(
             blank_ranges=blank_ranges,
         )
         runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
+        excel_py = _EXCEL_PATH.read_text(encoding="utf-8")
         return emit_named_modules(
             catalog,
             deps,
@@ -297,6 +290,7 @@ def generate_inverted_tree_modules(
             bindings_workbook,
             init_source=emit_init_module(catalog),
             runtime_source=runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
+            excel_source=excel_py if excel_py.endswith("\n") else excel_py + "\n",
         )
     finally:
         reset_blank_rects(token)

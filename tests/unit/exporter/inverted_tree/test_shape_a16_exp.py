@@ -1,4 +1,4 @@
-"""Layer A16 — Excel `EXP` must import from inverted-tree `runtime.py` (#606)."""
+"""Layer A16 — Excel `EXP` must import from inverted-tree `excel.py` (#606)."""
 
 from __future__ import annotations
 
@@ -37,7 +37,7 @@ def test_exp_emits_runtime_helper_and_imports(tmp_path: Path) -> None:
     workbook = _exp_workbook(tmp_path, "=EXP(A1)")
     modules = generate_inverted(workbook, _exp_bindings())
     assert "xl_exp(" in modules["internals.py"]
-    assert "def xl_exp" in modules["runtime.py"]
+    assert "def xl_exp" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a16_exp")
     assert pkg.compute_exp_x(x=0) == pytest.approx(1.0)
     assert pkg.compute_exp_x(x=1) == pytest.approx(math.e)

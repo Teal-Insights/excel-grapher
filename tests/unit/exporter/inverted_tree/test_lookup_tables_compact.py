@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor
-from excel_grapher.exporter.inverted_tree import runtime
+from excel_grapher.exporter.inverted_tree import excel, runtime
 from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
@@ -27,17 +27,17 @@ def test_lazy_table_rows_accept_views_beside_cell_callbacks() -> None:
         )
     )
     assert table.shape == (2, 4)
-    assert runtime.xl_index(table, 1, 3) == 2.0
-    assert runtime.xl_vlookup("b", table, 4, False) == 9.0
+    assert excel.xl_index(table, 1, 3) == 2.0
+    assert excel.xl_vlookup("b", table, 4, False) == 9.0
 
 
 def test_choose_range_selects_one_cell_of_a_view() -> None:
     flow = Tensor(Domain.product(YEARS), (1.0, 2.0, 3.0))
     cells = runtime.view(flow, cols=YEARS.keys)
-    assert runtime.xl_choose_range(2, cells) == 2.0
+    assert excel.xl_choose_range(2, cells) == 2.0
     try:
-        runtime.xl_choose_range(4, cells)
-    except runtime.XlError as error:
+        excel.xl_choose_range(4, cells)
+    except excel.XlError as error:
         assert error.code == "#VALUE!"
     else:
         raise AssertionError("expected #VALUE!")

@@ -30,8 +30,6 @@ from excel_grapher.core.formula_normalization import expand_whole_column_row_for
 from excel_grapher.core.operators_reference import apply_arithmetic
 from excel_grapher.core.types import CellValue, ExcelRange, XlError
 
-from .parser import CellRef
-
 
 @dataclass(frozen=True)
 class NamedRangeMaps:
@@ -398,8 +396,3 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
         row = m.group(3)
         cell_map[str(name)] = (sheet_name, f"{col}{row}")
     return NamedRangeMaps(cell_map=cell_map, range_map=range_map)
-
-
-def qualify_cell_ref(ref: CellRef, current_sheet: str) -> tuple[str, str]:
-    sheet = ref.sheet if ref.sheet is not None else current_sheet
-    return sheet, f"{ref.column}{ref.row}"

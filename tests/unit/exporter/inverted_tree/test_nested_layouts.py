@@ -13,7 +13,7 @@ from typing import Any
 
 from excel_grapher.exporter.export_runtime.provenance import grid_cells
 from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor, coordinate_runs
-from excel_grapher.exporter.inverted_tree import runtime
+from excel_grapher.exporter.inverted_tree import excel, runtime
 from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
@@ -71,8 +71,8 @@ def test_product_view_enumerates_selected_keys_in_worksheet_order() -> None:
         cols={"TIME_PERIOD": (2025,)},
     )
     assert block.shape == (4, 1)
-    assert runtime.xl_sum(block) == 4.0 + 7.0 + 13.0 + 16.0
-    assert runtime.xl_index(block, 3, 1) == 13.0
+    assert excel.xl_sum(block) == 4.0 + 7.0 + 13.0 + 16.0
+    assert excel.xl_index(block, 3, 1) == 13.0
 
 
 def _nested_workbook(tmp_path: Path) -> Path:
@@ -273,4 +273,4 @@ def test_product_view_over_rows_only_has_one_column() -> None:
         rows={"COUNTRY": ("Kenya",), "SCENARIO": SCENARIOS.keys, "TIME_PERIOD": (2024,)},
     )
     assert column.shape == (3, 1)
-    assert runtime.xl_sum(column) == 9.0 + 12.0 + 15.0
+    assert excel.xl_sum(column) == 9.0 + 12.0 + 15.0

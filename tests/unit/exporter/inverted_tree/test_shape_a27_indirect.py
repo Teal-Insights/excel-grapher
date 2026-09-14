@@ -99,8 +99,10 @@ def _series_member_bindings() -> dict[str, Any]:
 def _assert_no_xl_indirect(modules: dict[str, str]) -> None:
     internals = modules["internals.py"]
     runtime = modules["runtime.py"]
+    excel = modules["excel.py"]
     assert "xl_indirect" not in internals
     assert "def xl_indirect" not in runtime
+    assert "def xl_indirect" not in excel
 
 
 def test_literal_address_matches_evaluator(tmp_path: Path) -> None:

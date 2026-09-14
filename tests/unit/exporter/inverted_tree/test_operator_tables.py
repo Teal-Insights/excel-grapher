@@ -7,13 +7,13 @@ from typing import cast
 
 from excel_grapher.core.operators import OPERATOR_TABLE as CORE_OPERATOR_TABLE
 from excel_grapher.core.types import XlError as CoreXlError
-from excel_grapher.exporter.inverted_tree import runtime as inverted_runtime
+from excel_grapher.exporter.inverted_tree import excel as inverted_excel
 
 _Binary = Callable[[object, object], object]
 
 
 def test_operator_tables_have_the_same_keys() -> None:
-    assert set(inverted_runtime.OPERATOR_TABLE) == set(CORE_OPERATOR_TABLE)
+    assert set(inverted_excel.OPERATOR_TABLE) == set(CORE_OPERATOR_TABLE)
 
 
 def test_operator_tables_agree_on_scalar_samples() -> None:
@@ -35,5 +35,5 @@ def test_operator_tables_agree_on_scalar_samples() -> None:
         core = cast(_Binary, CORE_OPERATOR_TABLE[op])(left, right)
         if isinstance(core, CoreXlError):
             raise AssertionError(f"core {op} returned {core}")
-        inverted = cast(_Binary, inverted_runtime.OPERATOR_TABLE[op])(left, right)
+        inverted = cast(_Binary, inverted_excel.OPERATOR_TABLE[op])(left, right)
         assert inverted == core == expected, (op, left, right, inverted, core)

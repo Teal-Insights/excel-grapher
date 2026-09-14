@@ -60,7 +60,7 @@ def test_shared_function_export(tmp_path: Path, formula: str, expected: float | 
 
 
 def test_shared_helpers_preserve_function_specific_error_handling() -> None:
-    from excel_grapher.exporter.inverted_tree.runtime import xl_countif, xl_xlookup
+    from excel_grapher.exporter.inverted_tree.excel import xl_countif, xl_xlookup
 
     assert xl_countif((1, "#DIV/0!", 3), ">0") == 2
     assert xl_xlookup(2, (1, 2), ("#DIV/0!", 20)) == 20

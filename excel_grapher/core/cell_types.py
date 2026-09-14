@@ -243,6 +243,3 @@ def leaves_missing_cell_type_constraints(
     copied into a `frozenset` on every INDEX/OFFSET formula.
     """
     return {addr for addr in leaves if normalize_cell_type_env_key(addr) not in cell_type_env}
-
-
-_normalize_cell_address = normalize_cell_type_env_key

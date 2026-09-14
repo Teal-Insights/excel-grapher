@@ -59,7 +59,7 @@ def test_if_and_true_false_matches_mcve(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, _scalar_bindings())
     assert "xl_and(" in modules["internals.py"]
-    assert "def xl_and" in modules["runtime.py"]
+    assert "def xl_and" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="and_mcve")
     assert pkg.compute_out() == pytest.approx(20.0)
     _package_matches_output(tmp_path, workbook, _scalar_bindings(), "and_mcve_eval", "Engine!A1")
@@ -84,8 +84,8 @@ def test_if_or_and_not_scalars_match_evaluator(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, document)
     assert "xl_or(" in modules["internals.py"]
     assert "xl_not(" in modules["internals.py"]
-    assert "def xl_or" in modules["runtime.py"]
-    assert "def xl_not" in modules["runtime.py"]
+    assert "def xl_or" in modules["excel.py"]
+    assert "def xl_not" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="or_not")
     assert pkg.compute_or_out() == pytest.approx(10.0)
     assert pkg.compute_not_true() == pytest.approx(20.0)

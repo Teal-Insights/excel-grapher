@@ -3017,55 +3017,6 @@ def _infer_sum_numeric_domain_result(
     )
 
 
-def _infer_choose_numeric_domain(
-    node: FunctionCallNode,
-    env: CellTypeEnv,
-    limits: DynamicRefLimits,
-    *,
-    context: dict[str, int],
-    current_sheet: str,
-    depth: int,
-) -> _FiniteInts | _IntBounds | None:
-    if len(node.args) < 2:
-        return None
-    index_dom = _infer_numeric_domain(
-        node.args[0],
-        env,
-        limits,
-        context=context,
-        current_sheet=current_sheet,
-        depth=depth + 1,
-    )
-    if index_dom is None:
-        return None
-    option_count = len(node.args) - 1
-    if isinstance(index_dom, _FiniteInts):
-        selected = sorted(i for i in index_dom.values if 1 <= i <= option_count)
-    else:
-        lo = max(1, index_dom.lo)
-        hi = min(option_count, index_dom.hi)
-        if hi < lo:
-            return None
-        selected = list(range(lo, hi + 1))
-
-    out: _FiniteInts | _IntBounds | None = None
-    for idx in selected:
-        option_dom = _infer_numeric_domain(
-            node.args[idx],
-            env,
-            limits,
-            context=context,
-            current_sheet=current_sheet,
-            depth=depth + 1,
-        )
-        if option_dom is None:
-            return None
-        out = option_dom if out is None else _union_numeric_domains(out, option_dom, limits)
-        if out is None:
-            return None
-    return out
-
-
 def _infer_choose_numeric_domain_result(
     node: FunctionCallNode,
     env: CellTypeEnv,
