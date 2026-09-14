@@ -1123,20 +1123,12 @@ def _public_function(
         if key_inputs
         else ""
     )
-    result_lines = (
-        [
-            "    model = Model(**locals())",
-            f"    return model.{output.series_id}",
-        ]
-        if labellers
-        else [f"    return Model(**locals()).{output.series_id}"]
-    )
     source = "\n".join(
         [
             _publish_line(output, constants),
             _signature(name, inputs, _annotation(output)),
             f'    """Compute `{output.series_id}` using authored coordinate identities.{key_note}"""',
-            *result_lines,
+            f"    return Model(**locals()).{output.series_id}",
         ]
     )
     return source, name
