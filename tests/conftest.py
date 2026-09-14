@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from tests.paths import (
-    DEP_TRACKING_BASELINE_FIXTURES,
     FIXTURES_ROOT,
     OPERATORS_BASELINE_FIXTURES,
     SERIES_BINDINGS_FIXTURES,
@@ -34,11 +33,6 @@ def series_bindings_fixtures() -> Path:
 @pytest.fixture(scope="session")
 def operators_baseline_fixtures() -> Path:
     return OPERATORS_BASELINE_FIXTURES
-
-
-@pytest.fixture(scope="session")
-def dep_tracking_baseline_fixtures() -> Path:
-    return DEP_TRACKING_BASELINE_FIXTURES
 
 
 @pytest.fixture(scope="session")

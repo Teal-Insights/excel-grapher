@@ -5,18 +5,16 @@ from collections import deque
 from collections.abc import Sequence
 from pathlib import Path
 
-__all__ = ["emit_runtime", "runtime_cache_seed_symbols"]
+__all__ = ["emit_runtime"]
 
 _PACKAGE_ROOT = Path(__file__).resolve().parent.parent
-_RUNTIME_DIR = _PACKAGE_ROOT / "runtime"
 _CORE_DIR = _PACKAGE_ROOT / "core"
-_EXPORT_RUNTIME_DIR = _PACKAGE_ROOT / "exporter" / "export_runtime"
 _OPERATORS_FASTPATH_MODULE = _CORE_DIR / "operators_fastpath.py"
 _OPERATORS_FASTPATH_STUB_MODULE = _CORE_DIR / "operators_fastpath_stub.py"
 
 
-# Core package modules define types, coercions, scalar operators, and addressing (canonical source).
 def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]:
+    """Return shared core modules used to seed standalone Excel semantics."""
     fastpath_path = (
         _OPERATORS_FASTPATH_MODULE
         if include_operators_fastpath
@@ -43,61 +41,6 @@ def _core_modules(*, include_operators_fastpath: bool) -> list[tuple[str, Path]]
         ("core.lookup_funcs", _CORE_DIR / "lookup_funcs.py"),
     ]
 
-
-_CORE_MODULES: list[tuple[str, Path]] = _core_modules(include_operators_fastpath=True)
-
-# Export-owned runtime modules. These come after `runtime/` in module order, so
-# symbols defined in both (e.g. `xl_index`, `xl_range`) resolve to the export
-# implementations in emitted code while the evaluator keeps the shared versions.
-_EXPORT_RUNTIME_MODULES: list[tuple[str, Path]] = [
-    ("export_runtime.errors", _EXPORT_RUNTIME_DIR / "errors.py"),
-    ("export_runtime.ranges", _EXPORT_RUNTIME_DIR / "ranges.py"),
-    ("export_runtime.values", _EXPORT_RUNTIME_DIR / "values.py"),
-    ("export_runtime.lookup", _EXPORT_RUNTIME_DIR / "lookup.py"),
-    ("export_runtime.operators", _EXPORT_RUNTIME_DIR / "operators.py"),
-    ("export_runtime.aggregates", _EXPORT_RUNTIME_DIR / "aggregates.py"),
-    ("export_runtime.math", _EXPORT_RUNTIME_DIR / "math.py"),
-    ("export_runtime.text", _EXPORT_RUNTIME_DIR / "text.py"),
-    ("export_runtime.logic", _EXPORT_RUNTIME_DIR / "logic.py"),
-    ("export_runtime.reference", _EXPORT_RUNTIME_DIR / "reference.py"),
-    ("export_runtime.offset", _EXPORT_RUNTIME_DIR / "offset.py"),
-    ("export_runtime.info", _EXPORT_RUNTIME_DIR / "info.py"),
-    ("export_runtime.error_funcs", _EXPORT_RUNTIME_DIR / "error_funcs.py"),
-]
-
-# Export runtime modules (representation-specific implementations); order preserved for iteration.
-_RUNTIME_MODULES: list[tuple[str, Path]] = [
-    ("math", _RUNTIME_DIR / "math.py"),
-    ("text", _RUNTIME_DIR / "text.py"),
-    ("info", _RUNTIME_DIR / "info.py"),
-    ("datetime", _RUNTIME_DIR / "datetime.py"),
-    ("logic", _RUNTIME_DIR / "logic.py"),
-    ("lookup", _RUNTIME_DIR / "lookup.py"),
-    ("reference", _RUNTIME_DIR / "reference.py"),
-    ("offset_runtime", _RUNTIME_DIR / "offset_runtime.py"),
-    ("leaves", _RUNTIME_DIR / "leaves.py"),
-    ("cache_context", _RUNTIME_DIR / "cache_context.py"),
-    ("cache_eval_slim", _RUNTIME_DIR / "cache_eval_slim.py"),
-    ("cache", _RUNTIME_DIR / "cache.py"),
-]
-
-_SLIM_CACHE_EVAL_SYMBOLS = frozenset(
-    {
-        "EvalContext",
-        "_evaluate_address",
-        "xl_cell",
-        "xl_eval",
-    }
-)
-_SLIM_CACHE_EVAL_MODULE = "cache_eval_slim"
-_FULL_CACHE_EVAL_MODULE = "cache"
-_FULL_EVAL_CONTEXT_SYMBOL = "EvalContext"
-
-# All modules in registration order. Symbol collisions resolve to the module
-# registered last, so export_runtime overrides shared core/runtime symbols in
-# emitted code without changing what the evaluator imports.
-_ALL_MODULES: list[tuple[str, Path]] = _CORE_MODULES + _RUNTIME_MODULES + _EXPORT_RUNTIME_MODULES
-_ALL_MODULE_NAMES: list[str] = [name for name, _ in _ALL_MODULES]
 
 # Top-level names that are stdlib so emitted "import X" order satisfies ruff isort (I001).
 _ISORT_STDLIB: frozenset[str] = frozenset(
@@ -389,49 +332,21 @@ def _prune_import_lines(import_lines: list[str], *, used_names: set[str]) -> lis
     return deduped
 
 
-def runtime_cache_seed_symbols(*, include_dep_tracking: bool) -> set[str]:
-    """Return cache-eval symbol names for ``emit_runtime`` seeding."""
-    symbols = {
-        "EvalContext",
-        "coerce_inputs_dict",
-        "prepare_context_inputs",
-        "xl_cell",
-        "xl_eval",
-        "xl_range",
-    }
-    if include_dep_tracking:
-        symbols.add("xl_circular_reference")
-    return symbols
-
-
 def _register_runtime_symbol_maps(
     defs_by_module: dict[str, dict[str, ast.AST]],
-    *,
-    include_dep_tracking: bool,
 ) -> tuple[dict[str, ast.AST], dict[str, str]]:
-    """Build symbol lookup tables for ``emit_runtime``.
+    """Build symbol lookup tables for `emit_runtime`.
 
-    Modules register in ``_ALL_MODULES`` order; later modules override earlier
+    Modules register in caller order; later modules override earlier
     definitions with the same name. Export-runtime wrappers therefore replace
-    shared ``core``/``runtime`` symbols in emitted code while the evaluator
-    keeps importing the shared versions directly.
-
-    Export-runtime wrappers override shared ``core``/``runtime`` symbols in emitted
-    code while delegating to ``core/*_funcs`` implementations for shared logic.
+    shared `core` symbols in emitted code while the evaluator keeps importing
+    the shared versions directly.
     """
     symbol_to_node: dict[str, ast.AST] = {}
     symbol_to_module: dict[str, str] = {}
 
     for mod, defs in defs_by_module.items():
         for name, node in defs.items():
-            if include_dep_tracking:
-                if mod == _SLIM_CACHE_EVAL_MODULE and name in _SLIM_CACHE_EVAL_SYMBOLS:
-                    continue
-            else:
-                if mod == _FULL_CACHE_EVAL_MODULE and name in _SLIM_CACHE_EVAL_SYMBOLS:
-                    continue
-                if mod == "cache_context" and name == _FULL_EVAL_CONTEXT_SYMBOL:
-                    continue
             symbol_to_node[name] = node
             symbol_to_module[name] = mod
 
@@ -446,33 +361,18 @@ def _format_emitted_symbol_source(symbol: str, module_src: str, node: ast.AST) -
 def emit_runtime(
     required_symbols: set[str],
     *,
-    include_offset_table: bool,
-    include_dep_tracking: bool = True,
-    include_operators_fastpath: bool = True,
-    extra_modules: Sequence[tuple[str, Path]] = (),
-    modules: Sequence[tuple[str, Path]] | None = None,
+    modules: Sequence[tuple[str, Path]],
 ) -> str:
-    """Emit standalone runtime code for generated output.
+    """Emit standalone runtime code from an explicit module list.
 
-    When ``include_dep_tracking`` is False, the slim cache eval scaffold is emitted
-    instead of the invalidating ``EvalContext`` helpers.
+    Later modules override earlier symbols with the same name.
 
-    When ``include_operators_fastpath`` is False, stub fast-path functions that
-    always fall back to the reference loops are embedded instead of the vectorized
-    implementation.
-
-    ``extra_modules`` names additional ``(module, path)`` sources whose symbols
-    may be requested; they register after the export runtime. ``modules``
-    replaces the whole module list; later modules override earlier symbols.
+    Args:
+        required_symbols: Names that must appear in the emitted source.
+        modules: `(module_name, path)` sources to parse. Order is registration
+            order; later entries win on name collisions.
     """
-    all_modules = (
-        list(modules)
-        if modules is not None
-        else _core_modules(include_operators_fastpath=include_operators_fastpath)
-        + _RUNTIME_MODULES
-        + _EXPORT_RUNTIME_MODULES
-        + list(extra_modules)
-    )
+    all_modules = list(modules)
     all_module_names = [name for name, _ in all_modules]
 
     # Parse all runtime and core modules.
@@ -489,31 +389,13 @@ def emit_runtime(
         defs_by_module[mod_name] = _top_level_defs(mod_ast)
         imports_by_module[mod_name] = _collect_external_import_lines(mod_ast, src)
 
-    symbol_to_node, symbol_to_module = _register_runtime_symbol_maps(
-        defs_by_module,
-        include_dep_tracking=include_dep_tracking,
-    )
+    symbol_to_node, symbol_to_module = _register_runtime_symbol_maps(defs_by_module)
 
     # Dependency graph between runtime symbols.
     symbol_deps: dict[str, set[str]] = {}
     for name, node in symbol_to_node.items():
         refs = _referenced_names(node)
         symbol_deps[name] = {r for r in refs if r in symbol_to_node and r != name}
-
-    # `HelperCacheKey` is only named in `EvalContextBase` field annotations.
-    # Annotation identifiers are ignored by `_RuntimeNameCollector` (avoids an
-    # `EvalContext` ↔ `EvalContextBase` cycle via the resolver annotation), so
-    # wire the alias explicitly whenever the context base is emitted.
-    if "EvalContextBase" in symbol_deps and "HelperCacheKey" in symbol_to_node:
-        symbol_deps["EvalContextBase"].add("HelperCacheKey")
-    # RangeWatch is only referenced from full `EvalContext` annotations / helpers.
-    # Slim aliases `EvalContext = EvalContextBase` and must not pull the alias in.
-    if (
-        "EvalContext" in symbol_deps
-        and "RangeWatch" in symbol_to_node
-        and symbol_to_module.get("EvalContext") == "cache_context"
-    ):
-        symbol_deps["EvalContext"].add("RangeWatch")
 
     seed = set(required_symbols) | {
         "XlError",

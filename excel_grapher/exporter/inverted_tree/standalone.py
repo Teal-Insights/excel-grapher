@@ -89,9 +89,6 @@ def build_runtime_modules(runtime_source: str) -> dict[str, str]:
     } | set(_ALWAYS_REQUIRED)
     excel = emit_runtime(
         required,
-        include_offset_table=False,
-        include_dep_tracking=False,
-        include_operators_fastpath=False,
         modules=_MODULES,
     )
     excel = excel.replace(
