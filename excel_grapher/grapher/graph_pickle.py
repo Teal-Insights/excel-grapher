@@ -1,9 +1,9 @@
 """Low-peak pickle encoding for `DependencyGraph`.
 
 CPython's unpickler memo retains every reconstructed object until `pickle.load`
-returns. The legacy `__getstate__` format therefore peaks near 2x final size:
-indexed adjacency sets sit in the memo while `__setstate__` builds the live
-string-keyed maps beside them.
+returns. A single state-dict pickle would therefore peak near 2x final size:
+indexed adjacency sets sit in the memo while live string-keyed maps are built
+beside them.
 
 This module writes a two-frame payload (nodes, then COO edges). Each frame's
 unpickler is discarded before the next frame is read, so peak stays close to

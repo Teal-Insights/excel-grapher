@@ -55,7 +55,7 @@ def _shock_series(
         "sheet": "Risks",
         "data_range": "Risks!B2:C3",
         "layout": "matrix",
-        "input": {"setter": {"name": f"set_{series_id}"}},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",

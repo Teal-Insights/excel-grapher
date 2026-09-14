@@ -4,30 +4,6 @@ Canonical implementation: `excel_grapher.exporter.codegen.CodeGenerator`.
 Package export is `generate_modules()` and requires series bindings.
 """
 
-from excel_grapher.series_bindings.docstring_renderers import (
-    GoogleSeriesDocstringRenderer,
-    NumpySeriesDocstringRenderer,
-    PlainSeriesDocstringRenderer,
-    RstSeriesDocstringRenderer,
-    SeriesDocstringRenderCallable,
-    SeriesDocstringRenderer,
-    SeriesDocstringRendererName,
-    SeriesDocstringRendererSpec,
-    resolve_series_docstring_renderer,
-)
-from excel_grapher.series_bindings.docstrings import (
-    FieldDoc,
-    SeriesBindingDocstringCallback,
-    SeriesBindingDocstringCallbackSpec,
-    SeriesBindingDocstringContext,
-    SeriesBindingDocstringContract,
-    SeriesFunctionDoc,
-    list_series_docstring_callbacks,
-    register_series_docstring_callback,
-    resolve_series_docstring_callback,
-    unregister_series_docstring_callback,
-)
-
 from .codegen import CodeGenerator
 from .lightweight_viz import (
     WebVizPayload,
@@ -109,20 +85,6 @@ __all__ = [
     "register_projection_manifest",
     "resolve_projection_manifest",
     "unregister_projection_manifest",
-    "FieldDoc",
-    "GoogleSeriesDocstringRenderer",
-    "NumpySeriesDocstringRenderer",
-    "PlainSeriesDocstringRenderer",
-    "RstSeriesDocstringRenderer",
-    "SeriesDocstringRenderCallable",
-    "SeriesDocstringRenderer",
-    "SeriesDocstringRendererName",
-    "SeriesDocstringRendererSpec",
-    "SeriesBindingDocstringCallback",
-    "SeriesBindingDocstringCallbackSpec",
-    "SeriesBindingDocstringContext",
-    "SeriesBindingDocstringContract",
-    "SeriesFunctionDoc",
     "LAYOUT_STRATIFIED_MULTIPARTITE",
     "LAYOUT_SPRING",
     "LAYOUT_FORCEATLAS2",
@@ -135,9 +97,4 @@ __all__ = [
     "register_web_viz_layout",
     "resolve_web_viz_layout",
     "unregister_web_viz_layout",
-    "list_series_docstring_callbacks",
-    "register_series_docstring_callback",
-    "resolve_series_docstring_callback",
-    "unregister_series_docstring_callback",
-    "resolve_series_docstring_renderer",
 ]

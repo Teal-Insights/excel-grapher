@@ -18,7 +18,6 @@ This is a greenfield project with no users, so we are free to make design decisi
 
 Use **Google-style** docstrings in `excel_grapher/` (see `.cursor/rules/docstrings.mdc`).
 Use single backticks for inline code in docstrings (not reST double-backtick literals).
-Series-binding codegen defaults to the `google` renderer.
 
 ## Documentation site (great-docs)
 

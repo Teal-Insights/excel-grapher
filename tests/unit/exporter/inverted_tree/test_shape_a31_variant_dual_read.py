@@ -145,7 +145,7 @@ def _stats_entry(*, sheets: list[str], data_range: list[str]) -> dict[str, Any]:
         "data_range": data_range,
         "layout": "matrix",
         "exclude_columns": ["E"],
-        "input": {"setter": {"name": "set_stats", "record_contract": "records", "strict": True}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [
@@ -226,7 +226,7 @@ def _row_indicator_bindings() -> dict[str, Any]:
         "sheet": ["Stress", "Combo"],
         "data_range": ["Stress!B2", "Stress!B4", "Combo!B2", "Combo!B4"],
         "layout": "matrix",
-        "input": {"setter": {"name": "set_stats"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [
@@ -290,8 +290,6 @@ def test_variant_dual_read_is_keyed(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     fdi = deps["fdi"]
     assert "stats" in fdi.param_ids
-    assert "stats" in fdi.keyed_ids
-    assert "stats" not in fdi.lagged_ids
     assert "stats" not in fdi.aligned_ids
     assert catalog.get("stats").cells == (
         "Stress!D2",
@@ -326,9 +324,7 @@ def test_two_year_host_same_pins_is_keyed(tmp_path: Path) -> None:
     """Each year rereads `$D$2`/`$F$2`; catalog slots still differ by sheet."""
     workbook = write_workbook(tmp_path / "a31_years.xlsx", _two_year_sheets())
     catalog, deps, graph = inverted_graph_parts(workbook, _two_year_bindings())
-    fdi = deps["fdi"]
-    assert "stats" in fdi.keyed_ids
-    assert "stats" not in fdi.lagged_ids
+    deps["fdi"]
     document = _two_year_bindings()
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a31_years")
     cells = ["Stress!E19", "Stress!F19", "Combo!E19", "Combo!F19"]
@@ -354,9 +350,7 @@ def test_row_pinned_indicator_dual_read_is_keyed(tmp_path: Path) -> None:
     """Two `$`-pinned row labels still bind `SCENARIO` as `host`."""
     workbook = write_workbook(tmp_path / "a31_rows.xlsx", _row_indicator_sheets())
     catalog, deps, graph = inverted_graph_parts(workbook, _row_indicator_bindings())
-    fdi = deps["fdi"]
-    assert "stats" in fdi.keyed_ids
-    assert "stats" not in fdi.lagged_ids
+    deps["fdi"]
     document = _row_indicator_bindings()
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
@@ -385,9 +379,7 @@ def test_cross_sheet_pin_keeps_other_scenario_literal(tmp_path: Path) -> None:
     """A `$` pin on another sheet still freezes that `sheet_name` key."""
     workbook = write_workbook(tmp_path / "a31_cross.xlsx", _cross_sheet_sheets())
     catalog, deps, graph = inverted_graph_parts(workbook, _cross_sheet_bindings())
-    fdi = deps["fdi"]
-    assert "stats" in fdi.keyed_ids
-    assert "stats" not in fdi.lagged_ids
+    deps["fdi"]
     document = _cross_sheet_bindings()
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]

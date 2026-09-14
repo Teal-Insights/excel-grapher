@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Any, Literal, cast
@@ -895,28 +895,6 @@ class SeriesDeps:
       irregular-gather joins already taken to the host walk. When
       `fit_affine_map` is `None`, `index_maps` keeps the observed catalog
       slots (#695).
-    - `lagged_ids` — a producer read at two or more `TIME_PERIOD`s whose
-      positions both shift with the host (`t` and `t-1`). A constant pair
-      (`$A$8` / `$A$9` from every member) is a static catalog read, not a
-      lag (#681). An aligned year plus a pinned origin (`baseline[t]` and
-      `baseline[2026]`) is a keyed pair, not a lag (#735).
-    - `keyed_ids` — each producer slot is a key of host-aligned and/or
-      literal fields: same-year outer keys (`gdp[Baseline, t]` /
-      `gdp[Stress, t]`, #733), mixed relative + absolute years
-      (`baseline[t]` / `baseline[2026]`, #735), same-sheet `$` pins
-      of a `sheet_name` key (`stats[s, mean]` / `stats[s, stdev]`,
-      #737), a shared key whose host and producer vocabularies
-      differ (`B1` vs `Bounds Test 1: …`, #739), an `IF` then/else
-      pair of producer `SCENARIO`s that is a function of the host
-      row (`paths[B2.1, t]` / `paths[B2.2, t]` vs `B6.1` / `B6.2`,
-      #752), or an N-way catalog along one lookup axis of a joined
-      producer (`CHOOSE(k, p[t0], …, p[tn])` / a sum of that
-      year-row, #754). A field whose value set is the same for every
-      multi-read member of a joined partition is a lookup axis and
-      stays a literal even when one value equals the host year.
-      Partitions may have different sets (#760). `$` freezes the
-      row/column bind axis, not the sheet. Catalog-slot adjacency is
-      not a lag.
     - `lookup_ids` — `whole` / `dynamic` table reads
     - `is_scan` / `seed_id` / `scan_direction` — self-lags discharged by
       loop order. A relative other-series read at `schedule_coord` ± 1 is
@@ -935,8 +913,6 @@ class SeriesDeps:
     seed_id: str | None
     aligned_ids: frozenset[str]
     lookup_ids: frozenset[str]
-    lagged_ids: frozenset[str]
-    keyed_ids: frozenset[str]
     index_maps: dict[str, tuple[int, ...]]
     affine_maps: dict[str, tuple[int, int]]
     scan_direction: Literal["forward", "reversed"] = "forward"
@@ -1407,89 +1383,6 @@ def collect_series_edges(
     return refine_access_classes(collector.edges, catalog)
 
 
-def requires_catalog_instance_ranges(
-    scc: Sequence[str], catalog: SeriesCatalog, graph: DependencyGraph | None
-) -> bool:
-    """Whether a range reads members of the SCC's still-growing series.
-
-    Catalog-slot range emission needs completed arrays or instance callbacks.
-    Fused buffers use schedule order and cannot provide that interface.
-    """
-    if graph is None:
-        return False
-    members = frozenset(scc)
-
-    def visits_range(node: AstNode, host: CanonicalAddress) -> bool:
-        if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
-            return any(
-                (owner := catalog.series_for(address)) is not None
-                and owner.series_id in members
-                and not address_in_blank_ranges(address, current_blank_rects())
-                for address in iter_ref_addresses(node, host, graph)
-            )
-        if isinstance(node, BinaryOpNode):
-            return visits_range(node.left, host) or visits_range(node.right, host)
-        if isinstance(node, UnaryOpNode):
-            return visits_range(node.operand, host)
-        if isinstance(node, FunctionCallNode):
-            return any(visits_range(arg, host) for arg in node.args)
-        return False
-
-    return any(
-        ast is not None and visits_range(ast, address)
-        for sid in scc
-        for address in catalog.get(sid).cells
-        for ast in (try_formula_ast(graph, address),)
-    )
-
-
-def requires_demand_driven(
-    series: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    graph: DependencyGraph | None = None,
-    edges: Sequence[DependenceEdge] | None = None,
-) -> bool:
-    """True when a same-series ref cannot be discharged by a scan.
-
-    Forward self-lags whose schedule distances are all positive (`t-k`,
-    including mixed `{t-1, t-2}`) use a fused scan. Unit backward recursion
-    (`value_t = value_{t+1} * k`) uses a reversed scan. Mixed directions and
-    irregular self-refs fall through to demand-driven.
-
-    `edges` should be the already-collected edges of `series` (or the
-    catalog). When omitted, the formulas are walked via `graph`.
-    """
-    if edges is None:
-        if graph is None:
-            raise TypeError("requires_demand_driven requires edges or graph")
-        series_edges: Sequence[DependenceEdge] = collect_series_edges(
-            series, catalog=catalog, graph=graph
-        )
-    else:
-        series_edges = edges
-    self_edges = [
-        edge
-        for edge in series_edges
-        if edge.consumer_id == series.series_id and edge.producer_id == series.series_id
-    ]
-    if not self_edges:
-        return False
-    if all(edge.distance > 0 for edge in self_edges):
-        return False
-
-    is_backward = True
-    for edge in self_edges:
-        host_index = series.index_of(edge.consumer_cell)
-        if host_index is None:
-            return True
-        succ = successor_address(series, host_index, catalog, graph)
-        if succ is None or edge.producer_cell != succ:
-            is_backward = False
-            break
-    return not is_backward
-
-
 def collect_catalog_edges(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
@@ -1506,14 +1399,6 @@ def collect_catalog_edges(
         by_consumer[series.series_id] = series_edges
         collected.extend(series_edges)
     return CatalogEdges(edges=tuple(collected), by_consumer=by_consumer)
-
-
-def collect_all_dependence_edges(
-    catalog: SeriesCatalog,
-    graph: DependencyGraph,
-) -> tuple[DependenceEdge, ...]:
-    """Collect instance-level edges from every formula series to bound producers."""
-    return collect_catalog_edges(catalog, graph).edges
 
 
 def _int_key(value: object) -> int | None:
@@ -2290,8 +2175,6 @@ def series_deps_from_edges(
     index_maps: dict[str, tuple[int, ...]] = {}
     affine_maps: dict[str, tuple[int, int]] = {}
     aligned: set[str] = set()
-    lagged: set[str] = set()
-    keyed: set[str] = set()
     host_n = len(host.cells)
     identity_by_producer: dict[str, list[DependenceEdge]] = {}
     for edge in edges:
@@ -2316,10 +2199,8 @@ def series_deps_from_edges(
         )
         multi = {host_i: indices for host_i, indices in per_host.items() if len(indices) > 1}
         if multi and _is_consistent_lag(host, dep, per_host, graph):
-            lagged.add(series_id)
             continue
         if multi and _is_keyed_multi_read(host, dep, per_host, graph):
-            keyed.add(series_id)
             continue
         static_catalog = origin is not None and origin[0] == 0
         if static_catalog and any(len(indices) > 1 for indices in per_host.values()):
@@ -2329,7 +2210,6 @@ def series_deps_from_edges(
         if multi:
             # Several literal producer coordinates read by one member. Named
             # bodies spell each coordinate out; no positional class is needed.
-            keyed.add(series_id)
             continue
         for host_i, indices in per_host.items():
             slots[host_i] = next(iter(indices))
@@ -2371,8 +2251,6 @@ def series_deps_from_edges(
         seed_id=seed_id,
         aligned_ids=frozenset(aligned),
         lookup_ids=frozenset(lookup_ids),
-        lagged_ids=frozenset(lagged),
-        keyed_ids=frozenset(keyed),
         index_maps=index_maps,
         affine_maps=affine_maps,
         scan_direction=scan_direction,
@@ -2429,273 +2307,6 @@ def leaf_closure(
         sid for sid in catalog.order if sid in seen and catalog.get(sid).direction == "constant"
     ]
     return tuple(inputs + constants)
-
-
-def predecessor_closure(
-    indices: Sequence[int],
-    distances: Sequence[int] = (1,),
-) -> tuple[int, ...]:
-    """Return `indices` closed under each positive lag in `distances`.
-
-    The default `distances=(1,)` is the unit-lag scan: wanting `{2, 4}` needs
-    `{0, 1, 2, 3, 4}`. A stride-`k` recurrence passes `distances=(k,)`. The
-    closure is the lag graph, not a string-processing `1..max` rule.
-    """
-    from excel_grapher.exporter.inverted_tree.schedule import IndexSet
-
-    return IndexSet.from_indices(indices).closure_under(distances).materialize()
-
-
-def plan_indices(
-    output: BoundSeries,
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    scc_map: dict[str, tuple[str, ...]] | None = None,
-) -> tuple[dict[str, tuple[int, ...]], dict[str, tuple[int, ...]]]:
-    """Plan catalog indices each series must yield, working backward from `output`.
-
-    Returns `(result_indices, call_indices)`:
-
-    - `result_indices[id]`: catalog positions consumers need from `id`
-    - `call_indices[id]`: positions a formula series actually computes (scan
-      edges expand via `predecessor_closure`)
-
-    Lookup / constrained tables stay identity (full catalog). A scan that
-    consumes an elementwise series wins: the scan's closure is unioned into
-    that series' needed set.
-
-    Multi-series lag zippers are one call: every member is computed for the
-    full catalog (the year loop cannot skip a prefix). Consumers then `take`.
-    A nested fused nest indexes external producers with `_area` in catalog
-    space, so those leaves stay identity too.
-    """
-    result: dict[str, tuple[int, ...]] = {
-        output.series_id: tuple(range(len(output.cells))),
-    }
-    call: dict[str, tuple[int, ...]] = {}
-
-    def add_result(series_id: str, indices: tuple[int, ...]) -> None:
-        previous = result.get(series_id)
-        if previous is None:
-            result[series_id] = tuple(sorted(set(indices)))
-            return
-        result[series_id] = tuple(sorted(set(previous) | set(indices)))
-
-    formula_ids = formula_closure(output.series_id, catalog=catalog, deps=deps, scc_map=scc_map)
-    processed_sccs: set[tuple[str, ...]] = set()
-    for host_id in reversed(formula_ids):
-        scc = (scc_map or {}).get(host_id, (host_id,))
-        if len(scc) > 1:
-            if scc in processed_sccs:
-                continue
-            processed_sccs.add(scc)
-            if not any(sid in result for sid in scc):
-                continue
-            members = set(scc)
-            for sid in scc:
-                full = tuple(range(len(catalog.get(sid).cells)))
-                if sid not in result:
-                    add_result(sid, full)
-                call[sid] = full
-            for sid in scc:
-                _propagate_param_indices(
-                    deps[sid],
-                    call[sid],
-                    catalog=catalog,
-                    skip=members,
-                    add_result=add_result,
-                )
-            if _scc_is_nested(scc, catalog):
-                for sid in scc:
-                    for param_id in deps[sid].param_ids:
-                        if param_id in members:
-                            continue
-                        dep = catalog.get(param_id)
-                        if dep.is_sequence:
-                            add_result(param_id, tuple(range(len(dep.cells))))
-            continue
-        info = deps[host_id]
-        if host_id not in result:
-            continue
-        host_result = result[host_id]
-        host_call = predecessor_closure(host_result) if info.is_scan else host_result
-        host = catalog.get(host_id)
-        full = tuple(range(len(host.cells)))
-        # A sliced buffer changes the loop's integer origin. Region branches
-        # and non-identity producer reads still refer to the full host walk.
-        # Keep that walk intact, then project the published result.
-        identity_only = all(
-            not catalog.get(param_id).is_sequence
-            or (
-                param_id in info.aligned_ids
-                and param_id not in info.affine_maps
-                and info.index_maps.get(param_id, full) == full
-            )
-            for param_id in info.param_ids
-        )
-        prefix = host_call == tuple(range(len(host_call)))
-        if (
-            not identity_only
-            or (not prefix and len(host.statements) > 1)
-            or (info.is_scan and info.scan_direction == "reversed")
-        ):
-            host_call = full
-        call[host_id] = host_call
-        _propagate_param_indices(
-            info,
-            host_call,
-            catalog=catalog,
-            skip=set(),
-            add_result=add_result,
-        )
-    return result, call
-
-
-def _scc_is_nested(scc: tuple[str, ...], catalog: SeriesCatalog) -> bool:
-    """True when `scc` spans more than one outer-key partition."""
-    seen: set[tuple[object, ...]] = set()
-    for sid in scc:
-        for address in catalog.get(sid).cells:
-            part = schedule_partition(address, catalog)
-            if part:
-                seen.add(part)
-            if len(seen) > 1:
-                return True
-    return False
-
-
-def _propagate_param_indices(
-    info: SeriesDeps,
-    host_call: tuple[int, ...],
-    *,
-    catalog: SeriesCatalog,
-    skip: set[str],
-    add_result: Callable[[str, tuple[int, ...]], None],
-) -> None:
-    """Union consumer indices into each first-level param of `info`."""
-    for param_id in info.param_ids:
-        if param_id in skip:
-            continue
-        dep = catalog.get(param_id)
-        if param_id in info.lookup_ids:
-            add_result(param_id, tuple(range(len(dep.cells))))
-            continue
-        if dep.is_scalar:
-            add_result(param_id, tuple(range(len(dep.cells))))
-            continue
-        affine = info.affine_maps.get(param_id)
-        if affine is not None:
-            from excel_grapher.exporter.inverted_tree.schedule import IndexSet
-
-            coeff, offset = affine
-            add_result(
-                param_id,
-                IndexSet.from_indices(host_call).map_affine(coeff, offset).materialize(),
-            )
-            continue
-        index_map = info.index_maps.get(param_id)
-        if index_map is None:
-            add_result(param_id, tuple(range(len(dep.cells))))
-            continue
-        add_result(param_id, tuple(index_map[index] for index in host_call))
-
-
-def formula_closure(
-    root_id: str,
-    *,
-    catalog: SeriesCatalog,
-    deps: dict[str, SeriesDeps],
-    scc_map: dict[str, tuple[str, ...]] | None = None,
-) -> tuple[str, ...]:
-    """Return formula series in the subgraph of `root_id` (bindings order, topo).
-
-    Period-lag zipper SCCs are a single unit so they do not fail the DAG sort.
-    """
-    seen: set[str] = set()
-    stack = [root_id]
-    while stack:
-        current = stack.pop()
-        if current in seen:
-            continue
-        seen.add(current)
-        info = deps.get(current)
-        if info is None:
-            continue
-        for param_id in info.param_ids:
-            if catalog.get(param_id).is_formula_series:
-                stack.append(param_id)
-    formula_ids = [
-        sid for sid in catalog.order if sid in seen and catalog.get(sid).is_formula_series
-    ]
-    if scc_map is None:
-        return tuple(_topo_sort(formula_ids, deps=deps))
-    units: list[tuple[str, ...]] = []
-    seen_units: set[tuple[str, ...]] = set()
-    for sid in formula_ids:
-        unit = scc_map.get(sid, (sid,))
-        if unit not in seen_units:
-            seen_units.add(unit)
-            units.append(unit)
-    return tuple(sid for unit in _topo_units(units, deps=deps, scc_map=scc_map) for sid in unit)
-
-
-def _topo_units(
-    units: Sequence[tuple[str, ...]],
-    *,
-    deps: dict[str, SeriesDeps],
-    scc_map: dict[str, tuple[str, ...]],
-) -> list[tuple[str, ...]]:
-    """Topologically sort SCC supernodes (dependencies first)."""
-    selected = set(units)
-    remaining = set(units)
-    ordered: list[tuple[str, ...]] = []
-    while remaining:
-        ready = [
-            unit
-            for unit in units
-            if unit in remaining
-            and all(
-                scc_map.get(pid, (pid,)) not in remaining
-                for sid in unit
-                for pid in (deps[sid].param_ids if sid in deps else ())
-                if scc_map.get(pid, (pid,)) in selected and scc_map.get(pid, (pid,)) != unit
-            )
-        ]
-        if not ready:
-            raise InvertedTreeExportError(
-                f"cyclic formula-series dependencies among "
-                f"{sorted({sid for unit in remaining for sid in unit})}"
-            )
-        for unit in ready:
-            remaining.remove(unit)
-            ordered.append(unit)
-    return ordered
-
-
-def _topo_sort(series_ids: Iterable[str], *, deps: dict[str, SeriesDeps]) -> list[str]:
-    selected = set(series_ids)
-    remaining = set(selected)
-    ordered: list[str] = []
-    while remaining:
-        ready = [
-            sid
-            for sid in series_ids
-            if sid in remaining
-            and all(
-                pid not in remaining
-                for pid in (deps[sid].param_ids if sid in deps else ())
-                if pid in selected
-            )
-        ]
-        if not ready:
-            raise InvertedTreeExportError(
-                f"cyclic formula-series dependencies among {sorted(remaining)}"
-            )
-        for sid in ready:
-            remaining.remove(sid)
-            ordered.append(sid)
-    return ordered
 
 
 def assert_subgraph_bound(

@@ -127,7 +127,6 @@ class ConstantSeriesCell(TypedDict):
 
 class ConstantSeries(TypedDict):
     id: str
-    reader_name: str
     key_fields: list[str]
     requires_address: bool
     cells: list[ConstantSeriesCell]

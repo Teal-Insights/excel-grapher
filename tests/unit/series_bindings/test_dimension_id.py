@@ -23,7 +23,6 @@ from excel_grapher.series_bindings import (
     resolve_series_binding,
     validate_series_bindings,
 )
-from excel_grapher.series_bindings.docstrings import derive_doc_contract
 from excel_grapher.series_bindings.normalize import effective_dimension_id
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
@@ -54,7 +53,7 @@ def _reference_period_series(**overrides: Any) -> dict[str, Any]:
         "sheet": "Inputs",
         "data_range": "Inputs!F5:H5",
         "layout": "series",
-        "input": {"setter": {"name": "set_gdp_vs_reference"}},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -234,37 +233,6 @@ def test_resolve_dimensions_sharing_concept(tmp_path: Path) -> None:
     assert leaf["record"]["OBS_VALUE"] == 2.0
 
 
-# --- setter codegen round trip ---
-
-
-def test_doc_contract_fields_use_dimension_id(tmp_path: Path) -> None:
-    wb_path, graph = _reference_period_graph(tmp_path)
-    bindings = validate_bindings_document(_reference_period_document())
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(
-        graph,
-        wb_path,
-        series,
-        concept_scheme=bindings.get("concept_scheme"),
-        direction="input",
-    )
-
-    contract = derive_doc_contract(
-        series,
-        function_kind="setter",
-        function_name="set_gdp_vs_reference",
-        resolution=resolved,
-        bindings=bindings,
-    )
-
-    assert "REFERENCE_TIME_PERIOD" in contract.fields
-    assert contract.required_fields == ("TIME_PERIOD", "REFERENCE_TIME_PERIOD", "OBS_VALUE")
-    reference = contract.fields["REFERENCE_TIME_PERIOD"]
-    # dtype and human name resolve through the underlying TIME_PERIOD concept
-    assert reference.dtype == "int"
-    assert reference.concept_name == "Time period"
-
-
 # --- per-dimension dtype (same concept, different storage type) ---
 
 
@@ -348,33 +316,6 @@ def test_resolve_series_context_uses_dimension_dtype(tmp_path: Path) -> None:
     assert resolved["ok"] is True, resolved["issues"]
     record = resolved["leaves"][0]["record"]
     assert record["REFERENCE_TIME_PERIOD"] == datetime(2019, 1, 15)
-
-
-def test_doc_contract_reports_dimension_dtype(tmp_path: Path) -> None:
-    wb_path, graph = _reference_period_graph(tmp_path)
-    doc = _reference_period_document()
-    doc["series"][0] = _reference_date_series()
-    bindings = validate_bindings_document(doc)
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(
-        graph,
-        wb_path,
-        series,
-        concept_scheme=bindings.get("concept_scheme"),
-        direction="input",
-    )
-
-    contract = derive_doc_contract(
-        series,
-        function_kind="setter",
-        function_name="set_gdp_vs_reference",
-        resolution=resolved,
-        bindings=bindings,
-    )
-
-    # declared per-dimension dtype wins over the shared concept's int dtype
-    assert contract.fields["REFERENCE_TIME_PERIOD"].dtype == "datetime"
-    assert contract.fields["TIME_PERIOD"].dtype == "int"
 
 
 def test_validate_warns_on_dimension_dtype_read_mismatch(tmp_path: Path) -> None:

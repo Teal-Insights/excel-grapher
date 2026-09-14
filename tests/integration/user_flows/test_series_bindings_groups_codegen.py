@@ -48,7 +48,7 @@ def _row_series(
         "key": ["TIME_PERIOD"],
     }
     if direction == "input":
-        entry["input"] = {"setter": {"name": f"set_{series_id}"}}
+        entry["input"] = {}
     else:
         entry["output"] = {"compute": {"name": f"compute_{series_id}"}}
     if groups is not None:

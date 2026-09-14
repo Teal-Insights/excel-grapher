@@ -26,7 +26,6 @@ from excel_grapher.core.formula_ast import (
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
-    cell_ref_from_a1,
 )
 from excel_grapher.core.types import XlError
 
@@ -112,9 +111,7 @@ def _axis_from_json(payload: object) -> AxisRef:
     raise TypeError(f"unknown axis kind: {kind!r}")
 
 
-def _cell_ref_from_json(payload: object, *, legacy_a1: object = None) -> CellRef:
-    if isinstance(legacy_a1, str):
-        return cell_ref_from_a1(legacy_a1)
+def _cell_ref_from_json(payload: object) -> CellRef:
     if not isinstance(payload, dict):
         raise TypeError("cell ref payload must be an object")
     d = cast(_JsonObject, payload)
@@ -172,15 +169,11 @@ def ast_from_json(payload: object) -> AstNode:
             raise TypeError(f"unknown Excel error literal: {value!r}")
         return ErrorNode(error)
     if tag == "cell":
-        return CellRefNode(_cell_ref_from_json(d, legacy_a1=d.get("v")))
+        return CellRefNode(_cell_ref_from_json(d))
     if tag == "range":
-        start = d.get("s")
-        end = d.get("e")
         return RangeNode(
-            start_ref=_cell_ref_from_json(
-                start, legacy_a1=start if isinstance(start, str) else None
-            ),
-            end_ref=_cell_ref_from_json(end, legacy_a1=end if isinstance(end, str) else None),
+            start_ref=_cell_ref_from_json(d.get("s")),
+            end_ref=_cell_ref_from_json(d.get("e")),
         )
     if tag == "whole_col":
         sheet = d.get("sheet")

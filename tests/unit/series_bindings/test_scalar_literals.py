@@ -7,5 +7,7 @@ from datetime import datetime
 from excel_grapher.series_bindings.scalar_literals import py_scalar_literal
 
 
-def test_py_scalar_literal_datetime() -> None:
+def test_py_scalar_literal_bool_and_datetime() -> None:
+    assert py_scalar_literal(True) == "True"
+    assert py_scalar_literal(False) == "False"
     assert py_scalar_literal(datetime(2024, 1, 1)) == "datetime.datetime(2024, 1, 1, 0, 0)"

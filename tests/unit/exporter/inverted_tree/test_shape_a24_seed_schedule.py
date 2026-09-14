@@ -387,7 +387,7 @@ def _nest_entry(series_id: str, data_range: str, *, header_row: int, label_colum
             ],
         },
         "key": ["COUNTRY", "TIME_PERIOD"],
-        "input": {"setter": {"name": f"set_{series_id}"}},
+        "input": {},
     }
 
 

@@ -16,14 +16,6 @@ from excel_grapher.series_bindings.types import (
 )
 
 
-def _reader_name(series: dict[str, Any], resolved: SeriesResolution) -> str:
-    constant_block = series.get("constant") or {}
-    reader = constant_block.get("reader") if isinstance(constant_block, dict) else None
-    if isinstance(reader, dict) and reader.get("name"):
-        return str(reader["name"])
-    return f"read_{resolved['series_id']}"
-
-
 def _build_constant_series(
     resolved: SeriesResolution,
     series: dict[str, Any],
@@ -31,7 +23,6 @@ def _build_constant_series(
 ) -> ConstantSeries:
     return {
         "id": resolved["series_id"],
-        "reader_name": _reader_name(series, resolved),
         "key_fields": [str(field) for field in (series.get("key") or [])],
         "requires_address": resolved["requires_address"],
         "cells": cells,
@@ -45,11 +36,11 @@ def derive_constant_series(
     *,
     workbook: Path | str,
 ) -> list[ConstantSeries]:
-    """Return constant series for reader-only graph-leaf bindings.
+    """Return constant series for graph-leaf bindings.
 
     Each manifest `series[]` entry with `constant: {}` resolves to per-cell
-    `{address, key, record}` for graph leaves in `data_range`. Codegen emits
-    `read_*` (and Phase 2 body rewrite) but no `set_*` or `compute_*`.
+    `{address, key, record}` for graph leaves in `data_range`. Package export
+    bakes these as data constants rather than `compute_*` arguments.
     """
     return derive_series_for_direction(
         graph,

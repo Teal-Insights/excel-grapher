@@ -122,13 +122,7 @@ def _paths_entry() -> dict[str, Any]:
         "data_range": "Chart!D5:E9",
         "layout": "series",
         "exclude_rows": ["6", "8"],
-        "input": {
-            "setter": {
-                "name": "set_paths",
-                "record_contract": "records",
-                "strict": True,
-            }
-        },
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_PATH_SCENARIO, _TIME_DIM],
@@ -177,8 +171,6 @@ def test_threshold_coread_is_keyed(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     host = deps["breach"]
     assert "paths" in host.param_ids
-    assert "paths" in host.keyed_ids
-    assert "paths" not in host.lagged_ids
     assert "paths" not in host.aligned_ids
     assert catalog.get("paths").cells == (
         "Chart!D5",
@@ -194,7 +186,6 @@ def test_threshold_coread_emits_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a33_eval.xlsx", _mcve_sheets())
     document = _mcve_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "paths" in deps["breach"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert ".index(" not in internals

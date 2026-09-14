@@ -147,7 +147,7 @@ def _as_builtin_scalar(raw: Any) -> Any:
 
 
 def validate_binding_scalar(raw: Any, dtype: str) -> Scalar:
-    """Validate a setter input value against a binding dtype.
+    """Validate a caller-supplied scalar against a binding dtype.
 
     Unlike `coerce_scalar`, this rejects values that are not already the expected
     Python type (with limited safe coercions such as `int` -> `float`). Numpy

@@ -104,7 +104,7 @@ def test_missing_null_yields_none_coordinate(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!C2:C3",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_sparse"}},
+        "input": {},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell", "read": "float"}},
             "dimensions": [
@@ -162,7 +162,7 @@ def test_fill_down_covers_merged_style_sparse_group_column(tmp_path: Path) -> No
         "sheet": "Inputs",
         "data_range": "Inputs!C2:C5",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_sparse_groups"}},
+        "input": {},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell", "read": "float"}},
             "dimensions": [
@@ -221,7 +221,7 @@ def test_value_map_binds_rows_without_sheet_labels(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!C2:C5",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_no_labels"}},
+        "input": {},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell", "read": "float"}},
             "dimensions": [
@@ -279,7 +279,7 @@ def test_value_map_uncovered_row_errors_by_default(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!C2:C3",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_uncovered"}},
+        "input": {},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell", "read": "float"}},
             "dimensions": [
@@ -321,7 +321,7 @@ def test_value_map_column_axis(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!C2:D2",
         "layout": "series",
-        "input": {"setter": {"name": "set_col_map"}},
+        "input": {},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell", "read": "float"}},
             "dimensions": [
@@ -358,7 +358,7 @@ def test_column_header_fill_right_covers_merged_style_headers(tmp_path: Path) ->
         "sheet": "Inputs",
         "data_range": "Inputs!C2:D2",
         "layout": "series",
-        "input": {"setter": {"name": "set_wide_header"}},
+        "input": {},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell", "read": "float"}},
             "dimensions": [

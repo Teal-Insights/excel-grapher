@@ -1,7 +1,7 @@
 """Integration: output series export through `generate_modules()`.
 
-`BINDINGS_DOCUMENT` and `_write_output_workbook` remain the mixed G5 fixture used by
-`emit_computes_block` unit tests. Package export uses a split input/output workbook.
+`BINDINGS_DOCUMENT` and `_write_output_workbook` remain the mixed G5 fixture.
+Package export uses a split input/output workbook.
 """
 
 from __future__ import annotations
@@ -88,7 +88,7 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
             "layout": "series",
-            "input": {"setter": {"name": "set_borvelia_primary_balance"}},
+            "input": {},
             "output": {"compute": {"name": "compute_borvelia_primary_balance"}},
             "structure": deepcopy(_STRUCTURE),
             "key": ["TIME_PERIOD"],
@@ -109,7 +109,7 @@ INVERTED_DOCUMENT: dict[str, Any] = {
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
             "layout": "series",
-            "input": {"setter": {"name": "set_borvelia_primary_balance"}},
+            "input": {},
             "structure": deepcopy(_STRUCTURE),
             "key": ["TIME_PERIOD"],
             "series_context": {

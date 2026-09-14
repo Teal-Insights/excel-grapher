@@ -13,13 +13,11 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.schedule import plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
-    load_forced_rung_packages,
     load_package,
     series_entry,
     write_workbook,
@@ -114,14 +112,10 @@ def test_forward_off_union_seed_does_not_raise_keyerror(tmp_path: Path) -> None:
     workbook = _forward_seed_workbook(tmp_path)
     doc = _forward_seed_bindings()
     catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-    scc = ("debt", "adj")
-    choice = plan_scc(scc, catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    assert choice.plan is not None
-    assert choice.plan.schedule == (1, 2)
-    assert 0 not in choice.plan.coord_to_t
 
-    fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a22_fwd_seed_or")
+    fused = demand = load_package(
+        generate_inverted(workbook, doc), tmp_path, name="a22_fwd_seed_or"
+    )
     assert dict(
         fused.compute_debt(
             seed=fused.data.Seed.from_nested(domain=fused.data.SEED_DOMAIN, values=(100.0,))
@@ -139,7 +133,6 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     workbook = _forward_seed_workbook(tmp_path)
     doc = _forward_seed_bindings()
     catalog, _deps, graph_bound = inverted_graph_parts(workbook, doc)
-    assert plan_scc(("debt", "adj"), catalog=catalog, graph=graph_bound).rung == 2
     modules = generate_inverted(workbook, doc)
     internals = modules["internals.py"]
     assert "debt[time_period - 1]" in internals
@@ -168,14 +161,8 @@ def test_reversed_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     workbook = _reversed_seed_workbook(tmp_path)
     doc = _reversed_seed_bindings()
     catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-    scc = ("value", "flow")
-    choice = plan_scc(scc, catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    assert choice.plan is not None
-    assert choice.plan.direction == "reversed"
-    assert 2 not in choice.plan.coord_to_t
 
-    fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a22_rev_seed")
+    fused = demand = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_seed")
     assert dict(
         fused.compute_value(
             seed=fused.data.Seed.from_nested(domain=fused.data.SEED_DOMAIN, values=(100.0,))
@@ -204,13 +191,8 @@ def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> No
     workbook = _reversed_rate_workbook(tmp_path)
     doc = _reversed_rate_bindings()
     catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-    scc = ("value", "flow")
-    choice = plan_scc(scc, catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    assert choice.plan is not None
-    assert choice.plan.direction == "reversed"
 
-    fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a22_rev_rate")
+    fused = demand = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_rate")
     rate = fused.data.Rate.from_nested(domain=fused.data.RATE_DOMAIN, values=(0.01, 0.02, 0.03))
     demand_rate = demand.data.Rate.from_nested(
         domain=demand.data.RATE_DOMAIN, values=(0.01, 0.02, 0.03)

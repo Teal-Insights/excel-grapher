@@ -26,7 +26,7 @@ class _Graph:
 def _entry(dtype: str) -> dict:
     return {
         "id": "flow",
-        "input": {"setter": {"name": "set_flow"}},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",

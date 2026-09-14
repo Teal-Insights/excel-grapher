@@ -21,17 +21,17 @@ from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 def test_normalize_renames_legacy_row_series_layout() -> None:
     series = {
         "id": "x",
-        "layout": "series",
-        "setter": {"name": "set_x"},
+        "layout": "row_series",
+        "input": {},
     }
     normalized = normalize_series_entry(series)
     assert normalized["layout"] == "series"
 
 
-def test_legacy_top_level_setter_strips_to_empty_input() -> None:
+def test_empty_input_block_is_input_direction() -> None:
     series = {
         "id": "x",
-        "setter": {"name": "set_x"},
+        "input": {},
     }
     normalized = normalize_series_entry(series)
     assert "setter" not in normalized
@@ -92,7 +92,7 @@ def test_schema_rejects_non_mapping_series_entry() -> None:
                 "sheet": "S",
                 "data_range": "S!A1",
                 "layout": "scalar",
-                "input": {"setter": {"name": "set_ok"}},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [

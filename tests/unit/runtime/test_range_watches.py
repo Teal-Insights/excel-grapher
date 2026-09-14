@@ -13,7 +13,6 @@ from excel_grapher.core import CellValue
 from excel_grapher.exporter.export_runtime.math import xl_sum
 from excel_grapher.exporter.export_runtime.offset import xl_offset, xl_range
 from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict, xl_cell
-from excel_grapher.runtime.cache_eval_slim import EvalContext as SlimEvalContext
 
 CellFn = Callable[[EvalContext], CellValue]
 ResolverFn = Callable[[str], CellFn | None]
@@ -233,16 +232,6 @@ def test_invalidate_clears_helper_cache() -> None:
     ctx.helper_cache[("marker", ())] = 1
     ctx.set_inputs({"S!A1": 5.0})
     assert ctx.helper_cache == {}
-
-
-def test_slim_context_stays_untracked() -> None:
-    ctx = SlimEvalContext(
-        inputs=coerce_inputs_dict({"S!A1": 1.0}),
-        resolver=lambda _address: None,
-    )
-    assert not hasattr(ctx, "range_watches")
-    assert not hasattr(ctx, "reverse_deps")
-    assert not hasattr(ctx, "_record_range_watch")
 
 
 def test_library_xl_range_records_the_same_watch() -> None:

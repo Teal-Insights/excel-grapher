@@ -9,7 +9,7 @@ producers demand each selected instance instead of reading an incomplete tuple.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 
@@ -26,10 +26,7 @@ _DENSE_TOTALS = (16.0, 122.0, 1033.0)
 _SCC_TOTALS = (66.0, 55.0, 33.0)
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_range_crossing_input_and_formula_owners_uses_actual_coordinates(
-    tmp_path: Path, force_rung: Literal[3] | None
-) -> None:
+def test_range_crossing_input_and_formula_owners_uses_actual_coordinates(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "mixed_owners.xlsx",
         {
@@ -60,7 +57,7 @@ def test_range_crossing_input_and_formula_owners_uses_actual_coordinates(
         _grid_entry("formulas", ["Engine!B3", "Engine!D3", "Engine!B4:D4"], direction="internal"),
         _totals_entry(),
     )
-    package = load_package(generate_inverted(workbook, document, force_rung=force_rung), tmp_path)
+    package = load_package(generate_inverted(workbook, document), tmp_path)
     supplied = package.data.Inputs.from_records(
         domain=package.data.INPUTS_DOMAIN,
         records=[(("a", 2020), 1.0), (("a", 2021), 2.0), (("a", 2022), 3.0), (("b", 2021), 20.0)],
@@ -69,10 +66,7 @@ def test_range_crossing_input_and_formula_owners_uses_actual_coordinates(
     assert (result[2020], result[2021], result[2022]) == (111.0, 222.0, 333.0)
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_aggregate_uses_each_members_actual_range(
-    tmp_path: Path, force_rung: Literal[3] | None
-) -> None:
+def test_aggregate_uses_each_members_actual_range(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "diagonal.xlsx",
         {
@@ -104,8 +98,8 @@ def test_aggregate_uses_each_members_actual_range(
             compute_name="compute_totals",
         ),
     )
-    modules = generate_inverted(workbook, document, force_rung=force_rung)
-    package = load_package(modules, tmp_path, name=f"diagonal_{force_rung}")
+    modules = generate_inverted(workbook, document)
+    package = load_package(modules, tmp_path, name="diagonal")
     result = package.compute_totals()
     assert (result[2020], result[2021]) == (3.0, 50.0)
 
@@ -155,12 +149,8 @@ def _grid_entry(
             "dimensions": [_time_dim(), _country_dim()],
         },
     }
-    if direction == "constant":
-        entry["constant"] = {}
-    elif direction == "internal":
+    if direction in {"constant", "internal", "input"}:
         entry[direction] = {}
-    elif direction == "input":
-        entry[direction] = {"setter": {"name": f"set_{series_id}"}}
     else:
         raise ValueError(f"unknown direction {direction!r}")
     return entry
@@ -238,30 +228,23 @@ def _scc_bindings() -> dict[str, Any]:
     )
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_sparse_column_sum_exports_and_matches_column_totals(
-    tmp_path: Path, force_rung: Literal[3] | None
-) -> None:
+def test_sparse_column_sum_exports_and_matches_column_totals(tmp_path: Path) -> None:
     workbook = _sparse_workbook(tmp_path)
     modules = generate_inverted(
         workbook,
         _sparse_bindings(),
-        force_rung=force_rung,
         blank_ranges=["Engine!B3"],
     )
-    pkg = load_package(modules, tmp_path, name=f"agg_sparse_{force_rung}")
+    pkg = load_package(modules, tmp_path, name="agg_sparse")
     result = pkg.compute_totals()
     assert [result[year] for year in (2020, 2021, 2022)] == pytest.approx(_SPARSE_TOTALS)
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_dense_column_sum_does_not_freeze_first_column(
-    tmp_path: Path, force_rung: Literal[3] | None
-) -> None:
+def test_dense_column_sum_does_not_freeze_first_column(tmp_path: Path) -> None:
     workbook = _dense_workbook(tmp_path)
-    modules = generate_inverted(workbook, _dense_bindings(), force_rung=force_rung)
+    modules = generate_inverted(workbook, _dense_bindings())
     internals = modules["internals.py"]
-    pkg = load_package(modules, tmp_path, name=f"agg_dense_{force_rung}")
+    pkg = load_package(modules, tmp_path, name="agg_dense")
     got = pkg.compute_totals()
     assert [got[year] for year in (2020, 2021, 2022)] != pytest.approx((_DENSE_TOTALS[0],) * 3)
     assert [got[year] for year in (2020, 2021, 2022)] == pytest.approx(_DENSE_TOTALS)
@@ -276,14 +259,9 @@ def test_sparse_column_sum_does_not_use_affine_origin_classifier(tmp_path: Path)
     )
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_in_scc_column_sum_demands_selected_instances(
-    tmp_path: Path, force_rung: Literal[3] | None
-) -> None:
+def test_in_scc_column_sum_demands_selected_instances(tmp_path: Path) -> None:
     workbook = _scc_workbook(tmp_path)
-    modules = generate_inverted(workbook, _scc_bindings(), force_rung=force_rung)
-    pkg = load_package(modules, tmp_path, name=f"agg_scc_{force_rung}")
+    modules = generate_inverted(workbook, _scc_bindings())
+    pkg = load_package(modules, tmp_path, name="agg_scc")
     result = pkg.compute_totals()
     assert [result[year] for year in (2020, 2021, 2022)] == pytest.approx(_SCC_TOTALS)
-    if force_rung == 3:
-        assert "CoordinateReader(" in modules["internals.py"]

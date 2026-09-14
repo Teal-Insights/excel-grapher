@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Iterator, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from itertools import product
 from types import MappingProxyType
-from typing import Any, ClassVar, Generic, Self, TypeVar, cast, overload
+from typing import Any, ClassVar, Generic, Self, TypeVar, cast
 
 T = TypeVar("T")
 Coordinate = tuple[str | int, ...]
@@ -352,23 +352,6 @@ class Tensor(Generic[T]):
             keys[name] = axes[name].keys[position]
         return self.sel(**keys)
 
-    @classmethod
-    def from_legacy(
-        cls, *, domain: Domain, values: Iterable[T], coordinate_order: Iterable[Coordinate]
-    ) -> Self:
-        """Adapt a flat buffer using an explicit, validated catalog order."""
-        values, order = tuple(values), tuple(coordinate_order)
-        if len(values) != len(order):
-            raise DomainError("legacy values and coordinate order must have equal length")
-        return cls.from_records(domain=domain, records=zip(order, values, strict=True))
-
-    def to_legacy(self, *, coordinate_order: Iterable[Coordinate]) -> tuple[T, ...]:
-        """Export values in an explicitly declared complete catalog order."""
-        order = tuple(coordinate_order)
-        if len(order) != len(self.domain) or len(set(order)) != len(order):
-            raise DomainError("legacy coordinate order must cover the domain exactly once")
-        return tuple(self[coord] for coord in order)
-
     def to_json(self) -> str:
         """Serialize a versioned scalar value schema and exact domain records."""
         return json.dumps(
@@ -440,7 +423,7 @@ class TensorSchema:
     def validate(self, tensor: object, *, exact: bool = False) -> None:
         """Check semantic axes, required coordinates, and values."""
         if not isinstance(tensor, Tensor):
-            raise SchemaError(f"{self.series_id}: expected Tensor, use an explicit legacy adapter")
+            raise SchemaError(f"{self.series_id}: expected Tensor")
         expected = tuple((axis.name, axis.key_type) for axis in self.domain.axes)
         actual = tuple((axis.name, axis.key_type) for axis in tensor.domain.axes)
         if actual != expected:
@@ -480,91 +463,3 @@ class Series(Tensor[T]):
     def collect(cls, records: Iterable[tuple[Coordinate, T]]) -> Self:
         """Publish coordinate/value records over the series' required domain."""
         return cls.from_records(domain=cls.schema.domain, records=records)
-
-
-class YearSeries(Tensor[T]):
-    """A schema-enforcing year facade using integer labels."""
-
-    __slots__ = ()
-
-    def __init__(self, *, years: Iterable[int], values: Iterable[T]) -> None:
-        super().__init__(Domain.product(Axis("year", tuple(years), int)), tuple(values))
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        axes = self.domain.axes
-        if len(axes) != 1 or axes[0].name != "year" or axes[0].key_type is not int:
-            raise SchemaError("YearSeries requires one integer year axis")
-
-    @property
-    def years(self) -> tuple[int, ...]:
-        """The ordered year labels actually present in this path."""
-        return tuple(cast(int, coord[0]) for coord in self.domain)
-
-    def __getitem__(self, key: int) -> T:
-        return super().__getitem__(key)
-
-
-class ScenarioSeries(Tensor[T]):
-    """A schema-enforcing scenario/year facade with possibly unequal horizons."""
-
-    __slots__ = ()
-
-    def __post_init__(self) -> None:
-        super().__post_init__()
-        axes = self.domain.axes
-        if (
-            len(axes) != 2
-            or axes[0].name != "scenario"
-            or axes[0].key_type is not str
-            or axes[1].name != "year"
-            or axes[1].key_type is not int
-        ):
-            raise SchemaError("ScenarioSeries requires scenario/year axes with integer years")
-
-    @classmethod
-    def from_paths(cls, paths: Mapping[str, YearSeries[T]]) -> ScenarioSeries[T]:
-        """Construct an exact ragged domain in mapping and first-occurrence order."""
-        scenarios = Axis("scenario", tuple(paths), str)
-        years = Axis(
-            "year",
-            tuple(dict.fromkeys(year for path in paths.values() for year in path.years)),
-            int,
-        )
-        records = [
-            ((scenario, year), path[year])
-            for scenario, path in paths.items()
-            for year in path.years
-        ]
-        domain = Domain.explicit(
-            axes=(scenarios, years), coordinates=(coord for coord, _ in records)
-        )
-        return cls(
-            domain,
-            tuple(
-                value
-                for _, value in sorted(
-                    records,
-                    key=lambda record: (
-                        scenarios.keys.index(record[0][0]),
-                        years.keys.index(record[0][1]),
-                    ),
-                )
-            ),
-        )
-
-    @overload
-    def __getitem__(self, key: str) -> YearSeries[T]: ...
-
-    @overload
-    def __getitem__(self, key: tuple[str, int]) -> T: ...
-
-    def __getitem__(self, key: str | tuple[str, int]) -> T | YearSeries[T]:
-        if isinstance(key, tuple):
-            return super().__getitem__(key)
-        selected = self.sel(scenario=key)
-        assert isinstance(selected, Tensor)
-        return YearSeries[T](
-            years=(cast(int, coord[0]) for coord, _ in selected.items()),
-            values=(value for _, value in selected.items()),
-        )

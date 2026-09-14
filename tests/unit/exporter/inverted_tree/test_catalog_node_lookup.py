@@ -6,11 +6,8 @@ import ast
 from pathlib import Path
 from types import MappingProxyType
 
-import pytest
-
 from excel_grapher.core.address_keys import as_canonical
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, Statement
-from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.node import EMPTY_METADATA, make_cell_node, node_to_view
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -72,12 +69,6 @@ def test_key_point_for_unbound_cell_is_none() -> None:
     assert catalog.key_point_for(_UNBOUND) is None
 
 
-def test_require_key_point_for_raises_when_unbound() -> None:
-    catalog = _catalog(_series())
-    with pytest.raises(InvertedTreeExportError, match="Engine!Z99"):
-        catalog.require_key_point_for(_UNBOUND)
-
-
 def test_key_point_for_empty_key_is_empty_point_not_none() -> None:
     series = _series(key_fields=(), domain=(KeyPoint(()), KeyPoint(())))
     catalog = _catalog(series)
@@ -125,12 +116,6 @@ def test_binds_for_bound_series_without_dimensions_is_empty_mapping() -> None:
     assert binds is not None
     assert dict(binds) == {}
     assert isinstance(binds, MappingProxyType)
-
-
-def test_require_binds_for_raises_when_unbound() -> None:
-    catalog = _catalog(_series())
-    with pytest.raises(InvertedTreeExportError, match="Engine!Z99"):
-        catalog.require_binds_for(_UNBOUND)
 
 
 def test_bound_series_dimension_bind_matches_field() -> None:

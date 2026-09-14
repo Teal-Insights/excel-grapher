@@ -64,7 +64,7 @@ def _values_entry(size: int) -> dict[str, Any]:
         "sheet": "Data",
         "data_range": f"Data!B2:C{size + 1}",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_values"}},
+        "input": {},
         "key": ["COUNTRY", "TIME_PERIOD"],
         "structure": {
             "measure": _measure(),
@@ -105,7 +105,6 @@ def test_repeated_keyed_reads_do_not_embed_producer_domain(tmp_path: Path) -> No
     workbook = _domain_workbook(tmp_path, size)
     document = _domain_bindings(size)
     catalog, deps, _graph = inverted_graph_parts(workbook, document)
-    assert "values" in deps["result"].keyed_ids
     internals = generate_inverted(workbook, document)["internals.py"]
     domain = _producer_domain(size)
     assert internals.count(repr(domain)) <= 1
@@ -208,7 +207,6 @@ def test_non_affine_keyed_reads_intern_slot_table_once(tmp_path: Path) -> None:
     workbook = _shuffled_workbook(tmp_path)
     document = _shuffled_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "values" in deps["result"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert internals.count(".index(") == 0

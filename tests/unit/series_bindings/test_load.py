@@ -142,7 +142,7 @@ def test_merge_unions_concept_scheme_across_shards() -> None:
                 "sheet": "Inputs",
                 "data_range": "Inputs!B2",
                 "layout": "scalar",
-                "input": {"setter": {"name": "set_param_series"}},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -211,7 +211,7 @@ def test_merge_rejects_conflicting_concept_definitions() -> None:
                 "sheet": "S",
                 "data_range": "S!A1",
                 "layout": "scalar",
-                "input": {"setter": {"name": "set_a"}},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -239,7 +239,7 @@ def test_merge_rejects_conflicting_concept_definitions() -> None:
                 "sheet": "S",
                 "data_range": "S!B1",
                 "layout": "scalar",
-                "input": {"setter": {"name": "set_b"}},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [

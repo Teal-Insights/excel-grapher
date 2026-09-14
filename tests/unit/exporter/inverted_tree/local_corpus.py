@@ -11,7 +11,6 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
-from typing import Literal
 
 import pytest
 
@@ -128,8 +127,6 @@ def generate_corpus_modules(
     entry: CorpusEntry,
     graph: DependencyGraph,
     _catalog: SeriesCatalog,
-    *,
-    force_rung: Literal[2, 3] | None = None,
 ) -> dict[str, str]:
     """Emit inverted-tree modules for a corpus workbook."""
     bindings = load_series_bindings(entry.bindings)
@@ -137,7 +134,6 @@ def generate_corpus_modules(
         graph,
         series_bindings=bindings,
         bindings_workbook=entry.workbook,
-        force_rung=force_rung,
     )
 
 

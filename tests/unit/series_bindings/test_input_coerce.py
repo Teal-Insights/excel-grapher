@@ -1,4 +1,4 @@
-"""Unit tests for setter input coercion (records, positional, DataFrame)."""
+"""Unit tests for `coerce_setter_input` (records, positional, DataFrame)."""
 
 from __future__ import annotations
 

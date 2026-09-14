@@ -102,7 +102,7 @@ def _table_bindings() -> dict[str, Any]:
         "sheet": "Table",
         "data_range": "Table!B2:D3",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_rates"}},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",

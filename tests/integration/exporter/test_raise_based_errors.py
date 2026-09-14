@@ -15,10 +15,10 @@ from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.evaluator.types import XlError
-from excel_grapher.exporter.embed import emit_runtime
 from excel_grapher.exporter.export_runtime.offset import xl_index_ref
 from excel_grapher.exporter.export_runtime.operators import xl_bool, xl_int
 from tests.integration.utils.parity_harness import evaluate_targets
+from tests.unit.exporter.embed_helpers import emit_export_runtime
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -64,7 +64,7 @@ class TestExportRuntimeBoundaryHelpers:
         assert exc_info.value.code == XlError.REF
 
     def test_offset_ref_raises_reference_errors(self) -> None:
-        code = emit_runtime({"xl_offset_ref"}, include_offset_table=False)
+        code = emit_export_runtime({"xl_offset_ref"})
         ns: dict[str, Any] = {}
         exec(code, ns)
         with pytest.raises(cast("type[BaseException]", ns["XlErrorException"])) as exc_info:
@@ -72,7 +72,7 @@ class TestExportRuntimeBoundaryHelpers:
         assert cast(Any, exc_info.value).code == XlError.REF
 
     def test_averageif_raises_value_errors(self) -> None:
-        code = emit_runtime({"xl_averageif"}, include_offset_table=False)
+        code = emit_export_runtime({"xl_averageif"})
         ns: dict[str, Any] = {}
         exec(code, ns)
         with pytest.raises(cast("type[BaseException]", ns["XlErrorException"])) as exc_info:
@@ -80,7 +80,7 @@ class TestExportRuntimeBoundaryHelpers:
         assert cast(Any, exc_info.value).code == XlError.VALUE
 
     def test_value_preserves_iso_date_fallback(self) -> None:
-        code = emit_runtime({"xl_value"}, include_offset_table=False)
+        code = emit_export_runtime({"xl_value"})
         ns: dict[str, Any] = {}
         exec(code, ns)
         assert ns["xl_value"]("2018-03-15") == 43174.0

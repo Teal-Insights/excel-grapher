@@ -17,7 +17,7 @@ covers only the current statement and shifts the index origin (#777).
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 
@@ -122,7 +122,7 @@ def _paths_entry() -> dict[str, Any]:
         "sheet": "Engine",
         "data_range": "Engine!C3:D6",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_paths"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_PATH_SCENARIO, _TIME_DIM],
@@ -152,7 +152,7 @@ def _flag_entry(*, dtype: str = "float") -> dict[str, Any]:
         "sheet": "Engine",
         "data_range": "Engine!G1",
         "layout": "scalar",
-        "input": {"setter": {"name": "set_flag"}},
+        "input": {},
         "structure": {"measure": _measure(dtype=dtype), "dimensions": []},
         "key": [],
     }
@@ -172,8 +172,6 @@ def test_scenario_pair_dual_read_is_keyed(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     host = deps["selected"]
     assert "paths" in host.param_ids
-    assert "paths" in host.keyed_ids
-    assert "paths" not in host.lagged_ids
     assert "paths" not in host.aligned_ids
     assert catalog.get("paths").cells == (
         "Engine!C3",
@@ -191,7 +189,6 @@ def test_scenario_pair_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> 
     workbook = write_workbook(tmp_path / "a34_eval.xlsx", _mcve_sheets())
     document = _mcve_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "paths" in deps["selected"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert ".index(" not in internals
@@ -221,7 +218,6 @@ def test_scenario_pair_dual_read_follows_if_branch_order(tmp_path: Path) -> None
     workbook = write_workbook(tmp_path / "a34_swap.xlsx", sheets)
     document = _mcve_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "paths" in deps["selected"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a34_swap")
     kwargs = named_input_kwargs(pkg, catalog, graph)
     assert tuple(
@@ -244,7 +240,6 @@ def test_scenario_pair_dual_read_per_row_if_condition(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a34_qcraft.xlsx", sheets)
     document = _mcve_bindings(flag_dtype="string")
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "paths" in deps["selected"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a34_qcraft")
     kwargs = named_input_kwargs(pkg, catalog, graph)
     assert _unwrap(kwargs["flag"]) == "B2.1 Market"
@@ -322,23 +317,21 @@ def _baseline_pair_bindings() -> dict[str, Any]:
     return bindings_document(paths, selected, _flag_entry(), schema_version="1.14.0")
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
 def test_direct_baseline_plus_scenario_pairs_emits(
-    tmp_path: Path, force_rung: Literal[3] | None
+    tmp_path: Path,
 ) -> None:
-    """Direct Baseline plus two IF pairs export in fused and demand-driven mode (#777)."""
-    workbook = write_workbook(tmp_path / f"a34_baseline_{force_rung}.xlsx", _baseline_pair_sheets())
+    """Direct Baseline plus two IF pairs export (#777)."""
+    workbook = write_workbook(tmp_path / "a34_baseline.xlsx", _baseline_pair_sheets())
     document = _baseline_pair_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     host = catalog.get("selected")
     assert host.statements[0].start == 0
     assert host.statements[0].stop == 2
     assert all(point["SCENARIO"] == "Baseline" for point in host.statements[0].domain)
-    assert "paths" in deps["selected"].keyed_ids
-    modules = generate_inverted(workbook, document, force_rung=force_rung)
+    modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert ".index(" not in internals
-    pkg = load_package(modules, tmp_path, name=f"a34_baseline_{force_rung}")
+    pkg = load_package(modules, tmp_path, name="a34_baseline")
     cells = [
         "Engine!C9",
         "Engine!D9",

@@ -55,15 +55,11 @@ def test_corpus_rung3_matches_evaluator_and_auto(
     ):
         pytest.skip(f"{entry.id} exceeds max_cells={entry.max_cells}")
     topo = statement_topo_order(catalog, deps)
-    auto_modules = generate_corpus_modules(entry, graph, catalog)
-    rung3_modules = generate_corpus_modules(entry, graph, catalog, force_rung=3)
-    auto = load_package(auto_modules, tmp_path, name=f"{entry.id}_auto")
-    rung3 = load_package(rung3_modules, tmp_path, name=f"{entry.id}_r3")
-    auto_lines = compare_package_to_evaluator(auto, catalog, graph, topo=topo)
-    rung3_lines = compare_package_to_evaluator(rung3, catalog, graph, topo=topo)
-    assert not rung3_lines, "rung 3 diverged from evaluator:\n" + "\n".join(rung3_lines)
-    assert not auto_lines, "auto rung diverged from evaluator:\n" + "\n".join(auto_lines)
-    assert_no_per_cell_unroll(auto_modules)
-    assert package_byte_size(auto_modules) == package_byte_size(
+    modules = generate_corpus_modules(entry, graph, catalog)
+    pkg = load_package(modules, tmp_path, name=f"{entry.id}_auto")
+    lines = compare_package_to_evaluator(pkg, catalog, graph, topo=topo)
+    assert not lines, "export diverged from evaluator:\n" + "\n".join(lines)
+    assert_no_per_cell_unroll(modules)
+    assert package_byte_size(modules) == package_byte_size(
         generate_corpus_modules(entry, graph, catalog)
     )

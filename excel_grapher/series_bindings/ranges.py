@@ -10,10 +10,9 @@ import fastpyxl
 from fastpyxl.utils.cell import (
     column_index_from_string,
     coordinate_from_string,
-    get_column_letter,
 )
 
-from excel_grapher.core.address_keys import format_range_key, parse_address
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.grapher.parser import DEFAULT_MAX_RANGE_CELLS, format_key
 from excel_grapher.grapher.resolver import build_named_range_map
 from excel_grapher.grapher.target_expansion import (
@@ -294,66 +293,3 @@ def expand_bound_series_addresses_for_graph(
         ),
         series,
     )
-
-
-def _solid_rectangle_address(addresses: Sequence[str]) -> str | None:
-    """Return a sheet-qualified A1 range when `addresses` form one solid rectangle."""
-    if not addresses:
-        return None
-    cells = [_parse_cell_rc(address) for address in addresses]
-    sheets = {sheet for sheet, _row, _col in cells}
-    if len(sheets) != 1:
-        return None
-    sheet = next(iter(sheets))
-    rows = {row for _sheet, row, _col in cells}
-    cols = {col for _sheet, _row, col in cells}
-    min_row, max_row = min(rows), max(rows)
-    min_col, max_col = min(cols), max(cols)
-    expected = (max_row - min_row + 1) * (max_col - min_col + 1)
-    if len(cells) != expected:
-        return None
-    cell_set = {(row, col) for _sheet, row, col in cells}
-    for row in range(min_row, max_row + 1):
-        for col in range(min_col, max_col + 1):
-            if (row, col) not in cell_set:
-                return None
-    start = f"{get_column_letter(min_col)}{min_row}"
-    end = f"{get_column_letter(max_col)}{max_row}"
-    return format_range_key(sheet, start, end)
-
-
-def effective_reader_range_address(
-    series: Mapping[str, Any],
-    *,
-    workbook: Path | str | None = None,
-    named_ranges: Mapping[str, tuple[str, str]] | None = None,
-    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
-    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
-) -> str | None:
-    """Return the address for `read_*_range`, or None when none should be emitted.
-
-    Without `exclude_rows` / `exclude_columns`, returns the series `data_range`.
-    With exclusions, expands `data_range`, drops excluded rows/columns, and returns
-    a single contiguous rectangle covering exactly the remaining cells — or None
-    when the selection is empty or cannot be expressed as one `xl_range`.
-    """
-    ranges = series_data_ranges(series)
-    if len(ranges) != 1:
-        return None
-    data_range = ranges[0]
-    exclude_rows = series.get("exclude_rows")
-    exclude_columns = series.get("exclude_columns")
-    if not exclude_rows and not exclude_columns:
-        return data_range
-
-    addresses = apply_series_excludes(
-        expand_data_range(
-            data_range,
-            workbook=workbook,
-            named_ranges=named_ranges,
-            named_range_ranges=named_range_ranges,
-            max_range_cells=max_range_cells,
-        ),
-        series,
-    )
-    return _solid_rectangle_address(addresses)

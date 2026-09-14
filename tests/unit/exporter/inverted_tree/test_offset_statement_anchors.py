@@ -9,7 +9,6 @@ anchor to belong to the first.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Literal
 
 import pytest
 
@@ -83,18 +82,15 @@ def test_offset_host_partitions_on_distinct_lookup_blocks(tmp_path: Path) -> Non
     assert [(stmt.start, stmt.stop) for stmt in labels.statements] == [(0, 1), (1, 2)]
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
 def test_offset_anchor_inference_stays_in_statement(
     tmp_path: Path,
-    force_rung: Literal[3] | None,
 ) -> None:
     workbook = _offset_blocks_workbook(tmp_path)
     modules = generate_inverted(
         workbook,
         _offset_blocks_bindings(),
-        force_rung=force_rung,
     )
-    pkg = load_package(modules, tmp_path, name=f"offset_stmt_{force_rung}")
+    pkg = load_package(modules, tmp_path, name="offset_stmt")
     assert tuple(value for _, value in pkg.compute_labels(selector=0).items()) == pytest.approx(
         (1.0, 10.0)
     )

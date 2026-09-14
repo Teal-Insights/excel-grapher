@@ -115,47 +115,15 @@ def test_required_schema_rejects_same_size_different_labels() -> None:
         schema.validate(wider, exact=True)
 
 
-def test_sparse_serialization_and_explicit_legacy_order() -> None:
+def test_sparse_serialization_round_trip() -> None:
     domain = Domain.explicit(axes=(years(2025, 2026),), coordinates=((2026,), (2025,)))
-    tensor = Tensor.from_legacy(
-        domain=domain, values=("#N/A", None), coordinate_order=((2026,), (2025,))
-    )
+    tensor = Tensor.from_records(domain=domain, records=(((2026,), "#N/A"), ((2025,), None)))
     assert tensor[2026] == "#N/A"
-    assert tensor.to_legacy(coordinate_order=((2026,), (2025,))) == ("#N/A", None)
     assert Tensor.from_json(tensor.to_json()) == tensor
     assert (
         domain.fingerprint
         == Domain.explicit(axes=domain.axes, coordinates=reversed(tuple(domain))).fingerprint
     )
-
-
-def test_year_scenario_facades_preserve_ragged_paths() -> None:
-    from excel_grapher.exporter.export_runtime.tensor import ScenarioSeries, YearSeries
-
-    baseline = YearSeries(years=(2025, 2026, 2027), values=(100, 105, 110))
-    shock = YearSeries(years=(2026, 2027), values=(102, 106))
-    paths = ScenarioSeries.from_paths({"base": baseline, "shock": shock})
-    assert paths["shock", 2026] == 102
-    assert isinstance(paths["shock"], YearSeries)
-    assert paths["shock"].years == (2026, 2027)
-    assert paths["shock", 2025] is None
-    with pytest.raises(AxisError):
-        YearSeries(years=(True,), values=(1,))
-
-
-def test_facade_constructors_and_serialization_enforce_schema() -> None:
-    from excel_grapher.exporter.export_runtime.tensor import ScenarioSeries, YearSeries
-
-    series = YearSeries.from_nested(domain=Domain.product(years(2025)), values=(3,))
-    assert isinstance(series, YearSeries)
-    assert series[2025] == 3
-    assert YearSeries.from_json(series.to_json()) == series
-    with pytest.raises(SchemaError):
-        YearSeries.from_nested(domain=Domain.product(Axis("creditor", ("bank",), str)), values=(3,))
-    with pytest.raises(SchemaError):
-        ScenarioSeries.from_nested(
-            domain=Domain.product(Axis("scenario", (1,), int), years(2025)), values=((3,),)
-        )
 
 
 def test_schema_validates_its_own_contract() -> None:

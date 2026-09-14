@@ -1,4 +1,4 @@
-"""Schema 1.16.0: `input: {}` is an input; leftover setter/reader blocks are stripped."""
+"""Schema 1.16.0: empty `input: {}` is an input; leftover setter/reader keys are rejected."""
 
 from __future__ import annotations
 
@@ -66,55 +66,50 @@ def test_input_domain_without_setter_validates() -> None:
     assert has_input_direction(bindings["series"][0])
 
 
-def test_legacy_top_level_setter_strips_to_empty_input() -> None:
+def test_legacy_top_level_setter_is_rejected() -> None:
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(
+            {
+                "schema_version": "1.0.0",
+                "series": [_scalar_series(setter={"name": "set_interest_rate"})],
+            }
+        )
+
+
+def test_normalize_does_not_invent_input_from_top_level_setter() -> None:
     normalized = normalize_series_entry(
         _scalar_series(setter={"name": "set_interest_rate", "strict": True})
     )
-    assert "setter" not in normalized
-    assert normalized["input"] == {}
-    assert has_input_direction(normalized)
-
-    bindings = validate_bindings_document(
-        {
-            "schema_version": "1.0.0",
-            "series": [_scalar_series(setter={"name": "set_interest_rate"})],
-        }
-    )
-    assert bindings["series"][0]["input"] == {}
-    assert has_input_direction(bindings["series"][0])
+    assert normalized["setter"] == {"name": "set_interest_rate", "strict": True}
+    assert "input" not in normalized
+    assert not has_input_direction(normalized)
 
 
-def test_input_setter_and_reader_are_stripped() -> None:
-    bindings = validate_bindings_document(
-        {
-            "schema_version": "1.13.0",
-            "series": [
-                _scalar_series(
-                    input={
-                        "setter": {
-                            "name": "set_interest_rate",
-                            "record_contract": "records",
-                            "strict": True,
-                        },
-                        "reader": {"name": "read_interest_rate"},
-                        "domain": {"real_between": {"min": 0, "max": 1}},
-                    }
-                )
-            ],
-        }
-    )
-    assert bindings["series"][0]["input"] == {"domain": {"real_between": {"min": 0, "max": 1}}}
+def test_input_reader_extra_key_is_rejected() -> None:
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(
+            {
+                "schema_version": "1.13.0",
+                "series": [
+                    _scalar_series(
+                        input={
+                            "reader": {"name": "read_interest_rate"},
+                            "domain": {"real_between": {"min": 0, "max": 1}},
+                        }
+                    )
+                ],
+            }
+        )
 
 
-def test_invalid_setter_name_is_stripped_not_rejected() -> None:
-    bindings = validate_bindings_document(
-        {
-            "schema_version": "1.0.0",
-            "series": [_scalar_series(setter={"name": "not_a_setter"})],
-        }
-    )
-    assert has_input_direction(bindings["series"][0])
-    assert bindings["series"][0]["input"] == {}
+def test_invalid_setter_name_is_rejected() -> None:
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(
+            {
+                "schema_version": "1.0.0",
+                "series": [_scalar_series(setter={"name": "not_a_setter"})],
+            }
+        )
 
 
 def test_series_without_direction_still_rejected() -> None:
@@ -171,11 +166,16 @@ def test_empty_input_exports_without_setters(tmp_path: Path) -> None:
     assert "interest_rate" in api
 
 
-def test_public_api_does_not_export_setter_emitters() -> None:
+def test_public_api_does_not_export_removed_codegen() -> None:
     import excel_grapher.series_bindings as series_bindings
 
     assert not hasattr(series_bindings, "emit_setter_function")
     assert not hasattr(series_bindings, "emit_setters_block")
     assert not hasattr(series_bindings, "generate_setters_module")
     assert not hasattr(series_bindings, "emit_series_bindings_block")
+    assert not hasattr(series_bindings, "emit_compute_function")
+    assert not hasattr(series_bindings, "emit_computes_block")
+    assert not hasattr(series_bindings, "generate_computes_module")
+    assert not hasattr(series_bindings, "build_reader_index")
     assert "emit_setter_function" not in series_bindings.__all__
+    assert "emit_compute_function" not in series_bindings.__all__

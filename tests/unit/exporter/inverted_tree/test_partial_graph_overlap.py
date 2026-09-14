@@ -417,7 +417,7 @@ def test_matrix_holes_are_retained(tmp_path: Path) -> None:
     assert series.rect == ("Profile", 2, 2, 3, 3)
     assert series.block_width == 2
     assert len(series.domain) == 4
-    assert series.hole_indices == (1, 2, 3)
+    assert [hole.index for hole in series.holes] == [1, 2, 3]
     assert [hole.kind for hole in series.holes] == [
         "off_closure",
         "off_closure",
@@ -444,7 +444,7 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
     assert series.cells == ("Profile!B2", "Profile!C2", "Profile!B3", "Profile!C3")
     assert series.rect is not None
     assert series.block_width == 2
-    assert series.hole_indices == (1,)
+    assert [hole.index for hole in series.holes] == [1]
     assert series.holes[0].kind == "blank"
     assert series.holes[0].address == "Profile!C2"
 
@@ -515,7 +515,7 @@ def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
         catalog = build_catalog(bindings, workbook=workbook, graph=graph)
     series = catalog.get("profile_table")
     assert series.cells == ("Profile!B2", "Profile!C2", "Profile!B3", "Profile!C3")
-    assert series.hole_indices == (1, 2, 3)
+    assert [hole.index for hole in series.holes] == [1, 2, 3]
     assert series.holes[0].kind == "graph_leaf"
     assert series.holes[0].address == "Profile!C2"
 

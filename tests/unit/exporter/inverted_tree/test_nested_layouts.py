@@ -98,7 +98,7 @@ def _nested_bindings() -> dict[str, Any]:
         "sheet": "Vintage",
         "data_range": "Vintage!B2:D7",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_vintage"}},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",

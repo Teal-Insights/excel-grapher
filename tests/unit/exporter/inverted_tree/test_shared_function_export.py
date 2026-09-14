@@ -1,7 +1,6 @@
 """Shared worksheet functions used by real inverted-tree exports."""
 
 from pathlib import Path
-from typing import Literal
 
 import pytest
 
@@ -14,7 +13,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
 )
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
 @pytest.mark.parametrize(
     "formula, expected",
     [
@@ -45,9 +43,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
         ("=COLUMNS(A1:C3)", 3.0),
     ],
 )
-def test_shared_function_export(
-    tmp_path: Path, formula: str, expected: float | str, force_rung: Literal[3] | None
-) -> None:
+def test_shared_function_export(tmp_path: Path, formula: str, expected: float | str) -> None:
     cells = {"A1": 1, "A2": 2, "A3": 3, "C1": 10, "C2": 20, "C3": 30, "B5": formula}
     workbook = write_workbook(tmp_path / "functions.xlsx", {"Engine": cells})
     document = bindings_document(
@@ -58,7 +54,7 @@ def test_shared_function_export(
         ),
         series_entry("result", "Engine!B5", direction="output"),
     )
-    package = load_package(generate_inverted(workbook, document, force_rung=force_rung), tmp_path)
+    package = load_package(generate_inverted(workbook, document), tmp_path)
     result = package.api.compute_result()
     assert result == (pytest.approx(expected) if isinstance(expected, float) else expected)
 
@@ -70,12 +66,11 @@ def test_shared_helpers_preserve_function_specific_error_handling() -> None:
     assert xl_xlookup(2, (1, 2), ("#DIV/0!", 20)) == 20
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
 @pytest.mark.parametrize(
     "expression, expected", [("ROW()", (2.0, 3.0, 4.0)), ("ROW($C$2)", (2.0, 2.0, 2.0))]
 )
 def test_row_geometry_tracks_series_members(
-    tmp_path: Path, expression: str, expected: tuple[float, ...], force_rung: Literal[3] | None
+    tmp_path: Path, expression: str, expected: tuple[float, ...]
 ) -> None:
     workbook = write_workbook(
         tmp_path / "rows.xlsx",
@@ -100,7 +95,7 @@ def test_row_geometry_tracks_series_members(
             label_column="C",
         ),
     )
-    modules = generate_inverted(workbook, document, force_rung=force_rung)
+    modules = generate_inverted(workbook, document)
     assert "_kernels.result(" not in modules["internals.py"]
     package = load_package(modules, tmp_path)
     result = package.api.compute_result()

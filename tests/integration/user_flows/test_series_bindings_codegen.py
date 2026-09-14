@@ -61,7 +61,7 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
             "sheet": "Sheet1",
             "data_range": "Sheet1!F5:J5",
             "layout": "series",
-            "input": {"setter": {"name": "set_borvelia_primary_balance"}},
+            "input": {},
             "structure": deepcopy(_STRUCTURE),
             "key": ["TIME_PERIOD"],
             "series_context": {

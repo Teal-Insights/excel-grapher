@@ -1,11 +1,9 @@
 from __future__ import annotations
 
-import inspect
 import warnings
 from collections.abc import Callable, Hashable, Mapping
-from functools import wraps
 from math import isfinite
-from typing import Any, TypeVar, cast
+from typing import Any, cast
 
 import fastpyxl.utils.cell
 
@@ -22,7 +20,6 @@ __all__ = [
     "EvalContext",
     "EvalContextBase",
     "HelperCacheKey",
-    "circular_safe_cache",
     "coerce_inputs_dict",
     "warn_circular_reference",
     "xl_cell",
@@ -30,14 +27,8 @@ __all__ = [
     "xl_eval",
     "xl_helper",
     "xl_iterative_compute",
-    "xl_memoize",
     "xl_range",
 ]
-
-_F = TypeVar("_F", bound=Callable[..., CellValue])
-
-_cell_cache: dict[Callable[[], CellValue], CellValue] = {}
-_computing: set[Callable[[], CellValue]] = set()
 
 
 class CircularReferenceWarning(RuntimeWarning):
@@ -57,25 +48,6 @@ def xl_circular_reference() -> CellValue:
     """Excel default behavior for circular references (non-iterative calculation)."""
     warn_circular_reference(stacklevel=2)
     return 0
-
-
-def circular_safe_cache(func: Callable[[], CellValue]) -> Callable[[], CellValue]:
-    """Cache decorator that breaks circular references by returning 0."""
-
-    def wrapper() -> CellValue:
-        if func in _computing:
-            return xl_circular_reference()
-        if func in _cell_cache:
-            return _cell_cache[func]
-        _computing.add(func)
-        try:
-            result = func()
-            _cell_cache[func] = result
-            return result
-        finally:
-            _computing.discard(func)
-
-    return wrapper
 
 
 def coerce_inputs_dict(values: Mapping[str, object]) -> dict[str, CellValue]:
@@ -184,22 +156,6 @@ def _freeze_helper_kwargs(kwargs: Mapping[str, Any]) -> tuple[tuple[str, Hashabl
     return cast(tuple[tuple[str, Hashable], ...], frozen)
 
 
-def _bound_helper_kwargs(
-    fn: Callable[..., CellValue],
-    ctx: EvalContextBase,
-    *args: Any,
-    **kwargs: Any,
-) -> dict[str, Any]:
-    """Bind positional/keyword helper args after `ctx` into a kwargs dict."""
-    signature = inspect.signature(fn)
-    bound = signature.bind(ctx, *args, **kwargs)
-    bound.apply_defaults()
-    arguments = dict(bound.arguments)
-    ctx_param = next(iter(signature.parameters))
-    del arguments[ctx_param]
-    return arguments
-
-
 def xl_helper(ctx: EvalContextBase, fn: Callable[..., CellValue], /, **kwargs: Any) -> CellValue:
     """Evaluate a parameterized helper under `ctx`, memoized by `(fn, kwargs)`.
 
@@ -233,21 +189,6 @@ def xl_helper(ctx: EvalContextBase, fn: Callable[..., CellValue], /, **kwargs: A
         return _raise_if_error_value(value)
     finally:
         ctx.helper_computing.discard(key)
-
-
-def xl_memoize(fn: _F) -> _F:
-    """Memoize a `(ctx, **params)` helper via `xl_helper`.
-
-    Recursive and cross-helper calls that invoke the decorated name share the
-    same `ctx.helper_cache` entries. Positional arguments after `ctx` are bound
-    through `inspect.signature(fn).bind(...)`.
-    """
-
-    @wraps(fn)
-    def wrapper(ctx: EvalContextBase, /, *args: Any, **kwargs: Any) -> CellValue:
-        return xl_helper(ctx, fn, **_bound_helper_kwargs(fn, ctx, *args, **kwargs))
-
-    return cast(_F, wrapper)
 
 
 def _parse_sheet_address(address: str) -> tuple[str, str] | None:

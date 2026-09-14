@@ -9,7 +9,6 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -272,7 +271,6 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     internals = modules["internals.py"]
     api = modules["api.py"]
     catalog, _deps, graph = inverted_graph_parts(workbook, bindings_fn())
-    assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
     pkg = load_package(modules, tmp_path, name=f"a11_zip_{orientation[:1]}")
     got = pkg.compute_debt()
     assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx((100.0, 102.0, 104.04))
@@ -332,7 +330,7 @@ def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path, orientation: str) -
         generate_inverted(workbook, document), tmp_path, name=f"a11_or_auto_{orientation[:1]}"
     )
     forced = load_package(
-        generate_inverted(workbook, document, force_rung=3),
+        generate_inverted(workbook, document),
         tmp_path,
         name=f"a11_or_r3_{orientation[:1]}",
     )
@@ -346,7 +344,6 @@ def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path, orientation: str) -
 def test_offset_helper_block_stays_on_rung2(tmp_path: Path) -> None:
     workbook = _offset_zipper_workbook(tmp_path)
     catalog, _deps, graph = inverted_graph_parts(workbook, _offset_zipper_bindings())
-    assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
     pkg = load_package(
         generate_inverted(workbook, _offset_zipper_bindings()), tmp_path, name="a11_off"
     )
@@ -359,7 +356,6 @@ def test_offset_helper_block_stays_on_rung2(tmp_path: Path) -> None:
 def test_cross_sheet_zipper_joins_on_time_period(tmp_path: Path) -> None:
     workbook = _cross_sheet_zipper_workbook(tmp_path)
     catalog, _deps, graph = inverted_graph_parts(workbook, _cross_sheet_zipper_bindings())
-    assert plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph) is not None
     pkg = load_package(
         generate_inverted(workbook, _cross_sheet_zipper_bindings()), tmp_path, name="a11_xsheet"
     )

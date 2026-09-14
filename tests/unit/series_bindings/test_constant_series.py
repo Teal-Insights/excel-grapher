@@ -1,4 +1,4 @@
-"""Tests for constant (reader-only graph-leaf) series bindings."""
+"""Tests for constant (graph-leaf) series bindings."""
 
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import xlsxwriter
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     SeriesBindingsSchemaError,
-    build_reader_index,
     derive_constant_series,
     derive_input_series,
     derive_internal_series,
@@ -21,12 +20,11 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     merge_series_binding_documents,
     parse_bindings_file,
-    resolve_reader_ref,
     resolve_series_binding,
     validate_bindings_document,
     validate_series_bindings,
 )
-from excel_grapher.series_bindings.workflow import input_ids, reader_names
+from excel_grapher.series_bindings.workflow import input_ids
 
 
 def _write_constant_workbook(path: Path) -> None:
@@ -88,7 +86,7 @@ def test_schema_rejects_series_without_any_direction() -> None:
 
 def test_schema_rejects_constant_with_input() -> None:
     doc = _constant_series_doc(
-        input={"setter": {"name": "set_shock_year_anchor"}},
+        input={},
     )
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)
@@ -114,10 +112,10 @@ def test_schema_rejects_constant_with_legacy_setter() -> None:
         validate_bindings_document(doc)
 
 
-def test_schema_accepts_constant_reader_name_override() -> None:
+def test_schema_rejects_constant_reader_name_override() -> None:
     doc = _constant_series_doc(constant={"reader": {"name": "read_engine_c5"}})
-    bindings = validate_bindings_document(doc)
-    assert bindings["series"][0]["constant"]["reader"]["name"] == "read_engine_c5"
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(doc)
 
 
 def test_resolve_constant_series_includes_leaf_cells(tmp_path: Path) -> None:
@@ -170,7 +168,6 @@ def test_derive_constant_series(tmp_path: Path) -> None:
     assert len(constant_series) == 1
     series = constant_series[0]
     assert series["id"] == "shock_year_anchor"
-    assert series["reader_name"] == "read_shock_year_anchor"
     assert [cell["address"] for cell in series["cells"]] == ["Engine!C5"]
 
 
@@ -185,26 +182,9 @@ def test_input_output_internal_derive_skip_constant_series(tmp_path: Path) -> No
     assert derive_internal_series(graph, bindings, workbook=wb_path) == []
 
 
-def test_reader_index_includes_constant_leaves(tmp_path: Path) -> None:
-    wb_path = tmp_path / "constants.xlsx"
-    _write_constant_workbook(wb_path)
-    graph = create_dependency_graph(wb_path, ["Engine!C10"], load_values=True)
-    bindings = validate_bindings_document(_constant_series_doc())
-
-    index = build_reader_index(graph, bindings, workbook=wb_path)
-    assert "Engine!C5" in index["leaves"]
-    assert index["leaves"]["Engine!C5"]["reader"] == "read_shock_year_anchor"
-    assert index["leaves"]["Engine!C5"]["call_form"] == "read_shock_year_anchor(ctx)"
-
-    resolved = resolve_reader_ref("Engine!C5", index=index)
-    assert resolved["mode"] == "reader"
-    assert resolved["call_form"] == "read_shock_year_anchor(ctx)"
-
-
-def test_discovery_lists_readers_but_not_setters() -> None:
+def test_discovery_lists_no_inputs_for_constant_series() -> None:
     bindings = validate_bindings_document(_constant_series_doc())
     assert input_ids(bindings) == []
-    assert reader_names(bindings) == ["read_shock_year_anchor"]
     assert not any(has_input_direction(s) for s in bindings["series"])
 
 

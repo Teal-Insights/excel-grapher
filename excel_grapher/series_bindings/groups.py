@@ -9,7 +9,6 @@ from __future__ import annotations
 import re
 from typing import Any, TypedDict
 
-from excel_grapher.series_bindings.normalize import normalize_series_entry
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 
@@ -17,7 +16,6 @@ class GroupMember(TypedDict):
     """One binding's membership entry inside a group manifest node."""
 
     id: str
-    reader: str | None
     compute: str | None
     order: int | None
 
@@ -66,20 +64,6 @@ def bindings_have_groups(bindings: WorkbookSeriesBindings | dict[str, Any]) -> b
     )
 
 
-def _reader_name(series: dict[str, Any]) -> str | None:
-    normalized = normalize_series_entry(series)
-    constant_block = normalized.get("constant")
-    series_id = series.get("id")
-    if isinstance(constant_block, dict):
-        reader = constant_block.get("reader")
-        if isinstance(reader, dict) and reader.get("name"):
-            return str(reader["name"])
-        if not series_id:
-            return None
-        return f"read_{series_id}"
-    return None
-
-
 def _compute_name(series: dict[str, Any]) -> str | None:
     compute = (series.get("output") or {}).get("compute")
     if isinstance(compute, dict) and compute.get("name"):
@@ -90,7 +74,6 @@ def _compute_name(series: dict[str, Any]) -> str | None:
 def _member(series: dict[str, Any], order: int | None) -> GroupMember:
     return {
         "id": str(series.get("id", "")),
-        "reader": _reader_name(series),
         "compute": _compute_name(series),
         "order": order,
     }
@@ -178,22 +161,6 @@ def bindings_export_order(
     _flatten_tree(root, ordered)
     ordered.extend(series for series, _ in ungrouped)
     return ordered
-
-
-def grouped_public_names(
-    bindings: WorkbookSeriesBindings | dict[str, Any],
-) -> tuple[list[str], list[str]]:
-    """Return unique reader and compute names in grouped export order."""
-    readers: list[str] = []
-    computes: list[str] = []
-    for series in bindings_export_order(bindings):
-        reader = _reader_name(series)
-        if reader is not None and reader not in readers:
-            readers.append(reader)
-        compute = _compute_name(series)
-        if compute is not None and compute not in computes:
-            computes.append(compute)
-    return readers, computes
 
 
 def _manifest_node(node: _TreeNode) -> GroupNode:
