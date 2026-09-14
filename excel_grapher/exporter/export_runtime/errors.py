@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import NoReturn
 
-from excel_grapher.core import CellValue, XlError
+from excel_grapher.core import XlError
 from excel_grapher.core.types import XlErrorException
 
 __all__ = [
@@ -45,13 +45,6 @@ def raise_if_sentinel_str(value: str | XlError) -> str:
 
 def raise_if_sentinel_bool(value: bool | XlError) -> bool:
     """Return a boolean result or raise ``XlErrorException`` for an error sentinel."""
-    if isinstance(value, XlError):
-        raise XlErrorException(value)
-    return value
-
-
-def raise_if_sentinel(value: CellValue) -> CellValue:
-    """Return *value* or raise ``XlErrorException`` when it is an Excel error sentinel."""
     if isinstance(value, XlError):
         raise XlErrorException(value)
     return value

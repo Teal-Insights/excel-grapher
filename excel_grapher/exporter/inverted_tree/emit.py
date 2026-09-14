@@ -135,15 +135,6 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
     return _coerce_cached_value(value, dtype, address)
 
 
-_HOLE_DOC_LABELS = {
-    "blank": "blank",
-    "off_closure": "not computed",
-    "literal": "cached literal",
-    "graph_leaf": "cached literal",
-    "bound_leaf": "bound leaf",
-}
-
-
 def emit_init_module(catalog: SeriesCatalog) -> str:
     """Emit package `__init__.py` re-exporting public `compute_*` functions."""
     names = [s.compute_name or f"compute_{s.series_id}" for s in catalog.output_series()]

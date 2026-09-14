@@ -204,7 +204,6 @@ class CacheStats:
     hits: int = 0
     misses: int = 0
     writes: int = 0
-    disabled: bool = False
 
 
 # ---------------------------------------------------------------------------
@@ -259,7 +258,7 @@ class TypeAnalysisCache:
         self._max_rows = max_rows
         self._flush_threshold = flush_threshold
         self._pending: list[dict[str, Any]] = []
-        self.stats = CacheStats(disabled=conn is None)
+        self.stats = CacheStats()
 
     @classmethod
     def open(

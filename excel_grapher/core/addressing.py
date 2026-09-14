@@ -149,9 +149,6 @@ def split_sheet_qualified_address(address: str) -> tuple[str, str] | None:
         return None
 
 
-_split_sheet_qualified_address = split_sheet_qualified_address
-
-
 def _in_bounds(rng: ExcelRangeGeometry, bounds: WorkbookBoundsProtocol) -> bool:
     if rng.sheet != bounds.sheet:
         return False

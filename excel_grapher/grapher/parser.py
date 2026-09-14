@@ -13,7 +13,6 @@ from excel_grapher.core import address_keys as _address_keys
 from excel_grapher.core.address_keys import (
     format_cell_key,
     format_range_key,
-    needs_quoting,
     quoted_sheet_name_regex,
     quoted_sheet_prefix_regex,
     unescape_formula_sheet_name,
@@ -43,6 +42,7 @@ DEFAULT_MAX_RANGE_CELLS = 50_000
 format_key = _address_keys.format_key
 normalize_key = _address_keys.normalize_key
 parse_address = _address_keys.parse_address
+needs_quoting = _address_keys.needs_quoting
 
 
 @dataclass(frozen=True)
@@ -57,7 +57,6 @@ class CellRef:
 
 _FUNC_LIKE = {"IF", "OR", "AND", "NOT", "SUM", "MAX", "MIN", "AVG"}
 
-_QUOTED_SHEET = quoted_sheet_name_regex(capture_group="sheet")
 _QUOTED_SHEET_QS = quoted_sheet_name_regex(capture_group="qs")
 _QUOTED_SHEET_PREFIX = quoted_sheet_prefix_regex()
 
@@ -515,11 +514,6 @@ def ref_only_function_spans(formula: str) -> list[tuple[int, int]]:
 def mask_ref_only_function_calls(formula: str) -> str:
     """Mask address-only `ROW`/`COLUMN`/`ROWS`/`COLUMNS` calls in `formula`."""
     return mask_spans(formula, ref_only_function_spans(formula))
-
-
-# Private aliases so the module's historical internal names keep working.
-_needs_quoting = needs_quoting
-_format_ref = format_cell_key
 
 
 def normalize_formula(

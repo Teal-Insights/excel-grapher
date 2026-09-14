@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import hashlib
-import logging
 import re
 import time
 import warnings
@@ -96,14 +95,10 @@ from .resolver import build_named_range_map
 from .target_expansion import expand_targets_to_roots
 from .type_analysis_cache import TypeAnalysisCache
 
-_logger = logging.getLogger(__name__)
 _CANDIDATES_BFS_PROGRESS_INTERVAL = 5000
 """Emit a `bfs-progress` trace every N outer BFS nodes in candidate listing."""
 _CANDIDATES_ARG_PROGRESS_INTERVAL = 50_000
 """Emit a `candidates-arg-progress` trace every N argument-subgraph visits."""
-_VOLATILE_DYNAMIC_REF_FUNCS = frozenset(
-    {"NOW", "TODAY", "RAND", "RANDBETWEEN", "RANDARRAY", "INFO"}
-)
 _CONDITIONAL_FN_NAMES = frozenset({"IF", "IFS", "CHOOSE", "SWITCH"})
 _DYNAMIC_REF_FN_NAMES = frozenset({"OFFSET", "INDIRECT", "INDEX"})
 # Functions that consume a whole array argument and reduce or reshape it. A
@@ -175,8 +170,8 @@ _ARRAY_CONSUMING_FN_NAMES = frozenset(
     }
 )
 # Matches volatile builtins with optional Excel compatibility prefixes. Add new
-# volatile function names to ``_VOLATILE_DYNAMIC_REF_FUNCS`` only (not prefix
-# variants); ``_XLFN.`` / ``_XLUDF.`` are handled generically here.
+# volatile function names to this pattern only (not prefix variants);
+# ``_XLFN.`` / ``_XLUDF.`` are handled generically here.
 _VOLATILE_DYNAMIC_REF_PATTERN = re.compile(
     r"(?<![A-Z0-9_])(?:_XLFN\.|_XLUDF\.)?(?:NOW|TODAY|RANDBETWEEN|RANDARRAY|RAND|INFO)\s*\("
 )

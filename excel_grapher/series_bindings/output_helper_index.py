@@ -20,7 +20,6 @@ from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.types import Scalar, WorkbookSeriesBindings
 
 OutputHelperCallMode = Literal["helper", "xl_cell"]
-OutputHelperFallbackReason = Literal["unbound"]
 
 
 class OutputHelperSpec(TypedDict):
