@@ -15,7 +15,6 @@ from excel_grapher.grapher.dynamic_refs import expand_leaf_env_to_argument_env
 from excel_grapher.grapher.parser import expand_range
 from excel_grapher.grapher.target_expansion import expand_targets_to_roots
 from excel_grapher.series_bindings.ranges import (
-    effective_reader_range_address,
     expand_data_range,
     expand_data_range_for_graph,
 )
@@ -148,7 +147,6 @@ def test_max_range_cells_defaults_are_aligned() -> None:
         expand_leaf_env_to_argument_env,
         expand_data_range,
         expand_data_range_for_graph,
-        effective_reader_range_address,
     ):
         default = inspect.signature(fn).parameters["max_range_cells"].default
         assert default == DEFAULT_CAP, f"{fn.__qualname__} default is {default}"
