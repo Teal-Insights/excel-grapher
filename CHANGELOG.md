@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v19.0.1 (2026-09-14)
+
+### Bug Fixes
+
+- **series-bindings**: Narrow between/real_between type guards
+  ([#848](https://github.com/Teal-Insights/excel-grapher/pull/848),
+  [`d02aa62`](https://github.com/Teal-Insights/excel-grapher/commit/d02aa6224ed6d627e2ebecb856e7dc2879160c3a))
+
+- **series-bindings**: Reject float dtype with integer between domain
+  ([#848](https://github.com/Teal-Insights/excel-grapher/pull/848),
+  [`d02aa62`](https://github.com/Teal-Insights/excel-grapher/commit/d02aa6224ed6d627e2ebecb856e7dc2879160c3a))
+
+
 ## v19.0.0 (2026-09-14)
 
 ### Bug Fixes
