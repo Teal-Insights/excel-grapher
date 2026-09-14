@@ -1,4 +1,4 @@
-"""Coerce setter caller input into canonical record lists for series bindings."""
+"""Coerce caller input into canonical record lists for series bindings."""
 
 from __future__ import annotations
 
@@ -79,7 +79,7 @@ def _coerce_scalar_records(
     data: object,
     measure_field: str,
 ) -> Records:
-    """Normalize scalar-layout setter input to a record list."""
+    """Normalize scalar-layout caller input to a record list."""
     if isinstance(data, list):
         return cast(Records, data)
     if _is_mapping(data):
@@ -538,7 +538,7 @@ def _coerce_non_scalar_records(
     key_order: tuple[object, ...] | None,
     strict: bool,
 ) -> Records:
-    """Normalize series/matrix setter input to records before key coercion."""
+    """Normalize series/matrix caller input to records before key coercion."""
     if _is_tabular_dataframe(data):
         return _coerce_dataframe_records(
             data,
@@ -606,10 +606,10 @@ def coerce_setter_input(
     requires_address: bool = False,
     series_id: str = "",
 ) -> Records:
-    """Normalize caller input into records for ``_apply_series_records``.
+    """Normalize caller input into canonical record dicts.
 
     Args:
-        data: Scalar value, record(s), 1D measure values, or tidy DataFrame.
+        data: `_Scalar`, record(s), 1D measure values, or tidy DataFrame.
         layout: Binding layout (`scalar`, `series`, or `matrix`).
         key_fields: Key column names from the binding manifest.
         measure_field: Measure concept name (e.g. `OBS_VALUE`).

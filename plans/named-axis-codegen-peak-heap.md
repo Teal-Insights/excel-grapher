@@ -50,7 +50,7 @@ as in the test harness.
 | `build_catalog` | 14.4 | 15.4 | `KeyPoint`s, `_cell_indices`, schedule maps |
 | `collect_catalog_edges` | 15.6 | 15.7 | 7,155 `DependenceEdge` (104 B each) + cell strings |
 | `collect_all_deps` | 15.8 | 15.9 | `SeriesDeps` keeps a second tuple of the same edges |
-| `build_scc_map`, `plan_scc`, `assert_subgraph_bound` | 15.8 | 16.1 | Transient only |
+| `build_scc_map`, `plan_inverted_tree`, `assert_subgraph_bound` | 15.8 | 16.1 | Transient only |
 | `emit_named_internals` | 16.6 | 16.8 | `_emit_cache` ref lists (367 KiB), address strings |
 | `emit_named_api` | 16.6 | 16.7 | |
 | `emit_named_data` | 16.7 | 17.6 | Defaults, fingerprint payload |
@@ -138,8 +138,8 @@ repeated allocation spike and a plausible share of the 746 s.
 - [ ] Add `--profile-generation` to `scripts/measure_named_export.py`: run
   generation in a fresh subprocess, report per-phase tracemalloc retained and
   peak plus `ru_maxrss` at the boundaries of `build_catalog`,
-  `collect_catalog_edges`, `collect_all_deps`, `build_scc_map`, the `plan_scc`
-  loop, `assert_subgraph_bound`, `emit_named_internals`, `emit_named_api`,
+  `collect_catalog_edges`, `collect_all_deps`, `build_scc_map`, the
+  `plan_inverted_tree` legality loop, `assert_subgraph_bound`, `emit_named_internals`, `emit_named_api`,
   `emit_named_data`, and `build_runtime_modules`, and an object census
   (`DependenceEdge`, `KeyPoint`, `Statement`, `Domain`, `str` from
   `address_keys.py`). Record the graph's own footprint separately with
@@ -156,7 +156,7 @@ and object classes, on both synthetic and LIC DSF workloads.
 
 ### 2. Shorten lifetimes without changing output
 
-- [ ] Drop planning-only fields before emission. After `plan_scc` and
+- [ ] Drop planning-only fields before emission. After `plan_inverted_tree` and
   `assert_subgraph_bound`, `generate_inverted_tree_modules` passes emission a
   projection of `SeriesDeps` with `edges=()` and empty index and access maps,
   or `plan_inverted_tree` gains a `for_emission` return. `collect_all_deps`
@@ -225,7 +225,7 @@ edge, with byte-identical modules.
 - [ ] Collect stored-formula candidates for all series first and call
   `_stored_formula_addresses` once per workbook (one open, one streamed pass
   per touched sheet), preserving the per-series hole classification.
-- [ ] Check the `plan_scc` loop: `collect_dependence_edges` filters the full
+- [ ] Check the `plan_inverted_tree` legality loop: `collect_dependence_edges` filters the full
   edge tuple once per SCC. Pre-bucket edges by consumer (already available as
   `CatalogEdges.by_consumer`) so each SCC reads only its members' edges. This
   is time rather than peak, but it removes one full-edge-list copy per SCC.
