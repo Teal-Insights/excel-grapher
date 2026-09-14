@@ -15,10 +15,10 @@ from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.types import XlErrorException
 from excel_grapher.evaluator.types import XlError
-from tests.unit.exporter.embed_helpers import emit_export_runtime
 from excel_grapher.exporter.export_runtime.offset import xl_index_ref
 from excel_grapher.exporter.export_runtime.operators import xl_bool, xl_int
 from tests.integration.utils.parity_harness import evaluate_targets
+from tests.unit.exporter.embed_helpers import emit_export_runtime
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
