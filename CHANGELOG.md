@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v18.0.0 (2026-09-14)
+
+### Bug Fixes
+
+- **inverted-tree**: Fail closed on unscheduled partitions and singleton cycles
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+- **series-bindings**: Keep input_coerce Scalar alias out of excel.py
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+### Code Style
+
+- **exporter**: Sort emit_export_runtime import
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+### Documentation
+
+- Mark retired reader fields historical and drop leftover setter wording
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+### Features
+
+- **series-bindings**: Drop unused compute_* codegen and docstring subsystem
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+### Refactoring
+
+- Drop unused pickle, cache, and tensor legacy adapters
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+- Drop unused pickle, runtime, scheduling, and compute_* leftovers
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+- **exporter**: Require explicit modules for emit_runtime
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+- **inverted-tree**: Drop unused catalog lookup helpers
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+- **inverted-tree**: Drop unused rung and fused-loop scheduling
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+- **series-bindings**: Drop leftover reader range helper
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+### Testing
+
+- **series-bindings**: Flatten leftover nested input.setter rewrites
+  ([#845](https://github.com/Teal-Insights/excel-grapher/pull/845),
+  [`813ec2c`](https://github.com/Teal-Insights/excel-grapher/commit/813ec2cf6b33b64acc21121fdd831ebbdb53a06b))
+
+
 ## v17.0.1 (2026-09-14)
 
 ### Bug Fixes
