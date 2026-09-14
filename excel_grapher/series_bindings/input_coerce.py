@@ -277,12 +277,12 @@ def _in_closed_bounds(value: int | float, bounds: Mapping[str, Any]) -> bool:
     return (lo is None or value >= lo) and (hi is None or value <= hi)
 
 
-def _is_between_int(value: object) -> bool:
+def _is_between_int(value: object) -> TypeGuard[int]:
     """Return whether `value` is a non-bool integer (`between` membership)."""
     return isinstance(value, int) and not isinstance(value, bool)
 
 
-def _is_real_number(value: object) -> bool:
+def _is_real_number(value: object) -> TypeGuard[int | float]:
     """Return whether `value` is a non-bool int or float (`real_between`)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
