@@ -84,3 +84,12 @@ def test_generated_excel_owns_operators_runtime_owns_named_axis(tmp_path: Path) 
     assert "xl_add" not in runtime_import
     assert "publish" not in excel_import
     assert "def _core_add" in excel
+    seen_body = False
+    for node in ast.parse(excel).body:
+        is_import = isinstance(node, ast.Import | ast.ImportFrom)
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue
+        if is_import:
+            assert not seen_body
+            continue
+        seen_body = True

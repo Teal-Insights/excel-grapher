@@ -176,22 +176,90 @@ def _rename_identifiers(source: str, mapping: dict[str, str]) -> str:
     return ast.unparse(renamed) + "\n"
 
 
+def _adapter_stdlib_imports(adapter_tree: ast.Module) -> list[ast.ImportFrom]:
+    """Return adapter `from … import` nodes that must live in the excel header."""
+    imports: list[ast.ImportFrom] = []
+    for node in adapter_tree.body:
+        if not isinstance(node, ast.ImportFrom) or node.module is None:
+            continue
+        if node.module == "__future__" or node.module.startswith("excel_grapher."):
+            continue
+        imports.append(node)
+    return imports
+
+
+def _merge_stdlib_imports(excel: str, extra: list[ast.ImportFrom]) -> str:
+    """Add adapter stdlib names to the embed header without mid-file imports."""
+    tree = ast.parse(excel)
+    bound: set[str] = set()
+    last_import_end = 0
+    existing_from: dict[str, ast.ImportFrom] = {}
+    for node in tree.body:
+        if isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            continue
+        if isinstance(node, ast.ImportFrom) and node.module == "__future__":
+            last_import_end = node.end_lineno or node.lineno
+            continue
+        if isinstance(node, ast.ImportFrom):
+            last_import_end = node.end_lineno or node.lineno
+            if node.module is not None:
+                existing_from[node.module] = node
+            for alias in node.names:
+                bound.add(alias.asname or alias.name)
+            continue
+        if isinstance(node, ast.Import):
+            last_import_end = node.end_lineno or node.lineno
+            for alias in node.names:
+                bound.add((alias.asname or alias.name).split(".", 1)[0])
+            continue
+        break
+    missing_by_module: dict[str, list[str]] = {}
+    for node in extra:
+        assert node.module is not None
+        for alias in node.names:
+            name = alias.asname or alias.name
+            if name in bound:
+                continue
+            bound.add(name)
+            part = f"{alias.name} as {alias.asname}" if alias.asname else alias.name
+            missing_by_module.setdefault(node.module, []).append(part)
+    if not missing_by_module:
+        return excel
+    lines = excel.splitlines(keepends=True)
+    insertions: list[str] = []
+    for module, parts in missing_by_module.items():
+        existing = existing_from.get(module)
+        if (
+            existing is not None
+            and existing.lineno is not None
+            and existing.lineno == existing.end_lineno
+        ):
+            line = lines[existing.lineno - 1]
+            stripped = line.rstrip("\n")
+            newline = line[len(stripped) :]
+            lines[existing.lineno - 1] = f"{stripped}, {', '.join(parts)}{newline}"
+            continue
+        insertions.append(f"from {module} import {', '.join(parts)}\n")
+    for insert in insertions:
+        lines.insert(last_import_end, insert)
+        last_import_end += 1
+    return "".join(lines)
+
+
 def _adapter_body(adapter_source: str) -> str:
-    """Return adapter source with library imports and duplicate `T` removed."""
+    """Return adapter source with imports, module docstring, and duplicate `T` removed."""
     tree = ast.parse(adapter_source)
     lines = adapter_source.splitlines(keepends=True)
     skip: set[int] = set()
-    for node in tree.body:
-        drop = (
-            isinstance(node, ast.ImportFrom)
-            and node.module is not None
-            and (node.module == "__future__" or node.module.startswith("excel_grapher."))
-        ) or (
+    for index, node in enumerate(tree.body):
+        drop = isinstance(node, ast.Import | ast.ImportFrom) or (
             isinstance(node, ast.Assign)
             and len(node.targets) == 1
             and isinstance(node.targets[0], ast.Name)
             and node.targets[0].id == "T"
         )
+        if index == 0 and isinstance(node, ast.Expr) and isinstance(node.value, ast.Constant):
+            drop = isinstance(node.value.value, str)
         if drop:
             assert node.end_lineno is not None
             skip.update(range(node.lineno, node.end_lineno + 1))
@@ -232,6 +300,7 @@ def build_runtime_modules(runtime_source: str, excel_source: str) -> dict[str, s
     excel = _patch_column_letter(excel)
     renamed = _collision_renames(adapter_tree)
     excel = _rename_identifiers(excel, renamed)
+    excel = _merge_stdlib_imports(excel, _adapter_stdlib_imports(adapter_tree))
     aliases = _passthrough_aliases(adapter_tree, renamed)
     if aliases:
         excel = excel.rstrip() + "\n\n" + "\n".join(aliases) + "\n"
