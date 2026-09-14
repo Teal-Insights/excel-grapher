@@ -419,9 +419,8 @@ def test_coerce_input_measure_float_rewrites_int() -> None:
     assert type(coerce_input_measure(0, dtype="float", series_id="share")) is float
     assert coerce_input_measure(0.5, dtype="float", series_id="share") == 0.5
     assert coerce_input_measure(None, dtype="float", series_id="share") is None
+    assert coerce_input_measure("#N/A", dtype="float", series_id="share") == "#N/A"
+    assert coerce_input_measure(True, dtype="float", series_id="share") is True
     assert coerce_input_measure((0, 1), dtype="float", series_id="share") == (0.0, 1.0)
     assert coerce_input_measure(0, dtype="int", series_id="years") == 0
-    with pytest.raises(TypeError, match=r"share: expected float"):
-        coerce_input_measure("0", dtype="float", series_id="share")
-    with pytest.raises(TypeError, match=r"years: expected int"):
-        coerce_input_measure(0.0, dtype="int", series_id="years")
+    assert coerce_input_measure(0.0, dtype="int", series_id="years") == 0.0

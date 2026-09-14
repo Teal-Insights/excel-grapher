@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
 from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding_scalar
 from excel_grapher.series_bindings.types import Record, Records
@@ -328,64 +328,49 @@ def _reject_out_of_domain(
         )
 
 
-def _coerce_one(value: object, dtype: str, *, series_id: str) -> object:
-    """Apply `validate_binding_scalar` and prefix the series id on type errors."""
-    try:
-        return validate_binding_scalar(value, dtype)
-    except TypeError as exc:
-        raise TypeError(f"{series_id}: {exc}") from exc
+def _coerce_one(value: object, dtype: str) -> object:
+    """Rewrite `int` to `float` when `dtype` is `float`; otherwise return `value`."""
+    if dtype == "float" and not isinstance(value, bool) and isinstance(value, int):
+        return float(value)
+    return value
 
 
-class _NamedTensor(Protocol):
-    """Generated tensor with a domain and coordinate/value pairs."""
-
-    domain: object
-
-    def items(self) -> Iterable[tuple[object, object]]: ...
-
-
-def _is_named_tensor(value: object) -> TypeGuard[_NamedTensor]:
-    """True for generated `Series` tensors (domain plus coordinate `items()`)."""
+def _coerce_named_tensor(value: object, dtype: str) -> object | None:
+    """Rewrite tensor members when `value` looks like a generated `Series`."""
     domain = getattr(value, "domain", None)
     items = getattr(value, "items", None)
-    return domain is not None and callable(items) and not _is_mapping(value)
+    if domain is None or not callable(items) or _is_mapping(value):
+        return None
+    coerced = tuple(_coerce_one(member, dtype) for _coord, member in items())
+    return cast(Any, type(value))(domain, coerced)
 
 
 def coerce_input_measure(value: object, dtype: str, *, series_id: str) -> object:
     """Rewrite a public compute input using setter dtype rules.
 
     `int` becomes `float` when `dtype` is `float`. Sequences and tensors are
-    rewritten memberwise. `float` is never narrowed to `int`.
+    rewritten memberwise. Other measure values (`str` error codes, bools,
+    `None`) pass through. `float` is never narrowed to `int`.
 
     Args:
         value: One measure, a catalog-order sequence, or a named tensor.
         dtype: Binding measure dtype (`float`, `int`, `number`, ...).
-        series_id: Binding series id used in type-error messages.
+        series_id: Binding series id; reserved for type-error messages.
 
     Returns:
-        The validated value, possibly after a safe coercion.
-
-    Raises:
-        TypeError: When a member does not match `dtype`.
-        ValueError: When a datetime value is timezone-aware or `dtype` is unknown.
+        The value, possibly after a safe `int` -> `float` coercion.
     """
-    if _is_named_tensor(value):
-        coerced = tuple(
-            _coerce_one(member, dtype, series_id=f"{series_id}{coord!r}")
-            for coord, member in value.items()
-        )
-        return cast(Any, type(value))(value.domain, coerced)
+    tensor = _coerce_named_tensor(value, dtype)
+    if tensor is not None:
+        return tensor
     if _is_measure_sequence(value):
-        members = [
-            _coerce_one(member, dtype, series_id=f"{series_id}[{index}]")
-            for index, member in enumerate(value)
-        ]
+        members = [_coerce_one(member, dtype) for member in value]
         if isinstance(value, tuple):
             return tuple(members)
         if isinstance(value, list):
             return members
         return type(value)(members)
-    return _coerce_one(value, dtype, series_id=series_id)
+    return _coerce_one(value, dtype)
 
 
 def apply_input_value_map(
