@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from collections.abc import Iterable, Mapping
 from datetime import datetime
 
@@ -9,6 +10,7 @@ from excel_grapher.series_bindings.scalar_literals import py_scalar_literal
 from excel_grapher.series_bindings.types import SeriesResolution
 
 __all__ = [
+    "dimension_id_to_param_name",
     "emit_compute_preamble_lines",
     "emit_setter_type_alias_lines",
     "py_scalar_literal",
@@ -18,6 +20,21 @@ __all__ = [
     "setter_input_annotation",
     "values_include_datetime",
 ]
+
+
+def dimension_id_to_param_name(field: str) -> str:
+    """Convert an SDMX / effective dimension id to a Python keyword parameter name.
+
+    Examples:
+        `TIME_PERIOD` -> `time_period`
+        `ref_area` -> `ref_area`
+    """
+    slug = re.sub(r"[^a-zA-Z0-9]+", "_", field).strip("_").lower()
+    if not slug:
+        slug = "key"
+    if slug[0].isdigit():
+        slug = f"dim_{slug}"
+    return slug
 
 
 def python_annotation_for_dtype(dtype: str | None) -> str | None:

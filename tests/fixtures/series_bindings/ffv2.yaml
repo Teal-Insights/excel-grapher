@@ -12,9 +12,7 @@ series:
     data_range: Sheet1!B3:Q3
     layout: series
     editable: true
-    input:
-      setter:
-        name: set_puka_receptions
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE
@@ -46,9 +44,7 @@ series:
     data_range: Sheet1!B4:Q4
     layout: series
     editable: true
-    input:
-      setter:
-        name: set_puka_targets
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE
@@ -80,9 +76,7 @@ series:
     data_range: Sheet1!B5:Q5
     layout: series
     editable: true
-    input:
-      setter:
-        name: set_puka_yards
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE
@@ -148,9 +142,7 @@ series:
     data_range: Sheet1!B7:Q7
     layout: series
     editable: true
-    input:
-      setter:
-        name: set_puka_touchdowns
+    input: {}
     output:
       compute:
         name: compute_touchdowns
@@ -185,9 +177,7 @@ series:
     data_range: Sheet1!B8:Q8
     layout: series
     editable: false
-    input:
-      setter:
-        name: set_puka_longest_reception
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE
@@ -253,9 +243,7 @@ series:
     data_range: Sheet1!B3:Q3
     layout: series
     editable: true
-    input:
-      setter:
-        name: set_puka_week_1_stats
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

@@ -24,7 +24,7 @@ def _series(series_id: str, **overrides: Any) -> dict[str, Any]:
         "sheet": "Inputs",
         "data_range": "Inputs!B2",
         "layout": "scalar",
-        "setter": {"name": f"set_{series_id}"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -185,8 +185,7 @@ def test_group_manifest_nests_children_and_lists_members() -> None:
     assert paris["members"] == [
         {
             "id": "paris",
-            "setter": "set_paris",
-            "reader": "read_paris",
+            "reader": None,
             "compute": None,
             "order": 1,
         }
@@ -194,8 +193,7 @@ def test_group_manifest_nests_children_and_lists_members() -> None:
     assert manifest["ungrouped"] == [
         {
             "id": "loose",
-            "setter": "set_loose",
-            "reader": "read_loose",
+            "reader": None,
             "compute": None,
             "order": None,
         }
@@ -212,8 +210,7 @@ def test_group_manifest_records_multi_membership_in_every_group() -> None:
     assert group_b["members"] == [
         {
             "id": "multi",
-            "setter": "set_multi",
-            "reader": "read_multi",
+            "reader": None,
             "compute": None,
             "order": 5,
         }
@@ -222,13 +219,12 @@ def test_group_manifest_records_multi_membership_in_every_group() -> None:
 
 def test_group_manifest_includes_compute_names() -> None:
     entry = _series("outputs_debt", groups=[{"path": ["Outputs"]}])
-    del entry["setter"]
+    del entry["input"]
     entry["output"] = {"compute": {"name": "compute_outputs_debt"}}
     manifest = group_manifest(_doc(entry))
     assert manifest["groups"][0]["members"] == [
         {
             "id": "outputs_debt",
-            "setter": None,
             "reader": None,
             "compute": "compute_outputs_debt",
             "order": None,

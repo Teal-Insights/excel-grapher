@@ -329,7 +329,7 @@ def _print_summary(result: Mapping[str, Any]) -> None:
     warnings = sum(1 for issue in report["issues"] if issue["level"] == "warning")
     print(f"ok={report['ok']} errors={errors} warnings={warnings}")
     print(f"canonical_sha256={result['canonical_sha256']}")
-    print(f"setters={result['setters']}")
+    print(f"inputs={result['inputs']}")
     print(f"computes={result['computes']}")
 
 

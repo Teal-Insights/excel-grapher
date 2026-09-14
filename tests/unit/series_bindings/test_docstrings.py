@@ -41,7 +41,6 @@ from excel_grapher.series_bindings.docstrings import (
     run_series_docstring_callback,
     unregister_series_docstring_callback,
 )
-from excel_grapher.series_bindings.setter_codegen import _canonical_key_order
 from excel_grapher.series_bindings.types import SeriesResolution, WorkbookSeriesBindings
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
@@ -586,10 +585,7 @@ def test_derive_doc_contract_positional_values_match_key_order(tmp_path: Path) -
     bindings = load_series_bindings(FIXTURES / "borvelia_primary_balance.yaml")
     series = bindings["series"][0]
     resolved = resolve_series_binding(graph, wb_path, series)
-    key_fields = [str(field) for field in (series.get("key") or [])]
-    key_order = _canonical_key_order(resolved, key_fields)
-    assert key_order is not None
-    assert len(key_order) == 5
+    assert len(resolved["leaves"]) == 5
 
     contract = derive_doc_contract(
         series,

@@ -16,12 +16,6 @@ from excel_grapher.series_bindings.types import (
 )
 
 
-def _setter_name(series: dict[str, Any]) -> str:
-    input_block = series.get("input") or {}
-    setter = input_block.get("setter") or series.get("setter") or {}
-    return str(setter.get("name", f"set_{series.get('id', 'series')}"))
-
-
 def _build_input_series(
     resolved: SeriesResolution,
     series: dict[str, Any],
@@ -29,7 +23,6 @@ def _build_input_series(
 ) -> InputSeries:
     return {
         "id": resolved["series_id"],
-        "setter_name": _setter_name(series),
         "key_fields": [str(field) for field in (series.get("key") or [])],
         "requires_address": resolved["requires_address"],
         "cells": cells,

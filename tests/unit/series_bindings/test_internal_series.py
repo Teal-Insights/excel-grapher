@@ -14,7 +14,6 @@ from excel_grapher.series_bindings import (
     derive_input_series,
     derive_internal_series,
     derive_output_series,
-    emit_series_bindings_block,
     has_internal_direction,
     load_series_bindings,
     merge_series_binding_documents,
@@ -222,15 +221,6 @@ def test_derive_internal_series_from_fixture(tmp_path: Path) -> None:
         "Engine!C2",
         "Engine!D2",
     ]
-
-
-def test_derive_internal_series_does_not_emit_codegen(tmp_path: Path) -> None:
-    wb_path = tmp_path / "formula_override.xlsx"
-    _write_override_workbook(wb_path)
-    graph = create_dependency_graph(wb_path, ["Engine!B2"], load_values=True)
-    bindings = validate_bindings_document(_internal_series_doc())
-    lines = emit_series_bindings_block(graph, wb_path, bindings)
-    assert lines == []
 
 
 def test_input_and_output_derive_skip_internal_series(tmp_path: Path) -> None:

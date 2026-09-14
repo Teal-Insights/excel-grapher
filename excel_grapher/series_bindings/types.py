@@ -82,7 +82,6 @@ class InputSeriesCell(TypedDict):
 
 class InputSeries(TypedDict):
     id: str
-    setter_name: str
     key_fields: list[str]
     requires_address: bool
     cells: list[InputSeriesCell]

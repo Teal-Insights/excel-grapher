@@ -67,9 +67,9 @@ Prefer explicit, typed extension points over ad hoc keyword flags when users nee
 For local Python usage, accept direct objects or callables when they are easy to type and configure:
 
 ```python
-from excel_grapher.series_bindings import emit_setter_function
+from excel_grapher.series_bindings import emit_compute_function
 
-lines = emit_setter_function(
+lines = emit_compute_function(
     series,
     resolved,
     graph=graph,
@@ -98,7 +98,7 @@ Duplicate registration should fail by default. Support `replace=True` as an expl
 ```python
 register_series_docstring_callback("project_docs", my_callback)
 
-lines = emit_setter_function(
+lines = emit_compute_function(
     series,
     resolved,
     graph=graph,

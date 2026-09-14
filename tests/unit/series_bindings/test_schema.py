@@ -102,7 +102,7 @@ def test_schema_error_for_missing_key_names_series_id() -> None:
     )
 
 
-def test_schema_rejects_bad_setter_name() -> None:
+def test_schema_strips_bad_setter_name() -> None:
     doc = {
         "schema_version": "1.0.0",
         "series": [
@@ -118,8 +118,8 @@ def test_schema_rejects_bad_setter_name() -> None:
                         {
                             "concept": "X",
                             "role": "key",
-                            "scope": "cell",
-                            "bind": {"kind": "constant", "value": 1},
+                            "scope": "series",
+                            "bind": {"kind": "constant", "value": "x"},
                         }
                     ],
                 },
@@ -127,10 +127,9 @@ def test_schema_rejects_bad_setter_name() -> None:
             }
         ],
     }
-    errors = format_schema_errors(doc)
-    assert any("setter" in e for e in errors)
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
+    bindings = validate_bindings_document(doc)
+    assert bindings["series"][0]["input"] == {}
+    assert "setter" not in bindings["series"][0]
 
 
 def test_schema_accepts_bare_defined_name_data_range() -> None:

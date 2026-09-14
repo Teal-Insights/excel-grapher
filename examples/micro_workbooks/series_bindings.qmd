@@ -57,9 +57,7 @@ bindings_yaml = dedent(
         data_range: Sheet1!F5:J5
         layout: series
         editable: true
-        input:
-          setter:
-            name: set_borvelia_primary_balance
+        input: {}
         output:
           compute:
             name: compute_borvelia_primary_balance
@@ -124,18 +122,18 @@ print(
 
 ### Validation
 
-Before codegen, tooling intersects `data_range` with the extracted graph's **leaf** cells (inputs, not formulas depending on other cells). A binding can describe a wider workbook series than the current graph needs; setter generation uses the overlapping leaves and skips a series with no overlap.
+Before codegen, tooling intersects `data_range` with the extracted graph's **leaf** cells (inputs, not formulas depending on other cells). A binding can describe a wider workbook series than the current graph needs; export uses the overlapping leaves and skips a series with no overlap.
 
 ```{python}
 report = validate_series_bindings(graph, bindings, workbook=workbook_path)
 print(f"```text\n{pformat(report, indent=2, width=100)}\n```\n")
 ```
 
-With `require_unique_key` (the default), the generated setter can use key-based matching only if no two participating graph leaves have the same `TIME_PERIOD`. That holds here: offsets 1–5 across columns F–J are distinct.
+With `require_unique_key` (the default), tensor coordinates can use key-based matching only if no two participating graph leaves have the same `TIME_PERIOD`. That holds here: offsets 1–5 across columns F–J are distinct.
 
 ### Coordinate resolution
 
-**Resolution** walks each graph leaf that overlaps `data_range` and evaluates the bind executors (`column_header` for `TIME_PERIOD`, `data_cell` for `OBS_VALUE`, and so on). The result is a **key** tuple used to match records and a **record** dict shaped for the generated setter (including `OBS_VALUE` and optional attributes such as `UNIT_MEASURE`).
+**Resolution** walks each graph leaf that overlaps `data_range` and evaluates the bind executors (`column_header` for `TIME_PERIOD`, `data_cell` for `OBS_VALUE`, and so on). The result is a **key** tuple used as a tensor coordinate and a **record** dict (including `OBS_VALUE` and optional attributes such as `UNIT_MEASURE`).
 
 ```{python}
 resolved = resolve_series_binding(graph, workbook_path, series)
@@ -292,7 +290,7 @@ records = exported.as_records(exported.compute_borvelia_primary_balance_out, res
 print(records_markdown_table(records))
 ```
 
-Period **4** and **5** values (`7.5` and `8.0`) are the measures you passed; `as_records` attaches `TIME_PERIOD` from `__domain__`. Read them directly as `result[4]` and `result[5]`. Package discovery is `exported.__all__` (compute names and tensor types). Docstring callbacks apply to `emit_setter_function` / `emit_compute_function`, not `generate_modules()`.
+Period **4** and **5** values (`7.5` and `8.0`) are the measures you passed; `as_records` attaches `TIME_PERIOD` from `__domain__`. Read them directly as `result[4]` and `result[5]`. Package discovery is `exported.__all__` (compute names and tensor types). Docstring callbacks apply to `emit_compute_function`, not `generate_modules()`.
 
 ## 02. Formula-cell overrides (`input.mode: override`)
 
@@ -310,8 +308,6 @@ series:
     layout: scalar
     input:
       mode: override
-      setter:
-        name: set_engine_b1
     structure:
       measure:
         concept: OBS_VALUE
@@ -325,7 +321,7 @@ series:
 
 ## 03. Internal formula-cell triangulation (`internal: {}`)
 
-Schema **1.7.0** adds `internal: {}` for formula cells that need dimensional keys without public `set_*` or `compute_*` APIs. Pipelines can shard these as `internals.bindings.yaml` alongside input and output manifests.
+Schema **1.7.0** adds `internal: {}` for formula cells that need dimensional keys without public `compute_*` APIs. Pipelines can shard these as `internals.bindings.yaml` alongside input and output manifests.
 
 Example fixture: [internal_engine_row.yaml](../../tests/fixtures/series_bindings/internal_engine_row.yaml) (the following cell creates a small workbook in the temporary export directory).
 

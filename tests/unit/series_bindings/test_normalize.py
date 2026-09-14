@@ -28,14 +28,14 @@ def test_normalize_renames_legacy_row_series_layout() -> None:
     assert normalized["layout"] == "series"
 
 
-def test_normalize_moves_legacy_setter_to_input() -> None:
+def test_legacy_top_level_setter_strips_to_empty_input() -> None:
     series = {
         "id": "x",
         "setter": {"name": "set_x"},
     }
     normalized = normalize_series_entry(series)
     assert "setter" not in normalized
-    assert normalized["input"]["setter"]["name"] == "set_x"
+    assert normalized["input"] == {}
     assert has_input_direction(normalized)
     assert not has_output_direction(normalized)
 
@@ -47,7 +47,7 @@ def test_merge_input_and_output_shards(tmp_path: Path) -> None:
     series = merged["series"][0]
     assert has_input_direction(series)
     assert has_output_direction(series)
-    assert series["input"]["setter"]["name"] == "set_borvelia_primary_balance"
+    assert series["input"] == {}
     assert series["output"]["compute"]["name"] == "compute_borvelia_primary_balance"
 
 

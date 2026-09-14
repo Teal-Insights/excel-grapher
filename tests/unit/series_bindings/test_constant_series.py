@@ -16,8 +16,6 @@ from excel_grapher.series_bindings import (
     derive_input_series,
     derive_internal_series,
     derive_output_series,
-    emit_readers_block,
-    emit_series_bindings_block,
     has_constant_direction,
     has_input_direction,
     load_series_bindings,
@@ -28,7 +26,7 @@ from excel_grapher.series_bindings import (
     validate_bindings_document,
     validate_series_bindings,
 )
-from excel_grapher.series_bindings.workflow import reader_names, setter_names
+from excel_grapher.series_bindings.workflow import reader_names, input_ids
 
 
 def _write_constant_workbook(path: Path) -> None:
@@ -187,31 +185,6 @@ def test_input_output_internal_derive_skip_constant_series(tmp_path: Path) -> No
     assert derive_internal_series(graph, bindings, workbook=wb_path) == []
 
 
-def test_codegen_emits_reader_without_setter(tmp_path: Path) -> None:
-    wb_path = tmp_path / "constants.xlsx"
-    _write_constant_workbook(wb_path)
-    graph = create_dependency_graph(wb_path, ["Engine!C10"], load_values=True)
-    bindings = validate_bindings_document(_constant_series_doc())
-
-    lines = emit_series_bindings_block(graph, wb_path, bindings)
-    text = "\n".join(lines)
-
-    assert "def read_shock_year_anchor(" in text
-    assert "def set_shock_year_anchor(" not in text
-    assert "def compute_shock_year_anchor(" not in text
-
-
-def test_emit_readers_block_includes_constant_series(tmp_path: Path) -> None:
-    wb_path = tmp_path / "constants.xlsx"
-    _write_constant_workbook(wb_path)
-    graph = create_dependency_graph(wb_path, ["Engine!C10"], load_values=True)
-    bindings = validate_bindings_document(_constant_series_doc())
-
-    text = "\n".join(emit_readers_block(graph, wb_path, bindings))
-    assert "def read_shock_year_anchor(" in text
-    assert "_LEAF_INDEX_SHOCK_YEAR_ANCHOR" in text or "xl_cell(ctx, 'Engine!C5')" in text
-
-
 def test_reader_index_includes_constant_leaves(tmp_path: Path) -> None:
     wb_path = tmp_path / "constants.xlsx"
     _write_constant_workbook(wb_path)
@@ -230,7 +203,7 @@ def test_reader_index_includes_constant_leaves(tmp_path: Path) -> None:
 
 def test_discovery_lists_readers_but_not_setters() -> None:
     bindings = validate_bindings_document(_constant_series_doc())
-    assert setter_names(bindings) == []
+    assert input_ids(bindings) == []
     assert reader_names(bindings) == ["read_shock_year_anchor"]
     assert not any(has_input_direction(s) for s in bindings["series"])
 

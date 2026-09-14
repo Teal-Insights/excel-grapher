@@ -2,24 +2,16 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
 import xlsxwriter
 
 from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict
 from excel_grapher.series_bindings import (
     expand_data_range,
     resolve_series_binding,
     validate_bindings_document,
-)
-from excel_grapher.series_bindings.setter_codegen import (
-    emit_input_coerce_helpers,
-    emit_setter_function,
-    emit_setter_helpers,
-    emit_setters_block,
 )
 
 KEYLESS_SCALAR_BINDING: dict[str, Any] = {
@@ -30,13 +22,7 @@ KEYLESS_SCALAR_BINDING: dict[str, Any] = {
             "sheet": "Inputs",
             "data_range": "Inputs!B5",
             "layout": "scalar",
-            "input": {
-                "setter": {
-                    "name": "set_country_name",
-                    "record_contract": "records",
-                    "strict": True,
-                }
-            },
+            "input": {},
             "structure": {
                 "measure": {
                     "concept": "OBS_VALUE",
@@ -58,18 +44,6 @@ KEYLESS_SCALAR_BINDING: dict[str, Any] = {
         }
     ],
 }
-
-
-def _exec_setters(lines: list[str]) -> dict[str, object]:
-    namespace: dict[str, object] = {
-        "EvalContext": EvalContext,
-        "coerce_inputs_dict": coerce_inputs_dict,
-    }
-    source_lines = lines
-    if "def coerce_setter_input(" not in "\n".join(lines):
-        source_lines = emit_input_coerce_helpers() + emit_setter_helpers() + lines
-    exec("\n".join(source_lines), namespace)
-    return namespace
 
 
 def test_keyless_scalar_binding_passes_schema() -> None:
@@ -118,63 +92,3 @@ def test_keyless_scalar_multi_leaf_fails_resolution(tmp_path: Path) -> None:
     codes = {issue["code"] for issue in resolved["issues"]}
     assert "keyless_scalar_ambiguous" in codes
 
-
-def test_keyless_scalar_setter_accepts_shorthand_value(tmp_path: Path) -> None:
-    wb_path = tmp_path / "inputs.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Inputs")
-    ws.write("B5", "Litellia")
-    wb.close()
-
-    graph = create_dependency_graph(wb_path, ["Inputs!B5"], load_values=True)
-    series = cast(dict[str, Any], KEYLESS_SCALAR_BINDING["series"][0])
-    resolved = resolve_series_binding(graph, wb_path, series)
-    lines = emit_setter_function(series, resolved)
-    ns = _exec_setters(lines)
-    setter = cast(
-        Callable[[EvalContext, object], None],
-        ns["set_country_name"],
-    )
-
-    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(ctx, "Newland")
-    assert ctx.inputs["Inputs!B5"] == "Newland"
-
-
-def test_keyless_scalar_setter_accepts_record_without_keys(tmp_path: Path) -> None:
-    wb_path = tmp_path / "inputs.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Inputs")
-    ws.write("B5", "Litellia")
-    wb.close()
-
-    graph = create_dependency_graph(wb_path, ["Inputs!B5"], load_values=True)
-    series = cast(dict[str, Any], KEYLESS_SCALAR_BINDING["series"][0])
-    resolved = resolve_series_binding(graph, wb_path, series)
-    lines = emit_setter_function(series, resolved)
-    ns = _exec_setters(lines)
-    setter = cast(
-        Callable[[EvalContext, object], None],
-        ns["set_country_name"],
-    )
-
-    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(ctx, [{"OBS_VALUE": "Newland"}])
-    assert ctx.inputs["Inputs!B5"] == "Newland"
-
-
-def test_keyless_scalar_codegen_signature_uses_scalar_alias(tmp_path: Path) -> None:
-    wb_path = tmp_path / "inputs.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Inputs")
-    ws.write("B5", "Litellia")
-    wb.close()
-
-    graph = create_dependency_graph(wb_path, ["Inputs!B5"], load_values=True)
-    bindings = validate_bindings_document(KEYLESS_SCALAR_BINDING)
-    lines = emit_setters_block(graph, wb_path, bindings)
-    code = "\n".join(lines)
-
-    assert "Scalar: TypeAlias = str | int | float | bool | None" in code
-    assert "Scalar: TypeAlias = str | int | float | bool | datetime | None" not in code
-    assert "records: Records | Record | str," in code

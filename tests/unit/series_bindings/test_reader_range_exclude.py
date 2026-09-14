@@ -1,35 +1,23 @@
-"""Range readers must honour exclude_rows / exclude_columns (#453).
+"""Range readers honour exclude_rows / exclude_columns in the reader index.
 
-Keyed readers already filter via resolve; `read_*_range` historically emitted
-`xl_range(ctx, data_range)` and ignored exclusions — including complementary
-interleaved matrix bindings that then returned identical full blocks.
-
-#459: omitting a non-contiguous `read_*_range` must emit a UserWarning and be
-queryable via `collect_reader_range_omissions`.
+Keyed readers already filter via resolve. Binding-aligned `read_*_range`
+entries in the reader index use the narrowed contiguous rectangle after
+exclusions, not the original `data_range`.
 """
 
 from __future__ import annotations
 
-import re
-import warnings
 from pathlib import Path
 from typing import Any
 
-import pytest
 import xlsxwriter
 
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
     expand_data_range,
-    resolve_series_binding,
     validate_bindings_document,
 )
 from excel_grapher.series_bindings.reader_index import build_reader_index
-from excel_grapher.series_bindings.setter_codegen import (
-    collect_reader_range_omissions,
-    emit_reader_range_function,
-    emit_readers_block,
-)
 
 
 def _interleaved_matrix_doc() -> dict[str, Any]:
@@ -180,70 +168,6 @@ def _matrix_series(
     }
 
 
-def _fn_body(source: str, name: str) -> str | None:
-    match = re.search(rf"^def {name}\(.*?(?=^def |\Z)", source, re.S | re.M)
-    return match.group(0).rstrip() if match else None
-
-
-def test_interleaved_exclude_rows_omits_misleading_range_readers(tmp_path: Path) -> None:
-    """Non-contiguous exclusions must not emit identical full-block *_range helpers."""
-    wb_path = tmp_path / "mcve.xlsx"
-    _write_interleaved_workbook(wb_path)
-    bindings = validate_bindings_document(_interleaved_matrix_doc())
-    graph = create_dependency_graph(wb_path, expand_data_range("Risks!B2:D5"), load_values=True)
-
-    with pytest.warns(UserWarning, match="non-contiguous selection") as caught:
-        source = "\n".join(emit_readers_block(graph, wb_path, bindings))
-    messages = [str(w.message) for w in caught]
-    assert any("read_revenue_shocks_range" in msg for msg in messages)
-    assert any("read_expenditure_shocks_range" in msg for msg in messages)
-    assert "def read_revenue_shocks(" in source
-    assert "def read_expenditure_shocks(" in source
-    assert "def read_revenue_shocks_range(" not in source
-    assert "def read_expenditure_shocks_range(" not in source
-    assert "xl_range(ctx, 'Risks!B2:D5')" not in source
-
-
-def test_contiguous_exclude_rows_emits_narrowed_range(tmp_path: Path) -> None:
-    wb_path = tmp_path / "trim.xlsx"
-    _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(_matrix_series(exclude_rows=[5], data_range="Demo!B2:D5"))
-    graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(graph, wb_path, series)
-    lines = emit_reader_range_function(series, resolved, workbook=wb_path)
-    source = "\n".join(lines)
-    assert "def read_demo_range(" in source
-    assert "return xl_range(ctx, 'Demo!B2:D4')" in source
-    assert "Demo!B2:D5" not in source
-
-
-def test_contiguous_exclude_columns_emits_narrowed_range(tmp_path: Path) -> None:
-    wb_path = tmp_path / "trim.xlsx"
-    _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(
-        _matrix_series(exclude_columns=["D"], data_range="Demo!B2:D5")
-    )
-    graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(graph, wb_path, series)
-    lines = emit_reader_range_function(series, resolved, workbook=wb_path)
-    source = "\n".join(lines)
-    assert "return xl_range(ctx, 'Demo!B2:C5')" in source
-
-
-def test_hole_exclude_rows_omits_range_reader(tmp_path: Path) -> None:
-    """Excluding a middle row leaves a non-rectangular selection — no *_range helper."""
-    wb_path = tmp_path / "hole.xlsx"
-    _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(_matrix_series(exclude_rows=[3], data_range="Demo!B2:D5"))
-    graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(graph, wb_path, series)
-    with pytest.warns(UserWarning, match="read_demo_range"):
-        assert emit_reader_range_function(series, resolved, workbook=wb_path) == []
-
-
 def test_reader_index_keys_narrowed_contiguous_range(tmp_path: Path) -> None:
     wb_path = tmp_path / "trim.xlsx"
     _write_edge_trim_workbook(wb_path)
@@ -259,67 +183,3 @@ def test_reader_index_keys_narrowed_contiguous_range(tmp_path: Path) -> None:
     assert "Demo!B2:D5" not in index["ambiguous"]
 
 
-def test_omitted_range_reader_emits_user_warning(tmp_path: Path) -> None:
-    """#459: omission for non-contiguous selection must surface a UserWarning."""
-    wb_path = tmp_path / "mcve.xlsx"
-    _write_interleaved_workbook(wb_path)
-    bindings = validate_bindings_document(_interleaved_matrix_doc())
-    graph = create_dependency_graph(wb_path, expand_data_range("Risks!B2:D5"), load_values=True)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        emit_readers_block(graph, wb_path, bindings)
-
-    messages = [str(w.message) for w in caught if issubclass(w.category, UserWarning)]
-    assert any("read_revenue_shocks_range" in msg for msg in messages)
-    assert any("read_expenditure_shocks_range" in msg for msg in messages)
-    assert any("revenue_shocks" in msg for msg in messages)
-    assert any(
-        "non-contiguous" in msg.lower() or "cannot be expressed" in msg.lower() for msg in messages
-    )
-
-
-def test_contiguous_exclude_does_not_warn_about_range_omission(tmp_path: Path) -> None:
-    wb_path = tmp_path / "trim.xlsx"
-    _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(_matrix_series(exclude_rows=[5], data_range="Demo!B2:D5"))
-    graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
-
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        emit_readers_block(graph, wb_path, bindings)
-
-    omission = [
-        w
-        for w in caught
-        if issubclass(w.category, UserWarning)
-        and "read_demo_range" in str(w.message)
-        and ("non-contiguous" in str(w.message).lower() or "omitting" in str(w.message).lower())
-    ]
-    assert omission == []
-
-
-def test_collect_reader_range_omissions_is_queryable(tmp_path: Path) -> None:
-    """CI can assert on a report entry without scraping warnings."""
-    wb_path = tmp_path / "mcve.xlsx"
-    _write_interleaved_workbook(wb_path)
-    bindings = validate_bindings_document(_interleaved_matrix_doc())
-    graph = create_dependency_graph(wb_path, expand_data_range("Risks!B2:D5"), load_values=True)
-
-    issues = collect_reader_range_omissions(graph, wb_path, bindings)
-    by_id = {issue["series_id"]: issue for issue in issues}
-    assert set(by_id) == {"revenue_shocks", "expenditure_shocks"}
-    for issue in issues:
-        assert issue["level"] == "warning"
-        assert issue["code"] == "noncontiguous_reader_range"
-        assert issue["series_id"] is not None
-        assert f"read_{issue['series_id']}_range" in issue["message"]
-
-
-def test_collect_reader_range_omissions_empty_when_contiguous(tmp_path: Path) -> None:
-    wb_path = tmp_path / "trim.xlsx"
-    _write_edge_trim_workbook(wb_path)
-    bindings = validate_bindings_document(_matrix_series(exclude_rows=[5], data_range="Demo!B2:D5"))
-    graph = create_dependency_graph(wb_path, expand_data_range("Demo!B2:D5"), load_values=True)
-
-    assert collect_reader_range_omissions(graph, wb_path, bindings) == []

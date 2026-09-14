@@ -13,16 +13,11 @@ from typing import Literal, NotRequired, TypedDict
 
 from excel_grapher.core.address_keys import normalize_key, split_address_on_colon
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.codegen_literals import dimension_id_to_param_name
 from excel_grapher.series_bindings.normalize import has_constant_direction, has_input_direction
-from excel_grapher.series_bindings.ranges import effective_reader_range_address
+from excel_grapher.series_bindings.ranges import effective_reader_range_address, series_data_ranges
 from excel_grapher.series_bindings.resolve import resolve_series_bindings
 from excel_grapher.series_bindings.scalar_literals import py_scalar_literal
-from excel_grapher.series_bindings.setter_codegen import (
-    _reader_function_name,
-    _should_emit_reader,
-    _should_emit_reader_range,
-    dimension_id_to_param_name,
-)
 from excel_grapher.series_bindings.types import Scalar, SeriesResolution, WorkbookSeriesBindings
 
 ReaderLeafKind = Literal["keyed", "scalar", "address_keyed"]
@@ -77,6 +72,42 @@ class ReaderCallResolution(TypedDict):
     keys: NotRequired[dict[str, Scalar]]
     kwargs: NotRequired[dict[str, Scalar]]
     kind: NotRequired[ReaderLeafKind]
+
+
+def _reader_function_name(series: dict, resolved: SeriesResolution) -> str:
+    for block_key in ("input", "constant"):
+        block = series.get(block_key) or {}
+        if isinstance(block, dict):
+            reader = block.get("reader")
+            if isinstance(reader, dict) and reader.get("name"):
+                return str(reader["name"])
+    return f"read_{resolved['series_id']}"
+
+
+def _should_emit_reader(resolved: SeriesResolution) -> bool:
+    return bool(resolved["leaves"])
+
+
+def _qualifies_for_reader_range(series: dict, resolved: SeriesResolution) -> bool:
+    if not _should_emit_reader(resolved):
+        return False
+    if series.get("layout") == "scalar":
+        return False
+    ranges = series_data_ranges(series)
+    if len(ranges) != 1:
+        return False
+    return bool(len(resolved["leaves"]) > 1 or ":" in ranges[0])
+
+
+def _should_emit_reader_range(
+    series: dict,
+    resolved: SeriesResolution,
+    *,
+    workbook: Path | str | None = None,
+) -> bool:
+    if not _qualifies_for_reader_range(series, resolved):
+        return False
+    return effective_reader_range_address(series, workbook=workbook) is not None
 
 
 def format_reader_call_form(

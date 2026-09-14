@@ -64,7 +64,7 @@ def bindings_document(*, workbook: str) -> dict[str, Any]:
                 "sheet": "Inputs",
                 "data_range": "Inputs!F5:J5",
                 "layout": "series",
-                "input": {"setter": {"name": "set_borvelia_primary_balance"}},
+                "input": {},
                 "structure": _structure(),
                 "key": ["TIME_PERIOD"],
             },

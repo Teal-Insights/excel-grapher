@@ -57,7 +57,7 @@ def bindings_document(*, workbook: str) -> dict[str, Any]:
                 "sheet": "Inputs",
                 "data_range": "Inputs!B3:D5",
                 "layout": "matrix",
-                "input": {"setter": {"name": "set_macro_matrix"}},
+                "input": {},
                 "structure": structure,
                 "key": ["INDICATOR", "TIME_PERIOD"],
             },
