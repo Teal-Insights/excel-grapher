@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v19.0.2 (2026-09-14)
+
+### Bug Fixes
+
+- **export**: Coerce int to float at the compute_* input boundary
+  ([#850](https://github.com/Teal-Insights/excel-grapher/pull/850),
+  [`a1759fd`](https://github.com/Teal-Insights/excel-grapher/commit/a1759fd052e41a93c5d32e62840989845ccd10db))
+
+- **export**: Keep Excel measure passthrough when coercing compute inputs
+  ([#850](https://github.com/Teal-Insights/excel-grapher/pull/850),
+  [`a1759fd`](https://github.com/Teal-Insights/excel-grapher/commit/a1759fd052e41a93c5d32e62840989845ccd10db))
+
+
 ## v19.0.1 (2026-09-14)
 
 ### Bug Fixes
