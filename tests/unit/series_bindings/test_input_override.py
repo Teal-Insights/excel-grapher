@@ -158,7 +158,7 @@ def test_validate_leaf_mode_errors_on_non_leaf_overlap(tmp_path: Path) -> None:
     graph = _manual_override_graph()
     series = _override_scalar_series()
     series = dict(series)
-    series["input"] = {"input": {}}
+    series["input"] = {}
 
     report = validate_series_bindings(graph, {"schema_version": "1.6.0", "series": [series]})
 
@@ -269,7 +269,7 @@ def test_validate_rejects_unknown_input_mode(tmp_path: Path) -> None:
     graph = _manual_override_graph()
     series = _override_scalar_series()
     series = dict(series)
-    series["input"] = {"mode": "replace", "input": {}}
+    series["input"] = {"mode": "replace"}
 
     report = validate_series_bindings(graph, {"schema_version": "1.6.0", "series": [series]})
 

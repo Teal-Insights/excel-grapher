@@ -149,12 +149,8 @@ def _grid_entry(
             "dimensions": [_time_dim(), _country_dim()],
         },
     }
-    if direction == "constant":
-        entry["constant"] = {}
-    elif direction == "internal":
+    if direction in {"constant", "internal", "input"}:
         entry[direction] = {}
-    elif direction == "input":
-        entry[direction] = {"input": {}}
     else:
         raise ValueError(f"unknown direction {direction!r}")
     return entry

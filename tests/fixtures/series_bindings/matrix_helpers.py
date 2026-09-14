@@ -93,7 +93,7 @@ def macro_matrix_series(
         "key": ["INDICATOR", "TIME_PERIOD"],
     }
     if direction == "input":
-        series["input"] = {"input": {}}
+        series["input"] = {}
     else:
         series["output"] = {"compute": {"name": "compute_macro_matrix"}}
     series.update(overrides)

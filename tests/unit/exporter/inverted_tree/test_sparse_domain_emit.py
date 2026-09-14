@@ -62,7 +62,7 @@ def _matrix_entry(
         },
     }
     if direction == "input":
-        entry["input"] = {"input": {}}
+        entry["input"] = {}
     else:
         entry["output"] = {"compute": {"name": f"compute_{series_id}"}}
     return entry

@@ -72,7 +72,7 @@ def _scenario_series(
     elif direction == "output":
         series["output"] = {"compute": {"name": "compute_external_debt_nominal"}}
     else:
-        series["input"] = {"input": {}}
+        series["input"] = {}
     return series
 
 

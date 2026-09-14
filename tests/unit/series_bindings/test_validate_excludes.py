@@ -89,7 +89,7 @@ def _series_doc(
     if constant:
         series["constant"] = {}
     else:
-        series["input"] = {"input": {}}
+        series["input"] = {}
     return {"schema_version": "1.14.0", "workbook": "Book.xlsx", "series": [series]}
 
 

@@ -86,7 +86,7 @@ def test_schema_rejects_series_without_any_direction() -> None:
 
 def test_schema_rejects_constant_with_input() -> None:
     doc = _constant_series_doc(
-        input={"input": {}},
+        input={},
     )
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)
