@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
 import pytest
+from fastpyxl import Workbook
 
+from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.series_bindings import validate_series_bindings
 from excel_grapher.series_bindings.input_coerce import (
     coerce_setter_input,
     measure_domain_from_series,
@@ -15,6 +19,7 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
 )
+from excel_grapher.series_bindings.types import ValidationReport
 from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 
 
@@ -261,3 +266,115 @@ def test_require_input_domain_scalar_and_sequence() -> None:
         require_input_domain((0.0, 1.1), bounds, series_id="rate")
     with pytest.raises(ValueError, match=r"not in real_between"):
         require_input_domain((0.0, 1.1), bounds, series_id="rate")
+
+
+def test_require_input_domain_between_rejects_float_as_wrong_type() -> None:
+    require_input_domain(0, {"between": {"min": 0, "max": 1}}, series_id="share")
+    require_input_domain(0.0, {"real_between": {"min": 0, "max": 1}}, series_id="share")
+    with pytest.raises(ValueError, match=r"share has type float; between requires int"):
+        require_input_domain(0.0, {"between": {"min": 0, "max": 1}}, series_id="share")
+    with pytest.raises(ValueError, match=r"share has type str; real_between requires int or float"):
+        require_input_domain("0", {"real_between": {"min": 0, "max": 1}}, series_id="share")
+
+
+def _scalar_measure_doc(
+    *,
+    dtype: str,
+    domain: dict[str, Any],
+    series_id: str = "share",
+) -> dict[str, Any]:
+    read = "float" if dtype == "number" else dtype
+    return {
+        "schema_version": "1.13.0",
+        "series": [
+            {
+                "id": series_id,
+                "sheet": "Dash",
+                "data_range": "Dash!C1",
+                "layout": "scalar",
+                "input": {"domain": domain},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": dtype,
+                        "bind": {"kind": "data_cell", "read": read},
+                    },
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+
+
+def _report_for_domain_doc(
+    tmp_path: Path, doc: dict[str, Any], *, value: object = 0
+) -> ValidationReport:
+    path = tmp_path / "domain.xlsx"
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Dash"
+    ws["C1"] = value
+    wb.save(path)
+    bindings = validate_bindings_document(doc)
+    graph = create_dependency_graph(path, ["Dash!C1"], load_values=True)
+    return validate_series_bindings(graph, bindings, workbook=path)
+
+
+@pytest.mark.parametrize(
+    ("dtype", "domain"),
+    [
+        ("int", {"between": {"min": 0, "max": 1}}),
+        ("float", {"real_between": {"min": 0, "max": 1}}),
+        ("number", {"real_between": {"min": 0, "max": 1}}),
+        ("int", {"enum": [0, 1]}),
+        ("float", {"enum": [0.0, 1.0]}),
+    ],
+)
+def test_validate_accepts_domain_kind_matching_measure_dtype(
+    tmp_path: Path, dtype: str, domain: dict[str, Any]
+) -> None:
+    report = _report_for_domain_doc(tmp_path, _scalar_measure_doc(dtype=dtype, domain=domain))
+    assert report["ok"] is True
+    assert not any(issue["code"] == "invalid_input_domain" for issue in report["issues"])
+
+
+@pytest.mark.parametrize(
+    ("dtype", "domain", "message"),
+    [
+        (
+            "float",
+            {"between": {"min": 0, "max": 1}},
+            "between requires measure dtype 'int', got 'float'",
+        ),
+        (
+            "number",
+            {"between": {"min": 0, "max": 1}},
+            "between requires measure dtype 'int', got 'number'",
+        ),
+        (
+            "int",
+            {"real_between": {"min": 0, "max": 1}},
+            "real_between requires measure dtype 'float' or 'number', got 'int'",
+        ),
+        (
+            "string",
+            {"between": {"min": 0, "max": 1}},
+            "between requires measure dtype 'int', got 'string'",
+        ),
+        (
+            "string",
+            {"real_between": {"min": 0, "max": 1}},
+            "real_between requires measure dtype 'float' or 'number', got 'string'",
+        ),
+    ],
+)
+def test_validate_rejects_domain_kind_mismatching_measure_dtype(
+    tmp_path: Path, dtype: str, domain: dict[str, Any], message: str
+) -> None:
+    report = _report_for_domain_doc(tmp_path, _scalar_measure_doc(dtype=dtype, domain=domain))
+    assert report["ok"] is False
+    issues = [issue for issue in report["issues"] if issue["code"] == "invalid_input_domain"]
+    assert len(issues) == 1
+    assert issues[0]["series_id"] == "share"
+    assert message in issues[0]["message"]

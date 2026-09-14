@@ -6,6 +6,7 @@ from pathlib import Path
 
 import pytest
 
+from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
@@ -146,3 +147,26 @@ def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
     assert pkg.compute_out_a(flag=0) == 0
     with pytest.raises(ValueError, match=r"flag out of domain"):
         pkg.compute_out_b(flag=2)
+
+
+def test_export_refuses_float_dtype_with_integer_between(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "share.xlsx",
+        {
+            "Inputs": {"A1": 0.0},
+            "Outputs": {"B1": "=Inputs!A1"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "share",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="float",
+            domain={"between": {"min": 0, "max": 1}},
+        ),
+        series_entry("result", "Outputs!B1", layout="scalar", direction="output"),
+    )
+    with pytest.raises(InvertedTreeExportError, match="invalid_input_domain"):
+        generate_inverted(workbook, document)

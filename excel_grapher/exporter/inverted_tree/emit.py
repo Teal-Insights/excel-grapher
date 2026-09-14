@@ -171,6 +171,7 @@ _REFUSE_BINDING_CODES = frozenset(
     {
         "non_leaf_input_overlap",
         "no_formula_override_targets",
+        "invalid_input_domain",
     }
 )
 
@@ -180,8 +181,10 @@ def _refuse_invalid_bindings(
     series_bindings: WorkbookSeriesBindings,
     bindings_workbook: Path | str,
 ) -> None:
-    """Fail closed when bindings would emit a formula cell as a plain input.
+    """Fail closed when bindings would emit a broken public package.
 
+    Refuses formula cells bound as plain inputs, override inputs with no
+    formula targets, and `input.domain` kinds that disagree with measure dtype.
     Other validator errors (`duplicate_key`, `bind_resolution_failed`, unbound
     ranges) stay with emit's own fail-closed checks so their messages remain
     specific.

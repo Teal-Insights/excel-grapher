@@ -813,17 +813,26 @@ input:
 ```yaml
 input:
   domain:
-    real_between: {min: 0, max: 300}   # inclusive
+    real_between: {min: 0, max: 300}   # inclusive; dtype float or number
 ```
 
 ```yaml
 input:
   domain:
-    between: {min: 0, max: 100}   # inclusive integers
+    between: {min: 0, max: 100}   # inclusive integers; dtype int
 ```
 
+`between` requires `structure.measure.dtype: int`. `real_between` requires
+`float` or `number`. Bind validation and export fail closed when the domain
+kind does not match the measure dtype
+([issue 824](https://github.com/Teal-Insights/excel-grapher/issues/824)).
+Do not author a 0-1 share as integer `between` on a float series; use
+`real_between`.
+
 Domain checks run on each required `compute_*` / `Model` argument
-(scalar or every sequence member) before the evaluation walk.
+(scalar or every sequence member) before the evaluation walk. A value of the
+wrong Python type (for example `0.0` against `between`) raises `ValueError`
+naming the type mismatch rather than a bounds failure.
 
 ## Scalar input maps (1.15.0)
 

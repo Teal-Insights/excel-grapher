@@ -215,6 +215,52 @@ def _validate_input_value_map(series: dict[str, Any]) -> list[ValidationIssue]:
     return issues
 
 
+_BETWEEN_MEASURE_DTYPES = frozenset({"int"})
+_REAL_BETWEEN_MEASURE_DTYPES = frozenset({"float", "number"})
+
+
+def _measure_dtype(series: dict[str, Any]) -> str:
+    """Return the authored measure dtype, defaulting to schema `float`."""
+    structure = series.get("structure") or {}
+    measure = structure.get("measure")
+    if isinstance(measure, dict) and measure.get("dtype") is not None:
+        return str(measure["dtype"])
+    return "float"
+
+
+def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Reject `input.domain` kinds that do not match the measure dtype."""
+    input_block = series.get("input")
+    if not isinstance(input_block, dict):
+        return []
+    domain = input_block.get("domain")
+    if not isinstance(domain, dict):
+        return []
+    series_id = str(series.get("id", ""))
+    dtype = _measure_dtype(series)
+    if "between" in domain and dtype not in _BETWEEN_MEASURE_DTYPES:
+        return [
+            _issue(
+                "error",
+                "invalid_input_domain",
+                "input.domain.between requires measure dtype 'int', "
+                f"got {dtype!r}; use real_between for float or number",
+                series_id=series_id,
+            )
+        ]
+    if "real_between" in domain and dtype not in _REAL_BETWEEN_MEASURE_DTYPES:
+        return [
+            _issue(
+                "error",
+                "invalid_input_domain",
+                "input.domain.real_between requires measure dtype 'float' or "
+                f"'number', got {dtype!r}; use between for int",
+                series_id=series_id,
+            )
+        ]
+    return []
+
+
 def _dimension_field_ids(series: dict[str, Any]) -> set[str]:
     """Effective dimension ids (declared id, else concept) for key matching."""
     structure = series.get("structure") or {}
@@ -894,8 +940,9 @@ def validate_series_bindings(
     """Validate binding manifests against an extracted dependency graph.
 
     Document-level checks include `duplicate_series_id`, `invalid_python_id`,
-    and `geometry_in_id` (A1 cell or rectangle tokens in series ids and
-    `series_context` values).
+    `geometry_in_id` (A1 cell or rectangle tokens in series ids and
+    `series_context` values), and `invalid_input_domain` (`between` vs
+    `real_between` vs measure dtype).
     """
     from excel_grapher.series_bindings.resolve import _WorkbookValues, resolve_series_binding
 
@@ -927,6 +974,7 @@ def validate_series_bindings(
             issues.extend(_validate_series_structure(series))
             issues.extend(_validate_layout_intent(series))
             issues.extend(_validate_input_value_map(series))
+            issues.extend(_validate_input_domain_dtype(series))
             issues.extend(_validate_implementation_support(series))
             issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
 

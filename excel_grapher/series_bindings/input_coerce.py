@@ -277,18 +277,40 @@ def _in_closed_bounds(value: int | float, bounds: Mapping[str, Any]) -> bool:
     return (lo is None or value >= lo) and (hi is None or value <= hi)
 
 
+def _is_int_measure(value: object) -> TypeGuard[int]:
+    return not isinstance(value, bool) and isinstance(value, int)
+
+
+def _is_real_measure(value: object) -> TypeGuard[int | float]:
+    return not isinstance(value, bool) and isinstance(value, (int, float))
+
+
+def _value_matches_domain_type(value: object, domain: Mapping[str, Any]) -> bool:
+    """Return whether `value` has the Python type a domain kind requires."""
+    if "between" in domain:
+        return _is_int_measure(value)
+    if "real_between" in domain:
+        return _is_real_measure(value)
+    return True
+
+
+def _domain_type_requirement(domain: Mapping[str, Any]) -> str | None:
+    """Return a short type requirement for type-mismatch errors, if any."""
+    if "between" in domain:
+        return "int"
+    if "real_between" in domain:
+        return "int or float"
+    return None
+
+
 def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
     """Return whether `value` is inside a measure domain declaration."""
     if "enum" in domain:
         return value in domain["enum"]
     if "between" in domain:
-        if isinstance(value, bool) or not isinstance(value, int):
-            return False
-        return _in_closed_bounds(value, domain["between"])
+        return _is_int_measure(value) and _in_closed_bounds(value, domain["between"])
     if "real_between" in domain:
-        if isinstance(value, bool) or not isinstance(value, (int, float)):
-            return False
-        return _in_closed_bounds(value, domain["real_between"])
+        return _is_real_measure(value) and _in_closed_bounds(value, domain["real_between"])
     return True
 
 
@@ -305,6 +327,10 @@ def _reject_out_of_domain(
     """Raise `ValueError` when a non-null `value` is outside `domain`."""
     if value is None:
         return
+    required = _domain_type_requirement(domain)
+    if required is not None and not _value_matches_domain_type(value, domain):
+        kind = "between" if "between" in domain else "real_between"
+        raise ValueError(f"{label} has type {type(value).__name__}; {kind} requires {required}")
     if not _value_in_measure_domain(value, domain):
         raise ValueError(
             f"{label} out of domain: {value!r} not in {_format_measure_domain(domain)}"
@@ -353,7 +379,8 @@ def require_input_domain(
         series_id: Binding series id used in the error message.
 
     Raises:
-        ValueError: When any non-`None` member is outside `domain`.
+        ValueError: When any non-`None` member is the wrong type for the
+            domain kind, or is outside `domain`.
     """
     if _is_measure_sequence(value):
         for index, member in enumerate(value):

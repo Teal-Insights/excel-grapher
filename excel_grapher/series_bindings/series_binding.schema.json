@@ -763,7 +763,7 @@
       "description": "Closed integer interval; at least one of min or max is required."
     },
     "InputDomain": {
-      "description": "Allowed measure values for compute_* / Model arguments. Checked after dtype coercion; exact match for enum (trailing spaces preserved).",
+      "description": "Allowed measure values for compute_* / Model arguments. Checked after dtype coercion; exact match for enum (trailing spaces preserved). `between` requires measure dtype int; `real_between` requires float or number.",
       "oneOf": [
         {
           "type": "object",
