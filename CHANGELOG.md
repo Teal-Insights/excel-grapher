@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v19.0.0 (2026-09-14)
+
+### Bug Fixes
+
+- Restore injected-normalizer test and ruff format after API cleanup
+  ([#846](https://github.com/Teal-Insights/excel-grapher/pull/846),
+  [`7552144`](https://github.com/Teal-Insights/excel-grapher/commit/7552144c52df5ca70765959cba8d0de2cc4591ab))
+
+### Chores
+
+- Drop plans, measurement scripts, unused examples and deps
+  ([#846](https://github.com/Teal-Insights/excel-grapher/pull/846),
+  [`7552144`](https://github.com/Teal-Insights/excel-grapher/commit/7552144c52df5ca70765959cba8d0de2cc4591ab))
+
+### Refactoring
+
+- Drop test-only APIs and repo clutter (#842 tiers 3–4)
+  ([#846](https://github.com/Teal-Insights/excel-grapher/pull/846),
+  [`7552144`](https://github.com/Teal-Insights/excel-grapher/commit/7552144c52df5ca70765959cba8d0de2cc4591ab))
+
+- Drop test-only production APIs ([#846](https://github.com/Teal-Insights/excel-grapher/pull/846),
+  [`7552144`](https://github.com/Teal-Insights/excel-grapher/commit/7552144c52df5ca70765959cba8d0de2cc4591ab))
+
+
 ## v18.0.0 (2026-09-14)
 
 ### Bug Fixes
