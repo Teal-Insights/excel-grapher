@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import warnings
 from collections.abc import Sequence
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
 from excel_grapher.core.formula_ast import (
@@ -31,8 +31,6 @@ from excel_grapher.grapher.dependency_provenance import DependencyCause
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
-
-AxisKind = Literal["static", "dynamic", "whole"]
 
 
 def _canonical(address: str) -> CanonicalAddress:

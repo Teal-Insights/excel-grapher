@@ -13,10 +13,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
 from tests.unit.exporter.inverted_tree.test_shape_a20_matrix_join import _matrix_entry
 
 
-@pytest.mark.parametrize("force_rung", [None, 2, 3])
-def test_categorical_self_references_do_not_reverse_output_columns(
-    tmp_path: Path, force_rung
-) -> None:
+def test_categorical_self_references_do_not_reverse_output_columns(tmp_path: Path) -> None:
     cells = {"B1": "Latest actual", "C1": "1-year ahead", "D1": "% change"}
     for row, commodity in enumerate(("Brent", "Wheat", "Coffee"), 2):
         cells[f"A{row}"] = commodity
@@ -37,7 +34,7 @@ def test_categorical_self_references_do_not_reverse_output_columns(
         dimension["bind"]["read"] = "string"
     workbook = write_workbook(tmp_path / "categorical.xlsx", {"M": cells})
     pkg = load_package(
-        generate_inverted(workbook, bindings_document(*entries), force_rung=force_rung),
+        generate_inverted(workbook, bindings_document(*entries)),
         tmp_path,
         name="categorical",
     )
@@ -48,8 +45,7 @@ def test_categorical_self_references_do_not_reverse_output_columns(
         assert actual[commodity, "% change"] == pytest.approx(-0.2)
 
 
-@pytest.mark.parametrize("force_rung", [None, 2, 3])
-def test_row_uses_workbook_geometry_in_categorical_schedule(tmp_path: Path, force_rung) -> None:
+def test_row_uses_workbook_geometry_in_categorical_schedule(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import series_entry
 
     cells = {}
@@ -79,7 +75,7 @@ def test_row_uses_workbook_geometry_in_categorical_schedule(tmp_path: Path, forc
     ]
     workbook = write_workbook(tmp_path / "categorical_row.xlsx", {"M": cells})
     pkg = load_package(
-        generate_inverted(workbook, bindings_document(*entries), force_rung=force_rung),
+        generate_inverted(workbook, bindings_document(*entries)),
         tmp_path,
         name="categorical_row",
     )

@@ -8,7 +8,7 @@ import pytest
 
 from excel_grapher.exporter.inverted_tree.catalog import schedule_coord
 from excel_grapher.exporter.inverted_tree.deps import (
-    collect_all_dependence_edges,
+    collect_catalog_edges,
     identity_join_indices,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -52,7 +52,7 @@ def test_overlap_join_inverts_schedule_coord(tmp_path: Path) -> None:
     assert joined == deps["revenue_pct_gdp"].index_maps["gdp"]
     for host_cell, slot in zip(host.cells, joined, strict=True):
         assert schedule_coord(host_cell, catalog) == schedule_coord(gdp.cells[slot], catalog)
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     gdp_access = {
         edge.access
         for edge in edges
@@ -70,7 +70,7 @@ def test_splice_prefix_is_identity_join_to_last_growth_year(tmp_path: Path) -> N
     assert identity_join_indices(path, trajectory, catalog) == (-1, 0, 1, 2)
     assert "growth" not in deps["path"].aligned_ids
     assert "trajectory" not in deps["path"].aligned_ids
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     prefix = next(
         edge for edge in edges if edge.consumer_cell == "Engine!D4" and edge.producer_id == "growth"
     )

@@ -12,14 +12,11 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.deps import requires_demand_driven
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
-    load_forced_rung_packages,
     load_package,
     series_entry,
     write_workbook,
@@ -114,14 +111,9 @@ def test_terminal_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     workbook = workbook_fn(tmp_path)
     doc = bindings_fn()
     catalog, deps, graph = inverted_graph_parts(workbook, doc)
-    series = catalog.get("value")
-    assert requires_demand_driven(series, catalog=catalog, graph=graph) is False
+    catalog.get("value")
     assert deps["value"].is_scan is True
     assert deps["value"].scan_direction == "reversed"
-    choice = plan_scc(("value",), catalog=catalog, graph=graph)
-    assert choice.rung == 1
-    assert choice.plan is not None
-    assert choice.plan.direction == "reversed"
 
     modules = generate_inverted(workbook, doc)
     pkg = load_package(modules, tmp_path, name=pkg_name)
@@ -242,18 +234,7 @@ def test_lookahead_zipper_emits_fused_reversed_loop_and_matches_evaluator(
 ) -> None:
     workbook = workbook_fn(tmp_path)
     doc = bindings_fn()
-    catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-    scc = ("value", "flow")
-    choice = plan_scc(scc, catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    assert choice.plan is not None
-    assert choice.plan.direction == "reversed"
-
-    fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, pkg_name)
-    assert dict(fused.compute_value().items()) == pytest.approx(
-        dict(demand.compute_value().items())
-    )
-    pkg = fused
+    pkg = load_package(generate_inverted(workbook, doc), tmp_path, name=pkg_name)
     all_cells = [*value_cells, *flow_cells]
     graph_full = create_dependency_graph(workbook, all_cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(all_cells)
@@ -313,15 +294,7 @@ def _descending_year_zipper_bindings() -> dict:
 def test_descending_year_layout_fuses_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = _descending_year_zipper_workbook(tmp_path)
     doc = _descending_year_zipper_bindings()
-    catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-    scc = ("debt", "adj")
-    choice = plan_scc(scc, catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    assert choice.plan is not None
-
-    fused, demand = load_forced_rung_packages(workbook, doc, tmp_path, "a21_desc_zip")
-    assert dict(fused.compute_debt().items()) == pytest.approx(dict(demand.compute_debt().items()))
-    pkg = fused
+    pkg = load_package(generate_inverted(workbook, doc), tmp_path, name="a21_desc_zip")
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
@@ -337,7 +310,6 @@ def test_descending_year_layout_fuses_and_matches_evaluator(tmp_path: Path) -> N
 
 
 def test_differential_oracle_runs_over_both_directions(tmp_path: Path) -> None:
-    # Forward direction
     from tests.unit.exporter.inverted_tree.test_shape_a11_zipper import (
         _zipper_bindings,
         _zipper_workbook,
@@ -345,29 +317,24 @@ def test_differential_oracle_runs_over_both_directions(tmp_path: Path) -> None:
 
     wb_fwd = _zipper_workbook(tmp_path)
     doc_fwd = _zipper_bindings()
-    catalog_fwd, _deps_fwd, graph_fwd = inverted_graph_parts(wb_fwd, doc_fwd)
-    scc_fwd = ("debt", "adjustment")
-    choice_fwd = plan_scc(scc_fwd, catalog=catalog_fwd, graph=graph_fwd)
-    assert choice_fwd.rung == 2
-    assert choice_fwd.plan is not None
-    assert choice_fwd.plan.direction == "forward"
-    fused_fwd, demand_fwd = load_forced_rung_packages(wb_fwd, doc_fwd, tmp_path, "a21_or_fwd")
-    assert dict(fused_fwd.compute_debt().items()) == pytest.approx(
-        dict(demand_fwd.compute_debt().items())
+    pkg_fwd = load_package(generate_inverted(wb_fwd, doc_fwd), tmp_path, name="a21_or_fwd")
+    cells_fwd = ["Engine!A2", "Engine!B2", "Engine!C2"]
+    expected_fwd = FormulaEvaluator(
+        create_dependency_graph(wb_fwd, cells_fwd, load_values=True)
+    ).evaluate(cells_fwd)
+    assert [value for _, value in pkg_fwd.compute_debt().items()] == pytest.approx(
+        tuple(expected_fwd[cell] for cell in cells_fwd)
     )
 
-    # Reversed direction
     wb_rev = _lookahead_zipper_workbook(tmp_path)
     doc_rev = _lookahead_zipper_bindings()
-    catalog_rev, _deps_rev, graph_rev = inverted_graph_parts(wb_rev, doc_rev)
-    scc_rev = ("value", "flow")
-    choice_rev = plan_scc(scc_rev, catalog=catalog_rev, graph=graph_rev)
-    assert choice_rev.rung == 2
-    assert choice_rev.plan is not None
-    assert choice_rev.plan.direction == "reversed"
-    fused_rev, demand_rev = load_forced_rung_packages(wb_rev, doc_rev, tmp_path, "a21_or_rev")
-    assert dict(fused_rev.compute_value().items()) == pytest.approx(
-        dict(demand_rev.compute_value().items())
+    pkg_rev = load_package(generate_inverted(wb_rev, doc_rev), tmp_path, name="a21_or_rev")
+    cells_rev = ["Engine!A2", "Engine!B2", "Engine!C2"]
+    expected_rev = FormulaEvaluator(
+        create_dependency_graph(wb_rev, cells_rev, load_values=True)
+    ).evaluate(cells_rev)
+    assert [value for _, value in pkg_rev.compute_value().items()] == pytest.approx(
+        tuple(expected_rev[cell] for cell in cells_rev)
     )
 
 
@@ -399,5 +366,10 @@ def test_mixed_signs_refuses_fused_plan(tmp_path: Path) -> None:
         series_entry("y", "Engine!A3:C3", layout="series", direction="internal", header_row=1),
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-    assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
-    assert plan_scc(("x", "y"), catalog=catalog, graph=graph).rung == 3
+    pkg = load_package(generate_inverted(workbook, doc), tmp_path, name="a21_mixed")
+    cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3", "Engine!C3"]
+    expected = FormulaEvaluator(graph).evaluate(cells)
+    got = pkg.compute_x()
+    assert [value for _, value in got.items()] == pytest.approx(
+        tuple(expected[f"Engine!{col}2"] for col in ("A", "B", "C"))
+    )

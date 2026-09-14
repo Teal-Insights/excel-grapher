@@ -15,12 +15,9 @@ from typing import Any
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.exporter.inverted_tree.deps import collect_all_dependence_edges
+from excel_grapher.exporter.inverted_tree.deps import collect_catalog_edges
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import (
-    plan_scc,
-    residual_body_order,
-)
+from excel_grapher.exporter.inverted_tree.schedule import assert_distance_zero_legal
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     generate_inverted,
@@ -186,17 +183,8 @@ def test_vintage_residual_is_legal_per_issuance_year(tmp_path: Path) -> None:
     workbook = vintage_residual_workbook(tmp_path)
     document = vintage_residual_bindings()
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    choice = plan_scc(("stock", "principal"), catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    plan = choice.plan
-    assert plan is not None
-    assert plan.is_nested
-    assert plan.unroll
-    assert plan.partitions == ((2024,), (2025,))
-    assert plan.partition_regions[0][-1].body_order == ("principal", "stock")
-    assert plan.partition_regions[1][-1].body_order == ("stock", "principal")
-    edges = collect_all_dependence_edges(catalog, graph)
-    assert residual_body_order(("stock", "principal"), edges, catalog) is None
+    edges = collect_catalog_edges(catalog, graph).edges
+    assert_distance_zero_legal(("stock", "principal"), edges, catalog)
 
 
 def test_vintage_residual_export_matches_evaluator(tmp_path: Path) -> None:

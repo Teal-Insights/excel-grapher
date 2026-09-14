@@ -119,7 +119,7 @@ def _nested_compute_body(source: str, helper: str) -> str:
 def test_overlap_rung3_indexes_taken_window(tmp_path: Path) -> None:
     """Rung-3 helpers subscript the taken gdp window, not the catalog (#633)."""
     workbook = _overlap_workbook(tmp_path)
-    modules = generate_inverted(workbook, _overlap_bindings(), force_rung=3)
+    modules = generate_inverted(workbook, _overlap_bindings())
     body = modules["internals.py"]
     assert "gdp[time_period]" in body
     assert "revenue[time_period]" in body

@@ -8,8 +8,7 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.deps import (
-    collect_all_dependence_edges,
-    plan_indices,
+    collect_catalog_edges,
 )
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -108,7 +107,7 @@ def _affine_params(edges: tuple, consumer_id: str, producer_id: str) -> set[tupl
 
 def test_decimate_edges_are_affine_not_mixed_identity_shift(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(_decimate_workbook(tmp_path), _decimate_bindings())
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     assert _accesses(edges, "sampled", "source") == {"affine"}
     assert _affine_params(edges, "sampled", "source") == {(2, 0)}
     sampled = deps["sampled"]
@@ -120,19 +119,12 @@ def test_decimate_edges_are_affine_not_mixed_identity_shift(tmp_path: Path) -> N
 
 def test_reverse_edges_are_affine(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(_reverse_workbook(tmp_path), _reverse_bindings())
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     assert _accesses(edges, "reversed", "source") == {"affine"}
     assert _affine_params(edges, "reversed", "source") == {(-1, 2)}
     assert deps["reversed"].affine_maps == {"source": (-1, 2)}
     assert deps["reversed"].index_maps["source"] == (2, 1, 0)
     assert len(catalog.get("reversed").statements) == 1
-
-
-def test_plan_indices_maps_affine_image_without_index_map(tmp_path: Path) -> None:
-    catalog, deps, _graph = inverted_graph_parts(_decimate_workbook(tmp_path), _decimate_bindings())
-    deps["sampled"].index_maps = {}
-    result, _call = plan_indices(catalog.get("sampled"), catalog=catalog, deps=deps)
-    assert result["source"] == (0, 2, 4)
 
 
 def test_decimate_emit_uses_strided_range_and_matches_evaluator(tmp_path: Path) -> None:

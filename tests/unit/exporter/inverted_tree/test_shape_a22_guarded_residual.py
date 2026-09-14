@@ -13,7 +13,6 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -114,7 +113,6 @@ def test_scalar_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
     assert expected == {"Engine!B2": 10.0, "Engine!C2": 20.0}
 
     catalog, _deps, graph_bound = inverted_graph_parts(wb, bindings)
-    assert plan_scc(("x", "y"), catalog=catalog, graph=graph_bound).rung == 3
 
     modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_repro_pkg")
@@ -145,7 +143,6 @@ def test_series_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
     assert expected["Engine!D3"] == 24.0
 
     catalog, _deps, graph_bound = inverted_graph_parts(wb, bindings)
-    assert plan_scc(("x", "y"), catalog=catalog, graph=graph_bound).rung == 3
 
     modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_series_pkg")

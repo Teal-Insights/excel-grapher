@@ -611,8 +611,7 @@ def test_issue_703_mcve_generate_does_not_raise(tmp_path: Path) -> None:
     )
 
 
-@pytest.mark.parametrize("force_rung", [None, 2, 3])
-def test_formula_region_stops_at_structural_blank_reference(tmp_path: Path, force_rung) -> None:
+def test_formula_region_stops_at_structural_blank_reference(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.test_shape_a20_matrix_join import _matrix_entry
 
     workbook = write_workbook(
@@ -644,7 +643,7 @@ def test_formula_region_stops_at_structural_blank_reference(tmp_path: Path, forc
         _matrix_entry("result", "M!B5:D6", header_row=1, direction="output"),
     )
     package = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung, blank_ranges=("M!B3:C3",)),
+        generate_inverted(workbook, document, blank_ranges=("M!B3:C3",)),
         tmp_path,
         name="blank_boundary",
     )

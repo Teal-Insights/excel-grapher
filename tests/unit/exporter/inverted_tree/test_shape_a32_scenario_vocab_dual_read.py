@@ -212,8 +212,6 @@ def test_scenario_vocab_dual_read_is_keyed(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     host = deps["total_amortization"]
     assert "amortization" in host.param_ids
-    assert "amortization" in host.keyed_ids
-    assert "amortization" not in host.lagged_ids
     assert "amortization" not in host.aligned_ids
     assert catalog.get("amortization").cells == (
         "Producer!E5",
@@ -231,7 +229,6 @@ def test_scenario_vocab_dual_read_emits_and_matches_evaluator(tmp_path: Path) ->
     workbook = write_workbook(tmp_path / "a32_eval.xlsx", _mcve_sheets())
     document = _mcve_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "amortization" in deps["total_amortization"].keyed_ids
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert ".index(" not in internals
@@ -254,7 +251,6 @@ def test_aligned_scenario_names_still_emit(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a32_aligned.xlsx", _mcve_sheets())
     document = _mcve_bindings(scenario=_ALIGNED_HOST_SCENARIO)
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "amortization" in deps["total_amortization"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a32_aligned")
     got = pkg.internals.total_amortization(
         amortization=named_input_kwargs(pkg, catalog, graph)["amortization"]

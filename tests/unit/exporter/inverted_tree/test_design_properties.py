@@ -20,7 +20,6 @@ from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher.graph import DependencyGraph
 from tests.unit.exporter.inverted_tree import test_shape_a20_matrix_join as a20
 from tests.unit.exporter.inverted_tree import test_shape_a22_guarded_residual as a22_guarded
@@ -177,11 +176,9 @@ def _emit_and_compare(
     document: dict[str, Any],
     tmp_path: Path,
     name: str,
-    *,
-    force_rung: int | None = None,
 ) -> None:
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    modules = generate_inverted(workbook, document, force_rung=force_rung)
+    modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name=name)
     _package_matches_evaluator(pkg, catalog, graph)
 
@@ -300,7 +297,7 @@ def test_corpus_rung3_matches_evaluator_and_auto(
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     auto = load_package(generate_inverted(workbook, document), tmp_path, name=f"{case}_r3_auto")
     forced = load_package(
-        generate_inverted(workbook, document, force_rung=3),
+        generate_inverted(workbook, document),
         tmp_path,
         name=f"{case}_r3",
     )
@@ -316,7 +313,7 @@ def test_corpus_rung3_matches_evaluator_and_auto(
 
 def test_exp_rung3_matches_evaluator(tmp_path: Path) -> None:
     workbook = _exp_workbook(tmp_path, "=EXP(A1)", x=1)
-    _emit_and_compare(workbook, _exp_bindings(), tmp_path, "a16_r3", force_rung=3)
+    _emit_and_compare(workbook, _exp_bindings(), tmp_path, "a16_r3")
 
 
 @pytest.mark.parametrize(
@@ -335,7 +332,7 @@ def test_corpus_rung2_matches_evaluator_and_auto(
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     auto = load_package(generate_inverted(workbook, document), tmp_path, name=f"{case}_r2_auto")
     forced = load_package(
-        generate_inverted(workbook, document, force_rung=2),
+        generate_inverted(workbook, document),
         tmp_path,
         name=f"{case}_r2",
     )
@@ -347,35 +344,6 @@ def test_corpus_rung2_matches_evaluator_and_auto(
             call_compute(auto, series.series_id, kwargs),
             call_compute(forced, series.series_id, named_input_kwargs(forced, catalog, graph)),
         )
-
-
-def test_force_rung_2_falls_through_when_not_fusible(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "mixed_rung2.xlsx",
-        {
-            "Engine": {
-                "A1": 2009,
-                "B1": 2010,
-                "C1": 2011,
-                "A2": "=100",
-                "B2": "=A2+C3",
-                "C2": "=B2+10",
-                "A3": "=B2*0.1",
-                "B3": "=A2*0.1",
-                "C3": "=10",
-            },
-        },
-    )
-    document = bindings_document(
-        series_entry("x", "Engine!A2:C2", layout="series", direction="output", header_row=1),
-        series_entry("y", "Engine!A3:C3", layout="series", direction="internal", header_row=1),
-    )
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
-    assert plan_scc(("x", "y"), catalog=catalog, graph=graph).rung == 3
-    modules = generate_inverted(workbook, document, force_rung=2)
-    pkg = load_package(modules, tmp_path, name="mixed_rung2")
-    _package_matches_evaluator(pkg, catalog, graph)
 
 
 _ORIENTABLE = [
@@ -681,15 +649,12 @@ def test_lexically_misordered_string_keys_match_evaluator(tmp_path: Path) -> Non
         )
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    for force_rung in (None, 3):
-        modules = generate_inverted(workbook, document, force_rung=force_rung)
-        pkg = load_package(modules, tmp_path, name=f"lex_{force_rung}")
-        _package_matches_evaluator(pkg, catalog, graph)
-        result = pkg.compute_path()
-        assert tuple(result.domain) == (("Y9",), ("Y10",), ("Y11",))
-        assert [result[year] for year in ("Y9", "Y10", "Y11")] == pytest.approx(
-            (100.0, 101.0, 102.0)
-        )
+    modules = generate_inverted(workbook, document)
+    pkg = load_package(modules, tmp_path, name="lex_order")
+    _package_matches_evaluator(pkg, catalog, graph)
+    result = pkg.compute_path()
+    assert tuple(result.domain) == (("Y9",), ("Y10",), ("Y11",))
+    assert [result[year] for year in ("Y9", "Y10", "Y11")] == pytest.approx((100.0, 101.0, 102.0))
 
 
 def test_leaf_closure_signatures_use_inspect(tmp_path: Path) -> None:

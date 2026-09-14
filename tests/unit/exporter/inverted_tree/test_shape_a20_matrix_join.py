@@ -24,9 +24,8 @@ from fastpyxl.utils.cell import get_column_letter
 
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import schedule_coord
-from excel_grapher.exporter.inverted_tree.deps import collect_all_dependence_edges
+from excel_grapher.exporter.inverted_tree.deps import collect_catalog_edges
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc, plan_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -209,9 +208,6 @@ def test_matrix_zipper_emits_rung_2_and_matches_evaluator(tmp_path: Path, orient
     )
     document = oriented_document(_zipper_bindings(), orientation)
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    choice = plan_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
-    assert choice.rung == 2
-    assert choice.plan is not None
     adj_coords = [schedule_coord(cell, catalog) for cell in catalog.get("adjustment").cells]
     assert sorted(adj_coords) == [1, 2, 4, 5]
     assert adj_coords != list(range(min(adj_coords), max(adj_coords) + 1))
@@ -402,8 +398,6 @@ def test_per_country_seed_fuses_without_area_if_chain(tmp_path: Path, orientatio
     )
     document = oriented_document(_country_seed_bindings(n_areas, n_years), orientation)
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    choice = plan_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
-    assert choice.rung == 2
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert "if _area ==" not in internals
@@ -503,8 +497,6 @@ def test_aligned_matrix_producer_uses_area_stride_index(tmp_path: Path) -> None:
     )
     document = _aligned_rate_bindings(n_areas, n_years)
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    choice = plan_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
-    assert choice.rung == 2
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert "if _area ==" not in internals
@@ -544,16 +536,13 @@ def test_legal_cross_country_read_fuses(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a20_cross_ok.xlsx", _cross_country_legal_sheets())
     document = _cross_country_legal_bindings()
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     cross = [
         edge
         for edge in edges
         if edge.consumer_cell == "Engine!B3" and edge.producer_cell == "Engine!B2"
     ]
     assert cross and all(edge.access == "cross_partition" for edge in cross)
-    plan = plan_fused_scc(("path",), catalog=catalog, graph=graph)
-    assert plan is not None
-    assert plan_scc(("path",), catalog=catalog, graph=graph).rung != 3
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a20_cross_ok")
     addresses = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     expected = _evaluator_values(workbook, addresses)
@@ -580,13 +569,10 @@ def _cross_country_cycle_sheets() -> dict[str, dict[str, object]]:
 def test_mutual_cross_country_same_index_fails_closed_naming_cells(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a20_cross_cycle.xlsx", _cross_country_cycle_sheets())
     document = _cross_country_legal_bindings()
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
     with pytest.raises(InvertedTreeExportError, match="Engine!B2") as exc:
-        plan_fused_scc(("path",), catalog=catalog, graph=graph)
+        generate_inverted(workbook, document)
     message = str(exc.value)
     assert "Engine!B3" in message
-    with pytest.raises(InvertedTreeExportError, match="Engine!B2"):
-        generate_inverted(workbook, document)
 
 
 def _cross_year_chain_sheets() -> dict[str, dict[str, object]]:
@@ -615,8 +601,6 @@ def test_cross_year_partition_cycle_demotes_to_rung3_and_matches_evaluator(
     workbook = write_workbook(tmp_path / "a20_cross_year_chain.xlsx", _cross_year_chain_sheets())
     document = _cross_country_legal_bindings()
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    assert plan_fused_scc(("path",), catalog=catalog, graph=graph) is None
-    assert plan_scc(("path",), catalog=catalog, graph=graph).rung == 3
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert "CoordinateReader(" in internals
@@ -660,7 +644,6 @@ def test_cross_year_non_affine_demand_slots_match_evaluator(tmp_path: Path) -> N
         _matrix_entry("path", "Engine!B2:C4", header_row=1, direction="output"),
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    assert plan_scc(("path",), catalog=catalog, graph=graph).rung == 3
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a20_cross_year_slots")
     assert [
         pkg.compute_path()[area, year]

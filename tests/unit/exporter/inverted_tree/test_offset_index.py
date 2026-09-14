@@ -11,7 +11,7 @@ from excel_grapher.core.formula_ast import FunctionCallNode, parse
 from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.deps import (
     ast_literal_int,
-    collect_all_dependence_edges,
+    collect_catalog_edges,
     index_call_is_ref,
     offset_index_destination,
 )
@@ -136,7 +136,7 @@ def test_offset_index_mcve_emits_destination_lookup(tmp_path: Path) -> None:
     catalog, _deps, graph = inverted_graph_parts(workbook, _mcve_bindings())
     assert sorted(graph.leaf_keys()) == ["Lookup!B4"]
     assert sorted(graph.formula_keys()) == ["Engine!A1", "Outputs!A1"]
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     producers = {edge.producer_id for edge in edges if edge.consumer_id == "offset_index"}
     assert producers == {"code"}
 

@@ -198,8 +198,6 @@ def test_keyed_dual_read_is_not_a_lag(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     scaled = deps["scaled_exports"]
     assert "gdp" in scaled.param_ids
-    assert "gdp" in scaled.keyed_ids
-    assert "gdp" not in scaled.lagged_ids
     assert "gdp" not in scaled.aligned_ids
     assert catalog.get("gdp").cells == (
         "Stress!E46",
@@ -232,15 +230,13 @@ def test_adjacent_scenario_pack_is_not_a_lag(tmp_path: Path) -> None:
         gdp_range=["Stress!E46", "Baseline!O48", "Stress!F46", "Baseline!P48"]
     )
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    scaled = deps["scaled_exports"]
+    deps["scaled_exports"]
     assert catalog.get("gdp").cells == (
         "Stress!E46",
         "Baseline!O48",
         "Stress!F46",
         "Baseline!P48",
     )
-    assert "gdp" in scaled.keyed_ids
-    assert "gdp" not in scaled.lagged_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a29_adj")
     cells = ["Results!E19", "Results!F19"]
     expected = FormulaEvaluator(
@@ -259,9 +255,7 @@ def test_multi_scenario_host_keyed_dual_read_matches_evaluator(tmp_path: Path) -
     workbook = write_workbook(tmp_path / "a29_host.xlsx", _multi_scenario_sheets())
     document = _multi_scenario_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    scaled = deps["scaled_exports"]
-    assert "gdp" in scaled.keyed_ids
-    assert "gdp" not in scaled.lagged_ids
+    deps["scaled_exports"]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a29_host")
     cells = ["Stress!E19", "Stress!F19", "Shock!E19", "Shock!F19"]
     expected = FormulaEvaluator(

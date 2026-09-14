@@ -10,7 +10,7 @@ import sys
 import types
 from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any
 
 import pytest
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
@@ -212,7 +212,6 @@ def generate_inverted(
     document: dict[str, Any],
     *,
     dynamic_refs: DynamicRefConfig | None = None,
-    force_rung: Literal[2, 3] | None = None,
     blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
     bindings: WorkbookSeriesBindings = validate_bindings_document(document)
@@ -230,7 +229,6 @@ def generate_inverted(
         graph,
         series_bindings=bindings,
         bindings_workbook=workbook,
-        force_rung=force_rung,
         blank_ranges=blank_ranges,
     )
 
@@ -253,26 +251,6 @@ def load_package(
     for sub in ("api", "internals", "runtime", "data", "validation"):
         importlib.import_module(f"{name}.{sub}")
     return pkg
-
-
-def load_forced_rung_packages(
-    workbook: Path,
-    document: dict[str, Any],
-    tmp_path: Path,
-    stem: str,
-) -> tuple[types.ModuleType, types.ModuleType]:
-    """Load packages generated at `force_rung=2` and `force_rung=3`."""
-    fused = load_package(
-        generate_inverted(workbook, document, force_rung=2),
-        tmp_path,
-        name=f"{stem}_r2",
-    )
-    demand = load_package(
-        generate_inverted(workbook, document, force_rung=3),
-        tmp_path,
-        name=f"{stem}_r3",
-    )
-    return fused, demand
 
 
 def required_param_names(function: Callable[..., object]) -> tuple[str, ...]:
@@ -535,12 +513,22 @@ def assert_package_matches_evaluator(
         kwargs[series.series_id] = getattr(pkg.data, series.series_id.upper())
     cells = [cell for series in catalog.formula_series() for cell in series.cells]
     expected = FormulaEvaluator(graph).evaluate(cells)
-    from excel_grapher.exporter.inverted_tree.deps import formula_closure
 
-    ordered = sorted(
-        catalog.formula_series(),
-        key=lambda series: len(formula_closure(series.series_id, catalog=catalog, deps=deps)),
-    )
+    def _subgraph_size(series_id: str) -> int:
+        seen: set[str] = set()
+        stack = [series_id]
+        while stack:
+            current = stack.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            info = deps.get(current)
+            if info is None:
+                continue
+            stack.extend(info.param_ids)
+        return len(seen)
+
+    ordered = sorted(catalog.formula_series(), key=lambda series: _subgraph_size(series.series_id))
     for series in ordered:
         function = getattr(pkg, series.compute_name or f"compute_{series.series_id}", None)
         if function is None:

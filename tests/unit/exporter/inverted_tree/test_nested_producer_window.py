@@ -44,10 +44,7 @@ def test_nested_stock_does_not_compact_amortization_to_consumed_years(
     }
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_fused_resolver_keeps_external_producer_coordinate_origin(
-    tmp_path: Path, force_rung
-) -> None:
+def test_fused_resolver_keeps_external_producer_coordinate_origin(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import (
         inverted_graph_parts,
         named_input_kwargs,
@@ -83,17 +80,12 @@ def test_fused_resolver_keeps_external_producer_coordinate_origin(
         series_entry("b", "M!B4:D4", layout="series", direction="internal", header_row=1),
     )
     catalog, _, graph = inverted_graph_parts(workbook, document)
-    pkg = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="fused_origin"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="fused_origin")
     result = pkg.compute_a(**named_input_kwargs(pkg, catalog, graph))
     assert dict(result.items()) == {(2021,): 11.0, (2022,): 42.0, (2023,): 114.0}
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_nested_scan_reads_area_only_parameter_without_advancing_year(
-    tmp_path: Path, force_rung
-) -> None:
+def test_nested_scan_reads_area_only_parameter_without_advancing_year(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import series_entry
 
     cells = {"A2": "a", "A3": "b", "A5": "a", "A6": "b", "B5": "=1", "B6": "=2"}
@@ -118,9 +110,7 @@ def test_nested_scan_reads_area_only_parameter_without_advancing_year(
         _matrix_entry("opening", "M!B2:B3", header_row=1),
         _matrix_entry("stock", "M!C2:G3", header_row=1, direction="output"),
     )
-    pkg = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="area_only"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="area_only")
     assert dict(pkg.compute_stock().items()) == {
         (area, year): 10.0 - (year - 2020) * payment
         for area, payment in (("a", 1), ("b", -2))
@@ -128,10 +118,7 @@ def test_nested_scan_reads_area_only_parameter_without_advancing_year(
     }
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_lookup_table_demands_in_scc_producer_before_materialization(
-    tmp_path: Path, force_rung
-) -> None:
+def test_lookup_table_demands_in_scc_producer_before_materialization(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import series_entry
 
     workbook = write_workbook(
@@ -155,16 +142,13 @@ def test_lookup_table_demands_in_scc_producer_before_materialization(
         series_entry("values", "M!A2:C2", layout="series", direction="internal", header_row=1),
         series_entry("result", "M!A3:C3", layout="series", direction="output", header_row=1),
     )
-    pkg = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="lookup_scc"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="lookup_scc")
     assert dict(pkg.compute_result().items()) == {(2020,): 2.0, (2021,): 1.0, (2022,): 0.0}
     named = pkg.internals.scan_values(years=pkg.data.YEARS)
     assert dict(named.result.items()) == {(2020,): 2.0, (2021,): 1.0, (2022,): 0.0}
 
 
-@pytest.mark.parametrize("force_rung", [None, 2, 3])
-def test_nested_keyed_reads_use_host_catalog_origin(tmp_path: Path, force_rung) -> None:
+def test_nested_keyed_reads_use_host_catalog_origin(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import series_entry
 
     cells = {"A2": "a", "A3": "b"}
@@ -181,9 +165,7 @@ def test_nested_keyed_reads_use_host_catalog_origin(tmp_path: Path, force_rung) 
         _matrix_entry("opening", "M!B2:B3", header_row=1),
         _matrix_entry("result", "M!C2:G3", header_row=1, direction="output"),
     )
-    pkg = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="keyed_origin"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="keyed_origin")
     assert dict(pkg.compute_result().items()) == {
         (area, year): 10 + sum(range(3, year - 2017))
         for area in ("a", "b")
@@ -191,8 +173,7 @@ def test_nested_keyed_reads_use_host_catalog_origin(tmp_path: Path, force_rung) 
     }
 
 
-@pytest.mark.parametrize("force_rung", [None, 3])
-def test_choose_does_not_request_unselected_recurrence(tmp_path: Path, force_rung) -> None:
+def test_choose_does_not_request_unselected_recurrence(tmp_path: Path) -> None:
     from tests.unit.exporter.inverted_tree.helpers import series_entry
 
     workbook = write_workbook(
@@ -215,14 +196,11 @@ def test_choose_does_not_request_unselected_recurrence(tmp_path: Path, force_run
         series_entry("chosen", "M!A2:C2", layout="series", direction="internal", header_row=1),
         series_entry("result", "M!A3:C3", layout="series", direction="output", header_row=1),
     )
-    pkg = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="choose_lazy"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="choose_lazy")
     assert dict(pkg.compute_result().items()) == {(2020,): 2.0, (2021,): 5.0, (2022,): 9.0}
 
 
-@pytest.mark.parametrize("force_rung", [None, 2, 3])
-def test_each_partition_uses_its_own_formula_regions(tmp_path: Path, force_rung) -> None:
+def test_each_partition_uses_its_own_formula_regions(tmp_path: Path) -> None:
     cells = {
         "A2": "a",
         "A3": "b",
@@ -246,9 +224,7 @@ def test_each_partition_uses_its_own_formula_regions(tmp_path: Path, force_rung)
     document = bindings_document(
         source, _matrix_entry("result", "M!B2:E3", header_row=1, direction="output")
     )
-    pkg = load_package(
-        generate_inverted(workbook, document, force_rung=force_rung), tmp_path, name="regions"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="regions")
     assert dict(pkg.compute_result().items()) == {
         ("a", 2020): 9.0,
         ("a", 2021): 10.0,

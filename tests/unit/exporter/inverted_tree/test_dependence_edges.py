@@ -10,15 +10,12 @@ import pytest
 from excel_grapher.exporter.inverted_tree.deps import (
     DependenceEdge,
     SeriesDeps,
-    collect_all_dependence_edges,
     collect_all_deps,
+    collect_catalog_edges,
     series_deps_from_edges,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import (
-    plan_fused_scc,
-    residual_body_order,
-)
+from excel_grapher.exporter.inverted_tree.schedule import assert_distance_zero_legal
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     inverted_graph_parts,
@@ -64,12 +61,10 @@ def test_series_deps_does_not_retain_graph() -> None:
 
 def test_a10_lag_edges_are_identity_and_shift(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(_lag_workbook(tmp_path), _lag_bindings())
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     assert _accesses(edges, "direction", "debt") == {"identity", "shift"}
     direction = catalog.get("direction")
     derived = series_deps_from_edges(direction, edges, catalog, graph)
-    assert derived.lagged_ids == frozenset({"debt"})
-    assert derived.keyed_ids == frozenset()
     assert derived.aligned_ids == frozenset()
     assert derived.lookup_ids == frozenset()
     assert derived.edges
@@ -83,7 +78,7 @@ def test_a2_offset_table_is_dynamic_or_whole(tmp_path: Path) -> None:
         _a2_bindings(),
         dynamic_refs=_a2_dynamic_refs(),
     )
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     assert _accesses(edges, "shock_magnitude_resolved", "shock_magnitudes") <= {
         "dynamic",
         "whole",
@@ -96,7 +91,7 @@ def test_a2_offset_table_is_dynamic_or_whole(tmp_path: Path) -> None:
 
 def test_a1_aligned_path_is_identity(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(_a1_workbook(tmp_path), _a1_bindings())
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     assert _accesses(edges, "engine_path", "growth") == {"identity"}
     assert _accesses(edges, "engine_path", "interest") == {"identity"}
     assert _accesses(edges, "engine_path", "engine_path") == {"shift"}
@@ -110,7 +105,7 @@ def test_a1_aligned_path_is_identity(tmp_path: Path) -> None:
 
 def test_derived_series_deps_match_collect_all_deps(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(_a1_workbook(tmp_path), _a1_bindings())
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     derived = {
         series.series_id: series_deps_from_edges(series, edges, catalog, graph)
         for series in catalog.formula_series()
@@ -126,7 +121,7 @@ def test_distance_zero_cycle_names_statements_and_index() -> None:
     )
     catalog = _catalog_from_edges(edges)
     with pytest.raises(InvertedTreeExportError, match="distance-zero residual") as exc:
-        residual_body_order(("debt", "adjustment"), edges, catalog)
+        assert_distance_zero_legal(("debt", "adjustment"), edges, catalog)
     message = str(exc.value)
     assert "debt" in message
     assert "adjustment" in message
@@ -140,7 +135,11 @@ def test_simultaneous_workbook_residual_names_cells(tmp_path: Path) -> None:
         _simultaneous_workbook(tmp_path), _zipper_bindings()
     )
     with pytest.raises(InvertedTreeExportError, match="distance-zero residual") as exc:
-        plan_fused_scc(("debt", "adjustment"), catalog=catalog, graph=graph)
+        assert_distance_zero_legal(
+            ("debt", "adjustment"),
+            collect_catalog_edges(catalog, graph).edges,
+            catalog,
+        )
     message = str(exc.value)
     assert "debt" in message
     assert "adjustment" in message
@@ -165,7 +164,7 @@ def test_collect_dependence_edges_records_guarded_flag(tmp_path: Path) -> None:
         series_entry("c", "Engine!C1", layout="scalar", direction="output"),
     )
     catalog, _deps, graph = inverted_graph_parts(wb, bindings)
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     b_to_c = next(e for e in edges if e.consumer_id == "b" and e.producer_id == "c")
     c_to_b = next(e for e in edges if e.consumer_id == "c" and e.producer_id == "b")
     assert b_to_c.guarded is True

@@ -301,8 +301,6 @@ def test_choose_year_row_is_keyed(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     host = deps["post_grace"]
     assert "cumulative" in host.param_ids
-    assert "cumulative" in host.keyed_ids
-    assert "cumulative" not in host.lagged_ids
     assert "cumulative" not in host.aligned_ids
     assert catalog.get("cumulative").cells == (
         "PV!D5",
@@ -320,7 +318,6 @@ def test_choose_year_row_emits_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a35_eval.xlsx", _mcve_sheets())
     document = _mcve_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "cumulative" in deps["post_grace"].keyed_ids
     modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name="a35_eval")
     cells = [f"PV!{col}{row}" for row in (4, 9) for col in "DEFG"]
@@ -338,8 +335,6 @@ def test_choose_year_row_one_instrument_matches_evaluator(tmp_path: Path) -> Non
     workbook = write_workbook(tmp_path / "a35_one.xlsx", _one_instrument_sheets())
     document = _mcve_bindings(one_instrument=True)
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "cumulative" in deps["post_grace"].keyed_ids
-    assert "cumulative" not in deps["post_grace"].lagged_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_one")
     cells = [f"PV!{col}4" for col in "DEFG"]
     expected = _eval_cells(workbook, cells)
@@ -357,7 +352,6 @@ def test_year_row_sum_is_keyed_and_matches_evaluator(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a35_sum.xlsx", _mcve_sheets(host_formula="sum"))
     document = _mcve_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "cumulative" in deps["post_grace"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_sum")
     cells = [f"PV!{col}{row}" for row in (4, 9) for col in "DEFG"]
     expected = _eval_cells(workbook, cells)
@@ -373,8 +367,6 @@ def test_choose_year_row_ragged_widths_is_keyed(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings(ragged=True))
     host = deps["post_grace"]
     assert "cumulative" in host.param_ids
-    assert "cumulative" in host.keyed_ids
-    assert "cumulative" not in host.lagged_ids
     assert "cumulative" not in host.aligned_ids
     assert catalog.get("cumulative").cells == (
         "PV!D5",
@@ -393,7 +385,6 @@ def test_choose_year_row_ragged_widths_emits_and_matches_evaluator(tmp_path: Pat
     workbook = write_workbook(tmp_path / "a35_ragged_eval.xlsx", _ragged_sheets())
     document = _mcve_bindings(ragged=True)
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    assert "cumulative" in deps["post_grace"].keyed_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a35_ragged")
     cells = [f"PV!{col}4" for col in "DEFG"] + [f"PV!{col}9" for col in "DEFGH"]
     expected = _eval_cells(workbook, cells)

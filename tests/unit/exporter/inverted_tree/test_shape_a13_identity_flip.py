@@ -9,15 +9,12 @@ import pytest
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.schedule import (
-    FusedRegion,
-    plan_fused_scc,
     scan_function_name,
 )
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -178,13 +175,6 @@ def test_identity_flip_emits_region_local_fused_scan(
 ) -> None:
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
-    catalog, _deps, graph = inverted_graph_parts(workbook, bindings_fn())
-    plan = plan_fused_scc(("x", "y"), catalog=catalog, graph=graph)
-    assert plan is not None
-    assert plan.regions == (
-        FusedRegion(start=0, stop=1, body_order=("y", "x")),
-        FusedRegion(start=1, stop=2, body_order=("x", "y")),
-    )
     pkg = load_package(modules, tmp_path, name=pkg_name)
     x, y = pkg.compute_x(), pkg.compute_y()
     assert (x[2009], x[2010]) == pytest.approx((2.0, 10.0))
@@ -248,41 +238,6 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     graph = create_dependency_graph(workbook, targets, load_values=True)
     assert graph.cycle_report().has_must_cycles is False
     modules = generate_inverted(workbook, _qcraft_bindings())
-    catalog, _deps, graph_bound = inverted_graph_parts(workbook, _qcraft_bindings())
-    plan = plan_fused_scc(_qcraft_scc(), catalog=catalog, graph=graph_bound)
-    assert plan is not None
-    assert plan.regions == (
-        FusedRegion(
-            start=0,
-            stop=1,
-            body_order=(
-                "real_gdp_lcu",
-                "labour_productivity_growth",
-                "real_gdp_growth",
-                "employment_growth",
-            ),
-        ),
-        FusedRegion(
-            start=1,
-            stop=2,
-            body_order=(
-                "real_gdp_lcu",
-                "employment_growth",
-                "real_gdp_growth",
-                "labour_productivity_growth",
-            ),
-        ),
-        FusedRegion(
-            start=2,
-            stop=3,
-            body_order=(
-                "employment_growth",
-                "labour_productivity_growth",
-                "real_gdp_lcu",
-                "real_gdp_growth",
-            ),
-        ),
-    )
     pkg = load_package(modules, tmp_path, name="a13_qc")
     expected = FormulaEvaluator(graph).evaluate(targets)
     employment = pkg.compute_employment_growth()
@@ -317,10 +272,6 @@ def test_look_ahead_fuses_with_reversed_loop(tmp_path: Path) -> None:
             },
         },
     )
-    catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
-    plan = plan_fused_scc(("x", "y"), catalog=catalog, graph=graph)
-    assert plan is not None
-    assert plan.direction == "reversed"
     modules = generate_inverted(workbook, _two_series_bindings())
     pkg = load_package(modules, tmp_path, name="a13_lookahead")
     x, y = pkg.compute_x(), pkg.compute_y()
@@ -342,8 +293,6 @@ def test_mixed_direction_stays_on_rung3(tmp_path: Path) -> None:
             },
         },
     )
-    catalog, _deps, graph = inverted_graph_parts(workbook, _two_series_bindings())
-    assert plan_fused_scc(("x", "y"), catalog=catalog, graph=graph) is None
     generate_inverted(workbook, _two_series_bindings())
 
 

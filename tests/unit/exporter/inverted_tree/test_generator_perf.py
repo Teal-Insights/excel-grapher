@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 from dataclasses import replace
 from pathlib import Path
 from typing import Literal
@@ -15,7 +15,6 @@ from excel_grapher.core.address_keys import normalize_key
 from excel_grapher.exporter.inverted_tree import access as access_mod
 from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree import deps as deps_mod
-from excel_grapher.exporter.inverted_tree import schedule as schedule_mod
 from excel_grapher.exporter.inverted_tree.access import overlapping_schedule_peer
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
@@ -29,7 +28,6 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     schedule_coord,
 )
 from excel_grapher.exporter.inverted_tree.deps import DependenceEdge, iter_range_addresses
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.series_bindings import resolve as resolve_mod
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -83,59 +81,6 @@ def _count_normalize_key_calls(monkeypatch: pytest.MonkeyPatch) -> dict[str, int
     return calls
 
 
-def _count_fused_plan_ops(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
-    """Count bucketed edge walks during `plan_fused_scc` (#618, #653)."""
-    counts = {"index_keys": 0, "index_edges": 0, "buckets": 0, "zero_distance": 0}
-    original_key = schedule_mod._index_region_key
-    original_bucket = schedule_mod._bucket_edges_by_consumer_coord
-    original_zero = schedule_mod._zero_distance_edges
-
-    def counting_key(
-        scc: tuple[str, ...],
-        *,
-        catalog: SeriesCatalog,
-        domain: Mapping[str, tuple[int, int]],
-        index_edges: Sequence[DependenceEdge],
-        union_t: int,
-        index: int,
-        partition: tuple[object, ...] | None = None,
-        statement_ids: Mapping[str, Mapping[int, str]] | None = None,
-    ) -> object:
-        counts["index_keys"] += 1
-        counts["index_edges"] += len(index_edges)
-        return original_key(
-            scc,
-            catalog=catalog,
-            domain=domain,
-            index_edges=index_edges,
-            union_t=union_t,
-            index=index,
-            partition=partition,
-            statement_ids=statement_ids,
-        )
-
-    def counting_bucket(
-        edges: Sequence[DependenceEdge],
-        catalog: SeriesCatalog,
-        *,
-        partition: tuple[object, ...] | None = None,
-    ) -> dict[int, list[DependenceEdge]]:
-        counts["buckets"] += 1
-        return original_bucket(edges, catalog, partition=partition)
-
-    def counting_zero(
-        scc: tuple[str, ...],
-        edges: Sequence[DependenceEdge],
-    ) -> list[DependenceEdge]:
-        counts["zero_distance"] += 1
-        return original_zero(scc, edges)
-
-    monkeypatch.setattr(schedule_mod, "_index_region_key", counting_key)
-    monkeypatch.setattr(schedule_mod, "_bucket_edges_by_consumer_coord", counting_bucket)
-    monkeypatch.setattr(schedule_mod, "_zero_distance_edges", counting_zero)
-    return counts
-
-
 def test_generate_modules_walks_each_series_ast_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -153,7 +98,6 @@ def test_generate_modules_walks_each_series_ast_once(
         return original(series, catalog=catalog, graph=graph, blank_rects=blank_rects)
 
     monkeypatch.setattr(deps_mod, "collect_series_edges", counting)
-    monkeypatch.setattr(schedule_mod, "collect_series_edges", counting)
     generate_inverted(_a1_workbook(tmp_path), _a1_bindings())
     generate_inverted(_zipper_workbook(tmp_path), _zipper_bindings())
     assert walks, "expected collect_series_edges to run during generate_modules"
@@ -233,8 +177,7 @@ def _synthetic_series(
 def _synthetic_zipper(n: int) -> tuple[SeriesCatalog, tuple[DependenceEdge, ...]]:
     """2-series zipper: `debt_t = debt_{t-1} + adj_t`, `adj_t = debt_{t-1} * r`.
 
-    Debt is a peeled-seed two-statement series so fused planning hits
-    `_statement_at_union` instead of the single-statement short-circuit.
+    Debt is a peeled-seed two-statement series.
     """
     debt_cells = tuple(f"Engine!A{i}" for i in range(1, n + 1))
     adj_cells = tuple(f"Engine!B{i}" for i in range(2, n + 1))
@@ -284,47 +227,6 @@ def _synthetic_zipper(n: int) -> tuple[SeriesCatalog, tuple[DependenceEdge, ...]
             )
         )
     return catalog, tuple(edges)
-
-
-def test_plan_fused_scc_examines_each_edge_once_per_bucket(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    n = 5_000
-    catalog, edges = _synthetic_zipper(n)
-    assert len(catalog.get("debt").statements) == 2
-    assert len(edges) == 3 * (n - 1)
-    counts = _count_fused_plan_ops(monkeypatch)
-    plan = plan_fused_scc(("debt", "adjustment"), catalog=catalog, edges=edges)
-    assert plan is not None
-    assert plan.regions[-1].body_order == ("adjustment", "debt")
-    assert len(plan.schedule) == n
-    # One bucket pass; each same-partition edge is examined once across
-    # union indices. Scanning the full list per index is T × |E|.
-    assert counts["buckets"] == 1, counts
-    assert counts["index_keys"] == n, counts
-    assert counts["index_edges"] == len(edges), counts
-    assert counts["zero_distance"] == 2, counts
-
-
-def test_plan_fused_scc_edge_exams_scale_with_edges(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    n_small, n_large = 1_000, 4_000
-    counts = _count_fused_plan_ops(monkeypatch)
-    catalog_small, edges_small = _synthetic_zipper(n_small)
-    plan_small = plan_fused_scc(("debt", "adjustment"), catalog=catalog_small, edges=edges_small)
-    small = dict(counts)
-    counts["index_keys"] = counts["index_edges"] = counts["buckets"] = counts["zero_distance"] = 0
-    catalog_large, edges_large = _synthetic_zipper(n_large)
-    plan_large = plan_fused_scc(("debt", "adjustment"), catalog=catalog_large, edges=edges_large)
-    assert plan_small is not None and plan_large is not None
-    assert len(plan_large.schedule) == n_large
-    assert small["index_keys"] == n_small, small
-    assert counts["index_keys"] == n_large, counts
-    assert small["index_edges"] == len(edges_small), small
-    assert counts["index_edges"] == len(edges_large), counts
-    assert small["zero_distance"] == counts["zero_distance"] == 2
-    assert small["buckets"] == counts["buckets"] == 1
 
 
 def _count_load_workbook(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:

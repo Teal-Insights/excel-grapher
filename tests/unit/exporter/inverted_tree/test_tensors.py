@@ -117,9 +117,7 @@ def test_required_schema_rejects_same_size_different_labels() -> None:
 
 def test_sparse_serialization_round_trip() -> None:
     domain = Domain.explicit(axes=(years(2025, 2026),), coordinates=((2026,), (2025,)))
-    tensor = Tensor.from_records(
-        domain=domain, records=(((2026,), "#N/A"), ((2025,), None))
-    )
+    tensor = Tensor.from_records(domain=domain, records=(((2026,), "#N/A"), ((2025,), None)))
     assert tensor[2026] == "#N/A"
     assert Tensor.from_json(tensor.to_json()) == tensor
     assert (

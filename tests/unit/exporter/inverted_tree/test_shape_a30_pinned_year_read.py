@@ -170,8 +170,6 @@ def test_pinned_year_dual_read_is_not_a_lag(tmp_path: Path) -> None:
     catalog, deps, _graph = inverted_graph_parts(workbook, _mcve_bindings())
     faded = deps["faded"]
     assert "baseline" in faded.param_ids
-    assert "baseline" in faded.keyed_ids
-    assert "baseline" not in faded.lagged_ids
     assert "baseline" not in faded.aligned_ids
     assert catalog.get("baseline").cells == (
         "Baseline!E2",
@@ -209,15 +207,13 @@ def test_adjacent_pinned_year_is_not_a_lag(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a30_adj.xlsx", _adjacent_cousin_sheets())
     document = _adjacent_cousin_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    faded = deps["faded"]
+    deps["faded"]
     assert catalog.get("baseline").cells == (
         "Baseline!E2",
         "Baseline!F2",
         "Baseline!G2",
         "Baseline!H2",
     )
-    assert "baseline" in faded.keyed_ids
-    assert "baseline" not in faded.lagged_ids
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a30_adj")
     cells = ["Results!E19"]
     expected = FormulaEvaluator(
@@ -296,9 +292,7 @@ def test_aligned_scenario_plus_pinned_year_is_keyed(tmp_path: Path) -> None:
     workbook = write_workbook(tmp_path / "a30_cross.xlsx", _cross_shape_sheets())
     document = _cross_shape_bindings()
     catalog, deps, graph = inverted_graph_parts(workbook, document)
-    scaled = deps["scaled"]
-    assert "gdp" in scaled.keyed_ids
-    assert "gdp" not in scaled.lagged_ids
+    deps["scaled"]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a30_cross")
     cells = ["Results!E19", "Results!F19"]
     expected = FormulaEvaluator(

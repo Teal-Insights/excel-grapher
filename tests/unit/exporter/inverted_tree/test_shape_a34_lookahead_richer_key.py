@@ -18,7 +18,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.access import overlapping_schedule_peer
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, Statement
 from excel_grapher.exporter.inverted_tree.deps import (
-    collect_all_dependence_edges,
+    collect_catalog_edges,
     successor_address,
 )
 from excel_grapher.grapher import create_dependency_graph
@@ -216,7 +216,7 @@ def test_if_lookahead_into_richer_key_is_not_an_ambiguous_seed(tmp_path: Path) -
     assert stock.is_scan is False
     assert successor_address(host, 0, catalog, graph) == host.cells[1]
     assert successor_address(host, 1, catalog, graph) is None
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     for producer_id in ("fx_st", "lc_st"):
         classes = _accesses(edges, "stock", producer_id)
         assert classes
@@ -255,7 +255,7 @@ def test_unique_lookahead_into_richer_key_is_not_a_seed(tmp_path: Path) -> None:
     assert stock.seed_id is None
     assert stock.is_scan is False
     assert successor_address(host, 1, catalog, graph) is None
-    edges = collect_all_dependence_edges(catalog, graph)
+    edges = collect_catalog_edges(catalog, graph).edges
     classes = _accesses(edges, "stock", "lc_st")
     assert classes
     assert classes <= {"shift", "cross_partition"}

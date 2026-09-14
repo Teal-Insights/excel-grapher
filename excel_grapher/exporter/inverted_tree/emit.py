@@ -6,7 +6,7 @@ from collections.abc import Sequence
 from dataclasses import replace
 from datetime import date, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Literal
+from typing import TYPE_CHECKING, Any
 
 from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog, build_catalog
 from excel_grapher.exporter.inverted_tree.deps import (
@@ -21,8 +21,9 @@ from excel_grapher.exporter.inverted_tree.deps import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.named_emit import emit_named_modules
 from excel_grapher.exporter.inverted_tree.schedule import (
+    assert_distance_zero_legal,
     build_scc_map,
-    plan_scc,
+    collect_dependence_edges,
 )
 from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.series_bindings.validate import validate_series_bindings
@@ -242,7 +243,8 @@ def plan_inverted_tree(
         if scc in checked:
             continue
         checked.add(scc)
-        plan_scc(scc, catalog=catalog, graph=graph, edges=catalog_edges.edges)
+        scc_edges = collect_dependence_edges(catalog, graph, scc, edges=catalog_edges.edges)
+        assert_distance_zero_legal(scc, scc_edges, catalog)
     assert_subgraph_bound(
         catalog=catalog,
         graph=graph,
@@ -256,7 +258,6 @@ def generate_inverted_tree_modules(
     *,
     series_bindings: WorkbookSeriesBindings,
     bindings_workbook: Path | str,
-    force_rung: Literal[2, 3] | None = None,
     blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
     """Generate api/internals/runtime/data modules for inverted-tree export.
@@ -265,8 +266,6 @@ def generate_inverted_tree_modules(
         graph: Dependency graph covering the binding closure.
         series_bindings: Bindings catalog (inputs, constants, internals, outputs).
         bindings_workbook: Workbook path used to expand `data_range`s.
-        force_rung: Accepted for compatibility and ignored. Every series is
-            emitted as named coordinate code; recurrences are demand-driven.
         blank_ranges: Sheet-qualified rectangles omitted from the graph that
             resolve as empty (`None`) rather than unbound catalog cells.
             Must match the specs passed to `create_dependency_graph` and

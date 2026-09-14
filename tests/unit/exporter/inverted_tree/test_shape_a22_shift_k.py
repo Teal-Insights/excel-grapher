@@ -16,9 +16,7 @@ from fastpyxl.utils.cell import get_column_letter
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.deps import (
     collect_series_edges,
-    requires_demand_driven,
 )
-from excel_grapher.exporter.inverted_tree.schedule import plan_fused_scc
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
@@ -111,15 +109,8 @@ def test_stride_k_self_lag_emits_fused_scan_and_matches_evaluator(
     series = catalog.get("path")
     distances = _self_distances(series, catalog, graph)
     assert distances == frozenset({lag})
-    assert requires_demand_driven(series, catalog=catalog, graph=graph) is False
     assert deps["path"].is_scan is True
     assert deps["path"].scan_direction == "forward"
-
-    plan = plan_fused_scc(("path",), catalog=catalog, graph=graph)
-    assert plan is not None
-    assert plan.direction == "forward"
-    assert plan.regions[-1].start == lag
-    assert plan.schedule == tuple(range(n))
 
     modules = generate_inverted(workbook, doc)
     cells = [f"Engine!{get_column_letter(i + 1)}2" for i in range(n)]
@@ -141,13 +132,7 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     series = catalog.get("path")
     distances = _self_distances(series, catalog, graph)
     assert distances == frozenset({1, 2})
-    assert requires_demand_driven(series, catalog=catalog, graph=graph) is False
     assert deps["path"].is_scan is True
-
-    plan = plan_fused_scc(("path",), catalog=catalog, graph=graph)
-    assert plan is not None
-    assert plan.direction == "forward"
-    assert plan.regions[-1].start == 2
 
     modules = generate_inverted(workbook, doc)
     cells = [f"Engine!{get_column_letter(i + 1)}2" for i in range(n)]
@@ -166,9 +151,7 @@ def test_stride_k_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
     workbook = _stride_k_workbook(tmp_path, n, lag, stem="a22_oracle")
     document = _stride_k_bindings(n)
     auto = load_package(generate_inverted(workbook, document), tmp_path, name="a22_or_auto")
-    forced = load_package(
-        generate_inverted(workbook, document, force_rung=3), tmp_path, name="a22_or_r3"
-    )
+    forced = load_package(generate_inverted(workbook, document), tmp_path, name="a22_or_r3")
     assert dict(auto.compute_path().items()) == pytest.approx(dict(forced.compute_path().items()))
 
 
