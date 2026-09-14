@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v17.0.0 (2026-09-14)
+
+### Features
+
+- **series-bindings**: Drop unused input.setter and ctx setter emitter
+  ([#840](https://github.com/Teal-Insights/excel-grapher/pull/840),
+  [`14a2a61`](https://github.com/Teal-Insights/excel-grapher/commit/14a2a61c2320dc41ae3b190b8b0a33d315860a87))
+
+### Testing
+
+- **series-bindings**: Adapt leftover setter assertions after 1.16.0
+  ([#840](https://github.com/Teal-Insights/excel-grapher/pull/840),
+  [`14a2a61`](https://github.com/Teal-Insights/excel-grapher/commit/14a2a61c2320dc41ae3b190b8b0a33d315860a87))
+
+
 ## v16.0.0 (2026-09-13)
 
 ### Bug Fixes
