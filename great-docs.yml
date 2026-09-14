@@ -119,8 +119,6 @@ reference:
       - grapher.LightweightVizLocalEdges
       - grapher.LightweightVizModule
       - grapher.LightweightVizModuleEdge
-      - grapher.LightweightVizNodeColumns
-      - grapher.LightweightVizStats
       - grapher.GRAPH_CACHE_SCHEMA_VERSION
       - grapher.DynamicRefTraceFn
       - grapher.GraphReadView
@@ -333,8 +331,7 @@ pre_render:
   - scripts/build_workflow.py
 #
 # On Windows, also use UTF-8 for the great-docs CLI itself:
-#   uv run python scripts/great_docs_build.py
-# or: PYTHONUTF8=1 uv run great-docs build
+#   PYTHONUTF8=1 uv run great-docs build
 
 # Jupyter Kernel
 # --------------

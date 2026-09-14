@@ -47,7 +47,7 @@ jobs:
     name: Test without NumPy (default install)
     runs-on: ubuntu-latest
     env:
-      # Isolate from the default venv so pandas/matplotlib (dev) cannot pull NumPy back in.
+      # Isolate from the default venv so pandas (dev) cannot pull NumPy back in.
       UV_PROJECT_ENVIRONMENT: .venv-no-numpy
 
     steps:
@@ -64,7 +64,7 @@ jobs:
           python-version-file: pyproject.toml
 
       - name: Install package without NumPy
-        # Default install path: no `fast` / no NumPy-pulling packages (pandas, matplotlib).
+        # Default install path: no `fast` / no NumPy-pulling packages (pandas).
         # `--no-dev` alone is not enough: `uv run` would re-sync the default `dev` group.
         run: uv sync --no-dev --group test-core --extra networkx --extra viz
 
