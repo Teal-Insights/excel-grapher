@@ -26,9 +26,13 @@ from excel_grapher.exporter.inverted_tree.deps import (
     identity_join_indices,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.schedule import assert_distance_zero_legal
+from excel_grapher.exporter.inverted_tree.schedule import (
+    assert_distance_zero_legal,
+    tarjan_series_sccs,
+)
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    generate_inverted,
     inverted_graph_parts,
     make_catalog,
     series_entry,
@@ -68,6 +72,123 @@ def test_distance_zero_cycle_is_illegal() -> None:
     catalog = _catalog_from_edges(edges)
     with pytest.raises(InvertedTreeExportError, match="distance-zero residual"):
         assert_distance_zero_legal(("debt", "adjustment"), edges, catalog)
+
+
+def test_singleton_same_index_self_cycle_is_illegal() -> None:
+    edges = (DependenceEdge("path", "path", "Engine!B2", "Engine!B2", 0),)
+    catalog = _catalog_from_edges(edges)
+    with pytest.raises(InvertedTreeExportError, match="distance-zero residual"):
+        assert_distance_zero_legal(("path",), edges, catalog)
+
+
+def _singleton_cross_partition_document() -> dict:
+    return bindings_document(
+        {
+            "id": "path",
+            "sheet": "Engine",
+            "data_range": "Engine!B2:B3",
+            "layout": "matrix",
+            "output": {"compute": {"name": "compute_path"}},
+            "structure": {
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "float",
+                    "bind": {"kind": "data_cell", "read": "float"},
+                },
+                "dimensions": [
+                    {
+                        "concept": "COUNTRY",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {"kind": "row_label", "label_column": "A", "read": "string"},
+                    },
+                    {
+                        "concept": "TIME_PERIOD",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {"kind": "column_header", "header_row": 1, "read": "int"},
+                    },
+                ],
+            },
+            "key": ["COUNTRY", "TIME_PERIOD"],
+        }
+    )
+
+
+def test_singleton_scc_cross_partition_cycle_fails_closed_at_plan(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "singleton_cross_cycle.xlsx",
+        {
+            "Engine": {
+                "B1": 2020,
+                "A2": "France",
+                "B2": "=B3",
+                "A3": "Kenya",
+                "B3": "=B2",
+            }
+        },
+    )
+    document = _singleton_cross_partition_document()
+    catalog, deps, _graph = inverted_graph_parts(workbook, document)
+    assert tarjan_series_sccs([series.series_id for series in catalog.formula_series()], deps) == [
+        ("path",)
+    ]
+    with pytest.raises(InvertedTreeExportError, match="Engine!B2"):
+        generate_inverted(workbook, document)
+
+
+def _two_country_catalog() -> SeriesCatalog:
+    cells = ("Engine!B2", "Engine!B3")
+    domain = (
+        KeyPoint((("COUNTRY", "France"), ("TIME_PERIOD", 2020))),
+        KeyPoint((("COUNTRY", "Kenya"), ("TIME_PERIOD", 2020))),
+    )
+    series = BoundSeries(
+        series_id="path",
+        layout="matrix",
+        direction="output",
+        cells=cells,
+        key_fields=("COUNTRY", "TIME_PERIOD"),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=domain,
+        statements=(Statement("path", "path", None, 0, 2, cells, domain),),
+    )
+    return make_catalog(
+        series={"path": series},
+        order=("path",),
+        address_to_id={cell: "path" for cell in cells},
+    )
+
+
+def test_one_way_cross_partition_is_legal() -> None:
+    edges = (
+        DependenceEdge(
+            "path",
+            "path",
+            "Engine!B2",
+            "Engine!B3",
+            0,
+            access="cross_partition",
+        ),
+    )
+    assert_distance_zero_legal(("path",), edges, _two_country_catalog())
+
+
+def test_unscheduled_cross_partition_cell_fails_closed() -> None:
+    edges = (
+        DependenceEdge(
+            "path",
+            "path",
+            "Engine!B2",
+            "Engine!Z99",
+            0,
+            access="cross_partition",
+        ),
+    )
+    with pytest.raises(InvertedTreeExportError, match="Engine!Z99"):
+        assert_distance_zero_legal(("path",), edges, _two_country_catalog())
 
 
 def test_schedule_coord_joins_resolved_time_period(tmp_path: Path) -> None:

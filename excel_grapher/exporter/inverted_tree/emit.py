@@ -220,7 +220,7 @@ def plan_inverted_tree(
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
     catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
     deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
-    scc_map = build_scc_map(catalog, deps, edges=catalog_edges.edges)
+    scc_map = build_scc_map(catalog, deps)
     # Recurrence groups and nested self recurrences read external producers
     # by coordinate; their producers are never compacted to a host window.
     for sid, info in tuple(deps.items()):

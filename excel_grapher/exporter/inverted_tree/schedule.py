@@ -398,10 +398,13 @@ def _assert_cross_partition_legal(
 
     A cycle in the contracted partition graph is not enough to reject: an
     acyclic cell graph is legal under demand-driven evaluation. A real
-    circular reference at cell grain raises.
+    circular reference at cell grain raises. A cross-partition edge whose
+    consumer or producer is not in the SCC schedule partitions is a catalog
+    inconsistency and also raises.
 
     Raises:
-        InvertedTreeExportError: Unguarded cell edges form a cycle.
+        InvertedTreeExportError: Unguarded cell edges form a cycle, or an
+            edge names a cell outside the SCC partitions.
     """
     partitions = _scc_partitions(scc, catalog)
     if len(partitions) < 2:
@@ -422,8 +425,17 @@ def _assert_cross_partition_legal(
         producer_part = schedule_partition(edge.producer_cell, catalog)
         if consumer_part == producer_part:
             continue
-        if consumer_part not in residual or producer_part not in residual:
-            return
+        missing: list[str] = []
+        if consumer_part not in residual:
+            missing.append(edge.consumer_cell)
+        if producer_part not in residual:
+            missing.append(edge.producer_cell)
+        if missing:
+            raise InvertedTreeExportError(
+                "cross-partition edge names cell(s) "
+                f"{', '.join(missing)} outside the schedule partitions of "
+                f"zipper series {list(scc)!r}"
+            )
         residual[consumer_part].append(producer_part)
     pair = _first_partition_cycle(residual)
     if pair is not None and _unconditional_cell_graph_is_cyclic(scc, edges):
@@ -446,8 +458,9 @@ def assert_distance_zero_legal(
 
     Raises:
         InvertedTreeExportError: Some partition's residual has an
-            unconditional cycle at a schedule index, or unguarded
-            cross-partition cell edges form a circular reference.
+            unconditional cycle at a schedule index, unguarded
+            cross-partition cell edges form a circular reference, or a
+            cross-partition edge names a cell outside the SCC partitions.
     """
     for (index, part), residual in _residual_by_index_partition(
         scc, edges, catalog, include_guarded=False
@@ -468,20 +481,16 @@ def build_scc_map(
 ) -> dict[str, tuple[str, ...]]:
     """Map each formula series to its SCC (bindings order).
 
-    Multi-series SCCs fail closed only when some (schedule index, outer
-    partition) has an unconditional same-index must-cycle. Opposite
-    residual orientations in different vintages are legal (#762).
-    May-cycles through guarded edges do not raise here; runtime demand
-    decides them.
+    Legality is `assert_distance_zero_legal` in `plan_inverted_tree`, which
+    covers singleton and multi-series components. This helper only
+    contracts the dependence graph.
 
-    Pass `edges` when the catalog has already been walked.
+    `graph` and `edges` are accepted for call-site compatibility.
     """
+    _ = graph, edges
     ids = [series.series_id for series in catalog.formula_series()]
     mapping: dict[str, tuple[str, ...]] = {}
     for scc in tarjan_series_sccs(ids, deps):
-        if len(scc) > 1:
-            scc_edges = collect_dependence_edges(catalog, graph, scc, edges=edges)
-            assert_distance_zero_legal(scc, scc_edges, catalog)
         for sid in scc:
             mapping[sid] = scc
     return mapping
