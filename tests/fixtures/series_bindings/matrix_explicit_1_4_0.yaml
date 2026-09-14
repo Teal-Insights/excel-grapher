@@ -6,9 +6,7 @@ series:
     data_range: Inputs!B3:D5
     layout: matrix
     editable: true
-    input:
-      setter:
-        name: set_macro_matrix
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

@@ -7,8 +7,6 @@ series:
     layout: scalar
     input:
       mode: override
-      setter:
-        name: set_engine_b1
     structure:
       measure:
         concept: OBS_VALUE

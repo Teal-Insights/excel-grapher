@@ -38,7 +38,6 @@ def test_derive_input_series_from_series_bindings(tmp_path: Path) -> None:
     assert len(input_series) == 1
     series = input_series[0]
     assert series["id"] == "borvelia_primary_balance"
-    assert series["setter_name"] == "set_borvelia_primary_balance"
     assert series["key_fields"] == ["TIME_PERIOD"]
     assert series["requires_address"] is False
     assert [cell["address"] for cell in series["cells"]] == [

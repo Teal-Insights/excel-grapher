@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.series_bindings import validate_bindings_workbook
-from excel_grapher.series_bindings.workflow import setter_names
+from excel_grapher.series_bindings.workflow import input_ids
 from tests.integration.user_flows.utils import write_ffv2_workbook
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
@@ -31,21 +31,21 @@ def test_ffv2_bindings_validate(workbook: Path, bindings_path: Path) -> None:
     result = validate_bindings_workbook(workbook, bindings_path)
     assert result["report"]["ok"] is True
     assert not any(issue["level"] == "error" for issue in result["report"]["issues"])
-    assert len(result["input_series"]) == len(setter_names(bindings))
+    assert len(result["input_series"]) == len(input_ids(bindings))
 
 
-def test_ffv2_declared_setters_and_computes(
+def test_ffv2_declared_inputs_and_computes(
     workbook: Path,
     bindings_path: Path,
 ) -> None:
     result = validate_bindings_workbook(workbook, bindings_path)
-    assert result["setters"] == [
-        "set_puka_longest_reception",
-        "set_puka_receptions",
-        "set_puka_targets",
-        "set_puka_touchdowns",
-        "set_puka_week_1_stats",
-        "set_puka_yards",
+    assert result["inputs"] == [
+        "puka_longest_reception",
+        "puka_receptions",
+        "puka_targets",
+        "puka_touchdowns",
+        "puka_week_1_stats",
+        "puka_yards",
     ]
     assert result["computes"] == [
         "compute_puka_avg_yards_per_reception",

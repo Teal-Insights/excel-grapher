@@ -5,8 +5,7 @@ series:
     sheet: Assumptions
     data_range: Assumptions!B3:D3
     layout: series
-    setter:
-      name: set_row_b
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

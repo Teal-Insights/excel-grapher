@@ -9,16 +9,14 @@ else `concept`); dtype inheritance from `concept_scheme` keys on `concept`.
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 import xlsxwriter
 
 from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict
 from excel_grapher.series_bindings import (
     expand_data_range,
     load_series_bindings,
@@ -30,11 +28,6 @@ from excel_grapher.series_bindings.normalize import effective_dimension_id
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
-)
-from excel_grapher.series_bindings.setter_codegen import (
-    emit_input_coerce_helpers,
-    emit_setter_function,
-    emit_setter_helpers,
 )
 from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
@@ -244,57 +237,6 @@ def test_resolve_dimensions_sharing_concept(tmp_path: Path) -> None:
 # --- setter codegen round trip ---
 
 
-def _exec_setters(lines: list[str]) -> dict[str, object]:
-    namespace: dict[str, object] = {
-        "EvalContext": EvalContext,
-        "coerce_inputs_dict": coerce_inputs_dict,
-    }
-    source_lines = emit_input_coerce_helpers() + emit_setter_helpers() + lines
-    exec("\n".join(source_lines), namespace)
-    return namespace
-
-
-def test_emit_setter_round_trips_dimension_id_key(tmp_path: Path) -> None:
-    wb_path, graph = _reference_period_graph(tmp_path)
-    bindings = validate_bindings_document(_reference_period_document())
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(
-        graph,
-        wb_path,
-        series,
-        concept_scheme=bindings.get("concept_scheme"),
-        direction="input",
-    )
-    ns = _exec_setters(emit_setter_function(series, resolved))
-    setter = cast(
-        Callable[[EvalContext, list[dict[str, object]]], None],
-        ns["set_gdp_vs_reference"],
-    )
-
-    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(
-        ctx,
-        [{"TIME_PERIOD": 2021, "REFERENCE_TIME_PERIOD": 2019, "OBS_VALUE": 42.0}],
-    )
-    assert ctx.inputs["Inputs!G5"] == 42.0
-
-    with pytest.raises(ValueError, match="unknown fields"):
-        setter(
-            ctx,
-            [
-                {
-                    "TIME_PERIOD": 2021,
-                    "REFERENCE_TIME_PERIOD": 2019,
-                    "COMPARISON_AREA": "x",
-                    "OBS_VALUE": 1.0,
-                }
-            ],
-        )
-
-
-# --- docstring contract ---
-
-
 def test_doc_contract_fields_use_dimension_id(tmp_path: Path) -> None:
     wb_path, graph = _reference_period_graph(tmp_path)
     bindings = validate_bindings_document(_reference_period_document())
@@ -406,42 +348,6 @@ def test_resolve_series_context_uses_dimension_dtype(tmp_path: Path) -> None:
     assert resolved["ok"] is True, resolved["issues"]
     record = resolved["leaves"][0]["record"]
     assert record["REFERENCE_TIME_PERIOD"] == datetime(2019, 1, 15)
-
-
-def test_emit_setter_key_dtypes_include_dimension_dtype(tmp_path: Path) -> None:
-    wb_path, graph = _reference_period_graph(tmp_path)
-    doc = _reference_period_document()
-    doc["series"][0] = _reference_date_series()
-    bindings = validate_bindings_document(doc)
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(
-        graph,
-        wb_path,
-        series,
-        concept_scheme=bindings.get("concept_scheme"),
-        direction="input",
-    )
-    lines = emit_setter_function(series, resolved)
-    code = "\n".join(lines)
-    assert "'REFERENCE_TIME_PERIOD': 'datetime'" in code
-
-    ns = _exec_setters(lines)
-    setter = cast(
-        Callable[[EvalContext, list[dict[str, object]]], None],
-        ns["set_gdp_vs_reference"],
-    )
-    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(
-        ctx,
-        [
-            {
-                "TIME_PERIOD": 2021,
-                "REFERENCE_TIME_PERIOD": datetime(2019, 1, 15),
-                "OBS_VALUE": 42.0,
-            }
-        ],
-    )
-    assert ctx.inputs["Inputs!G5"] == 42.0
 
 
 def test_doc_contract_reports_dimension_dtype(tmp_path: Path) -> None:

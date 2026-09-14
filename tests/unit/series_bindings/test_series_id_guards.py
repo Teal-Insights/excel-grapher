@@ -60,7 +60,7 @@ def _scalar_series(
     if direction == "output":
         entry["output"] = {"compute": {"name": f"compute_{series_id}"}}
     elif direction == "input":
-        entry["input"] = {"setter": {"name": f"set_{series_id}"}}
+        entry["input"] = {}
     elif direction == "internal":
         entry["internal"] = {}
     elif direction == "constant":

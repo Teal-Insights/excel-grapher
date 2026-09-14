@@ -20,7 +20,7 @@ _FIELD_HINTS: dict[str, str] = {
     "structure": "Add a structure block describing measure, dimensions, and attributes.",
     "data_range": "Add the Excel range this series covers (for example Sheet1!B3:Q3).",
     "layout": "Optional layout intent: scalar, series, or matrix.",
-    "input": "Add an input block with a setter for editable series.",
+    "input": "Add an input block for editable series (`input: {}` is enough).",
     "output": "Add an output block with a compute for derived series.",
     "internal": "Add an internal block for non-I/O formula-cell key triangulation.",
 }

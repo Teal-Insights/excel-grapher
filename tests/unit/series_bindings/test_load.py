@@ -33,7 +33,8 @@ def test_load_json_binding_file(tmp_path: Path) -> None:
     path.write_text(json.dumps(doc), encoding="utf-8")
     loaded = load_series_bindings(path)
     series = loaded["series"][0]
-    assert series["input"]["setter"]["name"] == "set_borvelia_primary_balance"
+    assert series["input"] == {}
+    assert "setter" not in series
 
 
 def test_merge_directory_shards(tmp_path: Path) -> None:

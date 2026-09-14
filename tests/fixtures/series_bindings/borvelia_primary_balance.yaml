@@ -6,11 +6,7 @@ series:
     data_range: Inputs!F5:J5
     layout: series
     editable: true
-    setter:
-      name: set_borvelia_primary_balance
-      record_contract: records
-      allow_address: false
-      strict: true
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

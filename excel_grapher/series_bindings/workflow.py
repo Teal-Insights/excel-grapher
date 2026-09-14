@@ -11,6 +11,7 @@ from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.input_series import derive_input_series
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
+from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.ranges import (
     expand_bound_series_addresses,
     expand_bound_series_addresses_for_graph,
@@ -36,48 +37,37 @@ class BindingsCheckResult(TypedDict):
     targets: list[str]
     report: ValidationReport
     canonical_sha256: str
-    setters: list[str]
+    inputs: list[str]
     readers: list[str]
     computes: list[str]
     input_series: list[InputSeries]
     generated_files: NotRequired[dict[str, str]]
 
 
-def setter_names(bindings: WorkbookSeriesBindings) -> list[str]:
-    """Return sorted unique declared input setter function names."""
+def input_ids(bindings: WorkbookSeriesBindings) -> list[str]:
+    """Return sorted unique input series ids."""
     names: list[str] = []
     for series in bindings["series"]:
-        input_block = series.get("input") or {}
-        setter = input_block.get("setter") or series.get("setter")
-        if isinstance(setter, dict) and setter.get("name"):
-            names.append(str(setter["name"]))
+        series_id = series.get("id")
+        if series_id and has_input_direction(series):
+            names.append(str(series_id))
     return sorted(set(names))
 
 
 def reader_names(bindings: WorkbookSeriesBindings) -> list[str]:
-    """Return sorted unique reader function names for input and constant series.
+    """Return sorted unique reader names for constant series.
 
-    Every input series that declares a setter gets a `read_<series_id>` dual
-    (or an explicit `input.reader.name` override). Constant series emit the same
-    reader surface without a setter (`constant.reader.name` or `read_<series_id>`).
-    Range duals (`read_<id>_range`) are omitted from this list; they are
-    auxiliary helpers.
+    Package export does not emit `read_*` duals of inputs. Constant series still
+    advertise `constant.reader.name` or `read_<series_id>` for discovery.
+    Range duals (`read_<id>_range`) are omitted from this list.
     """
     names: list[str] = []
     for series in bindings["series"]:
         series_id = series.get("id")
         if not series_id:
             continue
-        input_block = series.get("input") or {}
-        setter = input_block.get("setter") or series.get("setter")
         constant_block = series.get("constant")
-        if isinstance(setter, dict) and setter.get("name"):
-            reader = input_block.get("reader")
-            if isinstance(reader, dict) and reader.get("name"):
-                names.append(str(reader["name"]))
-            else:
-                names.append(f"read_{series_id}")
-        elif isinstance(constant_block, dict):
+        if isinstance(constant_block, dict):
             reader = constant_block.get("reader")
             if isinstance(reader, dict) and reader.get("name"):
                 names.append(str(reader["name"]))
@@ -252,7 +242,7 @@ def validate_bindings_workbook(
         "targets": targets,
         "report": report,
         "canonical_sha256": bindings_canonical_sha256(bindings),
-        "setters": setter_names(bindings),
+        "inputs": input_ids(bindings),
         "readers": reader_names(bindings),
         "computes": compute_names(bindings),
         "input_series": derive_input_series(graph, bindings, workbook=workbook),

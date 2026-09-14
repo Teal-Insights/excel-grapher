@@ -147,7 +147,7 @@ def series_entry(
         "key": key_fields,
     }
     if direction == "input":
-        entry["input"] = {"setter": {"name": f"set_{series_id}"}}
+        entry["input"] = {}
         if domain is not None:
             entry["input"]["domain"] = dict(domain)
         if value_map is not None:

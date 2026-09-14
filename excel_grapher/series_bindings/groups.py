@@ -1,7 +1,6 @@
-"""View-level series binding groups: catalog metadata for export sequencing.
+"""View-level series binding groups: catalog metadata for documentation sequencing.
 
 Groups never affect graph extraction, binding resolution, or record semantics.
-`emit_series_bindings_block` may sequence library setters using group order.
 Inverted-tree packages from `generate_modules()` omit `list_groups()`.
 """
 
@@ -18,7 +17,6 @@ class GroupMember(TypedDict):
     """One binding's membership entry inside a group manifest node."""
 
     id: str
-    setter: str | None
     reader: str | None
     compute: str | None
     order: int | None
@@ -35,7 +33,7 @@ class GroupNode(TypedDict):
 
 
 class GroupsManifest(TypedDict):
-    """Machine-readable group structure for library setter sequencing."""
+    """Machine-readable group structure for catalog documentation grouping."""
 
     groups: list[GroupNode]
     ungrouped: list[GroupMember]
@@ -68,27 +66,10 @@ def bindings_have_groups(bindings: WorkbookSeriesBindings | dict[str, Any]) -> b
     )
 
 
-def _setter_name(series: dict[str, Any]) -> str | None:
-    normalized = normalize_series_entry(series)
-    setter = (normalized.get("input") or {}).get("setter")
-    if isinstance(setter, dict) and setter.get("name"):
-        return str(setter["name"])
-    return None
-
-
 def _reader_name(series: dict[str, Any]) -> str | None:
     normalized = normalize_series_entry(series)
-    input_block = normalized.get("input") or {}
-    setter = input_block.get("setter")
     constant_block = normalized.get("constant")
     series_id = series.get("id")
-    if isinstance(setter, dict) and setter.get("name"):
-        reader = input_block.get("reader")
-        if isinstance(reader, dict) and reader.get("name"):
-            return str(reader["name"])
-        if not series_id:
-            return None
-        return f"read_{series_id}"
     if isinstance(constant_block, dict):
         reader = constant_block.get("reader")
         if isinstance(reader, dict) and reader.get("name"):
@@ -109,7 +90,6 @@ def _compute_name(series: dict[str, Any]) -> str | None:
 def _member(series: dict[str, Any], order: int | None) -> GroupMember:
     return {
         "id": str(series.get("id", "")),
-        "setter": _setter_name(series),
         "reader": _reader_name(series),
         "compute": _compute_name(series),
         "order": order,
@@ -202,22 +182,18 @@ def bindings_export_order(
 
 def grouped_public_names(
     bindings: WorkbookSeriesBindings | dict[str, Any],
-) -> tuple[list[str], list[str], list[str]]:
-    """Return unique setter, reader, and compute names in grouped export order."""
-    setters: list[str] = []
+) -> tuple[list[str], list[str]]:
+    """Return unique reader and compute names in grouped export order."""
     readers: list[str] = []
     computes: list[str] = []
     for series in bindings_export_order(bindings):
-        setter = _setter_name(series)
-        if setter is not None and setter not in setters:
-            setters.append(setter)
         reader = _reader_name(series)
         if reader is not None and reader not in readers:
             readers.append(reader)
         compute = _compute_name(series)
         if compute is not None and compute not in computes:
             computes.append(compute)
-    return setters, readers, computes
+    return readers, computes
 
 
 def _manifest_node(node: _TreeNode) -> GroupNode:
@@ -233,7 +209,7 @@ def _manifest_node(node: _TreeNode) -> GroupNode:
 def group_manifest(
     bindings: WorkbookSeriesBindings | dict[str, Any],
 ) -> GroupsManifest:
-    """Build the nested group manifest used for library setter sequencing.
+    """Build the nested group manifest used for documentation sequencing.
 
     Unlike `bindings_export_order`, a multi-membership binding appears under
     every group it references.

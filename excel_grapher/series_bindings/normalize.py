@@ -84,20 +84,13 @@ def concept_for_field(series: dict[str, Any], field_name: str) -> str:
     return field_name
 
 
-def _setter_block(series: dict[str, Any]) -> dict[str, Any] | None:
-    input_block = series.get("input")
-    if isinstance(input_block, dict):
-        setter = input_block.get("setter")
-        if isinstance(setter, dict):
-            return setter
-    legacy = series.get("setter")
-    if isinstance(legacy, dict):
-        return legacy
-    return None
-
-
 def has_input_direction(series: dict[str, Any]) -> bool:
-    return _setter_block(series) is not None
+    """Return True when the series declares an input direction block.
+
+    Empty `input: {}` counts. Leftover `input.setter` / top-level `setter`
+    keys are stripped in `normalize_series_entry` and are not required.
+    """
+    return "input" in series and isinstance(series.get("input"), dict)
 
 
 def input_mode(series: dict[str, Any]) -> InputMode:
@@ -149,23 +142,23 @@ def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy with legacy aliases normalized for schema validation and codegen."""
+    """Return a copy with legacy aliases normalized for schema validation and codegen.
+
+    Package export does not emit `set_*` / `read_*` duals. Leftover
+    `input.setter`, `input.reader`, and top-level `setter` keys are stripped.
+    A stripped setter still leaves `input: {}` so the series stays an input.
+    """
     out = dict(series)
     if out.get("layout") == "row_series":
         out["layout"] = "series"
     legacy_setter = out.pop("setter", None)
-    input_block = out.get("input")
-    input_block = {} if not isinstance(input_block, dict) else dict(input_block)
+    declared_input = "input" in out or legacy_setter is not None
+    raw_input = out.get("input")
+    input_block = {} if not isinstance(raw_input, dict) else dict(raw_input)
+    input_block.pop("setter", None)
+    input_block.pop("reader", None)
 
-    if legacy_setter is not None:
-        if "setter" not in input_block:
-            input_block["setter"] = legacy_setter
-        elif input_block["setter"] != legacy_setter:
-            raise ValueError(
-                f"series {series.get('id')!r}: conflicting top-level setter and input.setter"
-            )
-
-    if input_block:
+    if declared_input:
         out["input"] = input_block
     elif "input" in out:
         del out["input"]

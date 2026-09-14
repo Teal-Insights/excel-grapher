@@ -5,8 +5,7 @@ series:
     sheet: Inputs
     data_range: Inputs!B2:C2
     layout: series
-    setter:
-      name: set_row_a
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

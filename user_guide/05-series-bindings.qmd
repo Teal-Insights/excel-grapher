@@ -3,9 +3,9 @@ title: "Series bindings"
 guide-section: "Export & quality"
 ---
 
-Declarative **series bindings** describe how spreadsheet input cells map to named dimensions
-(SDMX-style concepts) and how generated Python **setters** and **compute** functions accept
-`Records` — `list[dict]` with a required measure field (`OBS_VALUE` by default) plus key columns.
+Declarative **series bindings** describe how spreadsheet cells map to named dimensions
+(SDMX-style concepts) and how generated Python `compute_*` functions accept named
+tensors or scalars. Use `as_records` for a tidy `list[dict]` view.
 
 They replace the retired label-detection heuristics (`row_labels` / `column_labels` on graph nodes).
 The machine source of truth is a **sidecar manifest** next to the workbook, not inferred geometry.
@@ -53,7 +53,7 @@ display(
 | **Format** | YAML by default (`.bindings.yaml`); JSON (`.bindings.json`) also accepted |
 | **Location** | One sidecar per workbook, colocated with the `.xlsx` |
 | **Granularity (MVP)** | One `series[]` entry per logical indicator → one `compute_*` argument (`layout: series`) |
-| **Naming** | Stable `id` (snake_case); `setter.name` must match `set_[a-z][a-z0-9_]*` |
+| **Naming** | Stable `id` (snake_case); becomes the `compute_*` / `Model` argument name |
 | **Mixed-series leaves** | To tune a retained graph leaf inside an `internal`/`output` range, also bind that cell as a separate `input` or `constant` series |
 | **Non-executable prose** | `sdmx_notes`, `notes` — documentation only |
 
@@ -64,7 +64,7 @@ lic_inputs.xlsx
 lic_inputs.bindings.yaml    # schema_version, workbook, series[]
 ```
 
-All setters for that workbook live in a single `series[]` array.
+All series for that workbook live in a single `series[]` array.
 
 ### Optional per-sheet shards
 
@@ -137,22 +137,22 @@ A single file may also declare `data_range` (and `sheet`) as lists covering ever
 Each `series[]` entry shares structure (`data_range`, `layout`, `structure`, `key`) and declares
 optional direction blocks:
 
-- **`input.setter`** — generated setter requires key dimensions plus `OBS_VALUE` on each incoming record.
+- **`input`** — editable series (`input: {}` is enough). Optional `domain`, `value_map`, and `mode`. Package `compute_*` / `Model` take these as named arguments.
 - **`output.compute`** — generated compute returns all declared dimensions plus computed `OBS_VALUE` per graph cell in `data_range`.
-- **`internal`** — resolve per-cell `{address, key, record}` for formula nodes without emitting `set_*` or `compute_*` APIs.
-- **`constant`** — bind graph **leaves** (fixed parameters / scenario knobs / lookup seeds) for semantic `read_*` codegen and Phase 2 formula-body rewrite, without a public `set_*` or `compute_*`.
+- **`internal`** — resolve per-cell `{address, key, record}` for formula nodes without emitting `compute_*` APIs.
+- **`constant`** — bind graph **leaves** (fixed parameters / scenario knobs / lookup seeds) for semantic `read_*` codegen and Phase 2 formula-body rewrite, without a public `compute_*`.
 
-At least one of `input`, `output`, `internal`, or `constant` is required per series (legacy top-level `setter` is normalized to `input.setter`; legacy `layout: row_series` is normalized to `series`).
+At least one of `input`, `output`, `internal`, or `constant` is required per series (legacy top-level `setter` and leftover `input.setter` / `input.reader` are stripped at load, leaving `input: {}`; legacy `layout: row_series` is normalized to `series`).
 
 ### Input mode: `leaf` vs `override` (schema 1.6.0+) {#input-mode-override}
 
 By default, input bindings use **`input.mode: leaf`**: every cell in `data_range` must be a **graph leaf** (a value cell with no formula in the dependency graph). If `data_range` includes a formula cell, validation fails with `non_leaf_input_overlap` instead of silently skipping it.
 
-Use **`input.mode: override`** for the Excel **typed-over-formula** pattern: cells that keep a formula in the workbook but expose a public setter that displaces the computed value until changed. Override bindings:
+Use **`input.mode: override`** for the Excel **typed-over-formula** pattern: cells that keep a formula in the workbook but callers may still supply as public `compute_*` / `Model` arguments. Override bindings:
 
 - Resolve **graph nodes** in `data_range` (formula cells and, when mixed, leaf cells too).
 - Require **at least one formula cell** in the range (`no_formula_override_targets` otherwise).
-- Write through generated `set_*` functions via `ctx.set_inputs`; the export runtime returns the override value before re-evaluating the cell formula.
+- Package export does **not** emit `set_*` methods; bind the cell as an input so callers pass the value as a `compute_*` argument. The evaluation walk uses that argument instead of re-evaluating the cell formula.
 - Leave graph formulas and dependency edges unchanged (evaluation-time displacement only).
 
 ```yaml
@@ -164,8 +164,6 @@ series:
     layout: scalar
     input:
       mode: override
-      setter:
-        name: set_productivity_turning_point
     structure:
       measure:
         concept: OBS_VALUE
@@ -179,11 +177,11 @@ Example manifest: [formula_override.bindings.yaml](https://github.com/Teal-Insig
 
 **Migration (all schema versions):** Leaf-mode bindings that accidentally included formula cells previously emitted a `partial_graph_overlap` warning and dropped those cells. They now **error** at validation. Either narrow `data_range` to leaves only or declare `input.mode: override`.
 
-**Evaluator note:** Durable override setters (this feature) differ from transient per-call overrides tracked in [issue #122](https://github.com/Teal-Insights/excel-grapher/issues/122). `FormulaEvaluator` does not yet expose equivalent durable setter semantics.
+**Evaluator note:** Durable override inputs (this feature) differ from transient per-call overlays tracked in [issue #122](https://github.com/Teal-Insights/excel-grapher/issues/122). `FormulaEvaluator` does not yet expose equivalent durable override semantics.
 
 ### Internal direction (schema 1.7.0+)
 
-Use **`internal: {}`** for formula cells that need the same dimensional key machinery as public I/O bindings but should **not** generate `set_*` or `compute_*` functions. Typical consumers are extraction pipelines that triangulate internal computation cells by concept keys (for example `ref_0[TIME_PERIOD, INDICATOR]`).
+Use **`internal: {}`** for formula cells that need the same dimensional key machinery as public I/O bindings but should **not** generate `compute_*` functions. Typical consumers are extraction pipelines that triangulate internal computation cells by concept keys (for example `ref_0[TIME_PERIOD, INDICATOR]`).
 
 Internal bindings:
 
@@ -226,7 +224,7 @@ or `constant` instead of a baked literal.
 
 Use **`constant: {}`** for graph **leaves** that participate in formulas as fixed parameters,
 scenario knobs, or lookup seeds, but should **not** appear as user-editable Records API
-inputs (`set_*`) or published outputs (`compute_*`). Without a constant binding, those leaves
+inputs (`compute_*` arguments) or published outputs (`compute_*`). Without a constant binding, those leaves
 fall back to bare `xl_cell(ctx, 'Sheet!A1')` in generated formula bodies even when the domain
 model already names them.
 
@@ -241,10 +239,10 @@ Constant bindings:
   an `internal`/`output` rectangle; see
   [Double-binding retained graph leaves](#bound-leaf-double-bind).
 - Emit **`read_*`** (optional `constant.reader.name` override) plus leaf-index /
-  `list_readers` / Phase 2 body rewrite — the same semantic read path as input duals.
-- Emit **no** `set_*` or `compute_*`; `list_setters()` stays empty for these series.
-- Values still live in the export `CONSTANTS` / `ctx.inputs` merge (same as unclassified
-  constant leaves); there is no public Records write surface unless you also declare an
+  `list_readers` / Phase 2 body rewrite.
+- Emit **no** `compute_*`; these series are not Model constructor arguments.
+- Values still live in the export `CONSTANTS` / bound-leaf defaults (same as unclassified
+  constant leaves); there is no public write surface unless you also declare an
   `input` binding instead.
 
 ```yaml
@@ -376,7 +374,7 @@ Analysts often maintain a **manifest table** (Excel or markdown) listing inputs:
 Suggested workflow:
 
 1. **Inventory** inputs in the manifest (one row per logical series / indicator row).
-2. **Draft** `series_bindings.bindings.yaml` — one `series[]` item per manifest row that should become a setter.
+2. **Draft** `series_bindings.bindings.yaml` — one `series[]` item per manifest row that should become a `compute_*` argument.
 3. **Map columns** from the manifest into binding fields:
 
 | Manifest column (typical) | Binding field |
@@ -388,7 +386,7 @@ Suggested workflow:
 | Year / period axis | `bind.kind: column_header` + `key: [TIME_PERIOD]`; use `read: int` for projection offsets (1–5) or `read: datetime` for calendar headers |
 | Active / flag column | `bind.kind: row_label` or `column_header` + `read: bool`; or `bind.kind: constant` with YAML `true` / `false` |
 | Unit | `structure.attributes[]` with `value:` |
-| Setter name | `setter.name` |
+| Series id | `id` (becomes the `compute_*` / `Model` argument name) |
 
 4. **Validate** against the dependency graph (see [Python API](#python-api)).
 5. **Export.** `CodeGenerator.generate_modules(series_bindings=..., bindings_workbook=...)` emits inverted-tree `compute_*` (explicit tensor/scalar inputs and results). There is no bindings-free `generate()` path (see [Code export](06-export.qmd)).
@@ -404,7 +402,7 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
 4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take named tensors or scalars and return tensors or scalars; use `as_records` for a Records view.
 5. `output.compute.helper` applies to the library `emit_compute_function` path only (dim-keyed internals instead of `xl_cell`). Inverted-tree packages already emit one leaf-closure function per output.
-6. Optionally add `input.setter` in the same series or a mergeable shard for the library emitter `emit_setter_function`. Generated packages validate input tensors against their declared schemas.
+6. Mark editable series with `input: {}` (plus optional `domain` / `value_map` / `mode`). Generated packages validate input tensors against their declared schemas. Leftover `input.setter` is stripped at load.
 7. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Call `compute_*` with keyword tensor/scalar arguments and use `as_records` afterward when records are needed.
 
 ### Upgrade notes (1.10.0): helper-backed compute (library emitters)
@@ -417,61 +415,39 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 
 Package `compute_*` functions take named tensors (or scalars) and return tensors
 or scalars. Use `as_records(compute, result)` for a tidy `list[dict]` view.
-
-The library emitters `emit_setter_function` / `emit_compute_function` still accept **series**
-and **matrix** `SeriesInput`: records or a **tidy** pandas/polars `DataFrame`. Those helpers
-are not wired into `generate_modules()`. **Series** setters also accept a 1D
-iterable of measure values when the binding has a single key. **Scalar** setters accept a bare
-measure value, one record dict, or a one-element record list. `ctx: EvalContext` is always the
-first argument.
+Build or overlay input tensors with generated `from_records` helpers (or
+`data.py` defaults). See `examples/micro_workbooks/setter_dataframe_example.py`
+(single-key updates) and `examples/micro_workbooks/matrix_dataframe_example.py`
+(matrix).
 
 ```python
-# Records (always supported)
-set_borvelia_primary_balance(ctx, [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}])
-
-# Positional measure values — one float per leaf, in codegen key order (periods 1..5 here)
-set_borvelia_primary_balance(ctx, [-2.0, -1.0, 0.0, 7.5, 8.0])
-
-# Tidy DataFrame — columns are binding `key` fields plus the measure concept only
-import pandas as pd
-
-df = pd.DataFrame({"TIME_PERIOD": [4, 5], "OBS_VALUE": [7.5, 8.0]})
-set_borvelia_primary_balance(ctx, df)
-
-# Matrix setters use the same tidy contract (one row per cell)
-set_macro_matrix(
-    ctx,
-    pd.DataFrame(
-        {
-            "INDICATOR": ["GDP growth", "Inflation"],
-            "TIME_PERIOD": [2024, 2025],
-            "OBS_VALUE": [1.5, 2.8],
-        }
+result = compute_borvelia_primary_balance_out(
+    borvelia_primary_balance=BorveliaPrimaryBalance.from_records(
+        domain=BORVELIA_PRIMARY_BALANCE_DOMAIN,
+        records=(((1,), -2.0), ((2,), -1.0), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
     ),
 )
+records = as_records(compute_borvelia_primary_balance_out, result)
 ```
 
-`layout: matrix` setters accept records or a tidy DataFrame with all `key` fields plus the measure
-concept; positional 1D measure values are rejected for matrix bindings.
-
-See also `examples/micro_workbooks/setter_dataframe_example.py` (single-key tensor
-updates) and `examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
+The leftover library helper `emit_compute_function` still emits ctx-based
+Records `compute_*` functions. It is not wired into `generate_modules()`.
 
 ### Record dicts
 
-Each record must include:
+Each tidy record includes:
 
-- **Measure field** — observation written to the matched leaf cell, named by `structure.measure.concept` (`OBS_VALUE` by default).
+- **Measure field** — named by `structure.measure.concept` (`OBS_VALUE` by default).
 - **Key fields** — every concept listed in `key` (e.g. `TIME_PERIOD: 3` for offset-style int keys).
 
 Do **not** repeat `series_context`, attributes, or documentation dimensions in caller input unless
 they are listed in `key`. For example, `REF_AREA` and `INDICATOR` are binding metadata for
 Borvelia-style series — only `TIME_PERIOD` and `OBS_VALUE` are required in records or DataFrame
-columns.
+columns used to build a tensor.
 
-### Wide grids → tidy DataFrames
+### Wide grids → tidy records
 
-Setters accept **long/tidy** tables only. Convert wide Excel-shaped grids before calling a setter:
+Convert wide Excel-shaped grids to long/tidy tables before `from_records`:
 
 ```python
 # Single-key series: periods across columns, one indicator row
@@ -486,35 +462,9 @@ tidy = df_wide.reset_index().melt(
 tidy = df_wide.unpivot(on="TIME_PERIOD", index="INDICATOR", value_name="OBS_VALUE")
 ```
 
-Only include columns that appear in `key` plus the measure concept. Passing a wide grid (periods
-as columns) raises a validation error with a hint to melt or stack to tidy.
+Only include columns that appear in `key` plus the measure concept.
 
-### Empty measure cells
-
-Generated setters accept `empty_measure: Literal["skip", "write", "error"] = "write"`:
-
-- **`write`** (default) — pass the measure value through; the runtime applies its own empty vs
-  N/A semantics.
-- **`skip`** — drop rows whose measure is missing or NaN (convenient after melting a wide grid
-  with gaps).
-- **`error`** — raise when a row includes a missing or NaN measure.
-
-Empty **key** fields always raise, regardless of `empty_measure`. A zero-row DataFrame with valid
-columns is a no-op (partial update with zero cells).
-
-**Measure `dtype` is enforced at runtime.** Generated setters validate each measure value against
-`structure.measure.dtype` (falling back to the measure concept’s `concept_scheme` dtype, then a
-non-`auto` measure `bind.read`). Mismatches raise `TypeError`. Safe coercions are applied where
-appropriate (for example `int` → `float`, `date` → `datetime`, and 0-d numpy numeric scalars via
-`.item()`). `None` and NaN remain subject to `empty_measure` rather than dtype rejection. Key
-fields still use soft `key_dtypes` coercion for leaf matching — they are not subject to the same
-strict isinstance checks as measures.
-
-Setter signatures also narrow from the measure dtype: scalar shorthand parameters are annotated
-`Records | Record | float` (for example), and series setters use `Sequence[float]` for positional
-measure iterables instead of a catch-all `Scalar` sequence when the dtype is known.
-
-**Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants and `series_context` entries). Generated setters index records by the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
+**Key types must match resolved Python types.** Resolution coerces workbook and manifest values according to each bind’s `read` mode (and `concept_scheme` dtypes for constants and `series_context` entries). Tensor coordinates use the same types — callers must not pass strings when resolution produced `datetime` or `bool` objects:
 
 | Binding | Resolved key type | Correct record value | Incorrect (will not match) |
 |---------|-------------------|----------------------|----------------------------|
@@ -523,12 +473,7 @@ measure iterables instead of a catch-all `Scalar` sequence when the dtype is kno
 | `read: auto` on `TIME_PERIOD` (Excel date serial) | `int` or `float` | serial as stored (e.g. `45309.0`) | `datetime(2024, 1, 1)` — use `read: datetime` |
 | `read: bool` on `IS_ACTIVE` | `bool` | `True` | `1` or `"true"` |
 
-Inspect `resolve_series_binding()` output or generated setter index literals to confirm the types for a given manifest. Output `compute_*` functions return the same types in each record’s key fields.
-
-Optional:
-
-- **`address`** or **`cell_address`** — when `setter.allow_address` is true or keys are ambiguous (`requires_address`).
-- Other fields allowed when `setter.strict` is false; strict mode rejects unknown keys.
+Inspect `resolve_series_binding()` output to confirm the types for a given manifest. Output `compute_*` functions return the same types in each record’s key fields.
 
 `series_context` values are attached to emitted records for documentation; they are not used for matching unless also listed in `key`. When a `series_context` concept has a `dtype` in `concept_scheme`, resolution coerces ISO date strings and bool-like strings the same way as bind constants.
 
@@ -579,9 +524,7 @@ series:
     sheet: Inputs
     data_range: Inputs!B3:D5
     layout: matrix
-    input:
-      setter:
-        name: set_macro_matrix
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE
@@ -609,28 +552,8 @@ series:
       - TIME_PERIOD
 ```
 
-Generated setters accept long/tidy `list[dict]` records or a tidy DataFrame:
-
-```python
-set_macro_matrix(
-    ctx,
-    [
-        {"INDICATOR": "GDP growth", "TIME_PERIOD": 2024, "OBS_VALUE": 1.5},
-        {"INDICATOR": "Inflation", "TIME_PERIOD": 2025, "OBS_VALUE": 2.8},
-    ],
-)
-
-import pandas as pd
-
-df = pd.DataFrame(
-    {
-        "INDICATOR": ["GDP growth", "Inflation"],
-        "TIME_PERIOD": [2024, 2025],
-        "OBS_VALUE": [1.5, 2.8],
-    }
-)
-set_macro_matrix(ctx, df)
-```
+Package `compute_*` takes a named matrix tensor. Build it with `from_records` or overlay
+`data.py` defaults — see `examples/micro_workbooks/matrix_dataframe_example.py`.
 
 ## Grouped-row matrix geometry (1.5.0)
 
@@ -684,9 +607,7 @@ series:
     data_range: Inputs!C2:D8
     layout: matrix
     exclude_rows: [2, "5:6"]
-    input:
-      setter:
-        name: set_discrete_risks
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE
@@ -862,7 +783,7 @@ structure:
 
 **`read: auto` vs explicit `read: datetime`:** `auto` passes through native datetimes from the workbook reader and is appropriate when headers are stored as Excel date cells. Explicit `datetime` coerces Excel serial numbers and ISO strings and is required when you need deterministic date parsing regardless of how the reader classified the cell. Timezone-aware datetimes are rejected; only naive datetimes are supported.
 
-**`read: auto` footgun:** when the workbook reader returns a calendar date as a **number** (Excel serial), `read: auto` keeps it as `int` or `float` — it does not convert serials to `datetime`. That often surfaces as setter key mismatches: resolution indexed `45309.0` but callers pass `datetime(2024, 1, 1)`. Prefer `read: datetime` on `column_header` binds for calendar `TIME_PERIOD` axes unless you have confirmed the reader yields native `datetime` cells for those headers.
+**`read: auto` footgun:** when the workbook reader returns a calendar date as a **number** (Excel serial), `read: auto` keeps it as `int` or `float` — it does not convert serials to `datetime`. That often surfaces as coordinate mismatches: resolution indexed `45309.0` but callers pass `datetime(2024, 1, 1)`. Prefer `read: datetime` on `column_header` binds for calendar `TIME_PERIOD` axes unless you have confirmed the reader yields native `datetime` cells for those headers.
 
 Contrast with Borvelia’s offset-style headers (`read: int`, values 1–5): calendar and offset period axes differ only in the declared `read` mode and analyst notes — not in layout name.
 
@@ -881,44 +802,40 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.6.0** | `input.mode: override` for user-editable formula cells (non-leaf input setters). |
 | **1.7.0** | `internal` direction for non-I/O formula-cell key triangulation (`intersect_graph_formulas` validation). |
 | **1.8.0** | Optional dimension/attribute `id` separating dimension identity from concept, so multiple dimensions can share one concept; optional per-dimension `dtype` for same-concept dimensions with differing storage types. |
-| **1.9.0** | Optional `input.reader` name override for generated `read_*` duals. |
+| **1.9.0** | Optional `input.reader` name override for generated `read_*` duals (stripped at load from 1.16.0; `constant.reader` remains). |
 | **1.10.0** | Optional `output.compute.helper` so `compute_*` can call parameterized helpers from record dims (with `xl_cell` fallback). Modular exports place `_OUTPUT_LEAVES_*` in `_output_leaves.py`. |
-| **1.11.0** | `constant` direction for non-I/O graph-leaf bindings: emit `read_*` and Phase 2 body rewrite without `set_*` / `compute_*`. |
+| **1.11.0** | `constant` direction for non-I/O graph-leaf bindings: emit `read_*` and Phase 2 body rewrite without `compute_*`. |
 | **1.12.0** | Series-level `exclude_columns` (`ColumnSpec`) symmetric with `exclude_rows` for carving non-data columns out of an expanded `data_range`. |
-| **1.13.0** | Optional `input.domain` so generated `set_*` setters reject out-of-domain measure values (`enum`, `between`, `real_between`). |
+| **1.13.0** | Optional `input.domain` so inverted-tree `compute_*` / `Model` arguments reject out-of-domain measure values (`enum`, `between`, `real_between`). |
 | **1.14.0** | Complementary shards: same series `id` with different `sheet` / `data_range` merge when direction, `key`, and dimension shape match (`data_range` may be a list). `bind.kind: sheet_name` (optional `values` map from worksheet name to code). |
-| **1.15.0** | Optional `input.value_map` on **scalar input** series: map public `compute_*` / `set_*` values to workbook cell needles (MATCH/IF labels). Distinct from bind kind `value_map`. |
+| **1.15.0** | Optional `input.value_map` on **scalar input** series: map public `compute_*` values to workbook cell needles (MATCH/IF labels). Distinct from bind kind `value_map`. |
+| **1.16.0** | `input` no longer requires a setter block. Empty `input: {}` marks an editable series. Load-time normalization strips leftover `input.setter`, `input.reader`, and top-level `setter`. Package export takes inputs as `compute_*` / `Model` arguments. |
 
 ## Input domains (1.13.0)
 
-Declare an allowed measure domain on an input binding so generated setters and
-inverted-tree `compute_*` arguments fail at the call site instead of accepting
+Declare an allowed measure domain on an input binding so inverted-tree
+`compute_*` arguments fail at the call site instead of accepting
 bad values and surfacing Excel errors later:
 
 ```yaml
 input:
-  setter: {name: set_country}
   domain:
     enum: [Alpha, Beta, "High "]   # exact match; trailing spaces preserved
 ```
 
 ```yaml
 input:
-  setter: {name: set_interest_rate}
   domain:
     real_between: {min: 0, max: 300}   # inclusive
 ```
 
 ```yaml
 input:
-  setter: {name: set_projection_years}
   domain:
     between: {min: 0, max: 100}   # inclusive integers
 ```
 
-Domain checks run after dtype coercion on every measure value in the setter batch
-(scalar shorthand, records, positional series values, and DataFrame columns).
-Inverted-tree export checks the same domain on each required `compute_*` argument
+Domain checks run on each required `compute_*` / `Model` argument
 (scalar or every sequence member) before the evaluation walk.
 
 ## Scalar input maps (1.15.0)
@@ -932,7 +849,6 @@ domain check:
 
 ```yaml
 input:
-  setter: {name: set_demography_scenario}
   value_map:
     High: "High "
     Medium: Medium
@@ -1001,7 +917,7 @@ dimensions:
 ```
 
 The declared `dtype` drives value coercion when the bind has no explicit `read` (an explicit
-`read` still wins), flows into generated setter key coercion, and is reported in docstrings
+`read` still wins), flows into tensor coordinate types, and is reported in docstrings
 instead of the concept's dtype. Relying on a divergent `bind.read` alone (without `dtype`)
 triggers the `dtype_read_mismatch` warning, which nudges you to either declare the
 per-dimension `dtype` or split the concepts.
@@ -1113,8 +1029,8 @@ function with `data.py` defaults; `--emit-dir` writes generated module files to 
 ## Design note
 
 Series bindings are framed around **input series** derived from binding manifests, not independently
-discovered input groups. One binding id corresponds to one generated setter (when `input.setter` is
-declared), one optional output `compute_*` function (when `output.compute` is declared), and matching
-input-series views over the participating graph cells in `data_range`.
+discovered input groups. One binding id corresponds to one `compute_*` / `Model` argument (when
+`input` is declared), one optional output `compute_*` function (when `output.compute` is declared),
+and matching input-series views over the participating graph cells in `data_range`.
 
 Design history: [GitHub issue #192](https://github.com/Teal-Insights/excel-grapher/issues/192).

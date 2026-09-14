@@ -2,18 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
-import xlsxwriter
 
-from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict
-from excel_grapher.series_bindings import (
-    resolve_series_binding,
-)
 from excel_grapher.series_bindings.input_coerce import (
     coerce_setter_input,
     measure_domain_from_series,
@@ -23,16 +15,11 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.setter_codegen import (
-    emit_input_coerce_helpers,
-    emit_setter_function,
-    emit_setter_helpers,
-)
 from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 
 
 def _scalar_string_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any]:
-    input_block: dict[str, Any] = {"setter": {"name": "set_country"}}
+    input_block: dict[str, Any] = {}
     if domain is not None:
         input_block["domain"] = domain
     return {
@@ -59,7 +46,7 @@ def _scalar_string_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any
 
 
 def _scalar_float_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any]:
-    input_block: dict[str, Any] = {"setter": {"name": "set_rate"}}
+    input_block: dict[str, Any] = {}
     if domain is not None:
         input_block["domain"] = domain
     return {
@@ -83,16 +70,6 @@ def _scalar_float_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any]
             }
         ],
     }
-
-
-def _exec_setters(lines: list[str]) -> dict[str, object]:
-    namespace: dict[str, object] = {
-        "EvalContext": EvalContext,
-        "coerce_inputs_dict": coerce_inputs_dict,
-    }
-    source = emit_input_coerce_helpers() + emit_setter_helpers() + lines
-    exec("\n".join(source), namespace)
-    return namespace
 
 
 def test_schema_version_1_13_0_supported() -> None:
@@ -122,7 +99,6 @@ def test_schema_accepts_enum_between_and_real_between_domains() -> None:
                         "data_range": "Dash!D1",
                         "layout": "scalar",
                         "input": {
-                            "setter": {"name": "set_years"},
                             "domain": domain,
                         },
                         "structure": {
@@ -264,55 +240,6 @@ def test_coerce_series_domain_checks_each_record() -> None:
             measure_dtype="float",
             measure_domain=domain,
         )
-
-
-def test_emit_scalar_setter_rejects_out_of_enum_domain(tmp_path: Path) -> None:
-    wb_path = tmp_path / "country.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Dash")
-    ws.write("B1", "Alpha")
-    wb.close()
-
-    doc = _scalar_string_doc(domain={"enum": ["Alpha", "Beta", "High "]})
-    bindings = validate_bindings_document(doc)
-    series = bindings["series"][0]
-    graph = create_dependency_graph(wb_path, ["Dash!B1"], load_values=True)
-    resolved = resolve_series_binding(graph, wb_path, series)
-    lines = emit_setter_function(series, resolved, bindings=bindings)
-    code = "\n".join(lines)
-    assert "measure_domain=" in code
-
-    ns = _exec_setters(lines)
-    setter = cast(Callable[..., None], ns["set_country"])
-    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(ctx, "Beta")
-    assert ctx.inputs["Dash!B1"] == "Beta"
-    setter(ctx, "High ")
-    assert ctx.inputs["Dash!B1"] == "High "
-    with pytest.raises(ValueError, match="out of domain"):
-        setter(ctx, "Nonexistent")
-
-
-def test_emit_scalar_setter_rejects_out_of_real_between_domain(tmp_path: Path) -> None:
-    wb_path = tmp_path / "rate.xlsx"
-    wb = xlsxwriter.Workbook(wb_path)
-    ws = wb.add_worksheet("Dash")
-    ws.write_number("C1", 1.0)
-    wb.close()
-
-    doc = _scalar_float_doc(domain={"real_between": {"min": 0, "max": 300}})
-    bindings = validate_bindings_document(doc)
-    series = bindings["series"][0]
-    graph = create_dependency_graph(wb_path, ["Dash!C1"], load_values=True)
-    resolved = resolve_series_binding(graph, wb_path, series)
-    lines = emit_setter_function(series, resolved, bindings=bindings)
-    ns = _exec_setters(lines)
-    setter = cast(Callable[..., None], ns["set_rate"])
-    ctx = EvalContext(inputs=coerce_inputs_dict({}), resolver=lambda _a: None)
-    setter(ctx, 0)
-    setter(ctx, 300)
-    with pytest.raises(ValueError, match="out of domain"):
-        setter(ctx, 301)
 
 
 def test_measure_domain_from_series_normalizes_enum() -> None:

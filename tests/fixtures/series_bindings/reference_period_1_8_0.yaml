@@ -10,9 +10,7 @@ series:
     sheet: Inputs
     data_range: Inputs!F5:H5
     layout: series
-    input:
-      setter:
-        name: set_gdp_vs_reference
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

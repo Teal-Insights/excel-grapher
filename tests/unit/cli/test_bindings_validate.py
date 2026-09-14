@@ -88,7 +88,9 @@ def test_main_validate_ffv2_fixture(tmp_path: Path, capsys: pytest.CaptureFixtur
     captured = capsys.readouterr()
     assert exit_code == 0
     assert "ok=True" in captured.out
-    assert "set_puka_receptions" in captured.out
+    assert "inputs=" in captured.out
+    assert "puka_receptions" in captured.out
+    assert "setters=" not in captured.out
 
 
 def test_main_validate_json_output(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -111,6 +113,7 @@ def test_main_validate_json_output(tmp_path: Path, capsys: pytest.CaptureFixture
     assert exit_code == 0
     payload = json.loads(captured.out)
     assert payload["ok"] is True
+    assert "setters" not in payload
 
 
 def test_main_validate_verbose_prints_warnings(

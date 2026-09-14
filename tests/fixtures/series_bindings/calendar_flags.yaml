@@ -15,9 +15,7 @@ series:
     data_range: Inputs!B2:D3
     layout: series
     editable: true
-    input:
-      setter:
-        name: set_calendar_flags
+    input: {}
     output:
       compute:
         name: compute_calendar_flags

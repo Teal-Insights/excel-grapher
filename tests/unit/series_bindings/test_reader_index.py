@@ -423,7 +423,7 @@ def test_build_reader_index_keyed_and_range(tmp_path: Path) -> None:
     assert rng["call_form"] == "read_borvelia_primary_balance_range(ctx)"
 
 
-def test_resolve_reader_name_override(tmp_path: Path) -> None:
+def test_input_reader_name_override_is_stripped(tmp_path: Path) -> None:
     wb_path = tmp_path / "scalar.xlsx"
     _write_scalar_workbook(wb_path)
     bindings = validate_bindings_document(
@@ -437,6 +437,48 @@ def test_resolve_reader_name_override(tmp_path: Path) -> None:
                     "layout": "scalar",
                     "input": {
                         "setter": {"name": "set_country_name"},
+                        "reader": {"name": "read_custom_country"},
+                    },
+                    "structure": {
+                        "measure": {
+                            "concept": "OBS_VALUE",
+                            "dtype": "string",
+                            "bind": {"kind": "data_cell", "read": "string"},
+                        },
+                        "dimensions": [],
+                    },
+                    "key": [],
+                }
+            ],
+        }
+    )
+    graph = create_dependency_graph(wb_path, ["Inputs!B5"], load_values=True)
+
+    result = resolve_reader_ref(
+        "Inputs!B5",
+        graph=graph,
+        bindings=bindings,
+        workbook=wb_path,
+    )
+
+    assert result["mode"] == "reader"
+    assert result["reader"] == "read_country_name"
+    assert result["call_form"] == "read_country_name(ctx)"
+
+
+def test_constant_reader_name_override(tmp_path: Path) -> None:
+    wb_path = tmp_path / "scalar.xlsx"
+    _write_scalar_workbook(wb_path)
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.9.0",
+            "series": [
+                {
+                    "id": "country_name",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!B5",
+                    "layout": "scalar",
+                    "constant": {
                         "reader": {"name": "read_custom_country"},
                     },
                     "structure": {

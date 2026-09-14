@@ -86,7 +86,7 @@ Successful validation prints a short summary on stdout:
 ```text
 ok=True errors=0 warnings=0
 canonical_sha256=…
-setters=['set_puka_longest_reception', 'set_puka_receptions', …]
+inputs=['puka_longest_reception', 'puka_receptions', …]
 computes=['compute_puka_avg_yards_per_reception', …]
 ```
 
@@ -159,7 +159,7 @@ All compute functions passed smoke checks.
 Failures fall into two layers:
 
 **Sidecar schema errors** — the YAML/JSON manifest does not satisfy the JSON Schema (missing
-required fields, invalid setter names, and so on). These are reported on **stderr** before workbook
+required fields, unknown properties, and so on). These are reported on **stderr** before workbook
 validation runs:
 
 ```text

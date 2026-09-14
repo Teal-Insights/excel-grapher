@@ -9,7 +9,7 @@ from excel_grapher.series_bindings import (
     run_binding_checks,
     validate_bindings_workbook,
 )
-from excel_grapher.series_bindings.workflow import compute_names, setter_names
+from excel_grapher.series_bindings.workflow import compute_names, input_ids
 from tests.fixtures.series_bindings.matrix_helpers import (
     MATRIX_EXPLICIT_BINDINGS,
     MATRIX_EXPLICIT_COMPUTE_BINDINGS,
@@ -24,14 +24,14 @@ def test_matrix_explicit_bindings_validate(tmp_path: Path) -> None:
     result = validate_bindings_workbook(workbook, MATRIX_EXPLICIT_BINDINGS)
     assert result["report"]["ok"] is True
     assert not any(issue["level"] == "error" for issue in result["report"]["issues"])
-    assert len(result["input_series"]) == len(setter_names(bindings))
+    assert len(result["input_series"]) == len(input_ids(bindings))
 
 
 def test_matrix_explicit_bindings_catalog(tmp_path: Path) -> None:
     workbook = tmp_path / "matrix_inputs.xlsx"
     write_matrix_explicit_workbook(workbook)
     result = validate_bindings_workbook(workbook, MATRIX_EXPLICIT_BINDINGS)
-    assert result["setters"] == ["set_macro_matrix"]
+    assert result["inputs"] == ["macro_matrix"]
     assert result["computes"] == []
 
 
@@ -45,6 +45,6 @@ def test_matrix_explicit_compute_bindings_run_checks(tmp_path: Path) -> None:
         module_dir=tmp_path / "bindings_module_compute",
         package_name="bindings_module_compute",
     )
-    assert result["setters"] == []
+    assert result["inputs"] == []
     assert result["computes"] == ["compute_macro_matrix"]
     assert len(compute_names(bindings)) == 1

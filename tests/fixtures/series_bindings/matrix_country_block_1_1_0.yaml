@@ -5,8 +5,7 @@ series:
     sheet: Inputs
     data_range: Inputs!F3:J8
     layout: matrix
-    setter:
-      name: set_country_block_primary_balance
+    input: {}
     structure:
       measure:
         concept: OBS_VALUE

@@ -1,8 +1,7 @@
-"""Series binding manifest: load, validate, and canonicalize workbook setter specs."""
+"""Series binding manifest: load, validate, and canonicalize workbook series specs."""
 
 from __future__ import annotations
 
-from excel_grapher.series_bindings.bindings_codegen import emit_series_bindings_block
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.compute_codegen import (
     emit_compute_function,
@@ -94,17 +93,6 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     format_schema_errors,
     validate_bindings_document,
-)
-from excel_grapher.series_bindings.setter_codegen import (
-    collect_reader_range_omissions,
-    emit_reader_function,
-    emit_reader_range_function,
-    emit_readers_block,
-    emit_setter_function,
-    emit_setter_helpers,
-    emit_setters_block,
-    generate_setters_module,
-    reader_range_omission_issue,
 )
 from excel_grapher.series_bindings.setter_input_types import Layout, SeriesInput
 from excel_grapher.series_bindings.types import (
@@ -224,16 +212,7 @@ __all__ = [
     "emit_compute_function",
     "emit_computes_block",
     "emit_output_leaves_block",
-    "emit_series_bindings_block",
-    "collect_reader_range_omissions",
-    "emit_reader_function",
-    "emit_reader_range_function",
-    "emit_readers_block",
-    "emit_setter_function",
-    "emit_setter_helpers",
-    "emit_setters_block",
     "generate_computes_module",
-    "reader_range_omission_issue",
     "has_constant_direction",
     "has_input_direction",
     "has_internal_direction",
@@ -247,7 +226,6 @@ __all__ = [
     "expand_data_range_for_graph",
     "series_data_ranges",
     "format_schema_errors",
-    "generate_setters_module",
     "list_series_docstring_callbacks",
     "load_series_bindings",
     "merge_series_binding_documents",

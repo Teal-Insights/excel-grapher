@@ -2,19 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from pathlib import Path
 from typing import cast
 
 import xlsxwriter
 
-from excel_grapher.core import CellValue
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import Node
-from excel_grapher.runtime.cache import EvalContext, coerce_inputs_dict, xl_cell
 from excel_grapher.series_bindings import derive_input_series, resolve_series_binding
-from excel_grapher.series_bindings.setter_codegen import emit_setters_block
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from excel_grapher.series_bindings.validate import validate_series_bindings
 
@@ -41,7 +37,7 @@ def _override_scalar_series(*, series_id: str = "engine_override") -> dict[str, 
         "sheet": "Engine",
         "data_range": "Engine!B1",
         "layout": "scalar",
-        "input": {"mode": "override", "setter": {"name": "set_engine_b1"}},
+        "input": {"mode": "override"},
         "structure": {
             "measure": {"concept": "OBS_VALUE", "dtype": "float", "bind": {"kind": "data_cell"}},
             "dimensions": [],
@@ -300,41 +296,4 @@ def test_derive_input_series_from_override_binding(tmp_path: Path) -> None:
     input_series = derive_input_series(graph, bindings, workbook=wb_path)
 
     assert len(input_series) == 1
-    assert input_series[0]["setter_name"] == "set_engine_b1"
     assert [cell["address"] for cell in input_series[0]["cells"]] == ["Engine!B1"]
-
-
-def test_override_setter_invalidates_parent_cache(tmp_path: Path) -> None:
-    wb_path = tmp_path / "override.xlsx"
-    _write_override_workbook(wb_path)
-    graph = _manual_override_graph()
-    bindings = _override_bindings()
-
-    def make_resolver() -> Callable[[str], Callable[[EvalContext], CellValue] | None]:
-        def _engine_b1(ctx: EvalContext) -> CellValue:
-            return cast(CellValue, cast(float, xl_cell(ctx, "Inputs!A1")) + 1)
-
-        def _output_c1(ctx: EvalContext) -> CellValue:
-            return cast(CellValue, cast(float, xl_cell(ctx, "Engine!B1")) * 2)
-
-        impls: dict[str, Callable[[EvalContext], CellValue]] = {
-            "Engine!B1": _engine_b1,
-            "Output!C1": _output_c1,
-        }
-        return lambda addr: impls.get(addr)
-
-    lines = emit_setters_block(graph, wb_path, bindings, include_helpers=True)
-    ns: dict[str, object] = {"EvalContext": EvalContext, "coerce_inputs_dict": coerce_inputs_dict}
-    exec("\n".join(lines), ns)
-
-    resolver = make_resolver()
-    ctx = EvalContext(inputs=coerce_inputs_dict({"Inputs!A1": 10}), resolver=resolver)
-    assert xl_cell(ctx, "Output!C1") == 22
-
-    setter = cast(Callable[[EvalContext, object], None], ns["set_engine_b1"])
-    setter(ctx, 99)
-
-    assert ctx.inputs["Engine!B1"] == 99
-    assert "Engine!B1" not in ctx.cache
-    assert "Output!C1" not in ctx.cache
-    assert xl_cell(ctx, "Output!C1") == 198
