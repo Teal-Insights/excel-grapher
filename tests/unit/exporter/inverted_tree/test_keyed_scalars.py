@@ -58,7 +58,7 @@ def _sheets_bindings() -> dict[str, Any]:
         "sheet": ["S1", "S2"],
         "data_range": ["S1!A1", "S2!A1"],
         "layout": "scalar",
-        "input": {"setter": {"name": "set_shock"}},
+        "input": {},
         "structure": {"measure": _measure(), "dimensions": [_scenario_dimension()]},
         "key": ["SCENARIO"],
     }
@@ -67,7 +67,7 @@ def _sheets_bindings() -> dict[str, Any]:
         "sheet": ["S1", "S2"],
         "data_range": ["S1!B2:D2", "S2!B2:D2"],
         "layout": "matrix",
-        "input": {"setter": {"name": "set_flow"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_scenario_dimension(), _period_dimension()],

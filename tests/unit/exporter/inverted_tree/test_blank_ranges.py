@@ -296,13 +296,7 @@ def test_issue_mcve_generate_does_not_raise(tmp_path: Path) -> None:
                         "id": "key",
                         "sheet": "Inputs",
                         "data_range": "Inputs!A1",
-                        "input": {
-                            "setter": {
-                                "name": "set_key",
-                                "record_contract": "records",
-                                "strict": True,
-                            }
-                        },
+                        "input": {},
                         **scalar,
                     }
                 ],
@@ -526,13 +520,7 @@ def test_issue_703_mcve_generate_does_not_raise(tmp_path: Path) -> None:
                         "id": "key",
                         "sheet": "Inputs",
                         "data_range": "Inputs!A1",
-                        "input": {
-                            "setter": {
-                                "name": "set_key",
-                                "record_contract": "records",
-                                "strict": True,
-                            }
-                        },
+                        "input": {},
                         **scalar,
                     }
                 ],

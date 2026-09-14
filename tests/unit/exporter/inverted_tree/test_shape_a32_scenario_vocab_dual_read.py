@@ -168,13 +168,7 @@ def _amortization_entry() -> dict[str, Any]:
         "data_range": "Producer!E5:F14",
         "layout": "series",
         "exclude_rows": ["6:7", "9:10", "12:13"],
-        "input": {
-            "setter": {
-                "name": "set_amortization",
-                "record_contract": "records",
-                "strict": True,
-            }
-        },
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_PROD_INSTRUMENT, _PROD_SCENARIO, _PROD_TIME],

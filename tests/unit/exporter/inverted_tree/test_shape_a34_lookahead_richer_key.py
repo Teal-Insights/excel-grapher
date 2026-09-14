@@ -93,7 +93,7 @@ def _mcve_bindings() -> dict[str, Any]:
             "data_range": "Engine!B2:D4",
             "layout": "series",
             "exclude_rows": ["3"],
-            "input": {"setter": {"name": "set_fx_st"}},
+            "input": {},
             "structure": {
                 "measure": _measure(),
                 "dimensions": [
@@ -108,7 +108,7 @@ def _mcve_bindings() -> dict[str, Any]:
             "sheet": "Engine",
             "data_range": "Engine!B3:D3",
             "layout": "series",
-            "input": {"setter": {"name": "set_lc_st"}},
+            "input": {},
             "structure": {
                 "measure": _measure(),
                 "dimensions": [_holder_dim({"non-residents": 3}), _TIME_DIM],
@@ -120,7 +120,7 @@ def _mcve_bindings() -> dict[str, Any]:
             "sheet": "Engine",
             "data_range": "Engine!G1",
             "layout": "scalar",
-            "input": {"setter": {"name": "set_flag"}},
+            "input": {},
             "structure": {"measure": _measure(), "dimensions": []},
             "key": [],
         },
@@ -162,7 +162,7 @@ def _unique_lookahead_bindings() -> dict[str, Any]:
             "sheet": "Engine",
             "data_range": "Engine!B3:D3",
             "layout": "series",
-            "input": {"setter": {"name": "set_lc_st"}},
+            "input": {},
             "structure": {
                 "measure": _measure(),
                 "dimensions": [_holder_dim({"non-residents": 3}), _TIME_DIM],

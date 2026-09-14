@@ -87,7 +87,7 @@ def _slice_bindings(*, selected_range: str) -> dict[str, Any]:
             "sheet": "Engine",
             "data_range": "Engine!B2:D3",
             "layout": "matrix",
-            "input": {"setter": {"name": "set_shocks"}},
+            "input": {},
             "structure": {
                 "measure": _measure(),
                 "dimensions": [_scenario_dim(), _time_dim()],

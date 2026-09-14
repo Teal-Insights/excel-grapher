@@ -29,7 +29,7 @@ def _scalar_string_doc(
     layout: str = "scalar",
     extra_series: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    input_block: dict[str, Any] = {"setter": {"name": "set_selector"}}
+    input_block: dict[str, Any] = {"input": {}}
     if domain is not None:
         input_block["domain"] = domain
     if value_map is not None:
@@ -56,7 +56,7 @@ def _scalar_string_doc(
 
 
 def _series_layout_doc(*, value_map: dict[str, Any] | None = None) -> dict[str, Any]:
-    input_block: dict[str, Any] = {"setter": {"name": "set_rates"}}
+    input_block: dict[str, Any] = {"input": {}}
     if value_map is not None:
         input_block["value_map"] = dict(value_map)
     return {

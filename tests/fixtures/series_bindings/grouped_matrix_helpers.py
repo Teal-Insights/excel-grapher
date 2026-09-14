@@ -116,7 +116,7 @@ def grouped_matrix_series(**overrides: Any) -> dict[str, Any]:
         "data_range": "Inputs!C2:D8",
         "layout": "matrix",
         "exclude_rows": [2, "5:6"],
-        "input": {"setter": {"name": "set_discrete_risks"}},
+        "input": {},
         "structure": grouped_matrix_structure(),
         "key": ["SCENARIO", "SHOCK_TYPE", "TIME_PERIOD"],
     }

@@ -145,7 +145,7 @@ def _stats_entry(*, sheets: list[str], data_range: list[str]) -> dict[str, Any]:
         "data_range": data_range,
         "layout": "matrix",
         "exclude_columns": ["E"],
-        "input": {"setter": {"name": "set_stats", "record_contract": "records", "strict": True}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [
@@ -226,7 +226,7 @@ def _row_indicator_bindings() -> dict[str, Any]:
         "sheet": ["Stress", "Combo"],
         "data_range": ["Stress!B2", "Stress!B4", "Combo!B2", "Combo!B4"],
         "layout": "matrix",
-        "input": {"setter": {"name": "set_stats"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [

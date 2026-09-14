@@ -64,7 +64,7 @@ def _values_entry(size: int) -> dict[str, Any]:
         "sheet": "Data",
         "data_range": f"Data!B2:C{size + 1}",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_values"}},
+        "input": {},
         "key": ["COUNTRY", "TIME_PERIOD"],
         "structure": {
             "measure": _measure(),

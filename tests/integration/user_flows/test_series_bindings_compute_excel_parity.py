@@ -41,7 +41,7 @@ def _mixed_error_bindings(*, workbook: str) -> dict[str, Any]:
                 "sheet": "Sheet1",
                 "data_range": "Sheet1!B2",
                 "layout": "scalar",
-                "input": {"setter": {"name": "set_scale_input"}},
+                "input": {},
                 "structure": {
                     "measure": {
                         "concept": "OBS_VALUE",

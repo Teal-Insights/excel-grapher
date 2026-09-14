@@ -11,7 +11,7 @@ from excel_grapher.core.excel_function_names import (
     normalize_excel_function_name as _normalize_excel_function_name,
 )
 from excel_grapher.evaluator.functions import FUNCTIONS
-from excel_grapher.evaluator.name_utils import excel_func_to_python, normalize_excel_function_name
+from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _SOURCE_ROOT = _REPO_ROOT / "excel_grapher"
@@ -95,7 +95,9 @@ def test_runtime_python_name_follows_xl_prefix_convention(canonical: str, python
 )
 def test_prefixed_spellings_map_to_same_python_runtime_name(spelling: str) -> None:
     bare = spelling.split(".")[-1] if "." in spelling else spelling
-    assert excel_func_to_python(spelling) == excel_func_to_python(bare)
+    assert excel_func_to_python_runtime_name(
+        normalize_excel_function_name(spelling)
+    ) == excel_func_to_python_runtime_name(normalize_excel_function_name(bare))
 
 
 def test_functions_registry_has_no_xlfn_alias_keys() -> None:

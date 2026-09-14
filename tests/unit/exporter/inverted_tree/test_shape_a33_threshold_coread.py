@@ -122,13 +122,7 @@ def _paths_entry() -> dict[str, Any]:
         "data_range": "Chart!D5:E9",
         "layout": "series",
         "exclude_rows": ["6", "8"],
-        "input": {
-            "setter": {
-                "name": "set_paths",
-                "record_contract": "records",
-                "strict": True,
-            }
-        },
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_PATH_SCENARIO, _TIME_DIM],

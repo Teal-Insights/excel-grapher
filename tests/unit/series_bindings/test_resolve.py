@@ -102,7 +102,7 @@ def test_resolve_scalar_binding(tmp_path: Path) -> None:
         "sheet": "Sheet1",
         "data_range": "Sheet1!B25",
         "layout": "scalar",
-        "setter": {"name": "set_scalar_threshold_p"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -146,7 +146,7 @@ def test_resolve_duplicate_key_sets_requires_address(tmp_path: Path) -> None:
         "sheet": "Sheet1",
         "data_range": "Sheet1!C2:D2",
         "layout": "series",
-        "setter": {"name": "set_dup_headers"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -222,7 +222,9 @@ def test_resolve_series_bindings_loads_workbook_once(tmp_path: Path) -> None:
             "layout": "matrix",
             "data_range": f"S!B{row}:C{row}",
             "key": ["INDICATOR", "TIME_PERIOD"],
-            "input": {"mode": "leaf", "setter": {"name": f"set_{series_id}"}},
+            "input": {
+                "mode": "leaf",
+            },
             "structure": {
                 "dimensions": [
                     {
@@ -295,7 +297,7 @@ def test_resolve_bool_data_cell_read_auto(tmp_path: Path) -> None:
         "sheet": "Flags",
         "data_range": "Flags!A2:B2",
         "layout": "series",
-        "setter": {"name": "set_bool_cells"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -330,7 +332,7 @@ def test_resolve_bool_data_cell_read_bool_from_numeric(tmp_path: Path) -> None:
         "sheet": "Flags",
         "data_range": "Flags!B2",
         "layout": "scalar",
-        "setter": {"name": "set_bool_numeric"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -360,7 +362,7 @@ def test_resolve_bool_constant_native_and_inferred(tmp_path: Path) -> None:
         "sheet": "Flags",
         "data_range": "Flags!A2",
         "layout": "scalar",
-        "setter": {"name": "set_bool_constant"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -417,7 +419,7 @@ def test_resolve_datetime_column_header_read_auto(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!B2:C2",
         "layout": "series",
-        "setter": {"name": "set_calendar_auto"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -451,7 +453,7 @@ def test_resolve_datetime_column_header_read_datetime(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!B2",
         "layout": "scalar",
-        "setter": {"name": "set_calendar_explicit"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -487,7 +489,7 @@ def test_resolve_datetime_constant_from_iso_string(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!B2",
         "layout": "scalar",
-        "setter": {"name": "set_calendar_constant"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -524,7 +526,7 @@ def test_resolve_datetime_bind_failure_is_reported(tmp_path: Path) -> None:
         "sheet": "Inputs",
         "data_range": "Inputs!B2",
         "layout": "scalar",
-        "setter": {"name": "set_calendar_invalid"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -566,7 +568,7 @@ def test_resolve_deduplicates_identical_bind_failures_across_cells(tmp_path: Pat
         "sheet": "Inputs",
         "data_range": "Inputs!B2:C2",
         "layout": "series",
-        "setter": {"name": "set_calendar_int_read"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -617,7 +619,7 @@ def _scalar_series_with_series_context(
         "sheet": "Sheet1",
         "data_range": "Sheet1!B2",
         "layout": "scalar",
-        "setter": {"name": "set_context_series"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -748,7 +750,7 @@ def _scalar_series_with_attribute_value(
         "key": [],
     }
     if direction == "input":
-        series["setter"] = {"name": "set_attr_value"}
+        series["input"] = {}
     else:
         series["output"] = {"compute": {"name": "compute_attr_value"}}
     return graph, series

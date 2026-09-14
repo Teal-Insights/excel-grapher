@@ -99,11 +99,7 @@ def _mcve_bindings() -> dict[str, Any]:
             "baseline",
             "Baseline",
             "Baseline!E2:H2",
-            {
-                "input": {
-                    "setter": {"name": "set_baseline", "record_contract": "records", "strict": True}
-                }
-            },
+            {"input": {}},
         ),
         series_entry("shock0", "Stress!A1", layout="scalar", direction="input"),
         series_entry("horizon", "Stress!A2", layout="scalar", direction="input", dtype="int"),
@@ -150,7 +146,7 @@ def _adjacent_cousin_bindings() -> dict[str, Any]:
             "baseline",
             "Baseline",
             "Baseline!E2:H2",
-            {"input": {"setter": {"name": "set_baseline"}}},
+            {"input": {}},
         ),
         series_entry("shock0", "Stress!A1", layout="scalar", direction="input"),
         series_entry("horizon", "Stress!A2", layout="scalar", direction="input", dtype="int"),
@@ -267,7 +263,7 @@ def _cross_shape_bindings() -> dict[str, Any]:
         "sheet": ["Stress", "Baseline"],
         "data_range": ["Stress!E46:F46", "Baseline!E48:F48"],
         "layout": "series",
-        "input": {"setter": {"name": "set_gdp"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_scenario_dim(), _TIME_DIM],

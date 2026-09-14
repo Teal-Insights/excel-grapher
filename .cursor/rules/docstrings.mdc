@@ -42,7 +42,3 @@ Hang section content with **4 spaces** (match surrounding file).
 - **Public API** (`__all__`, exported names): docstrings required for non-trivial functions, classes, and modules.
 - **Test modules**: module docstrings only when they document unusual setup, env deps, or run instructions — not `"""Tests for foo."""`.
 - **`@override` methods**: omit docstrings unless behavior materially differs from the base; then document only the delta.
-
-## Generated code
-
-Series-binding codegen defaults to the `google` docstring renderer (`GoogleSeriesDocstringRenderer`).

@@ -3,15 +3,29 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
-from typing import Any, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
 
 from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding_scalar
-from excel_grapher.series_bindings.setter_input_types import EmptyMeasure, Layout, SetterInput
-from excel_grapher.series_bindings.types import Record, Records
+from excel_grapher.series_bindings.types import Record, Records, Scalar
+
+Layout: TypeAlias = Literal["scalar", "series", "matrix"]
+EmptyMeasure: TypeAlias = Literal["skip", "write", "error"]
+
+if TYPE_CHECKING:
+    import pandas as pd
+    import polars as pl
+
+    DataFrameInput: TypeAlias = pd.DataFrame | pl.DataFrame
+else:
+    DataFrameInput: TypeAlias = object
+
+SeriesInput: TypeAlias = Records | Record | Sequence[Scalar] | DataFrameInput
+SetterInput: TypeAlias = SeriesInput | Scalar
 
 __all__ = [
     "EmptyMeasure",
     "Layout",
+    "SeriesInput",
     "apply_input_value_map",
     "coerce_setter_input",
     "input_value_map_from_series",

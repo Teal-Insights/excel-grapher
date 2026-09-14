@@ -76,7 +76,7 @@ def _vintage_bindings() -> dict[str, Any]:
         "sheet": "Vintage",
         "data_range": "Vintage!B2:D4",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_vintage"}},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -167,7 +167,7 @@ def _expanding_sum_bindings() -> dict[str, Any]:
         "sheet": "Data",
         "data_range": f"Data!B2:{last_col}{last_vintage_row}",
         "layout": "series",
-        "input": {"setter": {"name": "set_vintage", "record_contract": "records", "strict": True}},
+        "input": {},
         "key": ["ISSUANCE_YEAR", "TIME_PERIOD"],
         "structure": {
             "measure": {

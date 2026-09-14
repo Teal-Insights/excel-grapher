@@ -25,7 +25,7 @@ def _scalar_series_doc(**series_overrides: Any) -> dict[str, Any]:
         "sheet": "Flags",
         "data_range": "Flags!B2",
         "layout": "scalar",
-        "setter": {"name": "set_bool_flag"},
+        "input": {},
         "structure": {
             "measure": {
                 "concept": "OBS_VALUE",
@@ -60,7 +60,7 @@ def test_schema_infers_sheet_from_sheet_qualified_data_range() -> None:
                 "id": "borvelia_primary_balance",
                 "data_range": "Sheet1!F5:J5",
                 "layout": "series",
-                "setter": {"name": "set_borvelia_primary_balance"},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -102,7 +102,7 @@ def test_schema_error_for_missing_key_names_series_id() -> None:
     )
 
 
-def test_schema_strips_bad_setter_name() -> None:
+def test_schema_accepts_empty_input_without_setter() -> None:
     doc = {
         "schema_version": "1.0.0",
         "series": [
@@ -111,7 +111,7 @@ def test_schema_strips_bad_setter_name() -> None:
                 "sheet": "S",
                 "data_range": "S!A1",
                 "layout": "scalar",
-                "setter": {"name": "not_a_setter"},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -141,7 +141,7 @@ def test_schema_accepts_bare_defined_name_data_range() -> None:
                 "sheet": "Inputs",
                 "data_range": "growth_baseline",
                 "layout": "scalar",
-                "setter": {"name": "set_defined_name_target"},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [],
@@ -194,7 +194,7 @@ def test_schema_accepts_legacy_row_series_layout() -> None:
                 "sheet": "S",
                 "data_range": "S!B2:C2",
                 "layout": "row_series",
-                "setter": {"name": "set_legacy_row"},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -223,7 +223,7 @@ def test_series_rejects_empty_key() -> None:
                 "sheet": "S",
                 "data_range": "S!B2:C2",
                 "layout": "series",
-                "setter": {"name": "set_empty_key_row"},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -252,7 +252,7 @@ def test_series_requires_cell_scoped_dimension() -> None:
                 "sheet": "S",
                 "data_range": "S!B2:C2",
                 "layout": "series",
-                "setter": {"name": "set_only_series_scope"},
+                "input": {},
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
                     "dimensions": [
@@ -300,7 +300,7 @@ def test_schema_accepts_read_bool_on_column_header_bind() -> None:
                 "sheet": "Flags",
                 "data_range": "Flags!B2:C2",
                 "layout": "series",
-                "setter": {"name": "set_bool_columns"},
+                "input": {},
                 "structure": {
                     "measure": {
                         "concept": "OBS_VALUE",
@@ -521,7 +521,7 @@ def test_schema_accepts_read_datetime_on_column_header_bind() -> None:
                 "sheet": "Inputs",
                 "data_range": "Inputs!B2:C2",
                 "layout": "series",
-                "setter": {"name": "set_calendar_periods"},
+                "input": {},
                 "structure": {
                     "measure": {
                         "concept": "OBS_VALUE",
@@ -712,7 +712,6 @@ def test_schema_accepts_input_mode_override() -> None:
                 "layout": "scalar",
                 "input": {
                     "mode": "override",
-                    "setter": {"name": "set_formula_override"},
                 },
                 "structure": {
                     "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},

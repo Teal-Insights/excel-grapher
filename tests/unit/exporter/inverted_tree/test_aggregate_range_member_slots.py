@@ -154,7 +154,7 @@ def _grid_entry(
     elif direction == "internal":
         entry[direction] = {}
     elif direction == "input":
-        entry[direction] = {"setter": {"name": f"set_{series_id}"}}
+        entry[direction] = {"input": {}}
     else:
         raise ValueError(f"unknown direction {direction!r}")
     return entry

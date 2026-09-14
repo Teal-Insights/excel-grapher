@@ -115,7 +115,9 @@ def test_resolve_input_override_series_includes_formula_row(tmp_path: Path) -> N
         "sheet": "Engine",
         "data_range": "Engine!B2:D2",
         "layout": "series",
-        "input": {"mode": "override", "setter": {"name": "set_engine_row"}},
+        "input": {
+            "mode": "override",
+        },
         "structure": {
             "measure": {"concept": "OBS_VALUE", "dtype": "float", "bind": {"kind": "data_cell"}},
             "dimensions": [
@@ -156,7 +158,7 @@ def test_validate_leaf_mode_errors_on_non_leaf_overlap(tmp_path: Path) -> None:
     graph = _manual_override_graph()
     series = _override_scalar_series()
     series = dict(series)
-    series["input"] = {"setter": {"name": "set_engine_b1"}}
+    series["input"] = {"input": {}}
 
     report = validate_series_bindings(graph, {"schema_version": "1.6.0", "series": [series]})
 
@@ -173,7 +175,9 @@ def test_validate_override_requires_at_least_one_formula_node(tmp_path: Path) ->
         "sheet": "Inputs",
         "data_range": "Inputs!A1",
         "layout": "scalar",
-        "input": {"mode": "override", "setter": {"name": "set_inputs_a1"}},
+        "input": {
+            "mode": "override",
+        },
         "structure": {
             "measure": {"concept": "OBS_VALUE", "dtype": "float", "bind": {"kind": "data_cell"}},
             "dimensions": [],
@@ -200,7 +204,9 @@ def test_validate_override_mode_accepts_mixed_leaf_and_formula_cells(tmp_path: P
         "sheet": "Sheet1",
         "data_range": "Sheet1!A1:B1",
         "layout": "series",
-        "input": {"mode": "override", "setter": {"name": "set_mixed"}},
+        "input": {
+            "mode": "override",
+        },
         "structure": {
             "measure": {"concept": "OBS_VALUE", "dtype": "float", "bind": {"kind": "data_cell"}},
             "dimensions": [
@@ -235,7 +241,9 @@ def test_resolve_input_override_mixed_range_includes_leaf_and_formula(tmp_path: 
         "sheet": "Sheet1",
         "data_range": "Sheet1!A1:C1",
         "layout": "series",
-        "input": {"mode": "override", "setter": {"name": "set_mixed"}},
+        "input": {
+            "mode": "override",
+        },
         "structure": {
             "measure": {"concept": "OBS_VALUE", "dtype": "float", "bind": {"kind": "data_cell"}},
             "dimensions": [
@@ -261,7 +269,7 @@ def test_validate_rejects_unknown_input_mode(tmp_path: Path) -> None:
     graph = _manual_override_graph()
     series = _override_scalar_series()
     series = dict(series)
-    series["input"] = {"mode": "replace", "setter": {"name": "set_engine_b1"}}
+    series["input"] = {"mode": "replace", "input": {}}
 
     report = validate_series_bindings(graph, {"schema_version": "1.6.0", "series": [series]})
 

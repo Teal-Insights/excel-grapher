@@ -18,7 +18,7 @@ from excel_grapher.series_bindings.schema import (
 
 
 def _series(series_id: str, **overrides: Any) -> dict[str, Any]:
-    """Minimal scalar binding entry with an input setter."""
+    """Minimal scalar binding entry with an input direction."""
     entry: dict[str, Any] = {
         "id": series_id,
         "sheet": "Inputs",
@@ -185,7 +185,6 @@ def test_group_manifest_nests_children_and_lists_members() -> None:
     assert paris["members"] == [
         {
             "id": "paris",
-            "reader": None,
             "compute": None,
             "order": 1,
         }
@@ -193,7 +192,6 @@ def test_group_manifest_nests_children_and_lists_members() -> None:
     assert manifest["ungrouped"] == [
         {
             "id": "loose",
-            "reader": None,
             "compute": None,
             "order": None,
         }
@@ -210,7 +208,6 @@ def test_group_manifest_records_multi_membership_in_every_group() -> None:
     assert group_b["members"] == [
         {
             "id": "multi",
-            "reader": None,
             "compute": None,
             "order": 5,
         }
@@ -225,7 +222,6 @@ def test_group_manifest_includes_compute_names() -> None:
     assert manifest["groups"][0]["members"] == [
         {
             "id": "outputs_debt",
-            "reader": None,
             "compute": "compute_outputs_debt",
             "order": None,
         }

@@ -190,7 +190,7 @@ def _series(
         "key": ["INSTRUMENT", "TIME_PERIOD"],
     }
     if direction == "input":
-        entry["input"] = {"setter": {"name": f"set_{series_id}"}}
+        entry["input"] = {"input": {}}
     elif direction == "internal":
         entry["internal"] = {}
     else:
@@ -227,7 +227,7 @@ def _one_instrument_series(
         "key": ["INSTRUMENT", "TIME_PERIOD"],
     }
     if direction == "input":
-        entry["input"] = {"setter": {"name": f"set_{series_id}"}}
+        entry["input"] = {"input": {}}
     else:
         entry["output"] = {"compute": {"name": f"compute_{series_id}"}}
     return entry

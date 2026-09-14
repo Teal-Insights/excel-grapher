@@ -89,7 +89,7 @@ def test_schema_rejects_series_without_any_direction() -> None:
 
 def test_schema_rejects_internal_with_input() -> None:
     doc = _internal_series_doc(
-        input={"setter": {"name": "set_engine_primary_balance"}},
+        input={"input": {}},
     )
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)

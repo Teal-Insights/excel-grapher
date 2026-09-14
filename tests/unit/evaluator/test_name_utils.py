@@ -13,66 +13,14 @@ from excel_grapher.core.address_keys import (
     quote_sheet_if_needed,
 )
 from excel_grapher.core.excel_function_names import (
+    excel_func_to_python_runtime_name,
     excel_function_call_prefixes,
 )
-from excel_grapher.evaluator.name_utils import (
-    address_to_python_name,
-    excel_func_to_python,
-    normalize_excel_function_name,
-)
+from excel_grapher.evaluator.name_utils import normalize_excel_function_name
 
 
-class TestAddressToPythonName:
-    """Tests for address_to_python_name function."""
-
-    def test_simple_address(self):
-        """Simple sheet and cell reference."""
-        assert address_to_python_name("Sheet1!A1") == "cell_sheet1_a1"
-
-    def test_lowercase_preserved(self):
-        """Result should be lowercase."""
-        assert address_to_python_name("SHEET1!A1") == "cell_sheet1_a1"
-
-    def test_quoted_sheet_name(self):
-        """Sheet name with quotes (contains space)."""
-        assert address_to_python_name("'My Sheet'!B2") == "cell_my_sheet_b2"
-
-    def test_quoted_sheet_name_with_escaped_quote(self):
-        """Sheet name with escaped single quote."""
-        assert address_to_python_name("'It''s Data'!A1") == "cell_its_data_a1"
-
-    def test_sheet_name_with_underscore(self):
-        """Sheet name already containing underscores."""
-        assert address_to_python_name("B1_GDP_ext!A35") == "cell_b1_gdp_ext_a35"
-
-    def test_sheet_name_with_spaces(self):
-        """Sheet name with multiple spaces."""
-        assert address_to_python_name("'Sheet With Spaces'!C10") == "cell_sheet_with_spaces_c10"
-
-    def test_multi_letter_column(self):
-        """Column with multiple letters."""
-        assert address_to_python_name("Sheet1!AA100") == "cell_sheet1_aa100"
-
-    def test_special_characters_removed(self):
-        """Special characters should become underscores or be removed."""
-        assert address_to_python_name("'Data-2024'!A1") == "cell_data_2024_a1"
-
-    def test_multiple_underscores_collapsed(self):
-        """Multiple consecutive underscores should be collapsed."""
-        assert address_to_python_name("'My  Sheet'!A1") == "cell_my_sheet_a1"
-
-    def test_leading_underscore_after_cell_prefix(self):
-        """No leading underscore after 'cell_' prefix."""
-        # Sheet name starting with special char
-        assert address_to_python_name("'_Hidden'!A1") == "cell_hidden_a1"
-
-    def test_numeric_sheet_name(self):
-        """Sheet name that is numeric (needs quotes in Excel)."""
-        assert address_to_python_name("'2024'!A1") == "cell_2024_a1"
-
-    def test_parentheses_in_sheet_name(self):
-        """Sheet name with parentheses."""
-        assert address_to_python_name("'Data (v2)'!B5") == "cell_data_v2_b5"
+def _excel_func_to_python(name: str) -> str:
+    return excel_func_to_python_runtime_name(normalize_excel_function_name(name))
 
 
 class TestNormalizeExcelFunctionName:
@@ -100,7 +48,7 @@ class TestNormalizeExcelFunctionName:
         assert normalize_excel_function_name(raw) == expected
 
     def test_excel_func_to_python_preserves_unknown_xludf_addin_name(self) -> None:
-        assert excel_func_to_python("_XLUDF.MYADDIN") == "xl__xludf_myaddin"
+        assert _excel_func_to_python("_XLUDF.MYADDIN") == "xl__xludf_myaddin"
 
     def test_excel_function_call_prefixes_includes_compatibility_variants(self) -> None:
         assert excel_function_call_prefixes("IFNA") == (
@@ -118,42 +66,42 @@ class TestNormalizeExcelFunctionName:
 
 
 class TestExcelFuncToPython:
-    """Tests for excel_func_to_python function."""
+    """Tests for Excel function names mapped through the export-runtime helper."""
 
     def test_simple_function(self):
         """Simple function name."""
-        assert excel_func_to_python("SUM") == "xl_sum"
+        assert _excel_func_to_python("SUM") == "xl_sum"
 
     def test_multi_word_function(self):
         """Multi-word function name."""
-        assert excel_func_to_python("VLOOKUP") == "xl_vlookup"
+        assert _excel_func_to_python("VLOOKUP") == "xl_vlookup"
 
     def test_function_with_numbers(self):
         """Function name with numbers."""
-        assert excel_func_to_python("LOG10") == "xl_log10"
+        assert _excel_func_to_python("LOG10") == "xl_log10"
 
     def test_already_lowercase(self):
         """Function name that's already lowercase (edge case)."""
-        assert excel_func_to_python("sum") == "xl_sum"
+        assert _excel_func_to_python("sum") == "xl_sum"
 
     def test_mixed_case(self):
         """Mixed case function name."""
-        assert excel_func_to_python("SumProduct") == "xl_sumproduct"
+        assert _excel_func_to_python("SumProduct") == "xl_sumproduct"
 
     def test_function_with_dot(self):
         """Function with dot (e.g., NORM.DIST)."""
-        assert excel_func_to_python("NORM.DIST") == "xl_norm_dist"
+        assert _excel_func_to_python("NORM.DIST") == "xl_norm_dist"
 
     def test_function_with_underscore(self):
         """Function with underscore (rare but possible)."""
-        assert excel_func_to_python("AGGREGATE_X") == "xl_aggregate_x"
+        assert _excel_func_to_python("AGGREGATE_X") == "xl_aggregate_x"
 
     def test_prefixed_function_normalizes_before_python_name(self):
         """Compatibility prefixes should not appear in generated Python names."""
-        assert excel_func_to_python("_XLUDF.IFNA") == "xl_ifna"
-        assert excel_func_to_python("_xlfn.XLOOKUP") == "xl_xlookup"
-        assert excel_func_to_python("_xlfn.NUMBERVALUE") == "xl_numbervalue"
-        assert excel_func_to_python("SUM") == excel_func_to_python("_xlfn.SUM")
+        assert _excel_func_to_python("_XLUDF.IFNA") == "xl_ifna"
+        assert _excel_func_to_python("_xlfn.XLOOKUP") == "xl_xlookup"
+        assert _excel_func_to_python("_xlfn.NUMBERVALUE") == "xl_numbervalue"
+        assert _excel_func_to_python("SUM") == _excel_func_to_python("_xlfn.SUM")
 
 
 class TestParseAddress:

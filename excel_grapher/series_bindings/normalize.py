@@ -87,8 +87,7 @@ def concept_for_field(series: dict[str, Any], field_name: str) -> str:
 def has_input_direction(series: dict[str, Any]) -> bool:
     """Return True when the series declares an input direction block.
 
-    Empty `input: {}` counts. Leftover `input.setter` / top-level `setter`
-    keys are stripped in `normalize_series_entry` and are not required.
+    Empty `input: {}` counts.
     """
     return "input" in series and isinstance(series.get("input"), dict)
 
@@ -120,13 +119,8 @@ def has_internal_direction(series: dict[str, Any]) -> bool:
 
 
 def has_constant_direction(series: dict[str, Any]) -> bool:
-    """Return True when the series declares constant (reader-only leaf) semantics."""
+    """Return True when the series declares constant (leaf) semantics."""
     return "constant" in series and isinstance(series.get("constant"), dict)
-
-
-def has_reader_direction(series: dict[str, Any]) -> bool:
-    """Return True when the series emits a public `read_*` (input or constant)."""
-    return has_input_direction(series) or has_constant_direction(series)
 
 
 def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
@@ -142,27 +136,13 @@ def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
 
 
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
-    """Return a copy with legacy aliases normalized for schema validation and codegen.
+    """Return a copy with legacy aliases normalized for schema validation.
 
-    Package export does not emit `set_*` / `read_*` duals. Leftover
-    `input.setter`, `input.reader`, and top-level `setter` keys are stripped.
-    A stripped setter still leaves `input: {}` so the series stays an input.
+    `layout: row_series` is renamed to `series`.
     """
     out = dict(series)
     if out.get("layout") == "row_series":
         out["layout"] = "series"
-    legacy_setter = out.pop("setter", None)
-    declared_input = "input" in out or legacy_setter is not None
-    raw_input = out.get("input")
-    input_block = {} if not isinstance(raw_input, dict) else dict(raw_input)
-    input_block.pop("setter", None)
-    input_block.pop("reader", None)
-
-    if declared_input:
-        out["input"] = input_block
-    elif "input" in out:
-        del out["input"]
-
     return out
 
 

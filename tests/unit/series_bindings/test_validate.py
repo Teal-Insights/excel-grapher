@@ -114,7 +114,7 @@ def test_validate_warns_when_measure_dtype_and_read_disagree(tmp_path: Path) -> 
                     "sheet": "Flags",
                     "data_range": "Flags!B2",
                     "layout": "scalar",
-                    "setter": {"name": "set_bool_mismatch"},
+                    "input": {},
                     "structure": {
                         "measure": {
                             "concept": "OBS_VALUE",
@@ -158,7 +158,7 @@ def test_validate_warns_when_dimension_dtype_and_read_disagree(tmp_path: Path) -
                     "sheet": "Flags",
                     "data_range": "Flags!B2",
                     "layout": "scalar",
-                    "setter": {"name": "set_bool_mismatch"},
+                    "input": {},
                     "structure": {
                         "measure": {
                             "concept": "OBS_VALUE",
@@ -214,7 +214,7 @@ def test_validate_warns_when_attribute_bind_read_disagrees_with_concept_dtype(
                     "sheet": "Sheet1",
                     "data_range": "Sheet1!B2",
                     "layout": "scalar",
-                    "setter": {"name": "set_attr_mismatch"},
+                    "input": {},
                     "structure": {
                         "measure": {
                             "concept": "OBS_VALUE",
@@ -269,7 +269,7 @@ def test_validate_skips_attribute_value_shorthand_for_dtype_read_check(
                     "sheet": "Sheet1",
                     "data_range": "Sheet1!B2",
                     "layout": "scalar",
-                    "setter": {"name": "set_attr_constant"},
+                    "input": {},
                     "structure": {
                         "measure": {
                             "concept": "OBS_VALUE",
@@ -331,7 +331,7 @@ def test_validate_series_layout_requires_cell_scoped_dimension(tmp_path: Path) -
                 "sheet": "Inputs",
                 "data_range": "Inputs!B2",
                 "layout": "series",
-                "input": {"setter": {"name": "set_series_only_scope"}},
+                "input": {},
                 "structure": {
                     "measure": {
                         "concept": "OBS_VALUE",

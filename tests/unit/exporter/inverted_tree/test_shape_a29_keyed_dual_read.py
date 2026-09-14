@@ -93,7 +93,7 @@ def _gdp_entry(data_range: str | list[str]) -> dict[str, Any]:
         "sheet": sheets,
         "data_range": data_range,
         "layout": "series",
-        "input": {"setter": {"name": "set_gdp", "record_contract": "records", "strict": True}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [
@@ -165,7 +165,7 @@ def _multi_scenario_bindings() -> dict[str, Any]:
         "sheet": ["Stress", "Shock", "Baseline"],
         "data_range": ["Stress!E46:F46", "Shock!E46:F46", "Baseline!O48:P48"],
         "layout": "series",
-        "input": {"setter": {"name": "set_gdp"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [

@@ -122,7 +122,7 @@ def _paths_entry() -> dict[str, Any]:
         "sheet": "Engine",
         "data_range": "Engine!C3:D6",
         "layout": "matrix",
-        "input": {"setter": {"name": "set_paths"}},
+        "input": {},
         "structure": {
             "measure": _measure(),
             "dimensions": [_PATH_SCENARIO, _TIME_DIM],
@@ -152,7 +152,7 @@ def _flag_entry(*, dtype: str = "float") -> dict[str, Any]:
         "sheet": "Engine",
         "data_range": "Engine!G1",
         "layout": "scalar",
-        "input": {"setter": {"name": "set_flag"}},
+        "input": {},
         "structure": {"measure": _measure(dtype=dtype), "dimensions": []},
         "key": [],
     }

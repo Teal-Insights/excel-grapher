@@ -38,7 +38,6 @@ class BindingsCheckResult(TypedDict):
     report: ValidationReport
     canonical_sha256: str
     inputs: list[str]
-    readers: list[str]
     computes: list[str]
     input_series: list[InputSeries]
     generated_files: NotRequired[dict[str, str]]
@@ -51,28 +50,6 @@ def input_ids(bindings: WorkbookSeriesBindings) -> list[str]:
         series_id = series.get("id")
         if series_id and has_input_direction(series):
             names.append(str(series_id))
-    return sorted(set(names))
-
-
-def reader_names(bindings: WorkbookSeriesBindings) -> list[str]:
-    """Return sorted unique reader names for constant series.
-
-    Package export does not emit `read_*` duals of inputs. Constant series still
-    advertise `constant.reader.name` or `read_<series_id>` for discovery.
-    Range duals (`read_<id>_range`) are omitted from this list.
-    """
-    names: list[str] = []
-    for series in bindings["series"]:
-        series_id = series.get("id")
-        if not series_id:
-            continue
-        constant_block = series.get("constant")
-        if isinstance(constant_block, dict):
-            reader = constant_block.get("reader")
-            if isinstance(reader, dict) and reader.get("name"):
-                names.append(str(reader["name"]))
-            else:
-                names.append(f"read_{series_id}")
     return sorted(set(names))
 
 
@@ -243,7 +220,6 @@ def validate_bindings_workbook(
         "report": report,
         "canonical_sha256": bindings_canonical_sha256(bindings),
         "inputs": input_ids(bindings),
-        "readers": reader_names(bindings),
         "computes": compute_names(bindings),
         "input_series": derive_input_series(graph, bindings, workbook=workbook),
     }

@@ -29,7 +29,7 @@ BINDINGS_DOCUMENT: dict[str, Any] = {
             "data_range": "Sheet1!F3:F5",
             "layout": "series",
             "editable": True,
-            "setter": {"name": "set_borvelia_statistics_year_1"},
+            "input": {},
             "structure": {
                 "measure": {
                     "concept": "OBS_VALUE",

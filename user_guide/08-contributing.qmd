@@ -58,8 +58,6 @@ Prefer explicit, typed extension points over ad hoc keyword flags when users nee
 | Extension point | Customization forms | Registry helpers | Notes |
 | --- | --- | --- | --- |
 | Graph build hooks (`NodeHook`) | Direct callables only | None | Passed to `create_dependency_graph(..., hooks=...)` or `DependencyGraph.register_hook`. Local instrumentation only. |
-| Series docstring callbacks | `SeriesBindingDocstringCallbackSpec` | `register_*`, `list_*`, `resolve_*`, `run_*`, `unregister_*` | Direct callback or registered name for codegen. |
-| Series docstring renderers | `SeriesDocstringRendererSpec` | `resolve_*` only | Built-in names plus renderer objects or callables. |
 | Web visualization layouts | `WebVizLayoutSpec` | `register_*`, `list_*`, `resolve_*`, `run_*`, `unregister_*` | Layout ID string or direct `WebVizLayoutPlugin` callable. |
 
 ### Direct customization first
@@ -67,17 +65,6 @@ Prefer explicit, typed extension points over ad hoc keyword flags when users nee
 For local Python usage, accept direct objects or callables when they are easy to type and configure:
 
 ```python
-from excel_grapher.series_bindings import emit_compute_function
-
-lines = emit_compute_function(
-    series,
-    resolved,
-    graph=graph,
-    workbook=workbook_path,
-    bindings=bindings,
-    series_docstring_callback=my_callback,
-)
-
 payload = to_web_viz_payload(graph, layout=my_layout_plugin)
 ```
 
@@ -96,20 +83,8 @@ Use registries when an extension should be selectable by a stable string name. R
 Duplicate registration should fail by default. Support `replace=True` as an explicit opt-in when replacement is useful in tests, notebooks, or project bootstrap code:
 
 ```python
-register_series_docstring_callback("project_docs", my_callback)
-
-lines = emit_compute_function(
-    series,
-    resolved,
-    graph=graph,
-    workbook=workbook_path,
-    bindings=bindings,
-    series_docstring_callback="project_docs",
-)
-
-# In tests or notebooks, re-register or clean up:
-register_series_docstring_callback("project_docs", updated_callback, replace=True)
-unregister_series_docstring_callback("project_docs")
+register_web_viz_layout("project_layout", my_layout_plugin, replace=True)
+unregister_web_viz_layout("project_layout")
 ```
 
 ### Built-ins and specs
@@ -118,8 +93,6 @@ When an API accepts more than one customization form, define a `*Spec` type alia
 
 Examples in the current API:
 
-- `SeriesDocstringRendererSpec`: built-in renderer name, renderer object, or callable.
-- `SeriesBindingDocstringCallbackSpec`: registered callback name or direct callback.
 - `WebVizLayoutSpec`: registered layout ID or direct `WebVizLayoutPlugin`.
 
 ### Scope guidelines
@@ -239,14 +212,12 @@ for selecting projections (mirroring web viz layouts) may follow when needed.
 
 Changes aligned in this release:
 
-- Series docstring callbacks accept direct callables or registered names via `SeriesBindingDocstringCallbackSpec`.
 - Web viz layouts accept direct plugins via `WebVizLayoutSpec`; `register_web_viz_layout` supports `replace=True`.
-- Registry cleanup helpers (`unregister_*`) for docstring callbacks and web viz layouts.
+- Registry cleanup helpers (`unregister_*`) for web viz layouts.
 
 Deferred (no change needed yet):
 
 - Graph build hooks remain direct-only; a registry would add no value for one-off instrumentation.
-- Series docstring renderers stay lookup-only (no global registration); built-ins are fixed and custom renderers are passed inline.
 
 ## Roadmap
 
