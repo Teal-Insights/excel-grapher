@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, TypeGuard, cast
 
 from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding_scalar
 from excel_grapher.series_bindings.types import Record, Records
@@ -29,6 +29,7 @@ __all__ = [
     "Layout",
     "SeriesInput",
     "apply_input_value_map",
+    "coerce_input_measure",
     "coerce_setter_input",
     "input_value_map_from_series",
     "measure_domain_from_series",
@@ -325,6 +326,66 @@ def _reject_out_of_domain(
         raise ValueError(
             f"{label} out of domain: {value!r} not in {_format_measure_domain(domain)}"
         )
+
+
+def _coerce_one(value: object, dtype: str, *, series_id: str) -> object:
+    """Apply `validate_binding_scalar` and prefix the series id on type errors."""
+    try:
+        return validate_binding_scalar(value, dtype)
+    except TypeError as exc:
+        raise TypeError(f"{series_id}: {exc}") from exc
+
+
+class _NamedTensor(Protocol):
+    """Generated tensor with a domain and coordinate/value pairs."""
+
+    domain: object
+
+    def items(self) -> Iterable[tuple[object, object]]: ...
+
+
+def _is_named_tensor(value: object) -> TypeGuard[_NamedTensor]:
+    """True for generated `Series` tensors (domain plus coordinate `items()`)."""
+    domain = getattr(value, "domain", None)
+    items = getattr(value, "items", None)
+    return domain is not None and callable(items) and not _is_mapping(value)
+
+
+def coerce_input_measure(value: object, dtype: str, *, series_id: str) -> object:
+    """Rewrite a public compute input using setter dtype rules.
+
+    `int` becomes `float` when `dtype` is `float`. Sequences and tensors are
+    rewritten memberwise. `float` is never narrowed to `int`.
+
+    Args:
+        value: One measure, a catalog-order sequence, or a named tensor.
+        dtype: Binding measure dtype (`float`, `int`, `number`, ...).
+        series_id: Binding series id used in type-error messages.
+
+    Returns:
+        The validated value, possibly after a safe coercion.
+
+    Raises:
+        TypeError: When a member does not match `dtype`.
+        ValueError: When a datetime value is timezone-aware or `dtype` is unknown.
+    """
+    if _is_named_tensor(value):
+        coerced = tuple(
+            _coerce_one(member, dtype, series_id=f"{series_id}{coord!r}")
+            for coord, member in value.items()
+        )
+        return cast(Any, type(value))(value.domain, coerced)
+    if _is_measure_sequence(value):
+        members = [
+            _coerce_one(member, dtype, series_id=f"{series_id}[{index}]")
+            for index, member in enumerate(value)
+        ]
+        if isinstance(value, tuple):
+            return tuple(members)
+        if isinstance(value, list):
+            return members
+        return type(value)(members)
+    return _coerce_one(value, dtype, series_id=series_id)
 
 
 def apply_input_value_map(
