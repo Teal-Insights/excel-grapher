@@ -11,9 +11,8 @@ from excel_grapher.core.address_keys import CellKey, NodeShape, parse_node_key
 from excel_grapher.core.formula_ast import parse_preserving_axes
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import (
+    _DERIVED_FIELDS_CACHE,
     Node,
-    _derived_fields_cache_clear,
-    _derived_fields_cache_info,
     make_cell_node,
 )
 
@@ -138,8 +137,8 @@ def test_deepcopy_and_projection_clone_preserve_slotted_nodes() -> None:
 def test_derived_fields_lru_keyed_on_address() -> None:
     from excel_grapher.grapher.node import _lookup_derived_fields
 
-    _derived_fields_cache_clear()
-    info0 = _derived_fields_cache_info()
+    _DERIVED_FIELDS_CACHE.clear()
+    info0 = _DERIVED_FIELDS_CACHE.cache_info()
     assert info0.hits == 0
     assert info0.misses == 0
     assert info0.currsize == 0
@@ -151,7 +150,7 @@ def test_derived_fields_lru_keyed_on_address() -> None:
     assert a.shape is NodeShape.cell
     assert b.column_index == 3
 
-    info = _derived_fields_cache_info()
+    info = _DERIVED_FIELDS_CACHE.cache_info()
     assert info.misses == 1
     assert info.hits == 3  # b.key, a.shape, b.column_index
     assert info.currsize == 1
@@ -159,9 +158,9 @@ def test_derived_fields_lru_keyed_on_address() -> None:
 
     # Plain str and AddressKey must share one dict entry (unlike functools.lru_cache,
     # which keys str subclasses distinctly via _make_key).
-    before = _derived_fields_cache_info()
+    before = _DERIVED_FIELDS_CACHE.cache_info()
     again = _lookup_derived_fields("Sheet1!C3")
-    after = _derived_fields_cache_info()
+    after = _DERIVED_FIELDS_CACHE.cache_info()
     assert again.key == "Sheet1!C3"
     assert after.hits == before.hits + 1
     assert after.misses == before.misses

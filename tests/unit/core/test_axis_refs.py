@@ -21,7 +21,6 @@ from excel_grapher.core.formula_ast import (
     RelativeAxis,
     WholeColumnNode,
     WholeRowNode,
-    iter_resolved_cell_keys,
     parse,
     parse_formula_text,
     parse_preserving_axes,
@@ -31,7 +30,6 @@ from excel_grapher.core.formula_ast import (
 from excel_grapher.core.formula_shape import (
     fingerprint_formula_shape,
     intern_formula_shapes,
-    resolve_address_leaf,
 )
 from excel_grapher.grapher.formula_shapes import warm_formula_shapes
 from excel_grapher.grapher.parser import parse_dynamic_range_refs_with_spans
@@ -113,8 +111,8 @@ def test_parse_preserving_axes_range_endpoints() -> None:
     assert isinstance(rng, RangeNode)
     assert rng.start_ref == _rel(-1, -3)
     assert rng.end_ref == _rel(-1, -1)
-    keys = list(iter_resolved_cell_keys(ast, "Sheet1!B4"))
-    assert keys == ["Sheet1!A1", "Sheet1!A3"]
+    assert resolve_cell_ref(rng.start_ref, "Sheet1!B4") == "Sheet1!A1"
+    assert resolve_cell_ref(rng.end_ref, "Sheet1!B4") == "Sheet1!A3"
 
 
 def test_parse_preserving_axes_whole_column_relative_vs_absolute() -> None:
@@ -191,18 +189,6 @@ def test_indirect_r1c1_stays_fail_closed() -> None:
             current_sheet="Sheet1",
             current_cell_a1="B2",
         )
-
-
-def test_resolve_address_leaf_binds_relative_params_to_host() -> None:
-    rel = CellRefNode(_rel(-1, 0))
-    assert resolve_address_leaf(rel, "Sheet1!B2") == "Sheet1!A2"
-    assert resolve_address_leaf(CellRefNode(_abs(1, 1)), "Sheet1!Z99") == "Sheet1!A1"
-    rng = RangeNode(_rel(-1, -1), _rel(-1, 0))
-    assert resolve_address_leaf(rng, "Sheet1!B3") == "Sheet1!A2:A3"
-    col = WholeColumnNode(sheet="Sheet1", col=RelativeAxis(-1))
-    assert resolve_address_leaf(col, "Sheet1!B1") == "Sheet1!A:A"
-    row = WholeRowNode(sheet="Sheet1", row=RelativeAxis(-1))
-    assert resolve_address_leaf(row, "Sheet1!A3") == "Sheet1!2:2"
 
 
 def test_autofill_siblings_share_relative_shape_params() -> None:

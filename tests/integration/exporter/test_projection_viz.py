@@ -9,7 +9,6 @@ import xlsxwriter
 
 from excel_grapher.exporter import IdentityTransitCompression, to_web_viz_payload
 from excel_grapher.grapher import create_dependency_graph, to_networkx
-from excel_grapher.grapher.lightweight_viz import lightweight_viz_flat
 
 pytest.importorskip("networkx")
 
@@ -35,14 +34,13 @@ def test_projected_networkx_omits_transit_nodes_without_mutating_graph(tmp_path:
     nx_graph = to_networkx(projection)
     payload = to_web_viz_payload(projection)
     nx_payload = to_web_viz_payload(nx_graph)
-    flat = lightweight_viz_flat(payload)
 
     assert len(graph) == original_node_count
     assert "Outputs!B12" in graph
     assert "Outputs!B12" not in projection
     assert "Outputs!B12" not in nx_graph
-    assert flat.stats.node_count < original_node_count
-    assert lightweight_viz_flat(nx_payload).stats.node_count == flat.stats.node_count
+    assert payload.core.stats.node_count < original_node_count
+    assert nx_payload.core.stats.node_count == payload.core.stats.node_count
 
 
 def test_projected_graph_skips_nx_reconstruction(
@@ -72,6 +70,5 @@ def test_projected_graph_skips_nx_reconstruction(
         boom,
     )
     payload = to_web_viz_payload(projection)
-    flat = lightweight_viz_flat(payload)
-    assert flat.stats.node_count == len(projection)
-    assert flat.stats.node_count < len(graph)
+    assert payload.core.stats.node_count == len(projection)
+    assert payload.core.stats.node_count < len(graph)

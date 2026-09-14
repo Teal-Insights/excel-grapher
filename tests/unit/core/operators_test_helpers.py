@@ -25,7 +25,6 @@ from excel_grapher.core.operators import (
     xl_sub,
 )
 from excel_grapher.core.operators_reference import (
-    broadcast_pair,
     reference_arithmetic_array,
     reference_compare_array,
     reference_concat_array,
@@ -71,6 +70,26 @@ def array_tolist(value: object) -> list[list[object]]:
 
 def as_ndarray(value: object) -> np.ndarray | list[list[object]]:
     return array_tolist(value)
+
+
+def broadcast_pair(
+    left: CellValue,
+    right: CellValue,
+) -> tuple[Any, Any] | XlError:
+    """Broadcast scalar/array operands to matching object ndarrays."""
+    if isinstance(left, XlError):
+        return left
+    if isinstance(right, XlError):
+        return right
+    if isinstance(left, np.ndarray) and isinstance(right, np.ndarray):
+        if left.shape != right.shape:
+            return XlError.VALUE
+        return left, right
+    if isinstance(left, np.ndarray):
+        return left, np.full(left.shape, right, dtype=object)
+    if isinstance(right, np.ndarray):
+        return np.full(right.shape, left, dtype=object), right
+    raise TypeError("expected at least one ndarray operand")
 
 
 def assert_cellvalue_equal(actual: object, expected: object) -> None:

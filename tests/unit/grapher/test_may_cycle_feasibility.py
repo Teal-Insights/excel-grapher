@@ -11,7 +11,6 @@ from excel_grapher.grapher.guard import (
     Compare,
     Literal,
     Not,
-    evaluate_guard,
     rewrite_guard_aliases,
 )
 from excel_grapher.grapher.may_cycle import identity_alias_map
@@ -101,11 +100,3 @@ def test_identity_alias_plus_singleton_domain_kills_mismatched_equality() -> Non
     )
     assert graph.cycle_report().has_may_cycles is True
     assert graph.cycle_report(cell_type_env=env).has_may_cycles is False
-
-
-def test_evaluate_guard_three_valued_and() -> None:
-    g = Compare(left=CellRef("Sheet1!A1"), op="=", right=Literal(0))
-    assert evaluate_guard(g, {"Sheet1!A1": 0}) is True
-    assert evaluate_guard(g, {"Sheet1!A1": 1}) is False
-    assert evaluate_guard(g, {}) is None
-    assert evaluate_guard(None, {}) is True

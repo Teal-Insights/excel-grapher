@@ -14,7 +14,7 @@ from typing import Any, Generic, Protocol, TypeVar, cast
 from excel_grapher.core.grid import Range
 from excel_grapher.core.types import FormulaValue
 from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor, TensorSchema
-from excel_grapher.exporter.inverted_tree.excel import XlError, _as_number, is_error
+from excel_grapher.exporter.inverted_tree.excel import XlError, _as_number
 
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., object])
@@ -241,13 +241,6 @@ def require_aligned(*series: Sequence[object]) -> int:
     return lengths[0]
 
 
-def require_length(values: Sequence[object], length: int) -> None:
-    """Fail if `values` is not a catalog-order array of `length`."""
-    actual = len(values)
-    if actual != length:
-        raise ValueError(f"expected length {length}, got {actual}")
-
-
 def take(values: Sequence[T], indices: Sequence[int] | slice) -> tuple[T, ...]:
     """Return `values` at 0-based `indices`, failing closed on out-of-range.
 
@@ -402,25 +395,4 @@ def eval_instance(
     finally:
         stack.remove(key)
     memo[key] = value
-    return value
-
-
-def live_measure(value: T) -> T:
-    """Return `value`, or raise `XlError` when it is a stored error code."""
-    if isinstance(value, str) and is_error(value):
-        raise XlError(value)
-    return value
-
-
-def demand_instance(
-    statement: str,
-    index: int,
-    compute: Callable[[int], T],
-    memo: dict[tuple[str, int], T],
-    stack: set[tuple[str, int]],
-) -> T:
-    """Like `eval_instance`, but re-raise a stored Excel error as `XlError`."""
-    value = eval_instance(statement, index, compute, memo, stack)
-    if isinstance(value, str) and is_error(value):
-        raise XlError(value)
     return value

@@ -21,7 +21,6 @@ from excel_grapher.exporter.web_viz_layout import (
     unregister_web_viz_layout,
 )
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.lightweight_viz import lightweight_viz_flat
 from excel_grapher.grapher.node import Node
 
 
@@ -173,7 +172,7 @@ def test_nx_layouts_do_not_call_to_networkx_for_graph(monkeypatch: pytest.Monkey
 
     monkeypatch.setattr("excel_grapher.grapher.export.to_networkx", boom)
     payload = to_web_viz_payload(_build_two_component_graph(), layout="spring", seed=11)
-    assert lightweight_viz_flat(payload).stats.node_count == 4
+    assert payload.core.stats.node_count == 4
 
 
 def test_digraph_compat_path_still_reconstructs(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -189,7 +188,7 @@ def test_digraph_compat_path_still_reconstructs(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(lv, "_dependency_graph_from_networkx", counted)
     payload = to_web_viz_payload(_build_two_component_digraph(), seed=7)
     assert calls == [1]
-    assert lightweight_viz_flat(payload).stats.node_count == 4
+    assert payload.core.stats.node_count == 4
 
 
 def test_to_web_viz_payload_includes_annotations() -> None:
@@ -208,10 +207,8 @@ def test_to_web_viz_payload_accepts_networkx_digraph() -> None:
     g = _build_two_component_digraph()
 
     payload = to_web_viz_payload(g, seed=7)
-    flat = lightweight_viz_flat(payload)
-
-    assert flat.stats.node_count == 4
-    assert flat.stats.module_count == 2
+    assert payload.core.stats.node_count == 4
+    assert len(payload.overlays[0].data["modules"]) == 2
     assert payload.overlays[0].display_name == "Directed Louvain modules"
     assert payload.overlays[0].overlay_id == "webviz.louvain_directed"
 
@@ -219,10 +216,8 @@ def test_to_web_viz_payload_accepts_networkx_digraph() -> None:
 def test_to_web_viz_payload_accepts_dependency_graph() -> None:
     graph = _build_two_component_graph()
     payload = to_web_viz_payload(graph, seed=7)
-    flat = lightweight_viz_flat(payload)
-
-    assert flat.stats.node_count == 4
-    assert flat.stats.module_count == 2
+    assert payload.core.stats.node_count == 4
+    assert len(payload.overlays[0].data["modules"]) == 2
     assert payload.overlays[0].overlay_id == "webviz.louvain_directed"
 
 
@@ -237,7 +232,7 @@ def test_to_web_viz_payload_skips_nx_reconstruction_for_graph(
         boom,
     )
     payload = to_web_viz_payload(_build_two_component_graph(), seed=7)
-    assert lightweight_viz_flat(payload).stats.node_count == 4
+    assert payload.core.stats.node_count == 4
 
 
 def test_default_layout_does_not_call_to_networkx_for_graph(
@@ -248,7 +243,7 @@ def test_default_layout_does_not_call_to_networkx_for_graph(
 
     monkeypatch.setattr("excel_grapher.grapher.export.to_networkx", boom)
     payload = to_web_viz_payload(_build_two_component_graph(), seed=7)
-    assert lightweight_viz_flat(payload).stats.node_count == 4
+    assert payload.core.stats.node_count == 4
 
 
 def test_custom_layout_does_not_materialize_networkx(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -301,11 +296,11 @@ def test_layout_plugin_can_opt_into_nx_graph(monkeypatch: pytest.MonkeyPatch) ->
 def test_to_web_viz_payload_is_deterministic_with_seed() -> None:
     g = _build_two_component_digraph()
 
-    a = lightweight_viz_flat(to_web_viz_payload(g, seed=17))
-    b = lightweight_viz_flat(to_web_viz_payload(g, seed=17))
+    a = to_web_viz_payload(g, seed=17)
+    b = to_web_viz_payload(g, seed=17)
 
-    assert list(a.nodes.module_id) == list(b.nodes.module_id)
-    assert list(a.nodes.rank) == list(b.nodes.rank)
+    assert a.overlays[0].data["node_module_id"] == b.overlays[0].data["node_module_id"]
+    assert a.core.nodes.rank == b.core.nodes.rank
 
 
 def test_write_web_viz_html_writes_html_file(tmp_path: Path) -> None:
@@ -352,18 +347,20 @@ def test_to_web_viz_payload_supports_networkx_layouts(layout: str) -> None:
     pytest.importorskip("numpy")
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, layout=layout, seed=11)
-    flat = lightweight_viz_flat(payload)
-    assert flat.stats.node_count == 4
-    assert any(abs(x) > 0 or abs(y) > 0 for x, y in zip(flat.nodes.x, flat.nodes.y, strict=True))
+    assert payload.core.stats.node_count == 4
+    assert any(
+        abs(x) > 0 or abs(y) > 0
+        for x, y in zip(payload.core.nodes.x, payload.core.nodes.y, strict=True)
+    )
 
 
 def test_to_web_viz_stratified_has_distinct_scc_ranks() -> None:
     g = _build_chain_digraph(5)
-    flat = lightweight_viz_flat(
-        to_web_viz_payload(g, seed=0, layout="stratified_multipartite", include_module_overlay=True)
+    payload = to_web_viz_payload(
+        g, seed=0, layout="stratified_multipartite", include_module_overlay=True
     )
-    assert flat.stats.node_count == 5
-    ranks = set(flat.nodes.rank)
+    assert payload.core.stats.node_count == 5
+    ranks = set(payload.core.nodes.rank)
     assert len(ranks) >= 2
 
 
@@ -375,6 +372,4 @@ def test_to_web_viz_payload_can_omit_module_overlay() -> None:
     assert payload.overlays == ()
     assert payload.annotations is not None
     assert payload.annotations.get("stratified_fallback") == "bfs_multipartite"
-    flat = lightweight_viz_flat(payload)
-    assert flat.stats.node_count == 4
-    assert flat.stats.module_count == 1
+    assert payload.core.stats.node_count == 4

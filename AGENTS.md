@@ -25,12 +25,11 @@ On Windows, set UTF-8 mode before building or previewing (great-docs prints Unic
 build log and post-render script):
 
 ```bash
-uv run python scripts/great_docs_build.py
-uv run python scripts/great_docs_preview.py
+PYTHONUTF8=1 uv run great-docs build
+PYTHONUTF8=1 uv run great-docs preview
 ```
 
-Equivalent: `PYTHONUTF8=1 uv run great-docs build`. The `pre_render` hook in `great-docs.yml`
-also patches `post-render.py` for Quarto's subprocess.
+The `pre_render` hook in `great-docs.yml` also patches `post-render.py` for Quarto's subprocess.
 
 ## Parity
 

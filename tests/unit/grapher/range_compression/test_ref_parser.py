@@ -3,14 +3,22 @@
 from __future__ import annotations
 
 from excel_grapher.grapher.range_compression.ref_parser import (
+    AbsCellRef,
     AbsRangeRef,
-    parse_cell_refs_with_abs,
     parse_ref_streams,
 )
 
 
+def _cell_refs(formula: str, *, default_sheet: str) -> list[AbsCellRef]:
+    return [
+        ref
+        for ref in parse_ref_streams(formula, default_sheet=default_sheet)
+        if isinstance(ref, AbsCellRef)
+    ]
+
+
 def test_parse_relative_cell_refs() -> None:
-    refs = parse_cell_refs_with_abs("=B3*C3", default_sheet="Patterns")
+    refs = _cell_refs("=B3*C3", default_sheet="Patterns")
     assert len(refs) == 2
     assert refs[0].column == "B"
     assert refs[0].row == 3
@@ -21,7 +29,7 @@ def test_parse_relative_cell_refs() -> None:
 
 
 def test_parse_absolute_markers() -> None:
-    refs = parse_cell_refs_with_abs("=E3+$E$11", default_sheet="Patterns")
+    refs = _cell_refs("=E3+$E$11", default_sheet="Patterns")
     assert len(refs) == 2
     head, tail = refs
     assert head.column == "E" and head.row == 3
@@ -42,5 +50,5 @@ def test_parse_ref_streams_includes_range() -> None:
 
 
 def test_masks_range_endpoints() -> None:
-    refs = parse_cell_refs_with_abs("=SUM(B3:C3)", default_sheet="Sheet1")
+    refs = _cell_refs("=SUM(B3:C3)", default_sheet="Sheet1")
     assert refs == []

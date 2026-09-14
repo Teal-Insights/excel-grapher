@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING, TypeAlias
@@ -333,30 +333,6 @@ def intern_formula_ast(tree: AstNode, intern: dict[AstNode, AstNode]) -> AstNode
     encoding of `tree`.
     """
     return intern.setdefault(tree, tree)
-
-
-def iter_resolved_cell_keys(node: AstNode, anchor: CellKey | str) -> Iterator[str]:
-    """Yield canonical cell keys referenced by `node` against `anchor`.
-
-    Range endpoints are yielded (not expanded). Whole-column/row leaves are
-    skipped; callers that need those bounds should resolve them separately.
-    """
-    match node:
-        case CellRefNode(ref):
-            yield resolve_cell_ref(ref, anchor)
-        case RangeNode(start_ref, end_ref):
-            yield resolve_cell_ref(start_ref, anchor)
-            yield resolve_cell_ref(end_ref, anchor)
-        case FunctionCallNode(_, args):
-            for arg in args:
-                yield from iter_resolved_cell_keys(arg, anchor)
-        case BinaryOpNode(_, left, right):
-            yield from iter_resolved_cell_keys(left, anchor)
-            yield from iter_resolved_cell_keys(right, anchor)
-        case UnaryOpNode(_, operand):
-            yield from iter_resolved_cell_keys(operand, anchor)
-        case _:
-            return
 
 
 def bind_axes(node: AstNode, anchor: CellKey | str | None) -> AstNode:

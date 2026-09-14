@@ -17,28 +17,6 @@ from .coercions import excel_casefold, to_number, to_string
 from .types import CellValue, FormulaValue, XlError
 
 
-def broadcast_pair(
-    left: CellValue,
-    right: CellValue,
-) -> tuple[Any, Any] | XlError:
-    """Broadcast scalar/array operands to matching object ndarrays."""
-    import numpy as np
-
-    if isinstance(left, XlError):
-        return left
-    if isinstance(right, XlError):
-        return right
-    if isinstance(left, np.ndarray) and isinstance(right, np.ndarray):
-        if left.shape != right.shape:
-            return XlError.VALUE
-        return left, right
-    if isinstance(left, np.ndarray):
-        return left, np.full(left.shape, right, dtype=object)
-    if isinstance(right, np.ndarray):
-        return np.full(right.shape, left, dtype=object), right
-    raise TypeError("expected at least one ndarray operand")
-
-
 def _compare_rank_key(value: FormulaValue) -> tuple[int, float | str | bool]:
     """Return `(type_rank, key)` using Excel's number < text < logical order.
 

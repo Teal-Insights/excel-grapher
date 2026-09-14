@@ -132,15 +132,6 @@ def parse_ref_streams(formula: str, *, default_sheet: str) -> list[FormulaRef]:
     return streams
 
 
-def parse_cell_refs_with_abs(formula: str, *, default_sheet: str) -> list[AbsCellRef]:
-    """Extract single-cell references from a raw formula, preserving `$` markers."""
-    return [
-        ref
-        for ref in parse_ref_streams(formula, default_sheet=default_sheet)
-        if isinstance(ref, AbsCellRef)
-    ]
-
-
 def abs_ref_to_key(ref: AbsCellRef, *, default_sheet: str) -> str:
     """Resolve an absolute cell ref to a sheet-qualified graph key."""
     from excel_grapher.core.address_keys import format_cell_key

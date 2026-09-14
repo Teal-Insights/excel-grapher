@@ -4,7 +4,7 @@ from unittest.mock import patch
 
 from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.addressing import split_sheet_qualified_address
-from excel_grapher.core.cell_types import CellKind, CellType, IntIntervalDomain
+from excel_grapher.core.cell_types import CellKind, CellType, IntervalDomain
 from excel_grapher.grapher.blank_ranges import address_in_blank_ranges, parse_blank_range_spec
 from excel_grapher.grapher.builder import _workbook_sorted_sheet_a1_pairs
 from excel_grapher.grapher.dynamic_refs import (
@@ -90,7 +90,7 @@ def test_expand_leaf_env_passes_correct_sheet_for_apostrophe_sheet_names() -> No
     leaf_env = {
         f"{_APOSTROPHE_SHEET}!A1": CellType(
             kind=CellKind.NUMBER,
-            interval=IntIntervalDomain(min=0, max=10),
+            interval=IntervalDomain(min=0, max=10),
         )
     }
     seen_sheets: list[str] = []

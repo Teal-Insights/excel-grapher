@@ -135,16 +135,6 @@ def _derived_fields(address: CellKey) -> _NodeDerivedFields:
     return _lookup_derived_fields(address)
 
 
-def _derived_fields_cache_info() -> NodeDerivedCacheInfo:
-    """Return hit/miss statistics for the derived-fields LRU."""
-    return _DERIVED_FIELDS_CACHE.cache_info()
-
-
-def _derived_fields_cache_clear() -> None:
-    """Clear the derived-fields LRU (intended for tests)."""
-    _DERIVED_FIELDS_CACHE.clear()
-
-
 class _EmptyMetadata(Mapping[str, Any]):
     """Immutable empty mapping shared by every node with no metadata.
 

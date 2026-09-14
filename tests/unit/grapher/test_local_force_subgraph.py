@@ -8,7 +8,6 @@ import re
 import networkx as nx
 
 from excel_grapher.exporter import to_web_viz_payload
-from excel_grapher.grapher.lightweight_viz import lightweight_viz_flat
 
 
 def _local_force_subgraph_source() -> str:
@@ -46,10 +45,10 @@ def _chain_nx() -> nx.DiGraph:
 
 def test_louvain_chain_exports_cross_module_local_edges() -> None:
     """Tail-node selection needs the exported CSR edge across the module split."""
-    flat = lightweight_viz_flat(to_web_viz_payload(_chain_nx(), layout="stratified_multipartite"))
-    assert flat.nodes.module_id == (0, 0, 1)
+    payload = to_web_viz_payload(_chain_nx(), layout="stratified_multipartite")
+    assert tuple(payload.overlays[0].data["node_module_id"]) == (0, 0, 1)
 
-    off = flat.local_edges.offsets
-    tg = flat.local_edges.targets
+    off = payload.core.local_edges.offsets
+    tg = payload.core.local_edges.targets
     assert list(tg[off[2] : off[3]]) == [1]
     assert list(tg[off[1] : off[2]]) == [0]

@@ -290,7 +290,7 @@ upload_to_vcs_release = false
 
 [dependency-groups]
 # Minimal test runner for the default (NumPy-free) install CI job.
-# Intentionally excludes pandas/matplotlib/jupyter so NumPy is not pulled transitively.
+# Intentionally excludes pandas so NumPy is not pulled transitively.
 test-core = [
     "pytest>=9.0.2",
     "ruff>=0.16.0",
@@ -300,9 +300,6 @@ test-core = [
 dev = [
     "graphviz>=0.21",
     "great-docs>=0.13.0",
-    "jupyter>=1.1.1",
-    "matplotlib>=3.10.8",
-    "nbformat>=5.10.4",
     "networkx>=3.6.1",
     "pandas>=3.0.3",
     "polars>=1.42.0",

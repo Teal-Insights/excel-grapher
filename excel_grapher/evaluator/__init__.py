@@ -5,13 +5,9 @@ The public API is intentionally small and stable; internal modules may change.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
-
 from .errors import MissingNormalizedFormulaError, ParseError
+from .evaluator import FormulaEvaluator
 from .types import CellValue, ExcelRange, XlError
-
-if TYPE_CHECKING:  # pragma: no cover
-    from .evaluator import FormulaEvaluator
 
 __all__ = [
     "FormulaEvaluator",
@@ -21,12 +17,3 @@ __all__ = [
     "ParseError",
     "MissingNormalizedFormulaError",
 ]
-
-
-def __getattr__(name: str):
-    # Lazy import to keep the package importable while modules are developed.
-    if name == "FormulaEvaluator":
-        from .evaluator import FormulaEvaluator
-
-        return FormulaEvaluator
-    raise AttributeError(name)

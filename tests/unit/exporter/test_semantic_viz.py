@@ -19,9 +19,7 @@ from excel_grapher.exporter.semantic_viz import (
     SEMANTIC_VIZ_CELL_SAMPLE,
     SEMANTIC_VIZ_PAYLOAD_VERSION,
     semantic_viz_primitive_count,
-    semantic_viz_renderer,
     serialize_semantic_viz_json,
-    spread_rank_centers,
     to_semantic_viz_payload,
     write_semantic_viz_html,
 )
@@ -248,7 +246,6 @@ def test_qcraft_scale_uses_boxes() -> None:
     # Q-CRAFT: 715 statements / 5,725 bundles. Labeled boxes stay readable.
     count = semantic_viz_primitive_count(statement_count=715, bundle_count=5725)
     assert count < SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
-    assert semantic_viz_renderer(statement_count=715, bundle_count=5725) == "boxes"
 
 
 def test_lic_dsf_scale_uses_dots() -> None:
@@ -256,27 +253,6 @@ def test_lic_dsf_scale_uses_dots() -> None:
     assert semantic_viz_primitive_count(statement_count=20020, bundle_count=119808) > (
         SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
     )
-    assert semantic_viz_renderer(statement_count=20020, bundle_count=119808) == "dots"
-
-
-def test_spread_rank_centers_fills_camera_not_left_edge() -> None:
-    widths = (80.0, 80.0, 80.0)
-    centers = spread_rank_centers(
-        widths, pad=48, min_gap=16, min_row_width=2800, graph_width=5_000_000
-    )
-    assert centers[0] >= 48
-    assert centers[-1] <= 2800 - 48
-    assert centers[-1] - centers[0] > 2000
-
-
-def test_spread_rank_centers_keeps_dense_packing() -> None:
-    widths = tuple(72.0 for _ in range(40))
-    packed_span = 40 * 72 + 39 * 16
-    centers = spread_rank_centers(
-        widths, pad=48, min_gap=16, min_row_width=2800, graph_width=packed_span + 96
-    )
-    gaps = [centers[i + 1] - centers[i] - 72 for i in range(len(centers) - 1)]
-    assert all(abs(g - 16) < 1e-6 for g in gaps)
 
 
 def test_html_ships_canvas_painter_and_rank_spread(tmp_path: Path) -> None:
