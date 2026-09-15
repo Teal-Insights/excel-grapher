@@ -205,7 +205,7 @@ def test_time_period_domain_matches_output_header(tiny_dsa_pkg) -> None:
 
     book = load_workbook(_WORKBOOK, data_only=True)
     header = tuple(book["Outputs"][f"{col}11"].value for col in "BCDEF")
-    assert header == tiny_dsa_pkg.data.OUTPUT_BASELINE_DOMAIN.axes[0].keys
+    assert header == tiny_dsa_pkg.data.OUTPUT_BASELINE.domain.axes[0].keys
     data = tiny_dsa_pkg.data
     computes = (
         tiny_dsa_pkg.compute_output_baseline,

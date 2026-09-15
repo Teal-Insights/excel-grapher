@@ -484,7 +484,7 @@ def named_input_kwargs(pkg: Any, catalog: SeriesCatalog, graph: DependencyGraph)
             node = graph.get_node(series.cells[0])
             values[series.series_id] = None if node is None else node.value
             continue
-        domain = _snapshot_domain(getattr(pkg.data, series.series_id.upper() + "_REQUIRED"), pkg)
+        domain = _snapshot_domain(getattr(pkg.data, series.series_id.upper()).required, pkg)
         records = []
         cells = series.coordinate_cells
         for coordinate in domain:

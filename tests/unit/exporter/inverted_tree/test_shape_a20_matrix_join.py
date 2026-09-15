@@ -407,11 +407,7 @@ def test_per_country_seed_fuses_without_area_if_chain(tmp_path: Path, orientatio
         oriented_addresses(_country_seed_debt_addresses(n_areas, n_years), orientation)
     )
     expected = _evaluator_values(workbook, addresses)
-    got = pkg.compute_debt(
-        initial=pkg.data.Initial.from_nested(
-            domain=pkg.data.INITIAL_DOMAIN, values=_country_seed_initial(n_areas)
-        )
-    )
+    got = pkg.compute_debt(initial=pkg.data.INITIAL.with_nested(_country_seed_initial(n_areas)))
     assert dict(got.items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("debt").coordinate_cells.items()}
     )

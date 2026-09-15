@@ -56,9 +56,11 @@ def _rekey(tensor: Any, years: tuple[int, ...]) -> Any:
     axis = tensor.domain.axes[0]
     shifted = type(axis)(axis.name, years, axis.key_type)
     values = [tensor[coord] for coord in tensor.domain]
-    return type(tensor).from_records(
-        domain=type(tensor.domain).product(shifted),
-        records=[((year,), value) for year, value in zip(years, values, strict=True)],
+    return type(tensor)(
+        type(tensor.domain).product(shifted),
+        tuple(values),
+        schema=tensor.schema,
+        cells=tensor.cells,
     )
 
 

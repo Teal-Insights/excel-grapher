@@ -192,9 +192,18 @@ def _shift_tensor(tensor: Any, delta: int) -> Any:
     axis_cls = type(axis)
     domain_cls = type(domain)
     shifted = axis_cls(axis.name, tuple(key + delta for key in axis.keys), axis.key_type)
-    return type(tensor).from_records(
-        domain=domain_cls.product(shifted),
-        records=[((coord[0] + delta,), value) for coord, value in tensor.items()],
+    domain = domain_cls.product(shifted)
+    schema = getattr(tensor, "schema", None)
+    if schema is None:
+        return type(tensor).from_records(
+            domain=domain,
+            records=[((coord[0] + delta,), value) for coord, value in tensor.items()],
+        )
+    return type(tensor)(
+        domain,
+        tuple(value for _coord, value in tensor.items()),
+        schema=schema,
+        cells=getattr(tensor, "cells", None),
     )
 
 
@@ -315,7 +324,7 @@ def test_compute_result_is_a_series_and_rejects_snapshot_keys(tmp_path: Path) ->
     result = pkg.compute_path(
         **{key: kwargs[key] for key in required_param_names(pkg.compute_path)}
     )
-    assert isinstance(result, pkg.data.Path)
+    assert isinstance(result, pkg.Series)
     assert result.sel(TIME_PERIOD=2025) == pytest.approx(result[2025])
     records = pkg.as_records(pkg.compute_path, result)
     assert [row["TIME_PERIOD"] for row in records] == list(_YEARS)

@@ -14,6 +14,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **series-bindings**: Runtime `axis_labels` key every tensor on an axis by
   the labeller's evaluated values ([#841](https://github.com/Teal-Insights/excel-grapher/issues/841))
 
+
+## v20.2.0 (2026-09-15)
+
+### Features
+
+- **export**: Fold same-axis string remaps into a host-key dict
+  ([#858](https://github.com/Teal-Insights/excel-grapher/pull/858),
+  [`c3050dd`](https://github.com/Teal-Insights/excel-grapher/commit/c3050dde64b175a0d31de0b74cc7788e7dbcdfe8))
+
+
+## v20.1.0 (2026-09-15)
+
+### Features
+
+- **export**: Intern subset named axes onto one master Axis
+  ([#860](https://github.com/Teal-Insights/excel-grapher/pull/860),
+  [`1144b5b`](https://github.com/Teal-Insights/excel-grapher/commit/1144b5bb10956d32c0734bd9ae02b26175f473b0))
+
+
+## v20.0.0 (2026-09-15)
+
+### Bug Fixes
+
+- **export**: Construct Series without overriding Tensor factories
+  ([#861](https://github.com/Teal-Insights/excel-grapher/pull/861),
+  [`6db1a25`](https://github.com/Teal-Insights/excel-grapher/commit/6db1a2553786da7bb8d74d7b624172adbd02badc))
+
+### Features
+
+- Bind inverted-tree series with define_series
+  ([#861](https://github.com/Teal-Insights/excel-grapher/pull/861),
+  [`6db1a25`](https://github.com/Teal-Insights/excel-grapher/commit/6db1a2553786da7bb8d74d7b624172adbd02badc))
+
+- **export**: Emit multi-series lookup tables as view strips
+  ([#857](https://github.com/Teal-Insights/excel-grapher/pull/857),
+  [`b84e880`](https://github.com/Teal-Insights/excel-grapher/commit/b84e8801fc95a1742ded5d76e949df3c87a9cdfa))
+
+- **export**: Fold lockstep string-key remaps into a dict lookup
+  ([#859](https://github.com/Teal-Insights/excel-grapher/pull/859),
+  [`ef291b1`](https://github.com/Teal-Insights/excel-grapher/commit/ef291b17aceed6a478f8545530ecc8d322da44ab))
+
+
 ## v19.0.2 (2026-09-14)
 
 ### Bug Fixes

@@ -17,6 +17,7 @@ from excel_grapher.exporter.export_runtime.tensor import (
     SchemaError,
     SchemaTemplate,
     Series,
+    SeriesSpec,
     Tensor,
     label_axis,
 )
@@ -42,18 +43,21 @@ def test_label_axis_builds_an_axis_and_names_collisions() -> None:
 
 def test_series_from_labels_is_the_identity_map() -> None:
     axis = label_axis("TIME_PERIOD", (2026, 2027), int)
-
-    class YearLabels(Series[object]):
-        schema = SchemaTemplate(
+    spec = SeriesSpec[object](
+        schema=SchemaTemplate(
             "year_labels",
             DomainTemplate.product(
                 AxisTemplate("TIME_PERIOD", int, size=2, labeller="year_labels", snapshot=(1, 2))
             ),
             (int, str, type(None)),
-        )
-
-    labels = YearLabels.from_labels(axis)
-    assert isinstance(labels, YearLabels)
+        ),
+        domain=DomainTemplate.product(
+            AxisTemplate("TIME_PERIOD", int, size=2, labeller="year_labels", snapshot=(1, 2))
+        ),
+        cells={},
+    )
+    labels = spec.from_labels(axis)
+    assert isinstance(labels, Series)
     assert tuple(labels.domain.axes[0].keys) == (2026, 2027)
     assert list(labels.items()) == [((2026,), 2026), ((2027,), 2027)]
 

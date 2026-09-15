@@ -129,13 +129,11 @@ def test_series_real_between_names_series_on_out_of_range_member(tmp_path: Path)
         tmp_path,
         name="domain_rate",
     )
-    rate = pkg.data.Rate.from_nested(domain=pkg.data.RATE_DOMAIN, values=(0.0, 1.0))
+    rate = pkg.data.RATE.with_nested((0.0, 1.0))
     result = pkg.compute_out(rate=rate)
     assert (result[1], result[2]) == pytest.approx((0.0, 1.0))
     with pytest.raises(ValueError, match=r"rate\(2,\) out of domain"):
-        pkg.compute_out(
-            rate=pkg.data.Rate.from_nested(domain=pkg.data.RATE_DOMAIN, values=(0.0, 1.1))
-        )
+        pkg.compute_out(rate=pkg.data.RATE.with_nested((0.0, 1.1)))
 
 
 def test_no_input_domain_does_not_emit_domain_guard(tmp_path: Path) -> None:
@@ -227,7 +225,7 @@ def test_compute_series_float_coerces_int_members(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _rate_bindings())
     assert "coerce_input_measure(rate" in modules["validation.py"]
     pkg = load_package(modules, tmp_path, name="rate_coerce")
-    rate = pkg.data.Rate.from_nested(domain=pkg.data.RATE_DOMAIN, values=(0, 1))
+    rate = pkg.data.RATE.with_nested((0, 1))
     assert type(rate[1]) is int
     checked = import_module(f"{pkg.__name__}.validation").CHECKS["rate"](rate)
     assert type(checked[1]) is float

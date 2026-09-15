@@ -111,7 +111,7 @@ def _windowed_prefix_bindings() -> dict:
 
 
 def _source(pkg, name: str, values: tuple[float, ...]):
-    domain = getattr(pkg.data, name.upper() + "_DOMAIN")
+    domain = getattr(pkg.data, name.upper()).domain
     return pkg.Tensor.from_records(
         domain=domain,
         records=zip(tuple(domain), values, strict=True),

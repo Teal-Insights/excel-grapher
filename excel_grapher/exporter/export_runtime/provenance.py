@@ -8,7 +8,7 @@ demand, so provenance stays inspectable without listing each cell.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator, Mapping
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from typing import Any, overload
 
 from .tensor import (
@@ -22,6 +22,13 @@ from .tensor import (
 )
 
 AxisGroup = tuple[tuple[str, ...], Mapping[Any, Any]]
+LayoutKeys = Axis | Sequence[str | int]
+
+
+def _layout_keys(axis: LayoutKeys | None) -> tuple[str | int, ...] | None:
+    if axis is None:
+        return None
+    return axis.keys if isinstance(axis, Axis) else tuple(axis)
 
 
 def _quote_sheet(sheet: str) -> str:
@@ -70,8 +77,8 @@ class RectangleCells(Mapping[Coordinate, str]):
         sheet: str,
         first_row: int,
         first_col: int,
-        row_axis: Axis | None,
-        col_axis: Axis | None,
+        row_axis: LayoutKeys | None,
+        col_axis: LayoutKeys | None,
         *,
         cols_first: bool = False,
         exceptions: Mapping[Coordinate, str] | None = None,
@@ -79,8 +86,8 @@ class RectangleCells(Mapping[Coordinate, str]):
         self._sheet = _quote_sheet(sheet)
         self._first_row = first_row
         self._first_col = first_col
-        self._row_axis = row_axis
-        self._col_axis = col_axis
+        self._row_axis = _layout_keys(row_axis)
+        self._col_axis = _layout_keys(col_axis)
         self._cols_first = cols_first
         self._exceptions = dict(exceptions or {})
 
@@ -102,16 +109,16 @@ class RectangleCells(Mapping[Coordinate, str]):
         col = self._first_col
         try:
             if self._row_axis is not None:
-                row += self._row_axis.keys.index(row_key)
+                row += self._row_axis.index(row_key)
             if self._col_axis is not None:
-                col += self._col_axis.keys.index(col_key)
+                col += self._col_axis.index(col_key)
         except ValueError:
             raise KeyError(coordinate) from None
         return f"{self._sheet}!{column_letter(col)}{row}"
 
     def __iter__(self) -> Iterator[Coordinate]:
-        rows: tuple[Any, ...] = (None,) if self._row_axis is None else self._row_axis.keys
-        cols: tuple[Any, ...] = (None,) if self._col_axis is None else self._col_axis.keys
+        rows: tuple[Any, ...] = (None,) if self._row_axis is None else self._row_axis
+        cols: tuple[Any, ...] = (None,) if self._col_axis is None else self._col_axis
         if self._cols_first:
             for col_key in cols:
                 for row_key in rows:
@@ -130,8 +137,8 @@ class RectangleCells(Mapping[Coordinate, str]):
         return tuple(parts)
 
     def __len__(self) -> int:
-        rows = 1 if self._row_axis is None else len(self._row_axis.keys)
-        cols = 1 if self._col_axis is None else len(self._col_axis.keys)
+        rows = 1 if self._row_axis is None else len(self._row_axis)
+        cols = 1 if self._col_axis is None else len(self._col_axis)
         return rows * cols
 
     def __repr__(self) -> str:
@@ -161,7 +168,7 @@ def _axis_from_labellers(axis: Axis | AxisTemplate, labellers: Mapping[str, Any]
 
 
 @overload
-def row_cells(sheet: str, row: int, first_column: str, axis: Axis) -> RectangleCells: ...
+def row_cells(sheet: str, row: int, first_column: str, axis: LayoutKeys) -> RectangleCells: ...
 
 
 @overload
@@ -171,7 +178,7 @@ def row_cells(
 
 
 def row_cells(
-    sheet: str, row: int, first_column: str, axis: Axis | AxisTemplate
+    sheet: str, row: int, first_column: str, axis: LayoutKeys | AxisTemplate
 ) -> RectangleCells | ProvenanceTemplate:
     """Cells of a one-row series whose columns enumerate `axis`."""
     if isinstance(axis, AxisTemplate):
@@ -184,7 +191,7 @@ def row_cells(
 
 
 @overload
-def column_cells(sheet: str, column: str, first_row: int, axis: Axis) -> RectangleCells: ...
+def column_cells(sheet: str, column: str, first_row: int, axis: LayoutKeys) -> RectangleCells: ...
 
 
 @overload
@@ -194,7 +201,7 @@ def column_cells(
 
 
 def column_cells(
-    sheet: str, column: str, first_row: int, axis: Axis | AxisTemplate
+    sheet: str, column: str, first_row: int, axis: LayoutKeys | AxisTemplate
 ) -> RectangleCells | ProvenanceTemplate:
     """Cells of a one-column series whose rows enumerate `axis`."""
     if isinstance(axis, AxisTemplate):
@@ -211,8 +218,8 @@ def block_cells(
     sheet: str,
     first_row: int,
     first_column: str,
-    row_axis: Axis,
-    col_axis: Axis,
+    row_axis: LayoutKeys,
+    col_axis: LayoutKeys,
     *,
     cols_first: bool = False,
     exceptions: Mapping[Coordinate, str] | None = None,
@@ -236,8 +243,8 @@ def block_cells(
     sheet: str,
     first_row: int,
     first_column: str,
-    row_axis: Axis | AxisTemplate,
-    col_axis: Axis | AxisTemplate,
+    row_axis: LayoutKeys | AxisTemplate,
+    col_axis: LayoutKeys | AxisTemplate,
     *,
     cols_first: bool = False,
     exceptions: Mapping[Coordinate, str] | None = None,
@@ -246,12 +253,22 @@ def block_cells(
     if isinstance(row_axis, AxisTemplate) or isinstance(col_axis, AxisTemplate):
 
         def bind_block(**labellers: Any) -> RectangleCells:
+            rows: LayoutKeys = (
+                _axis_from_labellers(row_axis, labellers)
+                if isinstance(row_axis, AxisTemplate)
+                else row_axis
+            )
+            cols: LayoutKeys = (
+                _axis_from_labellers(col_axis, labellers)
+                if isinstance(col_axis, AxisTemplate)
+                else col_axis
+            )
             return block_cells(
                 sheet,
                 first_row,
                 first_column,
-                _axis_from_labellers(row_axis, labellers),
-                _axis_from_labellers(col_axis, labellers),
+                rows,
+                cols,
                 cols_first=cols_first,
                 exceptions=exceptions,
             )

@@ -409,17 +409,32 @@ def _segment_bytes(source: str, node: ast.AST) -> int:
     return len(segment.encode("utf-8")) if segment else 0
 
 
-def _statement_prefix(node: ast.stmt) -> str:
+def _assigned_name(node: ast.stmt) -> str | None:
     if isinstance(node, ast.Assign) and len(node.targets) == 1:
         target = node.targets[0]
         if isinstance(target, ast.Name):
-            name = target.id
-            for suffix in ("_CELLS", "_DOMAIN", "_REQUIRED", "_SCHEMA", "_DEFAULT", "_LITERALS"):
-                if name.endswith(suffix):
-                    return suffix
-            if name.endswith("_AXIS") or "_AXIS_" in name:
-                return "_AXIS"
-            return "constant value"
+            return target.id
+    if isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+        return node.target.id
+    return None
+
+
+def _statement_prefix(node: ast.stmt) -> str:
+    name = _assigned_name(node)
+    if name is not None:
+        value = getattr(node, "value", None)
+        if (
+            isinstance(value, ast.Call)
+            and isinstance(value.func, ast.Name)
+            and value.func.id == "define_series"
+        ):
+            return "define_series"
+        for suffix in ("_CELLS", "_DOMAIN", "_REQUIRED", "_SCHEMA", "_DEFAULT", "_LITERALS"):
+            if name.endswith(suffix):
+                return suffix
+        if name.endswith("_AXIS") or "_AXIS_" in name:
+            return "_AXIS"
+        return "constant value"
     if isinstance(node, ast.ClassDef):
         return "class"
     if isinstance(node, ast.FunctionDef):

@@ -158,9 +158,8 @@ def test_generate_modules_emits_output_compute(workbook: Path, tmp_path: Path) -
     assert not hasattr(pkg, "make_context")
 
     result = pkg.compute_borvelia_primary_balance_out(
-        borvelia_primary_balance=pkg.data.BorveliaPrimaryBalance.from_records(
-            domain=pkg.data.BORVELIA_PRIMARY_BALANCE_DOMAIN,
-            records=zip(((1,), (2,), (3,), (4,), (5,)), (1.0, 2.0, 3.0, 7.5, 5.0), strict=True),
+        borvelia_primary_balance=pkg.data.BORVELIA_PRIMARY_BALANCE.with_records(
+            zip(((1,), (2,), (3,), (4,), (5,)), (1.0, 2.0, 3.0, 7.5, 5.0), strict=True),
         )
     )
     assert tuple(result[period] for period in (1, 2, 3, 4, 5)) == pytest.approx(
