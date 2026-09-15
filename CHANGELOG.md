@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## Unreleased
+
+### Features
+
+- **series-bindings**: Runtime `axis_labels` key every tensor on an axis by
+  the labeller's evaluated values ([#841](https://github.com/Teal-Insights/excel-grapher/issues/841))
+
 ## v19.0.2 (2026-09-14)
 
 ### Bug Fixes

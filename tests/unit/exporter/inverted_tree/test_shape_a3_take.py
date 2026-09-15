@@ -38,7 +38,7 @@ def test_misaligned_growth_interest_raise(tmp_path: Path) -> None:
         domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2, 3), int)),
         records=(((2,), 4.0), ((3,), 4.0)),
     )
-    with pytest.raises(pkg.tensor.SchemaError, match="interest.*required coordinate.*1"):
+    with pytest.raises(pkg.tensor.SchemaError, match="interest.*unknown labels"):
         pkg.internals.engine_path(engine_year0=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=wrong)
 
 
