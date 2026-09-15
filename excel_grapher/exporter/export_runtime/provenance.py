@@ -8,12 +8,19 @@ demand, so provenance stays inspectable without listing each cell.
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Mapping
+from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from .tensor import Axis, Coordinate, CoordinateError, Domain
 
 AxisGroup = tuple[tuple[str, ...], Mapping[Any, Any]]
+LayoutKeys = Axis | Sequence[str | int]
+
+
+def _layout_keys(axis: LayoutKeys | None) -> tuple[str | int, ...] | None:
+    if axis is None:
+        return None
+    return axis.keys if isinstance(axis, Axis) else tuple(axis)
 
 
 def _quote_sheet(sheet: str) -> str:
@@ -62,8 +69,8 @@ class RectangleCells(Mapping[Coordinate, str]):
         sheet: str,
         first_row: int,
         first_col: int,
-        row_axis: Axis | None,
-        col_axis: Axis | None,
+        row_axis: LayoutKeys | None,
+        col_axis: LayoutKeys | None,
         *,
         cols_first: bool = False,
         exceptions: Mapping[Coordinate, str] | None = None,
@@ -71,8 +78,8 @@ class RectangleCells(Mapping[Coordinate, str]):
         self._sheet = _quote_sheet(sheet)
         self._first_row = first_row
         self._first_col = first_col
-        self._row_axis = row_axis
-        self._col_axis = col_axis
+        self._row_axis = _layout_keys(row_axis)
+        self._col_axis = _layout_keys(col_axis)
         self._cols_first = cols_first
         self._exceptions = dict(exceptions or {})
 
@@ -94,16 +101,16 @@ class RectangleCells(Mapping[Coordinate, str]):
         col = self._first_col
         try:
             if self._row_axis is not None:
-                row += self._row_axis.keys.index(row_key)
+                row += self._row_axis.index(row_key)
             if self._col_axis is not None:
-                col += self._col_axis.keys.index(col_key)
+                col += self._col_axis.index(col_key)
         except ValueError:
             raise KeyError(coordinate) from None
         return f"{self._sheet}!{column_letter(col)}{row}"
 
     def __iter__(self) -> Iterator[Coordinate]:
-        rows: tuple[Any, ...] = (None,) if self._row_axis is None else self._row_axis.keys
-        cols: tuple[Any, ...] = (None,) if self._col_axis is None else self._col_axis.keys
+        rows: tuple[Any, ...] = (None,) if self._row_axis is None else self._row_axis
+        cols: tuple[Any, ...] = (None,) if self._col_axis is None else self._col_axis
         if self._cols_first:
             for col_key in cols:
                 for row_key in rows:
@@ -122,20 +129,20 @@ class RectangleCells(Mapping[Coordinate, str]):
         return tuple(parts)
 
     def __len__(self) -> int:
-        rows = 1 if self._row_axis is None else len(self._row_axis.keys)
-        cols = 1 if self._col_axis is None else len(self._col_axis.keys)
+        rows = 1 if self._row_axis is None else len(self._row_axis)
+        cols = 1 if self._col_axis is None else len(self._col_axis)
         return rows * cols
 
     def __repr__(self) -> str:
         return f"RectangleCells({self._sheet}, {dict(self)!r})"
 
 
-def row_cells(sheet: str, row: int, first_column: str, axis: Axis) -> RectangleCells:
+def row_cells(sheet: str, row: int, first_column: str, axis: LayoutKeys) -> RectangleCells:
     """Cells of a one-row series whose columns enumerate `axis`."""
     return RectangleCells(sheet, row, column_index(first_column), None, axis)
 
 
-def column_cells(sheet: str, column: str, first_row: int, axis: Axis) -> RectangleCells:
+def column_cells(sheet: str, column: str, first_row: int, axis: LayoutKeys) -> RectangleCells:
     """Cells of a one-column series whose rows enumerate `axis`."""
     return RectangleCells(sheet, first_row, column_index(column), axis, None)
 
@@ -144,8 +151,8 @@ def block_cells(
     sheet: str,
     first_row: int,
     first_column: str,
-    row_axis: Axis,
-    col_axis: Axis,
+    row_axis: LayoutKeys,
+    col_axis: LayoutKeys,
     *,
     cols_first: bool = False,
     exceptions: Mapping[Coordinate, str] | None = None,

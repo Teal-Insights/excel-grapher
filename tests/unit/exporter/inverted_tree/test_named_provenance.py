@@ -27,6 +27,8 @@ def test_row_cells_map_axis_keys_to_consecutive_columns() -> None:
     assert cells[(2021,)] == "Engine!D5"
     assert len(cells) == 3
     assert (2023,) not in cells
+    subset = row_cells("Engine", 5, "D", (2021, 2022))
+    assert dict(subset) == {(2021,): "Engine!D5", (2022,): "Engine!E5"}
 
 
 def test_column_cells_and_block_cells_follow_worksheet_order() -> None:
@@ -75,30 +77,34 @@ def test_data_module_provenance_does_not_grow_with_the_horizon(tmp_path: Path) -
         modules = generate_inverted(_horizon_workbook(tmp_path, years), _horizon_bindings(years))
         data = modules["data.py"]
         assert "row_cells('Sheet', 3, 'B', TIME_PERIOD_AXIS)" in data
-        cells_lines = [line for line in data.splitlines() if "_CELLS = " in line]
+        cells_lines = [line for line in data.splitlines() if "cells=row_cells(" in line]
         sizes[years] = sum(len(line) for line in cells_lines)
     assert sizes[80] == sizes[10], sizes
     pkg = load_package(modules, tmp_path, name="horizon_provenance")
     assert pkg.compute_twice.__cells__[(2025,)] == "Sheet!G3"
-    assert dict(pkg.data.FLOW_CELLS)[(2020,)] == "Sheet!B2"
+    assert dict(pkg.data.FLOW.cells)[(2020,)] == "Sheet!B2"
 
 
 def test_series_facades_declare_their_schema_once(tmp_path: Path) -> None:
     modules = generate_inverted(_horizon_workbook(tmp_path, 5), _horizon_bindings(5))
     data = modules["data.py"]
-    assert "class Twice(Series[float | str | None]):\n" in data
-    assert "    schema = TWICE_SCHEMA\n" in data
+    assert "class Twice" not in data
+    assert "TWICE: SeriesSpec[" in data
     assert "def __post_init__" not in data
     assert "def __getitem__" not in data
     pkg = load_package(modules, tmp_path, name="horizon_facades")
     tensor = pkg.compute_twice(flow=pkg.data.FLOW_DEFAULT)
-    assert isinstance(tensor, pkg.data.Twice)
+    assert isinstance(tensor, pkg.Series)
     assert tensor[2022] == 6.0
     try:
-        pkg.data.Twice(pkg.data.TWICE_DOMAIN, (1.0, 2.0, 3.0, 4.0, "#N/A"))
+        pkg.data.TWICE.with_values((1.0, 2.0, 3.0, 4.0, "#N/A"))
     except pkg.tensor.SchemaError:
         raise AssertionError("errors are valid observations") from None
     import pytest
 
     with pytest.raises(pkg.tensor.SchemaError, match="twice"):
-        pkg.data.Twice(pkg.tensor.Domain.product(pkg.tensor.Axis("year", (1, 2), int)), (1.0, 2.0))
+        pkg.Series(
+            pkg.tensor.Domain.product(pkg.tensor.Axis("year", (1, 2), int)),
+            (1.0, 2.0),
+            schema=pkg.data.TWICE.schema,
+        )

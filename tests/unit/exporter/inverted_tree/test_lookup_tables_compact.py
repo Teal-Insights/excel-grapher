@@ -319,10 +319,7 @@ def test_multi_column_index_match_catalog_is_views_not_per_key_lambdas(tmp_path:
     assert result["AFG"] == "AFG"
     assert result["BGD"] == "BGD"
     assert result["BEN"] == "BEN"
-    missing = type(pkg.data.TRIGGER_IFS_DEFAULT).from_nested(
-        domain=pkg.data.TRIGGER_IFS_DEFAULT.domain,
-        values=(999, 513, 638),
-    )
+    missing = pkg.data.TRIGGER_IFS_DEFAULT.with_nested((999, 513, 638))
     unmatched = pkg.compute_trigger_code(
         trigger_ifs=missing,
         trigger_header=pkg.data.TRIGGER_HEADER_DEFAULT,

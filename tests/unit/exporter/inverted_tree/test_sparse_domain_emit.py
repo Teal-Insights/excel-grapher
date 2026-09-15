@@ -144,7 +144,9 @@ def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
         modules = generate_inverted(workbook, document)
         data_py = modules["data.py"]
         interned_line = next(
-            line for line in data_py.splitlines() if line.startswith("RESULT_DOMAIN =")
+            line
+            for line in data_py.splitlines()
+            if "Domain.product(COUNTRY_AXIS)" in line or line.startswith("RESULT_DOMAIN =")
         )
         data_sizes.append(len(data_py))
         domain_sizes.append(len(interned_line))

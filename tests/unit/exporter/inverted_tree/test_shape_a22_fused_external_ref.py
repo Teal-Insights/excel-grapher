@@ -117,15 +117,9 @@ def test_forward_off_union_seed_does_not_raise_keyerror(tmp_path: Path) -> None:
         generate_inverted(workbook, doc), tmp_path, name="a22_fwd_seed_or"
     )
     assert dict(
-        fused.compute_debt(
-            seed=fused.data.Seed.from_nested(domain=fused.data.SEED_DOMAIN, values=(100.0,))
-        ).items()
+        fused.compute_debt(seed=fused.data.SEED.with_nested((100.0,))).items()
     ) == pytest.approx(
-        dict(
-            demand.compute_debt(
-                seed=demand.data.Seed.from_nested(domain=demand.data.SEED_DOMAIN, values=(100.0,))
-            ).items()
-        )
+        dict(demand.compute_debt(seed=demand.data.SEED.with_nested((100.0,))).items())
     )
 
 
@@ -142,16 +136,12 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     cells = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_debt(
-        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
-    )
+    got = pkg.compute_debt(seed=pkg.data.SEED.with_nested((100.0,)))
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[:2])
     )
     assert [value for _, value in got.items()] == pytest.approx((102.0, 104.04))
-    adj = pkg.internals.scan_debt(
-        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
-    ).adj
+    adj = pkg.internals.scan_debt(seed=pkg.data.SEED.with_nested((100.0,))).adj
     assert [value for _, value in adj.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[2:])
     )
@@ -164,23 +154,15 @@ def test_reversed_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
 
     fused = demand = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_seed")
     assert dict(
-        fused.compute_value(
-            seed=fused.data.Seed.from_nested(domain=fused.data.SEED_DOMAIN, values=(100.0,))
-        ).items()
+        fused.compute_value(seed=fused.data.SEED.with_nested((100.0,))).items()
     ) == pytest.approx(
-        dict(
-            demand.compute_value(
-                seed=demand.data.Seed.from_nested(domain=demand.data.SEED_DOMAIN, values=(100.0,))
-            ).items()
-        )
+        dict(demand.compute_value(seed=demand.data.SEED.with_nested((100.0,))).items())
     )
     pkg = fused
     cells = ["Engine!A2", "Engine!B2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_value(
-        seed=pkg.data.Seed.from_nested(domain=pkg.data.SEED_DOMAIN, values=(100.0,))
-    )
+    got = pkg.compute_value(seed=pkg.data.SEED.with_nested((100.0,)))
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[:2])
     )
@@ -193,10 +175,8 @@ def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> No
     catalog, _deps, graph = inverted_graph_parts(workbook, doc)
 
     fused = demand = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_rate")
-    rate = fused.data.Rate.from_nested(domain=fused.data.RATE_DOMAIN, values=(0.01, 0.02, 0.03))
-    demand_rate = demand.data.Rate.from_nested(
-        domain=demand.data.RATE_DOMAIN, values=(0.01, 0.02, 0.03)
-    )
+    rate = fused.data.RATE.with_nested((0.01, 0.02, 0.03))
+    demand_rate = demand.data.RATE.with_nested((0.01, 0.02, 0.03))
     assert dict(fused.compute_value(rate=rate).items()) == pytest.approx(
         dict(demand.compute_value(rate=demand_rate).items())
     )

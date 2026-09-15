@@ -139,9 +139,7 @@ def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
     assert pkg.compute_out(
-        src=pkg.data.Src.from_records(
-            domain=pkg.data.SRC_DOMAIN, records=(((1,), 10.0), ((2,), 20.0), ((3,), 30.0))
-        )
+        src=pkg.data.SRC.with_records((((1,), 10.0), ((2,), 20.0), ((3,), 30.0)))
     ) == pytest.approx(expected)
 
 

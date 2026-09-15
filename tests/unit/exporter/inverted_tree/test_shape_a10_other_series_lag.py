@@ -169,9 +169,8 @@ def test_other_series_lag_emits_without_two_position_error(
         ((102.0, 101.0, 100.0), (2.0, 2.0)),
         ((100.0, 102.0, 101.0), (1.0, 2.0)),
     ]:
-        debt = pkg.data.Debt.from_records(
-            domain=pkg.data.DEBT_REQUIRED,
-            records=zip(((2009,), (2010,), (2011,)), values, strict=True),
+        debt = pkg.data.DEBT.with_records(
+            zip(((2009,), (2010,), (2011,)), values, strict=True),
         )
         result = pkg.internals.direction(debt=debt)
         assert (result[2010], result[2011]) == expected
@@ -210,9 +209,8 @@ def test_other_series_lag_matches_formula_evaluator(
     targets = [*debt_cells, *dir_cells]
     graph = create_dependency_graph(workbook, targets, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(targets)
-    debt = pkg.data.Debt.from_records(
-        domain=pkg.data.DEBT_REQUIRED,
-        records=(
+    debt = pkg.data.DEBT.with_records(
+        (
             ((year,), expected[cell])
             for year, cell in zip((2009, 2010, 2011), debt_cells, strict=True)
         ),

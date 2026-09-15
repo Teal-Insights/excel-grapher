@@ -86,12 +86,13 @@ def test_emit_data_module_uses_param_inner_types(tmp_path: Path) -> None:
     modules = generate_inverted(_annotation_workbook(tmp_path), _annotation_bindings())
     data = modules["data.py"]
     api = modules["api.py"]
-    assert "GROWTH_DEFAULT = Growth(GROWTH_DOMAIN, " in data
+    assert "GROWTH: Series[" in data
     assert "COUNT_DEFAULT = 3" in data
-    assert "LABELS = Labels(LABELS_DOMAIN, " in data
-    assert "class Labels(Series[int | str | None]):" in data
+    assert "LABELS: Series[" in data
+    assert "class Labels" not in data
     assert "growth: data.Growth" in api
-    assert "class Growth(Series[float | str | None]):" in data
+    assert "class Growth" not in data
+    assert "Growth = Series[float | str | None]" in data
     assert "count: int | str" in api
 
 
@@ -129,9 +130,9 @@ def test_cached_text_constant_emits_measure_tensor(tmp_path: Path) -> None:
     modules = generate_inverted(_cached_text_workbook(tmp_path), _cached_text_bindings())
     data = modules["data.py"]
     internals = modules["internals.py"]
-    assert "STORE = Store(STORE_DOMAIN, " in data
+    assert "STORE: Series[" in data
     assert "'n/a'" in data
-    assert "store: data.Store" in internals
+    assert "store: data.Series[" in internals
     assert "Sequence[" not in internals
 
 
