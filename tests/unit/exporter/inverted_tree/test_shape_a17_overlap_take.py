@@ -84,11 +84,11 @@ def test_overlap_call_site_takes_gdp_window(tmp_path: Path) -> None:
     assert "gdp[time_period]" in internals
     assert "gdp[time_period - 1]" in internals
     assert "revenue[time_period]" in internals
-    assert "GDP_SCHEMA.validate(gdp)" in internals
+    assert "data.GDP.schema.validate(gdp)" in internals
     pkg = load_package(modules, tmp_path, name="a17_overlap")
     got = pkg.compute_result(
-        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0)),
-        revenue=pkg.data.Revenue.from_nested(domain=pkg.data.REVENUE_DOMAIN, values=(10.0, 12.0)),
+        gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)),
+        revenue=pkg.data.REVENUE.with_nested((10.0, 12.0)),
     )
     assert [got[year] for year in (2010, 2011)] == pytest.approx(
         (110 / 100 + 10 / 110, 121 / 110 + 12 / 121)
@@ -101,8 +101,8 @@ def test_overlap_matches_formula_evaluator(tmp_path: Path) -> None:
     graph = create_dependency_graph(workbook, ["Engine!C6", "Engine!D6"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Engine!C6", "Engine!D6"])
     got = pkg.compute_result(
-        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0)),
-        revenue=pkg.data.Revenue.from_nested(domain=pkg.data.REVENUE_DOMAIN, values=(10.0, 12.0)),
+        gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)),
+        revenue=pkg.data.REVENUE.with_nested((10.0, 12.0)),
     )
     assert [got[year] for year in (2010, 2011)] == pytest.approx(
         (expected["Engine!C6"], expected["Engine!D6"])
@@ -127,8 +127,8 @@ def test_overlap_rung3_indexes_taken_window(tmp_path: Path) -> None:
     graph = create_dependency_graph(workbook, ["Engine!C6", "Engine!D6"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Engine!C6", "Engine!D6"])
     got = pkg.compute_result(
-        gdp=pkg.data.Gdp.from_nested(domain=pkg.data.GDP_DOMAIN, values=(100.0, 110.0, 121.0)),
-        revenue=pkg.data.Revenue.from_nested(domain=pkg.data.REVENUE_DOMAIN, values=(10.0, 12.0)),
+        gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)),
+        revenue=pkg.data.REVENUE.with_nested((10.0, 12.0)),
     )
     assert [got[year] for year in (2010, 2011)] == pytest.approx(
         (expected["Engine!C6"], expected["Engine!D6"])

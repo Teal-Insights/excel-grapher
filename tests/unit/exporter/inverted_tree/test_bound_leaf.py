@@ -177,9 +177,8 @@ def test_emit_bound_leaf_constant_is_parameter(tmp_path: Path) -> None:
 
     pkg = load_package(modules, tmp_path, name="bound_leaf_constant")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    rate = pkg.data.Rate.from_records(
-        domain=pkg.data.RATE_REQUIRED,
-        records=(((2021,), 1.0), ((2023,), 3.0)),
+    rate = pkg.data.RATE.collect(
+        (((2021,), 1.0), ((2023,), 3.0)),
     )
     assert pkg.compute_result(rate=rate) == pytest.approx(expected["Outputs!A1"])
     with pkg.data.overrides(SEED=99.0):

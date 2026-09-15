@@ -78,9 +78,8 @@ key types, required coordinates, and value types. Scalar bindings remain plain s
 from generated import compute_output_baseline, data
 
 # Explicit labels: integer coordinates are years, never storage positions.
-growth = data.GrowthBaseline.from_records(
-    domain=data.GROWTH_BASELINE_DOMAIN,
-    records=(((year,), 3.5) for year in (2025, 2026, 2027, 2028, 2029)),
+growth = data.GROWTH_BASELINE.with_records(
+    (((year,), 3.5) for year in (2025, 2026, 2027, 2028, 2029)),
 )
 result = compute_output_baseline(
     country_name="Borvelia",

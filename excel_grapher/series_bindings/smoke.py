@@ -122,7 +122,7 @@ def _inverted_tree_default_kwargs(
     data: Any,
     bindings: WorkbookSeriesBindings,
 ) -> dict[str, Any]:
-    """Bind required compute parameters from `data.py` `*_DEFAULT` leaves."""
+    """Bind required compute parameters from `data.py` input leaves."""
     series_by_id = {
         str(series["id"]): series
         for series in bindings.get("series", [])
@@ -135,13 +135,17 @@ def _inverted_tree_default_kwargs(
         if param.default is not inspect.Parameter.empty:
             continue
         default_name = f"{name.upper()}_DEFAULT"
-        if not hasattr(data, default_name):
+        binding_name = name.upper()
+        if hasattr(data, default_name):
+            workbook_value = getattr(data, default_name)
+        elif hasattr(data, binding_name):
+            workbook_value = getattr(data, binding_name)
+        else:
             compute_name = getattr(compute, "__name__", "compute")
             raise BindingsSmokeError(
                 f"Compute {compute_name!r} required argument {name!r} has no "
-                f"{default_name} in data.py"
+                f"{binding_name} or {default_name} in data.py"
             )
-        workbook_value = getattr(data, default_name)
         series = series_by_id.get(name)
         kwargs[name] = (
             _public_compute_arg(series, workbook_value) if series is not None else workbook_value

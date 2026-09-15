@@ -95,7 +95,7 @@ def apply_tidy_updates(default: Any, tidy: pd.DataFrame) -> Any:
             raise ValueError(f"duplicate update for {point!r}")
         seen.add(point)
         values[point] = float(row["OBS_VALUE"])
-    return type(default).from_records(domain=default.domain, records=values.items())
+    return default.with_records(values.items())
 
 
 def main() -> None:

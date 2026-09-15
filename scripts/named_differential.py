@@ -189,8 +189,11 @@ def run_internals(
             group_params[member] = code.co_varnames[: code.co_kwonlyargcount]
 
     def published(name: str, value: Any) -> dict[tuple[object, ...], object]:
-        cells = getattr(data, name.upper() + "_CELLS")
-        domain = getattr(data, name.upper() + "_REQUIRED", None)
+        binding = getattr(data, name.upper(), None)
+        cells = getattr(binding, "cells", None)
+        if cells is None:
+            cells = getattr(data, name.upper() + "_CELLS")
+        domain = getattr(binding, "required", None)
         if domain is None:
             return {next(iter(cells)): value}
         return {coord: value[coord] for coord in domain if coord in cells}
@@ -199,7 +202,10 @@ def run_internals(
     failures: dict[str, str] = {}
     input_cells: dict[str, Any] = {}
     for name, default in inputs.items():
-        cells = getattr(data, name.upper() + "_CELLS", None)
+        binding = getattr(data, name.upper(), None)
+        cells = getattr(binding, "cells", None)
+        if cells is None:
+            cells = getattr(data, name.upper() + "_CELLS", None)
         if cells is None:
             continue
         input_cells[name] = cells
@@ -218,6 +224,10 @@ def run_internals(
             failures[name] = f"{type(exc).__name__}: {exc}"[:300]
 
     def provenance_of(name: str) -> Any:
+        binding = getattr(data, name.upper(), None)
+        cells = getattr(binding, "cells", None)
+        if cells is not None:
+            return cells
         return getattr(data, name.upper() + "_CELLS")
 
     addresses = sorted(

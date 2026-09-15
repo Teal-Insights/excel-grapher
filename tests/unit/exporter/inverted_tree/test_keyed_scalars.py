@@ -87,8 +87,9 @@ def _sheets_bindings() -> dict[str, Any]:
 def test_scalar_layout_series_keyed_by_sheet_is_a_keyed_series(tmp_path: Path) -> None:
     modules = generate_inverted(_sheets_workbook(tmp_path), _sheets_bindings())
     data, internals, api = modules["data.py"], modules["internals.py"], modules["api.py"]
-    assert "class Shock(Series[float | str | None]):" in data
-    assert "SHOCK_DEFAULT = Shock(SHOCK_DOMAIN, (1.5, 2.5))" in data
+    assert "class Shock" not in data
+    assert "SHOCK: Series[" in data
+    assert "SHOCK_DEFAULT = SHOCK" in data
     assert "xl_mul(flow[scenario, time_period], shock[scenario])" in internals
     assert "shock: data.Shock" in api
     pkg = assert_package_matches_evaluator(

@@ -148,8 +148,10 @@ def _nested_bindings() -> dict[str, Any]:
 def test_nested_block_provenance_is_a_grid(tmp_path: Path) -> None:
     modules = generate_inverted(_nested_workbook(tmp_path), _nested_bindings())
     data = modules["data.py"]
-    cells_line = next(line for line in data.splitlines() if line.startswith("VINTAGE_CELLS = "))
-    assert cells_line.startswith("VINTAGE_CELLS = grid_cells('Vintage', VINTAGE_DOMAIN, ")
+    cells_line = next(
+        line for line in data.splitlines() if "grid_cells('Vintage', VINTAGE_DOMAIN," in line
+    )
+    assert cells_line.strip().startswith("cells=grid_cells('Vintage', VINTAGE_DOMAIN,")
     assert "rows=(('COUNTRY', 'SCENARIO'), {('France', 'base'): 2," in cells_line
     assert "cols=(('TIME_PERIOD',), {2024: 'B', 2025: 'C', 2026: 'D'})" in cells_line
     assert "Vintage!C6" not in cells_line
@@ -177,7 +179,7 @@ def test_ranges_over_nested_blocks_are_product_views(tmp_path: Path) -> None:
         (2025,): "Vintage!C9",
         (2026,): "Vintage!D9",
     }
-    assert pkg.data.VINTAGE_CELLS[("Kenya", "high", 2025)] == "Vintage!C6"
+    assert pkg.data.VINTAGE.cells[("Kenya", "high", 2025)] == "Vintage!C6"
 
 
 def _ragged_workbook(tmp_path: Path) -> Path:
@@ -230,7 +232,7 @@ def test_ragged_domains_list_runs_not_coordinates(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _ragged_workbook(tmp_path), _ragged_bindings(), tmp_path, "ragged_runs"
     )
-    assert len(pkg.data.VINTAGE_DOMAIN) == 15
+    assert len(pkg.data.VINTAGE.domain) == 15
     assert pkg.compute_total(vintage=pkg.data.VINTAGE_DEFAULT)[2024] == sum(
         row * 10 + (1.0 if row >= 5 else 0.0) for row in range(2, 7)
     )

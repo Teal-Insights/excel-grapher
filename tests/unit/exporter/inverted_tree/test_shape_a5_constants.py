@@ -123,9 +123,7 @@ def test_overriding_data_constant_changes_compute_and_restores(tmp_path: Path) -
     baseline = pkg.compute_output_shocked(value=10.0, shock_year=1)
     assert (baseline[1], baseline[2]) == pytest.approx((11.0, 11.0))
     original = pkg.data.ENGINE_YEAR_LABELS
-    zeros = pkg.data.EngineYearLabels.from_records(
-        domain=original.domain, records=(((1,), 0), ((2,), 0))
-    )
+    zeros = original.with_records((((1,), 0), ((2,), 0)))
     pkg.data.ENGINE_YEAR_LABELS = zeros
     result = pkg.compute_output_shocked(value=10.0, shock_year=1)
     assert (result[1], result[2]) == pytest.approx((10.0, 10.0))

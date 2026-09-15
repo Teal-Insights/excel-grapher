@@ -138,13 +138,7 @@ def test_list_data_range_and_sheet_name_keys_match_evaluator(tmp_path: Path) -> 
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_shards")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!Z1"])["Outputs!Z1"]
     assert (
-        _scalar(
-            pkg.compute_out(
-                growth=pkg.data.Growth.from_nested(
-                    domain=pkg.data.GROWTH_DOMAIN, values=((1.0, 2.0), (3.0, 4.0))
-                )
-            )
-        )
+        _scalar(pkg.compute_out(growth=pkg.data.GROWTH.with_nested(((1.0, 2.0), (3.0, 4.0)))))
         == expected
     )
 
@@ -183,14 +177,7 @@ def test_value_map_key_domain_is_resolved(tmp_path: Path) -> None:
     assert [point["SCENARIO"] for point in catalog.get("src").domain] == ["Base", "Alt"]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_vmap")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!Z1"])["Outputs!Z1"]
-    assert (
-        _scalar(
-            pkg.compute_out(
-                src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=((10.0,), (20.0,)))
-            )
-        )
-        == expected
-    )
+    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested(((10.0,), (20.0,))))) == expected
 
 
 def test_named_range_data_range_exports(tmp_path: Path) -> None:
@@ -224,9 +211,7 @@ def test_named_range_data_range_exports(tmp_path: Path) -> None:
     assert catalog.get("src").cells == ("Inputs!B2", "Inputs!C2")
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_named")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
-    result = pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.5, 2.5))
-    )
+    result = pkg.compute_out(src=pkg.data.SRC.with_nested((1.5, 2.5)))
     assert result[1] == expected["Outputs!A1"]
     assert result[2] == expected["Outputs!B1"]
 
@@ -334,11 +319,9 @@ def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_sum_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(
-        pkg.compute_out(
-            src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-        )
-    ) == pytest.approx(expected)
+    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0)))) == pytest.approx(
+        expected
+    )
 
 
 def test_average_if_array_matches_evaluator(tmp_path: Path) -> None:
@@ -362,11 +345,9 @@ def test_average_if_array_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_average_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(
-        pkg.compute_out(
-            src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-        )
-    ) == pytest.approx(expected)
+    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0)))) == pytest.approx(
+        expected
+    )
 
 
 def test_max_if_array_matches_evaluator(tmp_path: Path) -> None:
@@ -390,11 +371,9 @@ def test_max_if_array_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_max_if")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(
-        pkg.compute_out(
-            src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-        )
-    ) == pytest.approx(expected)
+    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0)))) == pytest.approx(
+        expected
+    )
 
 
 def test_cross_sheet_range_matches_evaluator(tmp_path: Path) -> None:
@@ -459,14 +438,12 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
     assert _scalar(
-        pkg.compute_sum_out(
-            left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 2.0))
-        )
+        pkg.compute_sum_out(left=pkg.data.LEFT.with_nested((1.0, 2.0)))
     ) == pytest.approx(expected["Outputs!A1"])
     assert _scalar(
         pkg.compute_prod_out(
-            left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 2.0)),
-            right=pkg.data.Right.from_nested(domain=pkg.data.RIGHT_DOMAIN, values=(3.0, 4.0)),
+            left=pkg.data.LEFT.with_nested((1.0, 2.0)),
+            right=pkg.data.RIGHT.with_nested((3.0, 4.0)),
         )
     ) == pytest.approx(expected["Outputs!B1"])
 

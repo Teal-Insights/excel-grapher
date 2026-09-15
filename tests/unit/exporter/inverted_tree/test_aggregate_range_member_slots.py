@@ -58,9 +58,8 @@ def test_range_crossing_input_and_formula_owners_uses_actual_coordinates(tmp_pat
         _totals_entry(),
     )
     package = load_package(generate_inverted(workbook, document), tmp_path)
-    supplied = package.data.Inputs.from_records(
-        domain=package.data.INPUTS_DOMAIN,
-        records=[(("a", 2020), 1.0), (("a", 2021), 2.0), (("a", 2022), 3.0), (("b", 2021), 20.0)],
+    supplied = package.data.INPUTS.with_records(
+        [(("a", 2020), 1.0), (("a", 2021), 2.0), (("a", 2022), 3.0), (("b", 2021), 20.0)],
     )
     result = package.compute_totals(inputs=supplied)
     assert (result[2020], result[2021], result[2022]) == (111.0, 222.0, 333.0)
