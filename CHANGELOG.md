@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.2.0 (2026-09-15)
+
+### Features
+
+- **export**: Fold same-axis string remaps into a host-key dict
+  ([#858](https://github.com/Teal-Insights/excel-grapher/pull/858),
+  [`c3050dd`](https://github.com/Teal-Insights/excel-grapher/commit/c3050dde64b175a0d31de0b74cc7788e7dbcdfe8))
+
+
 ## v20.1.0 (2026-09-15)
 
 ### Features
