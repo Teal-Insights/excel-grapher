@@ -288,6 +288,7 @@ def _semantic_body(
     tables: dict[str, str] = {}
     used: set[str] = {"XlError"}
     recursive = deferred
+    key_remaps: dict[str, dict[object, object]] = {}
     # A scalar layout publishes one observation: its first bound cell.
     cells = series.cells[:1] if series.single_valued else series.cells
     for index, cell in enumerate(cells):
@@ -305,6 +306,7 @@ def _semantic_body(
             scc_ids=scc_ids | {series.series_id},
             graph=graph,
             named_axes=named_axes,
+            key_remaps=key_remaps,
         )
         node = try_formula_ast(graph, cell)
         if node is None:
@@ -406,6 +408,8 @@ def _semantic_body(
         f"{names[axis.name]}: {axis.key_type.__name__}" for axis in series.tensor_domain.axes
     )
     lines.append(f"    def {formula}({parameters}) -> {_value_annotation(series)}:")
+    for remap_name, mapping in key_remaps.items():
+        lines.append(f"        {remap_name} = {mapping!r}")
     all_coordinates = {coord for coordinates in groups.values() for coord in coordinates}
 
     def condition(coordinates: list[tuple[object, ...]]) -> str:
