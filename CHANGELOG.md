@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.1.0 (2026-09-15)
+
+### Features
+
+- **export**: Intern subset named axes onto one master Axis
+  ([#860](https://github.com/Teal-Insights/excel-grapher/pull/860),
+  [`1144b5b`](https://github.com/Teal-Insights/excel-grapher/commit/1144b5bb10956d32c0734bd9ae02b26175f473b0))
+
+
 ## v20.0.0 (2026-09-15)
 
 ### Bug Fixes
