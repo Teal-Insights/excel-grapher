@@ -342,6 +342,9 @@ def _coerce_named_tensor(value: object, dtype: str) -> object | None:
     if domain is None or not callable(items) or _is_mapping(value):
         return None
     coerced = tuple(_coerce_one(member, dtype) for _coord, member in items())
+    replace = getattr(value, "with_values", None)
+    if callable(replace):
+        return replace(coerced)
     return cast(Any, type(value))(domain, coerced)
 
 

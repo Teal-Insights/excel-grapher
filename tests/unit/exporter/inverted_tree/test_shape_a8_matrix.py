@@ -151,9 +151,7 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     assert pkg.compute_output_cell.__constants__ == ("profile_table",)
     assert "ctx" not in all_param_names(pkg.compute_output_cell)
     assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
-    replacement = pkg.data.ProfileTable.from_nested(
-        domain=pkg.data.PROFILE_TABLE_DOMAIN, values=((99.0, 11.0), (20.0, 21.0))
-    )
+    replacement = pkg.data.PROFILE_TABLE.with_nested(((99.0, 11.0), (20.0, 21.0)))
     with pkg.data.overrides(PROFILE_TABLE=replacement):
         assert _measure(pkg.compute_output_cell()) == pytest.approx(99.0)
     assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)

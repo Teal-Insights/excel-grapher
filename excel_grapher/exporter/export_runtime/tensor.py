@@ -4,12 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
-from collections.abc import Iterable, Iterator, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from itertools import product
 from types import MappingProxyType
-from typing import Any, ClassVar, Generic, Self, TypeVar, cast
+from typing import Any, Generic, Self, TypeVar, cast, overload
 
 T = TypeVar("T")
 Coordinate = tuple[str | int, ...]
@@ -444,22 +444,152 @@ class TensorSchema:
                 )
 
 
+@dataclass(frozen=True, slots=True)
 class Series(Tensor[T]):
-    """A tensor validated against its generated series schema on construction.
+    """A tensor bound to a series schema and optional cell provenance.
 
-    Generated `data` modules subclass this once per bound series and set
-    `schema`, so every instance carries the axes and required coordinates of
-    the authored series.
+    `define_series` constructs instances for inputs and constants. Formula
+    series without observations use `SeriesSpec` with the same attributes.
     """
 
-    __slots__ = ()
-    schema: ClassVar[TensorSchema]
+    schema: TensorSchema = field(kw_only=True, repr=False, compare=False)
+    cells: Mapping[Coordinate, str] | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         super().__post_init__()
-        type(self).schema.validate(self)
+        self.schema.validate(self)
+
+    @property
+    def required(self) -> Domain:
+        """The schema's required coordinates, which may be a subset of `domain`."""
+        return self.schema.domain
 
     @classmethod
-    def collect(cls, records: Iterable[tuple[Coordinate, T]]) -> Self:
+    def from_records(  # type: ignore[override]
+        cls,
+        *,
+        domain: Domain,
+        records: Iterable[tuple[Coordinate, T]],
+        schema: TensorSchema,
+        cells: Mapping[Coordinate, str] | None = None,
+    ) -> Self:
+        """Validate unique records, then bind them to `schema`."""
+        tensor = Tensor.from_records(domain=domain, records=records)
+        return cls(tensor.domain, tensor._values, schema=schema, cells=cells)
+
+    @classmethod
+    def from_nested(  # type: ignore[override]
+        cls,
+        *,
+        domain: Domain,
+        values: Any,
+        schema: TensorSchema,
+        cells: Mapping[Coordinate, str] | None = None,
+    ) -> Self:
+        """Construct nested product values, then bind them to `schema`."""
+        tensor = Tensor.from_nested(domain=domain, values=values)
+        return cls(tensor.domain, tensor._values, schema=schema, cells=cells)
+
+    def collect(self, records: Iterable[tuple[Coordinate, T]]) -> Self:
         """Publish coordinate/value records over the series' required domain."""
-        return cls.from_records(domain=cls.schema.domain, records=records)
+        return type(self).from_records(
+            domain=self.schema.domain, records=records, schema=self.schema, cells=self.cells
+        )
+
+    def with_values(self, values: Sequence[T]) -> Self:
+        """Return a series over the same domain, schema, and cells."""
+        return type(self)(self.domain, tuple(values), schema=self.schema, cells=self.cells)
+
+    def with_nested(self, values: Any) -> Self:
+        """Return a series from nested product values over the authored domain."""
+        return type(self).from_nested(
+            domain=self.domain, values=values, schema=self.schema, cells=self.cells
+        )
+
+    def with_records(self, records: Iterable[tuple[Coordinate, T]]) -> Self:
+        """Return a series from records over the authored domain."""
+        return type(self).from_records(
+            domain=self.domain, records=records, schema=self.schema, cells=self.cells
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class SeriesSpec(Generic[T]):
+    """Schema, authored domain, and cell provenance without observations."""
+
+    schema: TensorSchema
+    domain: Domain
+    cells: Mapping[Coordinate, str]
+
+    @property
+    def required(self) -> Domain:
+        """The schema's required coordinates, which may be a subset of `domain`."""
+        return self.schema.domain
+
+    def collect(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
+        """Publish coordinate/value records over the series' required domain."""
+        return Series.from_records(
+            domain=self.schema.domain, records=records, schema=self.schema, cells=self.cells
+        )
+
+    def with_values(self, values: Sequence[T]) -> Series[T]:
+        """Bind observations over the authored domain."""
+        return Series(self.domain, tuple(values), schema=self.schema, cells=self.cells)
+
+    def with_nested(self, values: Any) -> Series[T]:
+        """Bind nested product values over the authored domain."""
+        return Series.from_nested(
+            domain=self.domain, values=values, schema=self.schema, cells=self.cells
+        )
+
+    def with_records(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
+        """Bind records over the authored domain."""
+        return Series.from_records(
+            domain=self.domain, records=records, schema=self.schema, cells=self.cells
+        )
+
+
+@overload
+def define_series(
+    series_id: str,
+    domain: Domain,
+    values: Sequence[T],
+    *,
+    cells: Mapping[Coordinate, str],
+    value_types: tuple[type, ...],
+    required: Domain | None = None,
+) -> Series[T]: ...
+
+
+@overload
+def define_series(
+    series_id: str,
+    domain: Domain,
+    values: None = None,
+    *,
+    cells: Mapping[Coordinate, str],
+    value_types: tuple[type, ...],
+    required: Domain | None = None,
+) -> SeriesSpec[T]: ...
+
+
+def define_series(
+    series_id: str,
+    domain: Domain,
+    values: Sequence[T] | None = None,
+    *,
+    cells: Mapping[Coordinate, str],
+    value_types: tuple[type, ...],
+    required: Domain | None = None,
+) -> Series[T] | SeriesSpec[T]:
+    """Bind a series schema, provenance, and optional default observations.
+
+    `required` defaults to `domain`. Pass it only when the required
+    coordinates are a proper subset of the authored domain.
+    """
+    schema = TensorSchema(series_id, domain if required is None else required, value_types)
+    if values is None:
+        return SeriesSpec(schema=schema, domain=domain, cells=cells)
+    return Series(domain, tuple(values), schema=schema, cells=cells)

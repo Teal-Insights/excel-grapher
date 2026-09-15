@@ -139,9 +139,7 @@ def test_text_cell_arithmetic_matches_formula_evaluator(tmp_path: Path) -> None:
         name="op_coerce_eval",
     )
     got = pkg.compute_output_row(
-        inputs=pkg.data.Inputs.from_records(
-            domain=pkg.data.INPUTS_REQUIRED, records=(((1,), "abc"), ((2,), '"'), ((3,), 4.0))
-        )
+        inputs=pkg.data.INPUTS.with_records((((1,), "abc"), ((2,), '"'), ((3,), 4.0)))
     )
     assert tuple(got[year] for year in (1, 2, 3)) == tuple(expected[cell] for cell in cells)
     assert dict(got.items()) == {(1,): "#VALUE!", (2,): "#VALUE!", (3,): 8.0}

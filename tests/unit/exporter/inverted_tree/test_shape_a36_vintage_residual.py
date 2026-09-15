@@ -197,7 +197,7 @@ def test_vintage_residual_export_matches_evaluator(tmp_path: Path) -> None:
     stock_cells = ["V!D5", "V!E5", "V!D6", "V!E6"]
     expected = _evaluator_values(workbook, [*stock_cells, "V!A10"])
     assert dict(pkg.compute_stock().items()) == pytest.approx(
-        {coordinate: expected[cell] for coordinate, cell in pkg.data.STOCK_CELLS.items()}
+        {coordinate: expected[cell] for coordinate, cell in pkg.data.STOCK.cells.items()}
     )
     result = pkg.compute_result()
     if isinstance(result, tuple):

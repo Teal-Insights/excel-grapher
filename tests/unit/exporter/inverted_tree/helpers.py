@@ -467,7 +467,7 @@ def named_input_kwargs(
             node = graph.get_node(series.cells[0])
             values[series.series_id] = None if node is None else node.value
             continue
-        domain = getattr(pkg.data, series.series_id.upper() + "_REQUIRED")
+        domain = getattr(pkg.data, series.series_id.upper()).required
         records = []
         cells = series.coordinate_cells
         for coordinate in domain:

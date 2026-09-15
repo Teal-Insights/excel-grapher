@@ -10,8 +10,11 @@ from excel_grapher.exporter.export_runtime.tensor import (
     Domain,
     DomainError,
     SchemaError,
+    Series,
+    SeriesSpec,
     Tensor,
     TensorSchema,
+    define_series,
 )
 
 
@@ -173,3 +176,56 @@ def test_domain_positions_are_shared_and_tensors_hold_only_values() -> None:
     assert second[("c1", 2000)] == 100.0
     assert first.domain is second.domain
     assert peak < 40 * len(product), peak
+
+
+def test_define_series_binds_schema_cells_and_values() -> None:
+    domain = Domain.product(years(2025, 2026, 2027))
+    cells = {(2025,): "Data!B2", (2026,): "Data!C2", (2027,): "Data!D2"}
+    series = define_series(
+        "prices",
+        domain,
+        (1.0, 2.0, 3.0),
+        cells=cells,
+        value_types=(int, float, str, type(None)),
+    )
+    assert isinstance(series, Series)
+    assert series[2026] == 2.0
+    assert series.schema.series_id == "prices"
+    assert series.required is domain
+    assert series.cells[(2027,)] == "Data!D2"
+    rebuilt = series.collect(((coord, value) for coord, value in series.items()))
+    assert rebuilt[2025] == 1.0
+    assert rebuilt.schema is series.schema
+
+
+def test_define_series_without_values_is_a_spec() -> None:
+    domain = Domain.product(years(2025, 2026))
+    spec = define_series(
+        "twice",
+        domain,
+        cells={(2025,): "Sheet!B3", (2026,): "Sheet!C3"},
+        value_types=(int, float, str, type(None)),
+    )
+    assert isinstance(spec, SeriesSpec)
+    result = spec.collect((((2025,), 2.0), ((2026,), 4.0)))
+    assert isinstance(result, Series)
+    assert result[2026] == 4.0
+    assert result.schema.domain is domain
+
+
+def test_define_series_required_may_be_narrower_than_domain() -> None:
+    domain = Domain.product(years(2025, 2026, 2027))
+    required = Domain.product(years(2026, 2027))
+    series = define_series(
+        "window",
+        domain,
+        (0.0, 1.0, 2.0),
+        cells={(2025,): "A1", (2026,): "B1", (2027,): "C1"},
+        value_types=(int, float, str, type(None)),
+        required=required,
+    )
+    assert series.domain is domain
+    assert series.required is required
+    series.schema.validate(series)
+    with pytest.raises(SchemaError, match="window"):
+        series.schema.validate(series, exact=True)

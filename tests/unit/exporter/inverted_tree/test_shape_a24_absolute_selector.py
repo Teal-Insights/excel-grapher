@@ -133,7 +133,7 @@ def test_absolute_selector_emits_identity_loop_reading_mode(tmp_path: Path) -> N
     assert "prior: float | str = mode" not in internals
     assert "prior == label_nominal" not in internals
     assert "xl_eq(mode, label_nominal)" in internals
-    assert "collect(evaluate(formula, data.SELECTED_REQUIRED))" in internals
+    assert "collect(evaluate(formula, data.SELECTED.required))" in internals
 
 
 def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:
@@ -144,10 +144,8 @@ def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(graph).evaluate(cells)
     got = pkg.compute_selected(
         mode="Nominal",
-        nominal=pkg.data.Nominal.from_nested(
-            domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
-        ),
-        other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
+        nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
+        other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
     )
     assert [value for _, value in got.items()] == pytest.approx(
         (expected["Engine!B2"], expected["Engine!C2"], expected["Engine!D2"])
@@ -165,20 +163,16 @@ def test_absolute_selector_other_branch_and_fallback(tmp_path: Path) -> None:
         value
         for _, value in pkg.compute_selected(
             mode="Other",
-            nominal=pkg.data.Nominal.from_nested(
-                domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
-            ),
-            other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
+            nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
+            other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
         ).items()
     ) == pytest.approx((1.0, 2.0, 3.0))
     assert tuple(
         value
         for _, value in pkg.compute_selected(
             mode="Neither",
-            nominal=pkg.data.Nominal.from_nested(
-                domain=pkg.data.NOMINAL_DOMAIN, values=(4.0, 5.0, 6.0)
-            ),
-            other=pkg.data.Other.from_nested(domain=pkg.data.OTHER_DOMAIN, values=(1.0, 2.0, 3.0)),
+            nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
+            other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
         ).items()
     ) == ('"', '"', '"')
 

@@ -382,9 +382,8 @@ to coordinate records — see
 from generated import as_records, compute_borvelia_primary_balance_out, data
 
 result = compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=data.BorveliaPrimaryBalance.from_records(
-        domain=data.BORVELIA_PRIMARY_BALANCE_DOMAIN,
-        records=(((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+    borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
+        (((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
     ),
 )
 records = as_records(compute_borvelia_primary_balance_out, result)

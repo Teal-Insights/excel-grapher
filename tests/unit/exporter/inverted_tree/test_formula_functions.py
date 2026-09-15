@@ -27,7 +27,7 @@ def test_series_bodies_are_coordinate_functions(tmp_path: Path) -> None:
         "    def formula(time_period: int) -> float | str | None:\n"
         "        return as_measure(xl_mul(flow[time_period], 2))\n"
         "\n"
-        "    return data.Twice.collect(evaluate(formula, data.TWICE_REQUIRED))\n"
+        "    return data.TWICE.collect(evaluate(formula, data.TWICE.required))\n"
     ) in internals
     assert "_records" not in internals
     assert "_coordinate" not in internals
@@ -39,7 +39,7 @@ def test_recurrence_readers_call_coordinate_functions(tmp_path: Path) -> None:
     modules = generate_inverted(_zipper_workbook(tmp_path), _zipper_bindings())
     internals = modules["internals.py"]
     assert "    def debt_formula(time_period: int) -> float | str | None:" in internals
-    assert "    debt = CoordinateReader('debt', data.DEBT_REQUIRED, debt_formula)" in internals
+    assert "    debt = CoordinateReader('debt', data.DEBT.required, debt_formula)" in internals
     assert "_coordinate" not in internals
     pkg = load_package(modules, tmp_path, name="formula_readers")
     got = pkg.compute_debt()

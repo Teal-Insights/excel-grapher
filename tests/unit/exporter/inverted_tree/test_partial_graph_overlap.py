@@ -294,9 +294,7 @@ def test_helper_accepts_wider_domain_and_rejects_missing_coordinates(tmp_path: P
     engine4 = pkg.internals.engine_row.__domain__
     assert len(engine4) == 4
     assert pkg.internals.engine_row(rate=rate5)[2024] == 5
-    engine5 = pkg.data.EngineRow.from_nested(
-        domain=pkg.data.ENGINE_ROW_DOMAIN, values=(2.0, 3.0, 102.0, 5.0, 6.0)
-    )
+    engine5 = pkg.data.ENGINE_ROW.with_nested((2.0, 3.0, 102.0, 5.0, 6.0))
     assert pkg.internals.result(rate=rate5, engine_row=engine5)[2023] == 3
     missing = pkg.Tensor.from_nested(
         domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2021, 2022, 2024), int)),
@@ -314,7 +312,7 @@ def test_helper_documents_named_coordinate_contract(tmp_path: Path) -> None:
         modules = _emit_from_outputs(workbook, _year_document())
     internals = modules["internals.py"]
     assert "coordinate identities" in internals
-    assert "@publish(data.ENGINE_ROW_SCHEMA, cells=data.ENGINE_ROW_CELLS)" in internals
+    assert "@publish(data.ENGINE_ROW.schema, cells=data.ENGINE_ROW.cells)" in internals
     assert "rate[time_period]" in internals
 
 
@@ -451,7 +449,7 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="matrix_blank")
-    assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
+    assert pkg.data.PROFILE_TABLE.cells[("France", 2021)] == "Profile!C2"
     helper = pkg.internals.profile_table
     assert tuple(helper.__domain__) == (
         ("France", 2020),
@@ -459,7 +457,7 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
         ("Kenya", 2020),
         ("Kenya", 2021),
     )
-    assert len(pkg.data.PROFILE_TABLE_DOMAIN) == 4
+    assert len(pkg.data.PROFILE_TABLE.domain) == 4
     got = helper()
     assert got["France", 2020] == pytest.approx(1.0)
     assert got["France", 2021] is None
@@ -486,10 +484,10 @@ def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> Non
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="matrix_off_closure")
-    assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
+    assert pkg.data.PROFILE_TABLE.cells[("France", 2021)] == "Profile!C2"
     got = pkg.internals.profile_table()
     assert got["France", 2020] == pytest.approx(1.0)
-    assert len(pkg.data.PROFILE_TABLE_DOMAIN) == 4
+    assert len(pkg.data.PROFILE_TABLE.domain) == 4
     assert len(got.domain) == 1
     assert got["France", 2021] is None
 
@@ -576,7 +574,7 @@ def test_matrix_unreferenced_literal_is_embedded(tmp_path: Path) -> None:
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="matrix_unref_literal")
     got = pkg.internals.profile_table()
-    assert pkg.data.PROFILE_TABLE_CELLS[("France", 2021)] == "Profile!C2"
+    assert pkg.data.PROFILE_TABLE.cells[("France", 2021)] == "Profile!C2"
     assert got["France", 2021] is None
 
 
