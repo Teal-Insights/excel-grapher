@@ -537,6 +537,6 @@ def test_emit_named_data_binds_required_coordinates_once(
     monkeypatch.setattr(BoundSeries, "required_coordinates", property(counting))
     workbook = write_workbook(tmp_path / "issue_830.xlsx", {"Debt": {"A1": 0}})
     data = emit_named_data(catalog, workbook, named_axes, {})
-    assert f"{series.series_id.upper()}_REQUIRED" in data
+    assert "define_series(" in data
     assert accesses["n"] < n, accesses
     assert accesses["n"] <= 2, accesses

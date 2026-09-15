@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import product
 from typing import TYPE_CHECKING, Any, cast
@@ -38,6 +38,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     SeriesCatalog,
     Statement,
     covering_series,
+    fit_affine_map,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
     PositionalRangeCell,
@@ -56,11 +57,15 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.named_axes import is_subsequence, layout_keys_source
+from excel_grapher.exporter.inverted_tree.named_axes import (
+    NamedAxes,
+    is_subsequence,
+    layout_keys_source,
+    python_identifier,
+)
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
 
 if TYPE_CHECKING:
-    from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes
     from excel_grapher.grapher.graph import DependencyGraph
 
 _ARITHMETIC_HELPERS = {
@@ -125,6 +130,7 @@ class EmitContext:
     blank_rects: tuple[BlankRangeRect, ...] = field(default_factory=current_blank_rects)
     array_context: bool = False
     named_axes: NamedAxes | None = None
+    key_remaps: dict[str, dict[object, object]] = field(default_factory=dict)
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -400,6 +406,119 @@ def _string_driver(
     return ranked[0][1]
 
 
+_UNSET = object()
+_NON_SLOT_ACCESS = frozenset({"whole", "dynamic"})
+
+
+def _lockstep_producer_slots(ctx: EmitContext, producer: BoundSeries) -> dict[int, int] | None:
+    """Host catalog index -> producer index for a lockstep single-slot walk.
+
+    Each host member that reads `producer` must read exactly one slot, and
+    those slots must lie on `prod = host + offset` so the pairing is the
+    host walk, not a mixed neighbor or permutation.
+    """
+    per_host: dict[int, set[int]] = {}
+    for edge in ctx.deps.edges:
+        if edge.producer_id != producer.series_id or edge.consumer_id != ctx.host.series_id:
+            continue
+        if edge.access in _NON_SLOT_ACCESS:
+            continue
+        host_index = ctx.host.index_of(edge.consumer_cell)
+        producer_index = producer.index_of(edge.producer_cell)
+        if host_index is None or producer_index is None:
+            continue
+        per_host.setdefault(host_index, set()).add(producer_index)
+    if not per_host or any(len(indices) != 1 for indices in per_host.values()):
+        return None
+    slots = {host_index: next(iter(indices)) for host_index, indices in per_host.items()}
+    fitted = fit_affine_map(list(slots.items()))
+    if fitted is None or fitted[0] != 1:
+        return None
+    return slots
+
+
+def _lockstep_string_map(
+    ctx: EmitContext,
+    producer: BoundSeries,
+    producer_field: str,
+    slots: Mapping[int, int],
+    host_field: str,
+) -> dict[object, object] | None:
+    """Return host_field -> producer_field values when that pairing is a function."""
+    mapping: dict[object, object] = {}
+    for host_index in sorted(slots):
+        producer_index = slots[host_index]
+        if host_index >= len(ctx.host.domain) or producer_index >= len(producer.domain):
+            return None
+        try:
+            host_value = ctx.host.domain[host_index][host_field]
+            producer_value = producer.domain[producer_index][producer_field]
+        except KeyError:
+            return None
+        if type(host_value) is not str or type(producer_value) is not str:
+            return None
+        existing = mapping.get(host_value, _UNSET)
+        if existing is not _UNSET and existing != producer_value:
+            return None
+        mapping[host_value] = producer_value
+    if len(mapping) < 2 or all(source == target for source, target in mapping.items()):
+        return None
+    return mapping
+
+
+def _remap_constant_name(host_field: str, producer_id: str, producer_field: str) -> str:
+    """Name a host-key -> producer-key dict for generated formula bodies."""
+    host_part = python_identifier(host_field.upper())
+    producer_part = python_identifier(producer_id.upper())
+    if host_field == producer_field:
+        return f"{host_part}_TO_{producer_part}"
+    return f"{host_part}_TO_{producer_part}_{python_identifier(producer_field.upper())}"
+
+
+def _string_follow_expr(
+    ctx: EmitContext, owner: BoundSeries, key_field: str, target: str
+) -> str | None:
+    """A dict lookup when `target` is a lockstep function of a host string key.
+
+    Equality and templates already cover the same spelling and an embedded
+    host label. A lockstep walk whose producer labels are a different
+    vocabulary of a host key is that pairing as a dict, so formula families
+    collapse instead of branching on the host coordinate.
+    """
+    from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
+
+    if not ctx.coordinate_vars:
+        return None
+    slots = _lockstep_producer_slots(ctx, owner)
+    if slots is None or ctx.host_index not in slots:
+        return None
+    host_point = ctx.host.domain[ctx.host_index].as_mapping()
+    field_axis = _key_field_axis(owner, key_field)
+    ranked: list[tuple[str, str, dict[object, object]]] = []
+    for host_field, variable in ctx.coordinate_vars.items():
+        if type(host_point.get(host_field)) is not str:
+            continue
+        mapping = _lockstep_string_map(ctx, owner, key_field, slots, host_field)
+        if mapping is None or mapping.get(host_point[host_field]) != target:
+            continue
+        ranked.append((host_field, variable, mapping))
+    if not ranked:
+        return None
+    ranked.sort(
+        key=lambda item: (
+            item[0] != key_field,
+            _key_field_axis(ctx.host, item[0]) != field_axis,
+        )
+    )
+    host_field, variable, mapping = ranked[0]
+    name = _remap_constant_name(host_field, owner.series_id, key_field)
+    existing = ctx.key_remaps.get(name)
+    if existing is not None and existing != mapping:
+        return None
+    ctx.key_remaps[name] = mapping
+    return f"{name}[{variable}]"
+
+
 def _key_template(target: str, ctx: EmitContext) -> str | None:
     """An f-string over a host key embedded in the label `target`."""
     host_point = ctx.host.domain[ctx.host_index].as_mapping()
@@ -435,9 +554,10 @@ def _named_keys(
     the authored difference; formula-family grouping then verifies the same
     difference at every coordinate sharing the expression. A `$` pin onto
     this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
-    across vintages. Other fixed references stay literal. A label that
-    embeds the host's own key is a template over it; exact string equality
-    is pass-through, not a template.
+    across vintages. Other fixed references stay literal. A lockstep walk
+    whose producer string keys are a function of a host key is that
+    function as a dict. A label that embeds the host's own key is a
+    template over it; exact string equality is pass-through, not a template.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -465,6 +585,15 @@ def _named_keys(
         if field_axis in pinned:
             keys.append(repr(target))
             continue
+        if isinstance(target, str):
+            template = _key_template(target, ctx)
+            if template is not None:
+                keys.append(template)
+                continue
+            follow = _string_follow_expr(ctx, owner, key_field, target)
+            if follow is not None:
+                keys.append(follow)
+                continue
         if variable is not None and current == target:
             keys.append(variable)
             continue
@@ -480,10 +609,6 @@ def _named_keys(
             driver = _string_driver(ctx, key_field, field_axis, target)
             if driver is not None:
                 keys.append(driver)
-                continue
-            template = _key_template(target, ctx)
-            if template is not None:
-                keys.append(template)
                 continue
         keys.append(repr(target))
     return keys
@@ -804,20 +929,34 @@ def _group_positional_rows(
 
 
 def _positional_table_source(cells: Sequence[PositionalRangeCell], ctx: EmitContext) -> str:
-    """Emit an irregular range as a table of per-cell callbacks.
+    """Emit a lookup rectangle as strips of views, else per-cell callbacks.
 
-    Cells are read by literal coordinate so the table never depends on the
-    host loop variable and can be built once per call.
+    Consecutive worksheet rows that share the same series layout collapse
+    into one strip whose parts are views over those blocks. Cells are read
+    by literal coordinate so the table never depends on the host loop
+    variable and can be built once per call.
     """
     rows = _group_positional_rows(cells)
     table_ctx = replace(ctx, coordinate_vars={})
-    callbacks = _python_tuple([_python_tuple(_table_row_parts(row, table_ctx)) for row in rows])
+    part_rows = [_table_row_parts(row, table_ctx) for row in rows]
+    strips = _collapse_table_strips(part_rows, table_ctx)
+    callbacks = _python_tuple([_python_tuple(strip) for strip in strips])
     return f"{ctx.use('lazy_table')}({callbacks})"
 
 
-def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> list[str]:
+@dataclass(frozen=True, slots=True)
+class _TableRowPart:
+    """One lazy_table part: a cell callback or a view of one series run."""
+
+    source: str
+    series_id: str | None
+    start: CanonicalAddress
+    end: CanonicalAddress
+
+
+def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> list[_TableRowPart]:
     """One view per run of a series' cells in a table row, callbacks elsewhere."""
-    parts: list[str] = []
+    parts: list[_TableRowPart] = []
     index = 0
     while index < len(row):
         cell = row[index]
@@ -833,12 +972,69 @@ def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> li
         if end > index:
             view = _named_range_view(RangeNode(cell.address, row[end].address), ctx)
         if view is not None:
-            parts.append(view)
+            parts.append(_TableRowPart(view, cell.series_id, cell.address, row[end].address))
             index = end + 1
             continue
-        parts.append(f"lambda: {_emit_positional_cell(cell, ctx)}")
+        parts.append(
+            _TableRowPart(
+                f"lambda: {_emit_positional_cell(cell, ctx)}",
+                cell.series_id,
+                cell.address,
+                cell.address,
+            )
+        )
         index += 1
     return parts
+
+
+def _part_schema(part: _TableRowPart) -> tuple[str | None, str, int, int]:
+    start_sheet, _start_row, start_col = parse_cell_coords(part.start)
+    end_sheet, _end_row, end_col = parse_cell_coords(part.end)
+    sheet = start_sheet if start_sheet == end_sheet else ""
+    return (part.series_id, sheet, start_col, end_col)
+
+
+def _compatible_table_rows(left: Sequence[_TableRowPart], right: Sequence[_TableRowPart]) -> bool:
+    if len(left) != len(right):
+        return False
+    return all(
+        a.series_id is not None and _part_schema(a) == _part_schema(b)
+        for a, b in zip(left, right, strict=True)
+    )
+
+
+def _collapse_compatible_rows(
+    rows: Sequence[Sequence[_TableRowPart]], ctx: EmitContext
+) -> list[str] | None:
+    sources: list[str] = []
+    for column in range(len(rows[0])):
+        view = _named_range_view(RangeNode(rows[0][column].start, rows[-1][column].end), ctx)
+        if view is None:
+            return None
+        sources.append(view)
+    return sources
+
+
+def _collapse_table_strips(
+    part_rows: Sequence[Sequence[_TableRowPart]], ctx: EmitContext
+) -> list[list[str]]:
+    """Collapse consecutive same-layout rows into one strip of block views."""
+    strips: list[list[str]] = []
+    index = 0
+    while index < len(part_rows):
+        end = index
+        while end + 1 < len(part_rows) and _compatible_table_rows(
+            part_rows[index], part_rows[end + 1]
+        ):
+            end += 1
+        group = part_rows[index : end + 1]
+        collapsed = _collapse_compatible_rows(group, ctx) if len(group) > 1 else None
+        if collapsed is not None:
+            strips.append(collapsed)
+        else:
+            strips.extend([[part.source for part in row] for row in group])
+        index = end + 1
+    return strips
 
 
 def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:

@@ -405,16 +405,15 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 
 Package `compute_*` functions take named tensors (or scalars) and return tensors
 or scalars. Use `as_records(compute, result)` for a tidy `list[dict]` view.
-Build or overlay input tensors with generated `from_records` helpers (or
-`data.py` defaults). See `examples/micro_workbooks/setter_dataframe_example.py`
+Build or overlay input tensors with `with_records` on the `data.py` binding (or
+use the workbook defaults). See `examples/micro_workbooks/setter_dataframe_example.py`
 (single-key updates) and `examples/micro_workbooks/matrix_dataframe_example.py`
 (matrix).
 
 ```python
 result = compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=BorveliaPrimaryBalance.from_records(
-        domain=BORVELIA_PRIMARY_BALANCE_DOMAIN,
-        records=(((1,), -2.0), ((2,), -1.0), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+    borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
+        (((1,), -2.0), ((2,), -1.0), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
     ),
 )
 records = as_records(compute_borvelia_primary_balance_out, result)
@@ -434,7 +433,7 @@ columns used to build a tensor.
 
 ### Wide grids → tidy records
 
-Convert wide Excel-shaped grids to long/tidy tables before `from_records`:
+Convert wide Excel-shaped grids to long/tidy tables before `with_records`:
 
 ```python
 # Single-key series: periods across columns, one indicator row
@@ -539,7 +538,7 @@ series:
       - TIME_PERIOD
 ```
 
-Package `compute_*` takes a named matrix tensor. Build it with `from_records` or overlay
+Package `compute_*` takes a named matrix tensor. Build it with `with_records` or overlay
 `data.py` defaults — see `examples/micro_workbooks/matrix_dataframe_example.py`.
 
 ## Grouped-row matrix geometry (1.5.0)

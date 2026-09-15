@@ -81,18 +81,16 @@ def test_public_codegen_requires_labels_and_returns_tensor(tmp_path: Path) -> No
             series_bindings=validate_bindings_document(document), bindings_workbook=workbook
         )
     package = load_package(modules, tmp_path, name="named_public")
-    assert package.data.SRC_DOMAIN is package.data.OUT_DOMAIN
+    assert package.data.SRC.domain is package.data.OUT.domain
     assert CodeGenerator.representation_version == package.data.CODEGEN_SCHEMA_VERSION
-    tensor = package.data.Src.from_records(
-        domain=package.data.SRC_DOMAIN, records=(((2026,), 7.0), ((2025,), 5.0))
-    )
+    tensor = package.data.SRC.with_records((((2026,), 7.0), ((2025,), 5.0)))
     result = package.compute_out(src=tensor)
     assert package.compute_out.__cells__ == {(2025,): "Sheet1!B3", (2026,): "Sheet1!C3"}
     with pytest.raises(TypeError):
         package.compute_out.__cells__[(2025,)] = "Sheet1!A1"
     assert result[2025] == 10
     assert result[2026] == 14
-    assert isinstance(result, package.data.Out)
+    assert isinstance(result, package.Series)
     with pytest.raises(ValueError, match="src.*Tensor"):
         package.compute_out(src=(5, 7))
     wrong = package.Tensor.from_nested(
@@ -100,7 +98,7 @@ def test_public_codegen_requires_labels_and_returns_tensor(tmp_path: Path) -> No
     )
     with pytest.raises(ValueError, match="src.*2025"):
         package.compute_out(src=wrong)
-    assert "Tensor" in modules["data.py"]
+    assert "Series" in modules["data.py"]
     assert "src[time_period]" in modules["internals.py"]
     assert package.internals.out(src=tensor)[2026] == 14
     assert package.as_records(package.compute_out, result) == [
@@ -144,7 +142,7 @@ def test_input_projection_does_not_require_off_graph_coordinates(tmp_path: Path)
             series_bindings=validate_bindings_document(document), bindings_workbook=workbook
         )
     package = load_package(modules, tmp_path, name="named_projection")
-    assert tuple(package.data.SRC_DOMAIN) == ((2025,), (2026,), (2027,))
+    assert tuple(package.data.SRC.domain) == ((2025,), (2026,), (2027,))
     assert not hasattr(package.data, "UNUSED_DEFAULT")
     assert package.data.SRC_DEFAULT[2025] == 3
     assert package.data.SRC_DEFAULT[2027] == 5
@@ -272,7 +270,8 @@ def test_generated_default_distinguishes_blank_and_zero(tmp_path: Path) -> None:
     assert package.data.SRC_DEFAULT[2026] == 0
     assert package.compute_out(src=package.data.SRC_DEFAULT) == 0
     assert "data.Src" in modules["api.py"]
-    assert "class Src(Series[float | str | None]):" in modules["data.py"]
+    assert "Src = Series[" in modules["data.py"]
+    assert "class Src" not in modules["data.py"]
 
 
 def test_numeric_input_retains_supplied_boolean_comparison_semantics(tmp_path: Path) -> None:
@@ -290,7 +289,7 @@ def test_numeric_input_retains_supplied_boolean_comparison_semantics(tmp_path: P
         generate_inverted(workbook, document), tmp_path, name="named_bool_measure"
     )
     supplied = package.Tensor.from_records(
-        domain=package.data.SRC_DOMAIN, records=(((2025,), True),)
+        domain=package.data.SRC.domain, records=(((2025,), True),)
     )
     assert package.compute_out(src=supplied) == 1.0
 
@@ -310,7 +309,7 @@ def test_generated_schema_preserves_excel_error_values(tmp_path: Path, dtype: st
         )
     package = load_package(modules, tmp_path, name=f"named_error_{dtype}")
     assert package.compute_out()[2025] == "#DIV/0!"
-    assert "str" in str(package.data.Out.__orig_bases__[0])
+    assert "str" in str(package.data.Out)
 
 
 def test_package_generation_requires_bindings() -> None:

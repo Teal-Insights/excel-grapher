@@ -30,7 +30,7 @@ _PREFIX_LEN = 6
 
 def _source(pkg, name, values):
     return pkg.Tensor.from_records(
-        domain=getattr(pkg.data, name.upper() + "_DOMAIN"),
+        domain=getattr(pkg.data, name.upper()).domain,
         records=zip(((2020,), (2021,), (2022,)), values, strict=True),
     )
 

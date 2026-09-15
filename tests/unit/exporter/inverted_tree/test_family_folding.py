@@ -6,7 +6,9 @@ vintage stays put while the host period slides is one `span`, not a
 `TIME_PERIOD` if-ladder. An integer key of another axis that moves with the
 host period is the period variable plus a difference. A string producer key
 equal to a host coordinate is that host variable even when the field names
-differ. A label key that embeds the host's own key is a template over it.
+differ. A lockstep walk whose producer string keys are a function of a host
+key is that function as a dict, not a host-key if-ladder. A label key that
+embeds the host's own key is a template over it.
 """
 
 from __future__ import annotations
@@ -583,3 +585,108 @@ def test_string_key_unequal_to_host_stays_literal(tmp_path: Path) -> None:
     assert years["1 Year"] == 2
     assert years["2 Year"] == 1
     assert years["10 Year"] == 1
+
+
+_ISO3_CODES = ("BGD", "BEN", "BTN")
+_COUNTRY_NAMES = ("Bangladesh", "Benin", "Bhutan")
+_IFS_VALUES = (513.0, 638.0, 514.0)
+
+
+def _iso3_remap_workbook(tmp_path: Path, *, formulas: tuple[str, str, str]) -> Path:
+    """Catalog of country names with a host series keyed by ISO3 codes."""
+    cells: dict[str, object] = {
+        "A1": "country",
+        "B1": "ifs",
+        "D1": "iso3",
+        "E1": "ifs",
+    }
+    for row, (name, value, code, formula) in enumerate(
+        zip(_COUNTRY_NAMES, _IFS_VALUES, _ISO3_CODES, formulas, strict=True),
+        start=2,
+    ):
+        cells[f"A{row}"] = name
+        cells[f"B{row}"] = value
+        cells[f"D{row}"] = code
+        cells[f"E{row}"] = formula
+    return write_workbook(tmp_path / "iso3_remap.xlsx", {"Data": cells})
+
+
+def _iso3_remap_bindings(*, catalog_key: str, host_key: str) -> dict[str, Any]:
+    document = bindings_document(
+        series_entry(
+            "catalog_ifs",
+            "Data!B2:B4",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept=catalog_key,
+            key_read="string",
+        ),
+        series_entry(
+            "trigger_ifs",
+            "Data!E2:E4",
+            layout="series",
+            direction="output",
+            label_column="D",
+            key_concept=host_key,
+            key_read="string",
+        ),
+        schema_version="1.16.0",
+    )
+    for field in (catalog_key, host_key, "REF_AREA"):
+        if field not in {concept["id"] for concept in document["concept_scheme"]["concepts"]}:
+            document["concept_scheme"]["concepts"].append({"id": field, "dtype": "string"})
+    return document
+
+
+def _assert_iso3_remap_is_one_family(
+    tmp_path: Path, *, catalog_key: str, host_key: str, name: str
+) -> None:
+    """Lockstep ISO3/name pairing is one dict lookup, not a host-key if-ladder."""
+    workbook = _iso3_remap_workbook(tmp_path, formulas=("=B2", "=B3", "=B4"))
+    document = _iso3_remap_bindings(catalog_key=catalog_key, host_key=host_key)
+    internals = generate_inverted(workbook, document)["internals.py"]
+    host_var = host_key.lower()
+    assert not re.search(rf"if {host_var} ==", internals)
+    assert "catalog_ifs['Bangladesh']" not in internals
+    assert "catalog_ifs['Benin']" not in internals
+    assert "catalog_ifs['Bhutan']" not in internals
+    assert re.search(rf"catalog_ifs\[\w+\[{host_var}\]\]", internals)
+    for code, country in zip(_ISO3_CODES, _COUNTRY_NAMES, strict=True):
+        assert repr(code) in internals
+        assert repr(country) in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
+    result = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    for code, value in zip(_ISO3_CODES, _IFS_VALUES, strict=True):
+        assert result[code] == value
+
+
+def test_aligned_string_key_remap_is_one_family(tmp_path: Path) -> None:
+    """Same-concept ISO3 and name vocabularies join through a dict (#851)."""
+    _assert_iso3_remap_is_one_family(
+        tmp_path, catalog_key="REF_AREA", host_key="REF_AREA", name="iso3_same_field"
+    )
+
+
+def test_aligned_string_key_remap_across_field_names_is_one_family(tmp_path: Path) -> None:
+    """Lockstep pairing does not require the producer field to share the host id."""
+    _assert_iso3_remap_is_one_family(
+        tmp_path, catalog_key="COUNTRY", host_key="REF_AREA", name="iso3_mismatch"
+    )
+
+
+def test_neighbor_string_key_is_not_a_host_key_remap(tmp_path: Path) -> None:
+    """A mixed reference to a neighboring row stays a literal, not a remap."""
+    workbook = _iso3_remap_workbook(tmp_path, formulas=("=B3", "=B4", "=B2"))
+    document = _iso3_remap_bindings(catalog_key="REF_AREA", host_key="REF_AREA")
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert re.search(r"if ref_area ==", internals)
+    assert "catalog_ifs['Benin']" in internals
+    assert "catalog_ifs['Bhutan']" in internals
+    assert "catalog_ifs['Bangladesh']" in internals
+    assert re.search(r"catalog_ifs\[\w+\[ref_area\]\]", internals) is None
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_neighbor")
+    result = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    assert result["BGD"] == 638.0
+    assert result["BEN"] == 514.0
+    assert result["BTN"] == 513.0

@@ -26,38 +26,57 @@ TablePart = Callable[[], object] | Range
 def lazy_table(rows: tuple[tuple[TablePart, ...], ...]) -> Range:
     """Expose a formula table without evaluating cells a lookup does not select.
 
-    Each row lists cell callbacks and one-row views side by side; a view
-    contributes its columns in place, so a run of one series' cells is one
-    part instead of one callback per cell.
+    Each tuple is a horizontal strip of cell callbacks and views. Parts in a
+    strip share height; a view contributes its shape in place, so a
+    rectangular run of one series is one part instead of one callback per
+    cell. Strips stack vertically and share the table width.
     """
-    layout: list[list[tuple[int, TablePart]]] = []
+    strips: list[tuple[int, int, list[tuple[int, TablePart]]]] = []
     width: int | None = None
-    for row in rows:
+    top = 1
+    for strip in rows:
         parts: list[tuple[int, TablePart]] = []
         column = 0
-        for part in row:
-            parts.append((column, part))
+        height: int | None = None
+        for part in strip:
             if isinstance(part, Range):
-                if part.shape[0] != 1:
-                    raise ValueError("table rows accept one-row views")
-                column += part.shape[1]
+                part_height, part_width = part.shape
+                if height is None:
+                    height = part_height
+                elif height != part_height:
+                    raise ValueError(
+                        f"table strip parts differ in height: {height} and {part_height}"
+                    )
+                parts.append((column, part))
+                column += part_width
             else:
+                if height is None:
+                    height = 1
+                elif height != 1:
+                    raise ValueError(f"table strip parts differ in height: {height} and 1")
+                parts.append((column, part))
                 column += 1
+        height = height or 1
         if width is None:
             width = column
         elif width != column:
             raise ValueError(f"table rows differ in width: {width} and {column}")
-        layout.append(parts)
+        strips.append((top, height, parts))
+        top += height
 
     def resolve(row: int, column: int) -> FormulaValue:
-        for start, part in reversed(layout[row - 1]):
-            if column - 1 >= start:
-                if isinstance(part, Range):
-                    return part.cell(1, column - start)
-                return cast(FormulaValue, part())
-        raise IndexError(column)
+        for start_row, height, parts in strips:
+            if start_row <= row < start_row + height:
+                local_row = row - start_row + 1
+                for start, part in reversed(parts):
+                    if column - 1 >= start:
+                        if isinstance(part, Range):
+                            return part.cell(local_row, column - start)
+                        return cast(FormulaValue, part())
+                raise IndexError(column)
+        raise IndexError(row)
 
-    return Range("", 1, 1, len(rows), width or 1, lambda address: None, _coord_resolver=resolve)
+    return Range("", 1, 1, top - 1 or 1, width or 1, lambda address: None, _coord_resolver=resolve)
 
 
 class KeyedCompute(Protocol):

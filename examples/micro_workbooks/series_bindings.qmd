@@ -245,9 +245,8 @@ Supply explicit period coordinates (1..5 here). Convert a tidy DataFrame to coor
 from generated import as_records, compute_borvelia_primary_balance_out, data
 
 result = compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=data.BorveliaPrimaryBalance.from_records(
-        domain=data.BORVELIA_PRIMARY_BALANCE_DOMAIN,
-        records=(((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+    borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
+        (((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
     ),
 )
 records = as_records(compute_borvelia_primary_balance_out, result)
@@ -281,9 +280,8 @@ def records_markdown_table(records: list[dict[str, object]]) -> str:
 
 
 result = exported.compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=exported.data.BorveliaPrimaryBalance.from_records(
-        domain=exported.data.BORVELIA_PRIMARY_BALANCE_DOMAIN,
-        records=(((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+    borvelia_primary_balance=exported.data.BORVELIA_PRIMARY_BALANCE.with_records(
+        (((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
     ),
 )
 records = exported.as_records(exported.compute_borvelia_primary_balance_out, result)

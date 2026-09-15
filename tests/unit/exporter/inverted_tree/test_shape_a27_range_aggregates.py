@@ -92,9 +92,7 @@ def test_sum_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     assert "xl_sum(" in modules["internals.py"]
     assert "def xl_sum" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_emit")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.5, 2.5))
-    ) == pytest.approx(4.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.5, 2.5))) == pytest.approx(4.0)
 
 
 def test_sum_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
@@ -125,9 +123,7 @@ def test_sum_of_series_window_takes_only_the_range(tmp_path: Path) -> None:
     assert "view(src, cols=span(data.TIME_PERIOD_AXIS, 2024, 2025))" in modules["internals.py"]
     assert "2026" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_window")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0, 100.0))
-    ) == pytest.approx(3.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0, 100.0))) == pytest.approx(3.0)
     _package_matches_output(tmp_path, workbook, document, "a27_sum_window_eval", "Outputs!Z1")
 
 
@@ -156,8 +152,8 @@ def test_sumproduct_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
     assert "def xl_sumproduct" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sumproduct")
     assert pkg.compute_out(
-        left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 2.0)),
-        right=pkg.data.Right.from_nested(domain=pkg.data.RIGHT_DOMAIN, values=(3.0, 4.0)),
+        left=pkg.data.LEFT.with_nested((1.0, 2.0)),
+        right=pkg.data.RIGHT.with_nested((3.0, 4.0)),
     ) == pytest.approx(11.0)
     _package_matches_output(tmp_path, workbook, document, "a27_sumproduct_eval", "Outputs!Z1")
 
@@ -183,9 +179,7 @@ def test_sum_whole_column_matches_evaluator(tmp_path: Path) -> None:
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_whole_col")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0))
-    ) == pytest.approx(3.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(3.0)
     _package_matches_output(tmp_path, workbook, document, "a27_whole_col_eval", "Outputs!Z1")
 
 
@@ -202,9 +196,7 @@ def test_sum_whole_row_matches_evaluator(tmp_path: Path) -> None:
         },
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_whole_row")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0))
-    ) == pytest.approx(3.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(3.0)
     _package_matches_output(tmp_path, workbook, document, "a27_whole_row_eval", "Outputs!Z1")
 
 
@@ -292,12 +284,8 @@ def test_sum_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     assert "xl_if(" in modules["internals.py"]
     assert "def xl_if" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_if_emit")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-    ) == pytest.approx(2.0)
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0))
-    ) == pytest.approx(3.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(3.0)
 
 
 def test_sum_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
@@ -342,9 +330,9 @@ def test_sum_if_then_else_ranges_match_evaluator(tmp_path: Path) -> None:
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_else")
     assert pkg.compute_out(
-        flag=pkg.data.Flag.from_nested(domain=pkg.data.FLAG_DOMAIN, values=(-1.0, 2.0)),
-        then_s=pkg.data.ThenS.from_nested(domain=pkg.data.THEN_S_DOMAIN, values=(10.0, 20.0)),
-        else_s=pkg.data.ElseS.from_nested(domain=pkg.data.ELSE_S_DOMAIN, values=(100.0, 200.0)),
+        flag=pkg.data.FLAG.with_nested((-1.0, 2.0)),
+        then_s=pkg.data.THEN_S.with_nested((10.0, 20.0)),
+        else_s=pkg.data.ELSE_S.with_nested((100.0, 200.0)),
     ) == pytest.approx(120.0)
     _package_matches_output(tmp_path, workbook, document, "a27_sum_if_else_eval", "Outputs!Z1")
 
@@ -388,13 +376,13 @@ def test_sum_if_scalar_else_and_nested_if_match_evaluator(tmp_path: Path) -> Non
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_nested")
     assert pkg.compute_out_else(
-        flag=pkg.data.Flag.from_nested(domain=pkg.data.FLAG_DOMAIN, values=(-1.0, 2.0)),
-        then_s=pkg.data.ThenS.from_nested(domain=pkg.data.THEN_S_DOMAIN, values=(10.0, 20.0)),
+        flag=pkg.data.FLAG.with_nested((-1.0, 2.0)),
+        then_s=pkg.data.THEN_S.with_nested((10.0, 20.0)),
     ) == pytest.approx(20.0)
     assert pkg.compute_out_nest(
-        flag=pkg.data.Flag.from_nested(domain=pkg.data.FLAG_DOMAIN, values=(-1.0, 2.0)),
-        then_s=pkg.data.ThenS.from_nested(domain=pkg.data.THEN_S_DOMAIN, values=(10.0, 20.0)),
-        else_s=pkg.data.ElseS.from_nested(domain=pkg.data.ELSE_S_DOMAIN, values=(100.0, 200.0)),
+        flag=pkg.data.FLAG.with_nested((-1.0, 2.0)),
+        then_s=pkg.data.THEN_S.with_nested((10.0, 20.0)),
+        else_s=pkg.data.ELSE_S.with_nested((100.0, 200.0)),
     ) == pytest.approx(200.0)
     _package_matches_output(
         tmp_path, workbook, document, "a27_sum_if_nested_eval", "Outputs!Z1", pkg=pkg
@@ -431,8 +419,8 @@ def test_sum_if_2d_range_matches_evaluator(tmp_path: Path) -> None:
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_2d")
     assert pkg.compute_out(
-        left=pkg.data.Left.from_nested(domain=pkg.data.LEFT_DOMAIN, values=(1.0, 3.0)),
-        right=pkg.data.Right.from_nested(domain=pkg.data.RIGHT_DOMAIN, values=(-2.0, 4.0)),
+        left=pkg.data.LEFT.with_nested((1.0, 3.0)),
+        right=pkg.data.RIGHT.with_nested((-2.0, 4.0)),
     ) == pytest.approx(8.0)
     _package_matches_output(tmp_path, workbook, document, "a27_sum_if_2d_eval", "Outputs!Z1")
 
@@ -468,8 +456,8 @@ def test_sum_if_broadcast_scalar_equals_matches_evaluator(tmp_path: Path) -> Non
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_sum_if_eq")
     assert pkg.compute_out(
-        flag=pkg.data.Flag.from_nested(domain=pkg.data.FLAG_DOMAIN, values=(-1.0, 2.0)),
-        then_s=pkg.data.ThenS.from_nested(domain=pkg.data.THEN_S_DOMAIN, values=(10.0, 20.0)),
+        flag=pkg.data.FLAG.with_nested((-1.0, 2.0)),
+        then_s=pkg.data.THEN_S.with_nested((10.0, 20.0)),
         needle=2.0,
     ) == pytest.approx(20.0)
     _package_matches_output(tmp_path, workbook, document, "a27_sum_if_eq_eval", "Outputs!Z1")
@@ -502,9 +490,7 @@ def test_sum_if_window_of_longer_series_matches_evaluator(tmp_path: Path) -> Non
     modules = generate_inverted(workbook, document)
     assert "src[3]" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_if_window")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0, 100.0))
-    ) == pytest.approx(2.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0, 100.0))) == pytest.approx(2.0)
     _package_matches_output(tmp_path, workbook, document, "a27_sum_if_window_eval", "Outputs!Z1")
 
 
@@ -532,12 +518,8 @@ def test_sumproduct_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> N
     assert "xl_if(" in modules["internals.py"]
     assert "xl_sumproduct(" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a27_sumproduct_if_emit")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-    ) == pytest.approx(2.0)
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0))
-    ) == pytest.approx(3.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(3.0)
 
 
 def test_sumproduct_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
@@ -595,12 +577,8 @@ def test_average_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None
     assert "def xl_average" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_average_if_emit")
     # Omitted else is FALSE; AVERAGE skips logicals, so only the matching 2.0.
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-    ) == pytest.approx(2.0)
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 2.0))
-    ) == pytest.approx(1.5)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(1.5)
 
 
 def test_average_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
@@ -617,12 +595,8 @@ def test_max_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     assert "xl_max(" in modules["internals.py"]
     assert "def xl_max" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_max_if_emit")
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(-1.0, 2.0))
-    ) == pytest.approx(2.0)
-    assert pkg.compute_out(
-        src=pkg.data.Src.from_nested(domain=pkg.data.SRC_DOMAIN, values=(1.0, 4.0))
-    ) == pytest.approx(4.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
+    assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 4.0))) == pytest.approx(4.0)
 
 
 def test_max_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
@@ -667,9 +641,9 @@ def test_average_if_then_else_ranges_match_evaluator(tmp_path: Path) -> None:
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_average_if_else")
     assert pkg.compute_out(
-        flag=pkg.data.Flag.from_nested(domain=pkg.data.FLAG_DOMAIN, values=(-1.0, 2.0)),
-        then_s=pkg.data.ThenS.from_nested(domain=pkg.data.THEN_S_DOMAIN, values=(10.0, 20.0)),
-        else_s=pkg.data.ElseS.from_nested(domain=pkg.data.ELSE_S_DOMAIN, values=(100.0, 200.0)),
+        flag=pkg.data.FLAG.with_nested((-1.0, 2.0)),
+        then_s=pkg.data.THEN_S.with_nested((10.0, 20.0)),
+        else_s=pkg.data.ELSE_S.with_nested((100.0, 200.0)),
     ) == pytest.approx(60.0)
     _package_matches_output(tmp_path, workbook, document, "a27_average_if_else_eval", "Outputs!Z1")
 
@@ -704,8 +678,8 @@ def test_max_if_negative_then_skips_omitted_else(tmp_path: Path) -> None:
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a27_max_if_neg")
     assert pkg.compute_out(
-        flag=pkg.data.Flag.from_nested(domain=pkg.data.FLAG_DOMAIN, values=(-1.0, 2.0)),
-        then_s=pkg.data.ThenS.from_nested(domain=pkg.data.THEN_S_DOMAIN, values=(-10.0, -20.0)),
+        flag=pkg.data.FLAG.with_nested((-1.0, 2.0)),
+        then_s=pkg.data.THEN_S.with_nested((-10.0, -20.0)),
     ) == pytest.approx(-20.0)
     _package_matches_output(tmp_path, workbook, document, "a27_max_if_neg_eval", "Outputs!Z1")
 

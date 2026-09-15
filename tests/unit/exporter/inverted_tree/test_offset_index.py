@@ -163,9 +163,7 @@ def test_offset_index_steps_onto_adjacent_column_series(tmp_path: Path) -> None:
     params = all_param_names(pkg.internals.imported)
     assert "codes" in params
     assert "names" not in params
-    result = pkg.compute_result(
-        codes=pkg.data.Codes.from_nested(domain=pkg.data.CODES_DOMAIN, values=(111.0, 222.0))
-    )
+    result = pkg.compute_result(codes=pkg.data.CODES.with_nested((111.0, 222.0)))
     assert (result["AF"], result["BR"]) == pytest.approx((111.0, 222.0))
 
 
@@ -200,9 +198,7 @@ def test_offset_index_named_range_array(tmp_path: Path) -> None:
         tmp_path,
         name="offset_index_named",
     )
-    result = pkg.compute_result(
-        codes=pkg.data.Codes.from_nested(domain=pkg.data.CODES_DOMAIN, values=(111.0, 222.0))
-    )
+    result = pkg.compute_result(codes=pkg.data.CODES.with_nested((111.0, 222.0)))
     assert (result["AF"], result["BR"]) == pytest.approx((111.0, 222.0))
 
 

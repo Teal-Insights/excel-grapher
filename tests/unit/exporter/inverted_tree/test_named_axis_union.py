@@ -170,7 +170,7 @@ def test_subset_time_period_axes_share_one_constant(tmp_path: Path) -> None:
     assert "TIME_PERIOD_AXIS = Axis('TIME_PERIOD', (2024, 2025, 2026), int)" in data
     assert "VARIANT_AXIS = Axis('VARIANT', ('alpha', 'beta'), str)" in data
     assert (
-        "PRICES_SHORT_DOMAIN = Domain.product("
+        "Domain.product("
         "Axis('VARIANT', ('beta',), str), "
         "Axis('TIME_PERIOD', span(TIME_PERIOD_AXIS, 2025, 2026), int))"
     ) in data
