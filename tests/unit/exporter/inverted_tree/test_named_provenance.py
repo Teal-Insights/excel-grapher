@@ -27,6 +27,8 @@ def test_row_cells_map_axis_keys_to_consecutive_columns() -> None:
     assert cells[(2021,)] == "Engine!D5"
     assert len(cells) == 3
     assert (2023,) not in cells
+    subset = row_cells("Engine", 5, "D", (2021, 2022))
+    assert dict(subset) == {(2021,): "Engine!D5", (2022,): "Engine!E5"}
 
 
 def test_column_cells_and_block_cells_follow_worksheet_order() -> None:

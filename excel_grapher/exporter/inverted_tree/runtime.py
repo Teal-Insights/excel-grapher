@@ -216,19 +216,25 @@ def at_anchor(value: T, rows: object, cols: object) -> T:
     return value
 
 
-def axis_step(axis: Axis, key: object, steps: object) -> str | int:
+def _axis_keys(axis: Axis | Sequence[object]) -> tuple[object, ...]:
+    return axis.keys if isinstance(axis, Axis) else tuple(axis)
+
+
+def axis_step(axis: Axis | Sequence[object], key: object, steps: object) -> str | int:
     """Return the key `steps` positions after `key` along `axis`.
 
     Lowers `OFFSET` moves along one worksheet axis. A position outside the
     bound series raises `#VALUE!`, matching positional `xl_at` selection.
+    `axis` is an `Axis` or the key sequence of one series on that axis.
     """
+    keys = _axis_keys(axis)
     try:
-        position = axis.keys.index(cast(Any, key)) + int(_as_number(steps))
+        position = keys.index(cast(Any, key)) + int(_as_number(steps))
     except ValueError as exc:
         raise XlError("#VALUE!") from exc
-    if position < 0 or position >= len(axis.keys):
+    if position < 0 or position >= len(keys):
         raise XlError("#VALUE!")
-    return axis.keys[position]
+    return cast(str | int, keys[position])
 
 
 def require_aligned(*series: Sequence[object]) -> int:
