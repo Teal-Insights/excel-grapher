@@ -57,7 +57,12 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes, python_identifier
+from excel_grapher.exporter.inverted_tree.named_axes import (
+    NamedAxes,
+    is_subsequence,
+    layout_keys_source,
+    python_identifier,
+)
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
 
 if TYPE_CHECKING:
@@ -1084,20 +1089,27 @@ def _named_range_view(
     col_fields: list[str] = []
     for position, key_field in enumerate(owner.key_fields):
         axis = domain.axes[position]
-        keys = axis.keys
+        keys = ctx.named_axes.emitted(axis).keys
         seen = tuple(dict.fromkeys(point[key_field] for point in points))
-        first, last = keys.index(seen[0]), keys.index(seen[-1])
-        if seen != keys[first : last + 1]:
+        if not seen or seen[0] not in keys or seen[-1] not in keys:
             return None
+        first, last = keys.index(seen[0]), keys.index(seen[-1])
         constant = ctx.named_axes.constant(axis)
         start_key, end_key = first_keys[position], last_keys[position]
-        literal_corners = start_key == repr(keys[first]) and end_key == repr(keys[last])
-        if literal_corners and first == 0 and last == len(keys) - 1:
-            expr = f"data.{constant}.keys"
-        elif start_key == end_key:
-            expr = f"({start_key},)"
+        if seen == keys[first : last + 1]:
+            literal_corners = start_key == repr(keys[first]) and end_key == repr(keys[last])
+            if literal_corners and first == 0 and last == len(keys) - 1:
+                expr = f"data.{constant}.keys"
+            elif start_key == end_key:
+                expr = f"({start_key},)"
+            else:
+                expr = f"{ctx.use('span')}(data.{constant}, {start_key}, {end_key})"
+        elif (
+            is_subsequence(seen, keys) and start_key == repr(seen[0]) and end_key == repr(seen[-1])
+        ):
+            expr = repr(seen)
         else:
-            expr = f"{ctx.use('span')}(data.{constant}, {start_key}, {end_key})"
+            return None
         selections[key_field] = expr
         seen_keys[key_field] = seen
         by_row: dict[int, set[Any]] = {}
@@ -1286,8 +1298,10 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
         axis = field_axes.get(key_field)
         if axis is None or axis in static:
             continue
-        constant = ctx.named_axes.constant(domain.axes[position])
-        keys[position] = f"{ctx.use('axis_step')}(data.{constant}, {keys[position]}, {steps[axis]})"
+        layout = layout_keys_source(domain.axes[position], ctx.named_axes, module="data.")
+        if layout.startswith("span("):
+            ctx.use("span")
+        keys[position] = f"{ctx.use('axis_step')}({layout}, {keys[position]}, {steps[axis]})"
     return f"{name}[{', '.join(keys)}]"
 
 

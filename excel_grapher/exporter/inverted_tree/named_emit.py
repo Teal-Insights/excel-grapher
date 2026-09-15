@@ -33,7 +33,11 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes, python_identifier
+from excel_grapher.exporter.inverted_tree.named_axes import (
+    NamedAxes,
+    layout_keys_source,
+    python_identifier,
+)
 from excel_grapher.exporter.inverted_tree.schedule import scan_function_name, scc_external_params
 from excel_grapher.series_bindings.input_coerce import (
     input_value_map_from_series,
@@ -1179,7 +1183,7 @@ def _rectangle_source(
             if not matches(layout):
                 return (
                     f"row_cells({sheet!r}, {first_row}, {column_letter(first_col)!r}, "
-                    f"{named_axes.constant(axis)})"
+                    f"{layout_keys_source(axis, named_axes)})"
                 )
         if width == 1 and len(axis.keys) == height:
             layout = {
@@ -1189,7 +1193,7 @@ def _rectangle_source(
             if not matches(layout):
                 return (
                     f"column_cells({sheet!r}, {column_letter(first_col)!r}, {first_row}, "
-                    f"{named_axes.constant(axis)})"
+                    f"{layout_keys_source(axis, named_axes)})"
                 )
         return None
     if len(axes) == 2:
@@ -1211,8 +1215,8 @@ def _rectangle_source(
                 repr(sheet),
                 str(first_row),
                 repr(column_letter(first_col)),
-                named_axes.constant(row_axis),
-                named_axes.constant(col_axis),
+                layout_keys_source(row_axis, named_axes),
+                layout_keys_source(col_axis, named_axes),
             ]
             if row_position == 1:
                 arguments.append("cols_first=True")
@@ -1290,6 +1294,14 @@ def _render_grid(
     return f"grid_cells({', '.join(arguments)})"
 
 
+def _product_axis_source(axis: Any, named_axes: NamedAxes) -> str:
+    """Name the emitted axis, or build a subset `Axis` from `span` / keys."""
+    emitted = named_axes.emitted(axis)
+    if axis.keys == emitted.keys:
+        return named_axes.constant(axis)
+    return f"Axis({axis.name!r}, {layout_keys_source(axis, named_axes)}, {axis.key_type.__name__})"
+
+
 def _coordinates_source(
     coordinates: Sequence[tuple[Any, ...]], axes: Sequence[Any], named_axes: NamedAxes
 ) -> str:
@@ -1297,7 +1309,8 @@ def _coordinates_source(
     literal = repr(tuple(coordinates))
     if not coordinates or not axes:
         return literal
-    keys = axes[-1].keys
+    last = named_axes.emitted(axes[-1])
+    keys = last.keys
     runs: list[tuple[tuple[Any, ...], Any, Any]] = []
     for coordinate in coordinates:
         prefix, key = coordinate[:-1], coordinate[-1]
@@ -1313,10 +1326,12 @@ def _coordinates_source(
 
 def _domain_source(series: BoundSeries, named_axes: NamedAxes) -> str:
     domain = series.tensor_domain
-    axes = ", ".join(named_axes.constant(axis) for axis in domain.axes)
     if domain.coordinates is None:
+        axes = ", ".join(_product_axis_source(axis, named_axes) for axis in domain.axes)
         return f"Domain.product({axes})"
-    coordinates = _coordinates_source(domain.coordinates, domain.axes, named_axes)
+    axes = ", ".join(named_axes.constant(axis) for axis in domain.axes)
+    emitted = tuple(named_axes.emitted(axis) for axis in domain.axes)
+    coordinates = _coordinates_source(tuple(domain), emitted, named_axes)
     return f"Domain.explicit(axes=({axes},), coordinates={coordinates})"
 
 
@@ -1375,6 +1390,7 @@ def emit_named_data(
         "from contextlib import contextmanager",
         "from datetime import datetime",
         "from .provenance import block_cells, column_cells, grid_cells, row_cells",
+        "from .runtime import span",
         "from .tensor import Axis, Domain, Series, SeriesSpec, coordinate_runs, define_series",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
@@ -1483,6 +1499,8 @@ def emit_named_data(
             "",
         ]
     )
+    if not any("span(" in line for line in lines):
+        lines.remove("from .runtime import span")
     return "\n".join(lines)
 
 

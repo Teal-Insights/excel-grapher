@@ -31,6 +31,17 @@ def test_span_outside_axis_is_a_reference_error() -> None:
         raise AssertionError("expected #REF!")
 
 
+def test_axis_step_accepts_a_key_sequence() -> None:
+    assert runtime.axis_step(YEARS, 2021, 1) == 2022
+    assert runtime.axis_step(runtime.span(YEARS, 2021, 2022), 2021, 1) == 2022
+    try:
+        runtime.axis_step(runtime.span(YEARS, 2021, 2022), 2021, -1)
+    except excel.XlError as error:
+        assert error.code == "#VALUE!"
+    else:
+        raise AssertionError("expected #VALUE!")
+
+
 def test_row_view_exposes_a_one_row_range() -> None:
     row = runtime.view(_series(), cols=runtime.span(YEARS, 2021, 2023))
     assert row.shape == (1, 3)
