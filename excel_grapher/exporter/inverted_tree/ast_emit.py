@@ -803,20 +803,34 @@ def _group_positional_rows(
 
 
 def _positional_table_source(cells: Sequence[PositionalRangeCell], ctx: EmitContext) -> str:
-    """Emit an irregular range as a table of per-cell callbacks.
+    """Emit a lookup rectangle as strips of views, else per-cell callbacks.
 
-    Cells are read by literal coordinate so the table never depends on the
-    host loop variable and can be built once per call.
+    Consecutive worksheet rows that share the same series layout collapse
+    into one strip whose parts are views over those blocks. Cells are read
+    by literal coordinate so the table never depends on the host loop
+    variable and can be built once per call.
     """
     rows = _group_positional_rows(cells)
     table_ctx = replace(ctx, coordinate_vars={})
-    callbacks = _python_tuple([_python_tuple(_table_row_parts(row, table_ctx)) for row in rows])
+    part_rows = [_table_row_parts(row, table_ctx) for row in rows]
+    strips = _collapse_table_strips(part_rows, table_ctx)
+    callbacks = _python_tuple([_python_tuple(strip) for strip in strips])
     return f"{ctx.use('lazy_table')}({callbacks})"
 
 
-def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> list[str]:
+@dataclass(frozen=True, slots=True)
+class _TableRowPart:
+    """One lazy_table part: a cell callback or a view of one series run."""
+
+    source: str
+    series_id: str | None
+    start: CanonicalAddress
+    end: CanonicalAddress
+
+
+def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> list[_TableRowPart]:
     """One view per run of a series' cells in a table row, callbacks elsewhere."""
-    parts: list[str] = []
+    parts: list[_TableRowPart] = []
     index = 0
     while index < len(row):
         cell = row[index]
@@ -832,12 +846,69 @@ def _table_row_parts(row: Sequence[PositionalRangeCell], ctx: EmitContext) -> li
         if end > index:
             view = _named_range_view(RangeNode(cell.address, row[end].address), ctx)
         if view is not None:
-            parts.append(view)
+            parts.append(_TableRowPart(view, cell.series_id, cell.address, row[end].address))
             index = end + 1
             continue
-        parts.append(f"lambda: {_emit_positional_cell(cell, ctx)}")
+        parts.append(
+            _TableRowPart(
+                f"lambda: {_emit_positional_cell(cell, ctx)}",
+                cell.series_id,
+                cell.address,
+                cell.address,
+            )
+        )
         index += 1
     return parts
+
+
+def _part_schema(part: _TableRowPart) -> tuple[str | None, str, int, int]:
+    start_sheet, _start_row, start_col = parse_cell_coords(part.start)
+    end_sheet, _end_row, end_col = parse_cell_coords(part.end)
+    sheet = start_sheet if start_sheet == end_sheet else ""
+    return (part.series_id, sheet, start_col, end_col)
+
+
+def _compatible_table_rows(left: Sequence[_TableRowPart], right: Sequence[_TableRowPart]) -> bool:
+    if len(left) != len(right):
+        return False
+    return all(
+        a.series_id is not None and _part_schema(a) == _part_schema(b)
+        for a, b in zip(left, right, strict=True)
+    )
+
+
+def _collapse_compatible_rows(
+    rows: Sequence[Sequence[_TableRowPart]], ctx: EmitContext
+) -> list[str] | None:
+    sources: list[str] = []
+    for column in range(len(rows[0])):
+        view = _named_range_view(RangeNode(rows[0][column].start, rows[-1][column].end), ctx)
+        if view is None:
+            return None
+        sources.append(view)
+    return sources
+
+
+def _collapse_table_strips(
+    part_rows: Sequence[Sequence[_TableRowPart]], ctx: EmitContext
+) -> list[list[str]]:
+    """Collapse consecutive same-layout rows into one strip of block views."""
+    strips: list[list[str]] = []
+    index = 0
+    while index < len(part_rows):
+        end = index
+        while end + 1 < len(part_rows) and _compatible_table_rows(
+            part_rows[index], part_rows[end + 1]
+        ):
+            end += 1
+        group = part_rows[index : end + 1]
+        collapsed = _collapse_compatible_rows(group, ctx) if len(group) > 1 else None
+        if collapsed is not None:
+            strips.append(collapsed)
+        else:
+            strips.extend([[part.source for part in row] for row in group])
+        index = end + 1
+    return strips
 
 
 def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
