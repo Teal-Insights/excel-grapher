@@ -1,14 +1,13 @@
-"""Same-axis string remaps fold to a dict instead of a host-key if-ladder (#852).
+"""Pinned-year string remaps fold to a dict instead of a host-key if-ladder (#852).
 
-When host and producer share an axis name but not string identity (scenario
-codes vs long labels, ISO3 vs country names), each cell is a direct reference
-whose body differs only by that producer string. Family merge already
-parameterizes the other drivers; the leftover ladder is the 1:1 map.
+Lockstep ISO3/name remaps already fold (#851 / #859). The remaining gap is a
+same-year walk whose producer *row* is pinned while `TIME_PERIOD` slides:
+scenario codes vs long labels. That is still a lockstep function of the host
+key, so emit uses the same dict lookup.
 
-A producer string that is not a function of the host key (the same host
-key mapping onto two producer labels) stays a literal. Extra predicates on
-some members stay a leftover family beside the remapped path. A many-to-one
-map is still a function of the host key and still folds.
+A producer string that is not a function of the host key stays a literal.
+Extra predicates on some members stay a leftover family beside the remapped
+path. Neighbor/permutation reads stay literals (#859).
 """
 
 from __future__ import annotations
@@ -190,9 +189,8 @@ def test_scenario_code_to_label_remap_is_a_dict_not_an_if_ladder(tmp_path: Path)
     workbook = _scenario_remap_workbook(tmp_path)
     document = _scenario_remap_bindings()
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "SCENARIO_KEY" in internals
-    assert "SCENARIO_KEY[scenario]" in internals
-    assert "stress_interest[SCENARIO_KEY[scenario], time_period]" in internals
+    assert "SCENARIO_TO_STRESS_INTEREST[scenario]" in internals
+    assert "stress_interest[SCENARIO_TO_STRESS_INTEREST[scenario], time_period]" in internals
     assert not re.search(r"if scenario ==", internals)
     assert "Bounds Test 1: Real GDP Growth Shock" in internals
     assert "'B1'" in internals
@@ -206,9 +204,8 @@ def test_iso3_to_name_remap_is_a_dict_not_an_if_ladder(tmp_path: Path) -> None:
     workbook = _iso3_remap_workbook(tmp_path)
     document = _iso3_remap_bindings()
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "REF_AREA_KEY" in internals
-    assert "REF_AREA_KEY[ref_area]" in internals
-    assert "catalog_ifs[REF_AREA_KEY[ref_area]]" in internals
+    assert "REF_AREA_TO_CATALOG_IFS[ref_area]" in internals
+    assert "catalog_ifs[REF_AREA_TO_CATALOG_IFS[ref_area]]" in internals
     assert not re.search(r"if ref_area ==", internals)
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_remap")
     got = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
@@ -264,7 +261,7 @@ def test_inverse_label_to_code_remap_uses_the_same_fold(tmp_path: Path) -> None:
         "SCENARIO",
     )
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "SCENARIO_KEY[scenario]" in internals
+    assert "SCENARIO_TO_DSA_INTEREST[scenario]" in internals
     assert not re.search(r"if scenario ==", internals)
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "scenario_inverse")
     got = pkg.compute_chart_interest(dsa_interest=pkg.data.DSA_INTEREST_DEFAULT)
@@ -326,7 +323,7 @@ def test_extra_predicate_member_stays_a_leftover_family(tmp_path: Path) -> None:
         "SCENARIO",
     )
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "SCENARIO_KEY[scenario]" in internals
+    assert "SCENARIO_TO_STRESS_INTEREST[scenario]" in internals
     assert re.search(r"if scenario == 'B6':", internals)
     assert "xl_mul(" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "scenario_leftover")
@@ -335,8 +332,8 @@ def test_extra_predicate_member_stays_a_leftover_family(tmp_path: Path) -> None:
     assert got["B6", 2026] == 28.0
 
 
-def test_many_to_one_string_map_still_folds(tmp_path: Path) -> None:
-    """A function of the host key folds even when it is not injective."""
+def test_many_to_one_string_map_is_not_lockstep(tmp_path: Path) -> None:
+    """A non-affine neighbor mix stays literals, even when it is a function."""
     workbook = write_workbook(
         tmp_path / "iso3_many_to_one.xlsx",
         {
@@ -362,8 +359,9 @@ def test_many_to_one_string_map_still_folds(tmp_path: Path) -> None:
     )
     document = _iso3_remap_bindings()
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "REF_AREA_KEY[ref_area]" in internals
-    assert not re.search(r"if ref_area ==", internals)
+    assert "REF_AREA_TO_CATALOG_IFS" not in internals
+    assert "catalog_ifs['Benin']" in internals
+    assert "catalog_ifs['Bangladesh']" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_many_to_one")
     got = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
     assert got["BGD"] == 638.0
@@ -419,7 +417,7 @@ def test_producer_key_that_is_not_a_function_of_the_host_stays_literal(tmp_path:
         "REF_AREA",
     )
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "REF_AREA_KEY" not in internals
+    assert "REF_AREA_TO_CATALOG_IFS" not in internals
     assert "catalog_ifs['Bangladesh', time_period]" in internals
     assert "catalog_ifs['Benin', time_period]" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_independent")
