@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any, cast
+
 import pytest
 
 from excel_grapher.exporter.export_runtime.provenance import row_cells
@@ -16,7 +18,6 @@ from excel_grapher.exporter.export_runtime.tensor import (
     SchemaTemplate,
     Series,
     Tensor,
-    TensorSchema,
     label_axis,
 )
 from excel_grapher.exporter.inverted_tree.runtime import as_records, publish
@@ -81,7 +82,9 @@ def test_domain_and_schema_templates_bind_labellers_by_axis_name() -> None:
     tensor = Tensor.from_nested(domain=bound, values=(3, 4))
     schema.bind(TIME_PERIOD=labels).validate(tensor)
     schema.validate(tensor)
-    with pytest.raises(SchemaError, match="unknown labels.*1.*accepted labels are \\(2026, 2027\\)"):
+    with pytest.raises(
+        SchemaError, match="unknown labels.*1.*accepted labels are \\(2026, 2027\\)"
+    ):
         schema.bind(TIME_PERIOD=labels).validate(
             Tensor.from_nested(
                 domain=Domain.product(Axis("TIME_PERIOD", (1, 2), int)), values=(3, 4)
@@ -143,8 +146,9 @@ def test_publish_and_as_records_accept_a_schema_template() -> None:
         )
 
     result = compute_out()
-    assert compute_out.__key__ == ("TIME_PERIOD",)
-    assert isinstance(compute_out.__domain__, DomainTemplate)
+    published = cast(Any, compute_out)
+    assert published.__key__ == ("TIME_PERIOD",)
+    assert isinstance(published.__domain__, DomainTemplate)
     assert as_records(compute_out, result) == [
         {"TIME_PERIOD": 2030, "OBS_VALUE": 6},
         {"TIME_PERIOD": 2031, "OBS_VALUE": 8},
