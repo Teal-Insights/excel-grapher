@@ -62,9 +62,7 @@ class Axis:
         return self._index[key]
 
 
-def label_axis(
-    name: str, values: Iterable[object], key_type: type[str] | type[int]
-) -> Axis:
+def label_axis(name: str, values: Iterable[object], key_type: type[str] | type[int]) -> Axis:
     """Build an axis from evaluated labels, naming duplicate or mistyped values."""
     keys: list[str | int] = []
     seen: set[object] = set()
@@ -74,7 +72,7 @@ def label_axis(
         if value in seen:
             raise AxisError(f"axis {name!r}: duplicate label {value!r}")
         seen.add(value)
-        keys.append(value)
+        keys.append(cast(str | int, value))
     return Axis(name, tuple(keys), key_type)
 
 
@@ -252,9 +250,10 @@ class AxisTemplate:
     size: int
     labeller: str
     snapshot: tuple[str | int, ...]
+    source: tuple[str | int, ...] | None = None
 
     def bind(self, axis: Axis) -> Axis:
-        """Return `axis` after checking name, key type, and length."""
+        """Return `axis`, or the snapshot-aligned slice of a longer labeller axis."""
         if axis.name != self.name:
             raise AxisError(
                 f"axis {self.name!r}: expected name {self.name!r}, received {axis.name!r}"
@@ -264,11 +263,19 @@ class AxisTemplate:
                 f"axis {self.name!r}: expected {self.key_type.__name__} keys, "
                 f"received {axis.key_type.__name__}"
             )
-        if len(axis.keys) != self.size:
+        source = self.source if self.source is not None else self.snapshot
+        if len(axis.keys) != len(source):
             raise AxisError(
-                f"axis {self.name!r}: expected {self.size} keys, received {len(axis.keys)}"
+                f"axis {self.name!r}: expected {len(source)} keys, received {len(axis.keys)}"
             )
-        return axis
+        if source == self.snapshot:
+            if len(axis.keys) != self.size:
+                raise AxisError(
+                    f"axis {self.name!r}: expected {self.size} keys, received {len(axis.keys)}"
+                )
+            return axis
+        keys = tuple(axis.keys[source.index(key)] for key in self.snapshot)
+        return Axis(self.name, keys, self.key_type)
 
 
 def _bound_axis(axis: Axis | AxisTemplate, labellers: Mapping[str, Tensor[Any]]) -> Axis:
@@ -309,9 +316,7 @@ class DomainTemplate:
     def domain_from_axes(self, axes: Sequence[Axis]) -> Domain:
         """Materialize this template over already-bound `axes`."""
         if len(axes) != len(self.axes):
-            raise DomainError(
-                f"expected {len(self.axes)} axes, received {len(axes)}"
-            )
+            raise DomainError(f"expected {len(self.axes)} axes, received {len(axes)}")
         return self._domain(tuple(axes))
 
     def _domain(self, axes: tuple[Axis, ...]) -> Domain:
@@ -623,12 +628,10 @@ class Series(Tensor[T]):
     @classmethod
     def from_labels(cls, axis: Axis) -> Self:
         """Publish the identity tensor mapping each label to itself."""
-        return cls._from_domain(Domain.product(axis), tuple(axis.keys))
+        return cls._from_domain(Domain.product(axis), cast(tuple[T, ...], tuple(axis.keys)))
 
     @classmethod
-    def collect(
-        cls, records: Iterable[tuple[Coordinate, T]], domain: Domain | None = None
-    ) -> Self:
+    def collect(cls, records: Iterable[tuple[Coordinate, T]], domain: Domain | None = None) -> Self:
         """Publish coordinate/value records over the series' required domain."""
         if domain is None:
             schema_domain = cls.schema.domain

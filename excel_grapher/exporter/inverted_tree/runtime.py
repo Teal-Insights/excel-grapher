@@ -9,7 +9,7 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from itertools import product
 from types import MappingProxyType
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from excel_grapher.core.grid import Range
 from excel_grapher.core.types import FormulaValue
@@ -22,6 +22,9 @@ from excel_grapher.exporter.export_runtime.tensor import (
     TensorSchema,
 )
 from excel_grapher.exporter.inverted_tree.excel import XlError, _as_number
+
+if TYPE_CHECKING:
+    from excel_grapher.exporter.export_runtime.provenance import ProvenanceTemplate
 
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., object])
@@ -82,7 +85,7 @@ def publish(
     domain: object = None,
     holes: tuple[int, ...] = (),
     constants: Iterable[str] | None = None,
-    cells: Mapping[K, str] | None = None,
+    cells: Mapping[K, str] | ProvenanceTemplate | None = None,
 ) -> Callable[[F], F]:
     """Attach series metadata to a generated helper and return it unchanged.
 

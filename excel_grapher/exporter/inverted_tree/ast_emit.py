@@ -56,6 +56,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.named_axes import python_identifier
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
 
 if TYPE_CHECKING:
@@ -131,6 +132,24 @@ class EmitContext:
     def use(self, symbol: str) -> str:
         self.used_runtime.add(symbol)
         return symbol
+
+    def runtime_labeller_for(self, axis: Any) -> BoundSeries | None:
+        """Return the non-constant labeller covering `axis`, if any."""
+        return self.catalog.runtime_labeller(axis.name, axis.keys)
+
+    def host_uses_positions(self, axis: Any) -> bool:
+        """True when the host iterates `axis` by position (it is that axis's labeller)."""
+        return self.host.axis_labels == axis.name and self.host.direction != "constant"
+
+    def axis_source(self, axis: Any) -> str:
+        """Expression for `axis`: a bound runtime axis or a `data` constant."""
+        if self.runtime_labeller_for(axis) is not None:
+            return "_ax_" + python_identifier(axis.name.lower())
+        if self.named_axes is None:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r}: named axis constants are required"
+            )
+        return f"data.{self.named_axes.constant(axis)}"
 
 
 def python_measure_type(series: BoundSeries) -> str:
@@ -464,6 +483,8 @@ def _named_keys(
         if field_axis in pinned:
             keys.append(repr(target))
             continue
+        owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
+        runtime = ctx.runtime_labeller_for(owner_axis)
         if variable is not None and current == target:
             keys.append(variable)
             continue
@@ -471,6 +492,20 @@ def _named_keys(
             driver = _integer_driver(ctx, key_field, field_axis)
             if driver is not None:
                 variable, current = driver
+                if runtime is not None:
+                    difference = owner_axis.keys.index(target) - owner_axis.keys.index(current)
+                    if ctx.host_uses_positions(owner_axis):
+                        sign = "+" if difference > 0 else "-"
+                        keys.append(
+                            variable if difference == 0 else f"{variable} {sign} {abs(difference)}"
+                        )
+                    elif difference == 0:
+                        keys.append(variable)
+                    else:
+                        keys.append(
+                            f"{ctx.use('axis_step')}({ctx.axis_source(owner_axis)}, {variable}, {difference})"
+                        )
+                    continue
                 difference = target - current
                 sign = "+" if difference > 0 else "-"
                 keys.append(variable if difference == 0 else f"{variable} {sign} {abs(difference)}")
@@ -478,12 +513,37 @@ def _named_keys(
         if isinstance(target, str):
             driver = _string_driver(ctx, key_field, field_axis, target)
             if driver is not None:
+                if runtime is not None:
+                    host_runtime = next(
+                        (
+                            ctx.runtime_labeller_for(axis)
+                            for axis in ctx.host.tensor_domain.axes
+                            if ctx.runtime_labeller_for(axis) is not None
+                        ),
+                        None,
+                    )
+                    if host_runtime is None:
+                        raise InvertedTreeExportError(
+                            f"series {ctx.host.series_id!r}: cross-field key equality between "
+                            f"runtime axis {owner_axis.name!r} and a static axis is unsupported"
+                        )
                 keys.append(driver)
                 continue
             template = _key_template(target, ctx)
             if template is not None:
+                if any(
+                    ctx.runtime_labeller_for(axis) is not None
+                    for axis in ctx.host.tensor_domain.axes
+                ):
+                    raise InvertedTreeExportError(
+                        f"series {ctx.host.series_id!r}: key templates over a runtime axis "
+                        "are unsupported"
+                    )
                 keys.append(template)
                 continue
+        if runtime is not None:
+            keys.append(f"{ctx.axis_source(owner_axis)}.keys[{owner_axis.keys.index(target)}]")
+            continue
         keys.append(repr(target))
     return keys
 
@@ -898,9 +958,17 @@ def _named_range_view(
         if seen != keys[first : last + 1]:
             return None
         constant = ctx.named_axes.constant(axis)
+        axis_src = ctx.axis_source(axis)
         start_key, end_key = first_keys[position], last_keys[position]
         literal_corners = start_key == repr(keys[first]) and end_key == repr(keys[last])
-        if literal_corners and first == 0 and last == len(keys) - 1:
+        if ctx.runtime_labeller_for(axis) is not None:
+            if first == 0 and last == len(keys) - 1:
+                expr = f"{axis_src}.keys"
+            elif start_key == end_key:
+                expr = f"({start_key},)"
+            else:
+                expr = f"{ctx.use('span')}({axis_src}, {start_key}, {end_key})"
+        elif literal_corners and first == 0 and last == len(keys) - 1:
             expr = f"data.{constant}.keys"
         elif start_key == end_key:
             expr = f"({start_key},)"
@@ -1094,8 +1162,8 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
         axis = field_axes.get(key_field)
         if axis is None or axis in static:
             continue
-        constant = ctx.named_axes.constant(domain.axes[position])
-        keys[position] = f"{ctx.use('axis_step')}(data.{constant}, {keys[position]}, {steps[axis]})"
+        axis_src = ctx.axis_source(domain.axes[position])
+        keys[position] = f"{ctx.use('axis_step')}({axis_src}, {keys[position]}, {steps[axis]})"
     return f"{name}[{', '.join(keys)}]"
 
 

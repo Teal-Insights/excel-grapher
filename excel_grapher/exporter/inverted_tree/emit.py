@@ -86,6 +86,15 @@ def _parse_numeric_text(text: str) -> float | None:
             return None
 
 
+def _labeller_cell_value(node: Any, cell: str, graph: DependencyGraph) -> Any:
+    """Return a labeller cell's snapshot value, evaluating the formula if uncached."""
+    if node.value is not None or not node.has_formula:
+        return node.value
+    from excel_grapher.evaluator import FormulaEvaluator
+
+    return FormulaEvaluator(graph).evaluate([cell])[cell]
+
+
 def _coerce_cached_value(value: Any, dtype: str, address: str) -> object:
     """Coerce a cached workbook value to a catalog dtype.
 
@@ -244,7 +253,7 @@ def plan_inverted_tree(
                 f"labeller {labeller.series_id!r}: every cell must be in the extracted graph"
             )
         cached = tuple(
-            _coerce_cached_value(node.value, labeller.dtype, cell)
+            _coerce_cached_value(_labeller_cell_value(node, cell, graph), labeller.dtype, cell)
             for node, cell in zip(nodes, authored, strict=True)
             if node is not None
         )

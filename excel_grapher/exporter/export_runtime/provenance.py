@@ -9,7 +9,7 @@ demand, so provenance stays inspectable without listing each cell.
 from __future__ import annotations
 
 from collections.abc import Callable, Iterator, Mapping
-from typing import Any
+from typing import Any, overload
 
 from .tensor import (
     Axis,
@@ -160,17 +160,37 @@ def _axis_from_labellers(axis: Axis | AxisTemplate, labellers: Mapping[str, Any]
     return axis.bind(labeller.domain.axes[0])
 
 
+@overload
+def row_cells(sheet: str, row: int, first_column: str, axis: Axis) -> RectangleCells: ...
+
+
+@overload
+def row_cells(
+    sheet: str, row: int, first_column: str, axis: AxisTemplate
+) -> ProvenanceTemplate: ...
+
+
 def row_cells(
     sheet: str, row: int, first_column: str, axis: Axis | AxisTemplate
 ) -> RectangleCells | ProvenanceTemplate:
     """Cells of a one-row series whose columns enumerate `axis`."""
     if isinstance(axis, AxisTemplate):
-        return ProvenanceTemplate(
-            lambda **labellers: row_cells(
-                sheet, row, first_column, _axis_from_labellers(axis, labellers)
-            )
-        )
+
+        def bind_row(**labellers: Any) -> RectangleCells:
+            return row_cells(sheet, row, first_column, _axis_from_labellers(axis, labellers))
+
+        return ProvenanceTemplate(bind_row)
     return RectangleCells(sheet, row, column_index(first_column), None, axis)
+
+
+@overload
+def column_cells(sheet: str, column: str, first_row: int, axis: Axis) -> RectangleCells: ...
+
+
+@overload
+def column_cells(
+    sheet: str, column: str, first_row: int, axis: AxisTemplate
+) -> ProvenanceTemplate: ...
 
 
 def column_cells(
@@ -178,12 +198,38 @@ def column_cells(
 ) -> RectangleCells | ProvenanceTemplate:
     """Cells of a one-column series whose rows enumerate `axis`."""
     if isinstance(axis, AxisTemplate):
-        return ProvenanceTemplate(
-            lambda **labellers: column_cells(
-                sheet, column, first_row, _axis_from_labellers(axis, labellers)
-            )
-        )
+
+        def bind_column(**labellers: Any) -> RectangleCells:
+            return column_cells(sheet, column, first_row, _axis_from_labellers(axis, labellers))
+
+        return ProvenanceTemplate(bind_column)
     return RectangleCells(sheet, first_row, column_index(column), axis, None)
+
+
+@overload
+def block_cells(
+    sheet: str,
+    first_row: int,
+    first_column: str,
+    row_axis: Axis,
+    col_axis: Axis,
+    *,
+    cols_first: bool = False,
+    exceptions: Mapping[Coordinate, str] | None = None,
+) -> RectangleCells: ...
+
+
+@overload
+def block_cells(
+    sheet: str,
+    first_row: int,
+    first_column: str,
+    row_axis: Axis | AxisTemplate,
+    col_axis: Axis | AxisTemplate,
+    *,
+    cols_first: bool = False,
+    exceptions: Mapping[Coordinate, str] | None = None,
+) -> ProvenanceTemplate: ...
 
 
 def block_cells(
@@ -198,8 +244,9 @@ def block_cells(
 ) -> RectangleCells | ProvenanceTemplate:
     """Cells of a matrix series whose rows and columns enumerate two axes."""
     if isinstance(row_axis, AxisTemplate) or isinstance(col_axis, AxisTemplate):
-        return ProvenanceTemplate(
-            lambda **labellers: block_cells(
+
+        def bind_block(**labellers: Any) -> RectangleCells:
+            return block_cells(
                 sheet,
                 first_row,
                 first_column,
@@ -208,7 +255,8 @@ def block_cells(
                 cols_first=cols_first,
                 exceptions=exceptions,
             )
-        )
+
+        return ProvenanceTemplate(bind_block)
     return RectangleCells(
         sheet,
         first_row,
@@ -285,6 +333,28 @@ class GridCells(Mapping[Coordinate, str]):
         return f"GridCells({dict(self)!r})"
 
 
+@overload
+def grid_cells(
+    sheet: str | AxisGroup,
+    domain: Domain,
+    *,
+    rows: int | AxisGroup,
+    cols: str | AxisGroup,
+    exceptions: Mapping[Coordinate, str] | None = None,
+) -> GridCells: ...
+
+
+@overload
+def grid_cells(
+    sheet: str | AxisGroup,
+    domain: DomainTemplate,
+    *,
+    rows: int | AxisGroup,
+    cols: str | AxisGroup,
+    exceptions: Mapping[Coordinate, str] | None = None,
+) -> ProvenanceTemplate: ...
+
+
 def grid_cells(
     sheet: str | AxisGroup,
     domain: Domain | DomainTemplate,
@@ -295,13 +365,15 @@ def grid_cells(
 ) -> GridCells | ProvenanceTemplate:
     """Cells of a series whose worksheet positions follow groups of its key fields."""
     if isinstance(domain, DomainTemplate):
-        return ProvenanceTemplate(
-            lambda **labellers: grid_cells(
+
+        def bind_grid(**labellers: Any) -> GridCells:
+            return grid_cells(
                 sheet,
                 domain.bind(**labellers),
                 rows=rows,
                 cols=cols,
                 exceptions=exceptions,
             )
-        )
+
+        return ProvenanceTemplate(bind_grid)
     return GridCells(sheet, domain, rows=rows, cols=cols, exceptions=exceptions)
