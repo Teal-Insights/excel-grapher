@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Any, cast
 from excel_grapher.exporter.codegen import REPRESENTATION_VERSION
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     EmitContext,
+    KeyMapRegistry,
     _as_measure_call,
     _named_keys,
     emit_expr,
@@ -173,6 +174,12 @@ def _value_types(dtype: str) -> str:
     return "(" + ", ".join(dict.fromkeys([*types, "str", "type(None)"])) + ")"
 
 
+def _format_key_mapping(mapping: Mapping[object, object]) -> str:
+    """Render a host→producer string map as a dict literal."""
+    items = ", ".join(f"{key!r}: {value!r}" for key, value in mapping.items())
+    return "{" + items + "}"
+
+
 def _coordinate_names(series: BoundSeries, reserved: set[str]) -> dict[str, str]:
     """Return a loop-variable name for every key field of `series`."""
     names: dict[str, str] = {}
@@ -284,6 +291,7 @@ def _semantic_body(
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved)
+    key_maps = KeyMapRegistry(occupied=set(reserved))
     groups: dict[str, list[tuple[object, ...]]] = {}
     tables: dict[str, str] = {}
     used: set[str] = {"XlError"}
@@ -305,6 +313,7 @@ def _semantic_body(
             scc_ids=scc_ids | {series.series_id},
             graph=graph,
             named_axes=named_axes,
+            key_maps=None if series.single_valued else key_maps,
         )
         node = try_formula_ast(graph, cell)
         if node is None:
@@ -364,6 +373,9 @@ def _semantic_body(
             selectors = ", ".join(names.values()) + ","
             groups[f"as_measure(data.{table}[{selectors}])"] = list(literals)
     lines = [f"    {alias} = {source}" for source, alias in tables.items()]
+    lines.extend(
+        f"    {name} = {_format_key_mapping(mapping)}" for name, mapping in key_maps.maps.items()
+    )
     if series.single_valued:
         if len(groups) != 1:
             raise InvertedTreeExportError(
@@ -392,7 +404,7 @@ def _semantic_body(
         )
         return lines, used
     name = series.series_id.upper()
-    occupied = reserved
+    occupied = reserved | set(key_maps.maps)
 
     def temporary(base: str) -> str:
         candidate = base

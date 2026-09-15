@@ -1707,6 +1707,30 @@ def _host_follow_key_maps(
     return {name: maps[name] for name in valid}
 
 
+def _producer_slots_by_host(
+    host: BoundSeries,
+    producer: BoundSeries,
+    deps: SeriesDeps,
+) -> dict[int, set[int]]:
+    """Return producer catalog slots read by each host member.
+
+    Whole-table and dynamic lookups are skipped; those are not coordinate
+    remaps. Cell reads of every other access class feed `_host_follow_key_maps`.
+    """
+    per_host: dict[int, set[int]] = {}
+    for edge in deps.edges:
+        if edge.consumer_id != host.series_id or edge.producer_id != producer.series_id:
+            continue
+        if edge.access in {"whole", "dynamic"}:
+            continue
+        host_index = host.index_of(edge.consumer_cell)
+        prod_index = producer.index_of(edge.producer_cell)
+        if host_index is None or prod_index is None:
+            continue
+        per_host.setdefault(host_index, set()).add(prod_index)
+    return per_host
+
+
 def _producer_slots_in_node(
     node: AstNode,
     host_cell: CanonicalAddress,

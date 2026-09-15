@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterator, Sequence
+from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import product
 from typing import TYPE_CHECKING, Any, cast
@@ -42,6 +42,8 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import (
     PositionalRangeCell,
     SeriesDeps,
+    _host_follow_key_maps,
+    _producer_slots_by_host,
     addresses_outside_blank_ranges,
     covering_series_for_index_window,
     current_blank_rects,
@@ -56,6 +58,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.named_axes import python_identifier
 from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
 
 if TYPE_CHECKING:
@@ -109,6 +112,32 @@ _ARRAY_IF_UNSOUND_FNS = frozenset(
 
 
 @dataclass
+class KeyMapRegistry:
+    """Host→producer string maps collected while lowering one formula series."""
+
+    occupied: set[str]
+    maps: dict[str, dict[object, object]] = field(default_factory=dict)
+    _by_content: dict[tuple[tuple[object, object], ...], str] = field(default_factory=dict)
+
+    def name_for(self, field: str, mapping: Mapping[object, object]) -> str:
+        """Return a stable local name for `mapping`, allocating one when new."""
+        content = tuple(sorted(mapping.items(), key=lambda item: repr(item[0])))
+        existing = self._by_content.get(content)
+        if existing is not None:
+            return existing
+        base = python_identifier(field.upper()) + "_KEY"
+        name = base
+        suffix = 2
+        while name in self.occupied:
+            name = f"{base}_{suffix}"
+            suffix += 1
+        self.occupied.add(name)
+        self.maps[name] = dict(mapping)
+        self._by_content[content] = name
+        return name
+
+
+@dataclass
 class EmitContext:
     """How to read bound series while lowering one host formula."""
 
@@ -124,6 +153,7 @@ class EmitContext:
     blank_rects: tuple[BlankRangeRect, ...] = field(default_factory=current_blank_rects)
     array_context: bool = False
     named_axes: NamedAxes | None = None
+    key_maps: KeyMapRegistry | None = None
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -419,6 +449,86 @@ def _key_template(target: str, ctx: EmitContext) -> str | None:
     return f"f{quoted[0]}{inner.replace(value, '{' + variable + '}')}{quoted[0]}"
 
 
+def _is_useful_string_remap(mapping: Mapping[object, object]) -> bool:
+    """True when `mapping` can replace a host-key if-ladder.
+
+    The map must have at least two host keys, every pair must be strings, and
+    at least one pair must change identity. Identity-only maps stay as the
+    host variable; a single leftover stays a literal.
+    """
+    if len(mapping) < 2:
+        return False
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in mapping.items()):
+        return False
+    return any(key != value for key, value in mapping.items())
+
+
+def _order_mapping_by_host(
+    host: BoundSeries, field: str, mapping: Mapping[object, object]
+) -> dict[object, object]:
+    """Return `mapping` in host-domain key order."""
+    ordered: dict[object, object] = {}
+    for point in host.domain:
+        try:
+            key = point[field]
+        except KeyError:
+            continue
+        if key in mapping and key not in ordered:
+            ordered[key] = mapping[key]
+    for key, value in mapping.items():
+        ordered.setdefault(key, value)
+    return ordered
+
+
+def _follow_string_map(
+    ctx: EmitContext, owner: BoundSeries, key_field: str
+) -> dict[object, object] | None:
+    """Return a useful host→producer string map for `key_field`, if any."""
+    cache = ctx.host._emit_cache
+    cache_key = ("string_remap", owner.series_id, key_field)
+    if cache_key in cache:
+        return cache[cache_key]
+    per_host = _producer_slots_by_host(ctx.host, owner, ctx.deps)
+    mapping = _host_follow_key_maps(ctx.host, owner, per_host).get(key_field)
+    useful = (
+        _order_mapping_by_host(ctx.host, key_field, mapping)
+        if mapping and _is_useful_string_remap(mapping)
+        else None
+    )
+    cache[cache_key] = useful
+    return useful
+
+
+def _string_remap_key(
+    owner: BoundSeries,
+    key_field: str,
+    current: object,
+    target: object,
+    variable: str | None,
+    ctx: EmitContext,
+) -> str | None:
+    """Index a 1:1 string remap of `key_field`, or `None` when it is not one.
+
+    Same-axis host and producer keys that disagree in spelling but follow the
+    host walk (`B1` → `Bounds Test 1: …`, `BGD` → `Bangladesh`) become
+    `SCENARIO_KEY[scenario]` rather than a per-coordinate literal. A row that
+    stays put while `TIME_PERIOD` slides is still pinned against the year
+    walk; the remap is a function of the host key, not of that pin.
+    """
+    if (
+        ctx.key_maps is None
+        or variable is None
+        or owner.series_id == ctx.host.series_id
+        or not isinstance(current, str)
+        or not isinstance(target, str)
+    ):
+        return None
+    mapping = _follow_string_map(ctx, owner, key_field)
+    if mapping is None or mapping.get(current) != target:
+        return None
+    return f"{ctx.key_maps.name_for(key_field, mapping)}[{variable}]"
+
+
 def _named_keys(
     owner: BoundSeries,
     point: KeyPoint,
@@ -436,7 +546,8 @@ def _named_keys(
     this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
     across vintages. Other fixed references stay literal. A label that
     embeds the host's own key is a template over it; exact string equality
-    is pass-through, not a template.
+    is pass-through, not a template. A same-axis string that is a 1:1
+    function of the host key is a dict lookup over that host variable.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -461,6 +572,15 @@ def _named_keys(
         ):
             keys.append(issuance_var)
             continue
+        if isinstance(target, str):
+            template = _key_template(target, ctx)
+            if template is not None:
+                keys.append(template)
+                continue
+            remapped = _string_remap_key(owner, key_field, current, target, variable, ctx)
+            if remapped is not None:
+                keys.append(remapped)
+                continue
         if field_axis in pinned:
             keys.append(repr(target))
             continue
@@ -479,10 +599,6 @@ def _named_keys(
             driver = _string_driver(ctx, key_field, field_axis, target)
             if driver is not None:
                 keys.append(driver)
-                continue
-            template = _key_template(target, ctx)
-            if template is not None:
-                keys.append(template)
                 continue
         keys.append(repr(target))
     return keys

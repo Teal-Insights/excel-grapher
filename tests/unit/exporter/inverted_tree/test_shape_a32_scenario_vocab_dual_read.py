@@ -226,6 +226,8 @@ def test_scenario_vocab_dual_read_emits_and_matches_evaluator(tmp_path: Path) ->
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
     assert ".index(" not in internals
+    assert "SCENARIO_KEY[scenario]" in internals
+    assert "if scenario ==" not in internals
     pkg = load_package(modules, tmp_path, name="a32_eval")
     cells = ["Outputs!A1", "Outputs!A2", "Host_B1!F10", "Host_B2!F10"]
     expected = FormulaEvaluator(
