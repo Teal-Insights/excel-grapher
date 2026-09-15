@@ -796,6 +796,54 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.14.0** | Complementary shards: same series `id` with different `sheet` / `data_range` merge when direction, `key`, and dimension shape match (`data_range` may be a list). `bind.kind: sheet_name` (optional `values` map from worksheet name to code). |
 | **1.15.0** | Optional `input.value_map` on **scalar input** series: map public `compute_*` values to workbook cell needles (MATCH/IF labels). Distinct from bind kind `value_map`. |
 | **1.16.0** | `input` no longer requires a setter block. Empty `input: {}` marks an editable series. Package export takes inputs as `compute_*` / `Model` arguments. |
+| **1.17.0** | Series-level `axis_labels` names a one-key series whose evaluated values are the runtime keys of that axis. |
+
+## Runtime axis labels (1.17.0)
+
+A header row that is a formula, not a snapshot literal, can still be a tensor
+axis. Bind the header cells as their own series and set `axis_labels` to the
+sole key field:
+
+```yaml
+schema_version: "1.17.0"
+series:
+  - id: engine_year_labels
+    data_range: Engine!C5:G5
+    layout: series
+    internal: {}
+    axis_labels: TIME_PERIOD
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind: {kind: data_cell, read: int}
+      dimensions:
+        - id: TIME_PERIOD
+          concept: TIME_PERIOD
+          role: key
+          scope: cell
+          bind: {kind: column_header, header_row: 5, read: int}
+    key: [TIME_PERIOD]
+```
+
+The labeller's values become the keys of every tensor on that axis — inputs
+after validation, internals, and `compute_*` results. `internals.x.sel(TIME_PERIOD=2026)`
+selects 2026. Positions remain the codegen's layout truth and are emitted as
+positions (`axis_step`, `_p == 0`), never as snapshot literals.
+
+**Authoring rules.** The named axis must be the series' only key. Measure type
+must match the axis key type. Duplicate labeller identities, a labeller cell
+outside the extracted graph, cached values that disagree with snapshot keys,
+or an input on the labelled axis in the labeller's leaf closure fail at
+export. Non-injective header formulas fail at `compute_*` with `AxisError`.
+
+**Defaults.** Workbook-default input tensors are published over the snapshot
+axis. Shifting the labeller's input without re-keying those tensors raises
+`SchemaError` listing the accepted labels.
+
+**Out of scope.** Translated input enums / `value_map` needles; f-string key
+templates over a runtime string axis; cross-field key equality between a
+runtime axis and a static axis.
 
 ## Input domains (1.13.0)
 

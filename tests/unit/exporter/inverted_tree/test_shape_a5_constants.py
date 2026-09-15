@@ -149,7 +149,7 @@ def test_internal_constant_argument_validates_supplied_tensor(tmp_path: Path) ->
         domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (3, 4), int)),
         records=(((3,), 1), ((4,), 2)),
     )
-    with pytest.raises(pkg.tensor.SchemaError, match="engine_year_labels.*required coordinate"):
+    with pytest.raises(pkg.tensor.SchemaError, match="engine_year_labels.*unknown labels"):
         pkg.internals.shocked_path(value=10.0, shock_year=1, engine_year_labels=wrong)
 
 

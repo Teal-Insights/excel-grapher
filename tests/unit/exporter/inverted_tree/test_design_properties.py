@@ -25,6 +25,7 @@ from tests.unit.exporter.inverted_tree import test_shape_a20_matrix_join as a20
 from tests.unit.exporter.inverted_tree import test_shape_a22_guarded_residual as a22_guarded
 from tests.unit.exporter.inverted_tree import test_shape_a22_shift_k as a22_shift_k
 from tests.unit.exporter.inverted_tree.helpers import (
+    _evaluator_pairs,
     all_param_names,
     bindings_document,
     call_compute,
@@ -164,11 +165,8 @@ def _package_matches_evaluator(
         if series.layout == "scalar":
             _values_close(got, expected[series.cells[0]])
         else:
-            assert tuple(got.domain) == tuple(
-                coord for coord in series.tensor_domain if coord in series.required_coordinates
-            )
-            for coordinate, value in got.items():
-                _values_close(value, expected[series.coordinate_cells[coordinate]])
+            for cell, value in _evaluator_pairs(series, got):
+                _values_close(value, expected[cell])
 
 
 def _emit_and_compare(

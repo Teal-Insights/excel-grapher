@@ -281,8 +281,17 @@ def _read_cell_value(graph: DependencyGraph | None, reader: _WorkbookValues, add
     if graph is not None and address in graph:
         node = graph.get_node(address)
         if node is not None:
-            return node.value
+            if node.value is not None or not node.has_formula:
+                return node.value
+            return _evaluate_formula_cell(graph, address)
     return reader.read(address)
+
+
+def _evaluate_formula_cell(graph: DependencyGraph, address: str) -> Any:
+    """Compute a formula cell that has no cached workbook value."""
+    from excel_grapher.evaluator import FormulaEvaluator
+
+    return FormulaEvaluator(graph).evaluate([address])[address]
 
 
 def _lookup_concept_dtype(

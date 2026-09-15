@@ -2272,12 +2272,35 @@ def collect_all_deps(
     """
     if catalog_edges is None:
         catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
-    return {
+    deps = {
         series.series_id: series_deps_from_edges(
             series, catalog_edges.by_consumer.get(series.series_id, ()), catalog, graph
         )
         for series in catalog.formula_series()
     }
+    return _with_labeller_edges(catalog, deps)
+
+
+def _with_labeller_edges(
+    catalog: SeriesCatalog, deps: dict[str, SeriesDeps]
+) -> dict[str, SeriesDeps]:
+    """Depend every series with a runtime axis on that axis's labeller."""
+    for series in catalog.formula_series():
+        info = deps.get(series.series_id)
+        if info is None:
+            continue
+        extra = [
+            labeller.series_id
+            for axis in series.tensor_domain.axes
+            if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
+            and labeller.series_id != series.series_id
+            and labeller.series_id not in info.param_ids
+        ]
+        if not extra:
+            continue
+        extras = tuple(sid for sid in catalog.order if sid in set(extra))
+        deps[series.series_id] = replace(info, param_ids=info.param_ids + extras)
+    return deps
 
 
 def leaf_closure(

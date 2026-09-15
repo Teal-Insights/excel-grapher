@@ -9,12 +9,22 @@ from __future__ import annotations
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from itertools import product
 from types import MappingProxyType
-from typing import Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
 
 from excel_grapher.core.grid import Range
 from excel_grapher.core.types import FormulaValue
-from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, Tensor, TensorSchema
+from excel_grapher.exporter.export_runtime.tensor import (
+    Axis,
+    Domain,
+    DomainTemplate,
+    SchemaTemplate,
+    Tensor,
+    TensorSchema,
+)
 from excel_grapher.exporter.inverted_tree.excel import XlError, _as_number
+
+if TYPE_CHECKING:
+    from excel_grapher.exporter.export_runtime.provenance import ProvenanceTemplate
 
 T = TypeVar("T")
 F = TypeVar("F", bound=Callable[..., object])
@@ -83,18 +93,18 @@ class KeyedCompute(Protocol):
     """A generated `compute_*` or internals helper with published key metadata."""
 
     __key__: tuple[str, ...]
-    __domain__: tuple[object, ...] | Domain | None
+    __domain__: tuple[object, ...] | Domain | DomainTemplate | None
     __holes__: tuple[int, ...]
 
 
 def publish(
-    schema: TensorSchema | None = None,
+    schema: TensorSchema | SchemaTemplate | None = None,
     *,
     key: tuple[str, ...] | None = None,
     domain: object = None,
     holes: tuple[int, ...] = (),
     constants: Iterable[str] | None = None,
-    cells: Mapping[K, str] | None = None,
+    cells: Mapping[K, str] | ProvenanceTemplate | None = None,
 ) -> Callable[[F], F]:
     """Attach series metadata to a generated helper and return it unchanged.
 
@@ -306,6 +316,13 @@ def as_records(
     """
     keys = compute.__key__
     domain = compute.__domain__
+    if isinstance(domain, DomainTemplate):
+        if not isinstance(result, Tensor):
+            raise ValueError("result must be a Tensor over the declared result domain")
+        return [
+            dict(zip(keys, coord, strict=True)) | {measure: value}
+            for coord, value in result.items()
+        ]
     if isinstance(domain, Domain):
         if not isinstance(result, Tensor) or result.domain != domain:
             raise ValueError("result must be a Tensor over the declared result domain")

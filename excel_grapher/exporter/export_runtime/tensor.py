@@ -39,6 +39,7 @@ class Axis:
     name: str
     keys: tuple[str | int, ...]
     key_type: type[str] | type[int]
+    _index: Mapping[str | int, int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str) or not self.name.strip():
@@ -52,6 +53,27 @@ class Axis:
         if len(set(keys)) != len(keys):
             raise AxisError(f"axis {self.name!r}: duplicate keys")
         object.__setattr__(self, "keys", keys)
+        object.__setattr__(self, "_index", MappingProxyType({key: i for i, key in enumerate(keys)}))
+
+    def position(self, key: str | int) -> int:
+        """Return the 0-based index of `key` on this axis."""
+        if type(key) is not self.key_type or key not in self._index:
+            raise CoordinateError(f"axis {self.name!r}: invalid key {key!r}")
+        return self._index[key]
+
+
+def label_axis(name: str, values: Iterable[object], key_type: type[str] | type[int]) -> Axis:
+    """Build an axis from evaluated labels, naming duplicate or mistyped values."""
+    keys: list[str | int] = []
+    seen: set[object] = set()
+    for value in values:
+        if type(value) is not key_type:
+            raise AxisError(f"axis {name!r}: label {value!r} must be {key_type.__name__}")
+        if value in seen:
+            raise AxisError(f"axis {name!r}: duplicate label {value!r}")
+        seen.add(value)
+        keys.append(cast(str | int, value))
+    return Axis(name, tuple(keys), key_type)
 
 
 def coordinate_runs(
@@ -217,6 +239,144 @@ class Domain:
         return hashlib.sha256(
             json.dumps(self.to_dict(), sort_keys=True, separators=(",", ":")).encode()
         ).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class AxisTemplate:
+    """An axis whose keys are known only after its labeller is evaluated."""
+
+    name: str
+    key_type: type[str] | type[int]
+    size: int
+    labeller: str
+    snapshot: tuple[str | int, ...]
+    source: tuple[str | int, ...] | None = None
+
+    def bind(self, axis: Axis) -> Axis:
+        """Return `axis`, or the snapshot-aligned slice of a longer labeller axis."""
+        if axis.name != self.name:
+            raise AxisError(
+                f"axis {self.name!r}: expected name {self.name!r}, received {axis.name!r}"
+            )
+        if axis.key_type is not self.key_type:
+            raise AxisError(
+                f"axis {self.name!r}: expected {self.key_type.__name__} keys, "
+                f"received {axis.key_type.__name__}"
+            )
+        source = self.source if self.source is not None else self.snapshot
+        if len(axis.keys) != len(source):
+            raise AxisError(
+                f"axis {self.name!r}: expected {len(source)} keys, received {len(axis.keys)}"
+            )
+        if source == self.snapshot:
+            if len(axis.keys) != self.size:
+                raise AxisError(
+                    f"axis {self.name!r}: expected {self.size} keys, received {len(axis.keys)}"
+                )
+            return axis
+        keys = tuple(axis.keys[source.index(key)] for key in self.snapshot)
+        return Axis(self.name, keys, self.key_type)
+
+
+def _bound_axis(axis: Axis | AxisTemplate, labellers: Mapping[str, Tensor[Any]]) -> Axis:
+    if isinstance(axis, Axis):
+        return axis
+    labeller = labellers.get(axis.name)
+    if labeller is None:
+        raise AxisError(f"axis {axis.name!r}: missing labeller {axis.labeller!r}")
+    if not labeller.domain.axes:
+        raise AxisError(f"axis {axis.name!r}: labeller {axis.labeller!r} has no axes")
+    return axis.bind(labeller.domain.axes[0])
+
+
+@dataclass(frozen=True, slots=True)
+class DomainTemplate:
+    """A domain with one or more axes supplied by labellers at call time."""
+
+    axes: tuple[Axis | AxisTemplate, ...]
+    coordinates: tuple[tuple[int, ...], ...] | None = None
+
+    @classmethod
+    def product(cls, *axes: Axis | AxisTemplate) -> DomainTemplate:
+        """Construct a Cartesian template, with the final axis varying fastest."""
+        return cls(tuple(axes))
+
+    @classmethod
+    def explicit(
+        cls, *, axes: Iterable[Axis | AxisTemplate], coordinates: Iterable[tuple[int, ...]]
+    ) -> DomainTemplate:
+        """Store sparse membership as positions along each template axis."""
+        return cls(tuple(axes), tuple(tuple(coord) for coord in coordinates))
+
+    def bind(self, **labellers: Tensor[Any]) -> Domain:
+        """Materialize axes from `labellers` keyed by axis name."""
+        axes = tuple(_bound_axis(axis, labellers) for axis in self.axes)
+        return self._domain(axes)
+
+    def domain_from_axes(self, axes: Sequence[Axis]) -> Domain:
+        """Materialize this template over already-bound `axes`."""
+        if len(axes) != len(self.axes):
+            raise DomainError(f"expected {len(self.axes)} axes, received {len(axes)}")
+        return self._domain(tuple(axes))
+
+    def _domain(self, axes: tuple[Axis, ...]) -> Domain:
+        if self.coordinates is None:
+            return Domain.product(*axes)
+        coordinates = tuple(
+            tuple(axes[index].keys[position] for index, position in enumerate(coord))
+            for coord in self.coordinates
+        )
+        return Domain.explicit(axes=axes, coordinates=coordinates)
+
+    def __iter__(self) -> Iterator[Coordinate]:
+        raise TypeError("bind a DomainTemplate before iterating its coordinates")
+
+
+@dataclass(frozen=True, slots=True)
+class SchemaTemplate:
+    """A series contract whose runtime axes bind from labellers or the tensor itself."""
+
+    series_id: str
+    domain: DomainTemplate
+    value_types: tuple[type, ...]
+
+    def __post_init__(self) -> None:
+        if not self.series_id or not self.domain.axes or not self.value_types:
+            raise SchemaError(
+                "required series schema needs an identifier, nonempty domain, and value types"
+            )
+        object.__setattr__(self, "value_types", tuple(self.value_types))
+
+    def bind(self, **labellers: Tensor[Any]) -> TensorSchema:
+        """Bind runtime axes and return a concrete `TensorSchema`."""
+        return TensorSchema(self.series_id, self.domain.bind(**labellers), self.value_types)
+
+    def validate(self, tensor: object, *, exact: bool = False) -> None:
+        """Check size and type on runtime axes, resolving keys from `tensor`."""
+        if not isinstance(tensor, Tensor):
+            raise SchemaError(f"{self.series_id}: expected Tensor")
+        if len(tensor.domain.axes) != len(self.domain.axes):
+            expected = tuple(axis.name for axis in self.domain.axes)
+            actual = tuple(axis.name for axis in tensor.domain.axes)
+            raise SchemaError(f"{self.series_id}: expected axes {expected!r}, received {actual!r}")
+        bound: list[Axis] = []
+        for template, actual in zip(self.domain.axes, tensor.domain.axes, strict=True):
+            if isinstance(template, AxisTemplate):
+                try:
+                    bound.append(template.bind(actual))
+                except AxisError as exc:
+                    raise SchemaError(f"{self.series_id}: {exc}") from exc
+                continue
+            if actual.name != template.name or actual.key_type is not template.key_type:
+                expected = tuple((axis.name, axis.key_type) for axis in self.domain.axes)
+                received = tuple((axis.name, axis.key_type) for axis in tensor.domain.axes)
+                raise SchemaError(
+                    f"{self.series_id}: expected axes {expected!r}, received {received!r}"
+                )
+            bound.append(template)
+        TensorSchema(
+            self.series_id, self.domain.domain_from_axes(bound), self.value_types
+        ).validate(tensor, exact=exact)
 
 
 @dataclass(frozen=True, slots=True)
@@ -428,6 +588,15 @@ class TensorSchema:
         actual = tuple((axis.name, axis.key_type) for axis in tensor.domain.axes)
         if actual != expected:
             raise SchemaError(f"{self.series_id}: expected axes {expected!r}, received {actual!r}")
+        for expected_axis, actual_axis in zip(self.domain.axes, tensor.domain.axes, strict=True):
+            expected_keys = set(expected_axis.keys)
+            unknown = tuple(key for key in actual_axis.keys if key not in expected_keys)
+            missing = tuple(key for key in expected_axis.keys if key not in set(actual_axis.keys))
+            if unknown and missing:
+                raise SchemaError(
+                    f"{self.series_id}: axis {expected_axis.name!r} has unknown labels "
+                    f"{unknown!r}; accepted labels are {expected_axis.keys!r}"
+                )
         for coord in self.domain:
             try:
                 tensor.domain.require(coord)
@@ -452,24 +621,31 @@ class Series(Tensor[T]):
     series without observations use `SeriesSpec` with the same attributes.
     """
 
-    schema: TensorSchema = field(kw_only=True, repr=False, compare=False)
-    cells: Mapping[Coordinate, str] | None = field(
-        default=None, kw_only=True, repr=False, compare=False
-    )
+    schema: TensorSchema | SchemaTemplate = field(kw_only=True, repr=False, compare=False)
+    cells: Any = field(default=None, kw_only=True, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         super().__post_init__()
         self.schema.validate(self)
 
     @property
-    def required(self) -> Domain:
+    def required(self) -> Domain | DomainTemplate:
         """The schema's required coordinates, which may be a subset of `domain`."""
         return self.schema.domain
 
-    def collect(self, records: Iterable[tuple[Coordinate, T]]) -> Self:
+    def collect(
+        self, records: Iterable[tuple[Coordinate, T]], domain: Domain | None = None
+    ) -> Self:
         """Publish coordinate/value records over the series' required domain."""
-        tensor = Tensor.from_records(domain=self.schema.domain, records=records)
-        return type(self)(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
+        return cast(Self, _collect_series(type(self), self.schema, self.cells, records, domain))
+
+    def from_labels(self, axis: Axis) -> Self:
+        """Publish the identity tensor mapping each label to itself."""
+        domain = Domain.product(axis)
+        schema = TensorSchema(self.schema.series_id, domain, self.schema.value_types)
+        return type(self)(
+            domain, cast(tuple[T, ...], tuple(axis.keys)), schema=schema, cells=self.cells
+        )
 
     def with_values(self, values: Sequence[T]) -> Self:
         """Return a series over the same domain, schema, and cells."""
@@ -490,33 +666,65 @@ class Series(Tensor[T]):
 class SeriesSpec(Generic[T]):
     """Schema, authored domain, and cell provenance without observations."""
 
-    schema: TensorSchema
-    domain: Domain
-    cells: Mapping[Coordinate, str]
+    schema: TensorSchema | SchemaTemplate
+    domain: Domain | DomainTemplate
+    cells: Any
 
     @property
-    def required(self) -> Domain:
+    def required(self) -> Domain | DomainTemplate:
         """The schema's required coordinates, which may be a subset of `domain`."""
         return self.schema.domain
 
-    def collect(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
+    def collect(
+        self, records: Iterable[tuple[Coordinate, T]], domain: Domain | None = None
+    ) -> Series[T]:
         """Publish coordinate/value records over the series' required domain."""
-        tensor = Tensor.from_records(domain=self.schema.domain, records=records)
-        return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
+        return _collect_series(Series, self.schema, self.cells, records, domain)
+
+    def from_labels(self, axis: Axis) -> Series[T]:
+        """Publish the identity tensor mapping each label to itself."""
+        bound = Domain.product(axis)
+        schema = TensorSchema(self.schema.series_id, bound, self.schema.value_types)
+        return Series(bound, cast(tuple[T, ...], tuple(axis.keys)), schema=schema, cells=self.cells)
 
     def with_values(self, values: Sequence[T]) -> Series[T]:
         """Bind observations over the authored domain."""
+        if not isinstance(self.domain, Domain):
+            raise TypeError("with_values requires a bound domain")
         return Series(self.domain, tuple(values), schema=self.schema, cells=self.cells)
 
     def with_nested(self, values: Any) -> Series[T]:
         """Bind nested product values over the authored domain."""
+        if not isinstance(self.domain, Domain):
+            raise TypeError("with_nested requires a bound domain")
         tensor = Tensor.from_nested(domain=self.domain, values=values)
         return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
     def with_records(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
         """Bind records over the authored domain."""
+        if not isinstance(self.domain, Domain):
+            raise TypeError("with_records requires a bound domain")
         tensor = Tensor.from_records(domain=self.domain, records=records)
         return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
+
+
+def _collect_series(
+    series_type: type[Series[T]],
+    schema: TensorSchema | SchemaTemplate,
+    cells: Any,
+    records: Iterable[tuple[Coordinate, T]],
+    domain: Domain | None,
+) -> Series[T]:
+    schema_domain = schema.domain
+    if domain is None:
+        if not isinstance(schema_domain, Domain):
+            raise TypeError("collect requires a bound domain")
+        domain = schema_domain
+    tensor = Tensor.from_records(domain=domain, records=records)
+    bound_schema: TensorSchema | SchemaTemplate = schema
+    if isinstance(schema, SchemaTemplate):
+        bound_schema = TensorSchema(schema.series_id, domain, schema.value_types)
+    return series_type(tensor.domain, tensor._values, schema=bound_schema, cells=cells)
 
 
 @overload
@@ -525,39 +733,46 @@ def define_series(
     domain: Domain,
     values: Sequence[T],
     *,
-    cells: Mapping[Coordinate, str],
+    cells: Any,
     value_types: tuple[type, ...],
-    required: Domain | None = None,
+    required: Domain | DomainTemplate | None = None,
 ) -> Series[T]: ...
 
 
 @overload
 def define_series(
     series_id: str,
-    domain: Domain,
+    domain: Domain | DomainTemplate,
     values: None = None,
     *,
-    cells: Mapping[Coordinate, str],
+    cells: Any,
     value_types: tuple[type, ...],
-    required: Domain | None = None,
+    required: Domain | DomainTemplate | None = None,
 ) -> SeriesSpec[T]: ...
 
 
 def define_series(
     series_id: str,
-    domain: Domain,
+    domain: Domain | DomainTemplate,
     values: Sequence[T] | None = None,
     *,
-    cells: Mapping[Coordinate, str],
+    cells: Any,
     value_types: tuple[type, ...],
-    required: Domain | None = None,
+    required: Domain | DomainTemplate | None = None,
 ) -> Series[T] | SeriesSpec[T]:
     """Bind a series schema, provenance, and optional default observations.
 
     `required` defaults to `domain`. Pass it only when the required
     coordinates are a proper subset of the authored domain.
     """
-    schema = TensorSchema(series_id, domain if required is None else required, value_types)
+    schema_domain = domain if required is None else required
+    schema: TensorSchema | SchemaTemplate
+    if isinstance(schema_domain, DomainTemplate):
+        schema = SchemaTemplate(series_id, schema_domain, value_types)
+    else:
+        schema = TensorSchema(series_id, schema_domain, value_types)
     if values is None:
         return SeriesSpec(schema=schema, domain=domain, cells=cells)
+    if not isinstance(domain, Domain):
+        raise TypeError("define_series with values requires a bound Domain")
     return Series(domain, tuple(values), schema=schema, cells=cells)

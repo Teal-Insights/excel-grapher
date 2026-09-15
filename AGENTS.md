@@ -37,6 +37,10 @@ The project aims for **behavioral parity** across **Excel** (reference), **`Form
 
 **Excel-facing tests:** Prefer validating against **live Excel** (xlwings on Windows/macOS, or Excel via COM from WSL) when comparing to the real engine. **Run-if-available:** if automation is missing, **`pytest.skip`** with a clear reason—do not fail CI. Cache-based comparisons (`excel_workbook_parity`) remain useful for environments without Excel. See `.cursor/rules/parity.mdc` for the full contract.
 
+When a series declares `axis_labels`, generated `internals` are keyed by the
+labeller's evaluated values (the same keys callers see on `compute_*` results),
+not by snapshot header literals.
+
 ## Cursor Cloud specific instructions
 
 This is a pure Python **library + CLI** (`excel-grapher`) managed with `uv`; there are no runtime services (no DB/web/queue). "End-to-end" runs entirely in-process against `.xlsx` fixtures in `examples/` and `tests/fixtures/`. Dependencies are installed by the startup update script (`uv sync --all-extras --dev`), which also provisions the pinned Python (3.13). Run everything through `uv run`.
