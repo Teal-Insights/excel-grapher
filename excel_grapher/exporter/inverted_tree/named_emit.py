@@ -121,6 +121,7 @@ def named_codegen_fingerprint(catalog: SeriesCatalog) -> str:
                 "series_id": series.series_id,
                 "direction": series.direction,
                 "dtype": series.dtype,
+                "axis_labels": series.axis_labels,
                 "domain": domain.to_dict(),
                 "required": [coord for coord in domain if coord in required],
                 "provenance": list(series.coordinate_cells.items()),

@@ -17,6 +17,7 @@ _STRUCTURAL_FIELDS = frozenset(
         "exclude_rows",
         "exclude_columns",
         "layout",
+        "axis_labels",
         "structure",
         "key",
         "groups",
