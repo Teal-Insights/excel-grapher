@@ -466,37 +466,10 @@ class Series(Tensor[T]):
         """The schema's required coordinates, which may be a subset of `domain`."""
         return self.schema.domain
 
-    @classmethod
-    def from_records(  # type: ignore[override]
-        cls,
-        *,
-        domain: Domain,
-        records: Iterable[tuple[Coordinate, T]],
-        schema: TensorSchema,
-        cells: Mapping[Coordinate, str] | None = None,
-    ) -> Self:
-        """Validate unique records, then bind them to `schema`."""
-        tensor = Tensor.from_records(domain=domain, records=records)
-        return cls(tensor.domain, tensor._values, schema=schema, cells=cells)
-
-    @classmethod
-    def from_nested(  # type: ignore[override]
-        cls,
-        *,
-        domain: Domain,
-        values: Any,
-        schema: TensorSchema,
-        cells: Mapping[Coordinate, str] | None = None,
-    ) -> Self:
-        """Construct nested product values, then bind them to `schema`."""
-        tensor = Tensor.from_nested(domain=domain, values=values)
-        return cls(tensor.domain, tensor._values, schema=schema, cells=cells)
-
     def collect(self, records: Iterable[tuple[Coordinate, T]]) -> Self:
         """Publish coordinate/value records over the series' required domain."""
-        return type(self).from_records(
-            domain=self.schema.domain, records=records, schema=self.schema, cells=self.cells
-        )
+        tensor = Tensor.from_records(domain=self.schema.domain, records=records)
+        return type(self)(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
     def with_values(self, values: Sequence[T]) -> Self:
         """Return a series over the same domain, schema, and cells."""
@@ -504,15 +477,13 @@ class Series(Tensor[T]):
 
     def with_nested(self, values: Any) -> Self:
         """Return a series from nested product values over the authored domain."""
-        return type(self).from_nested(
-            domain=self.domain, values=values, schema=self.schema, cells=self.cells
-        )
+        tensor = Tensor.from_nested(domain=self.domain, values=values)
+        return type(self)(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
     def with_records(self, records: Iterable[tuple[Coordinate, T]]) -> Self:
         """Return a series from records over the authored domain."""
-        return type(self).from_records(
-            domain=self.domain, records=records, schema=self.schema, cells=self.cells
-        )
+        tensor = Tensor.from_records(domain=self.domain, records=records)
+        return type(self)(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
 
 @dataclass(frozen=True, slots=True)
@@ -530,9 +501,8 @@ class SeriesSpec(Generic[T]):
 
     def collect(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
         """Publish coordinate/value records over the series' required domain."""
-        return Series.from_records(
-            domain=self.schema.domain, records=records, schema=self.schema, cells=self.cells
-        )
+        tensor = Tensor.from_records(domain=self.schema.domain, records=records)
+        return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
     def with_values(self, values: Sequence[T]) -> Series[T]:
         """Bind observations over the authored domain."""
@@ -540,15 +510,13 @@ class SeriesSpec(Generic[T]):
 
     def with_nested(self, values: Any) -> Series[T]:
         """Bind nested product values over the authored domain."""
-        return Series.from_nested(
-            domain=self.domain, values=values, schema=self.schema, cells=self.cells
-        )
+        tensor = Tensor.from_nested(domain=self.domain, values=values)
+        return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
     def with_records(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
         """Bind records over the authored domain."""
-        return Series.from_records(
-            domain=self.domain, records=records, schema=self.schema, cells=self.cells
-        )
+        tensor = Tensor.from_records(domain=self.domain, records=records)
+        return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
 
 @overload

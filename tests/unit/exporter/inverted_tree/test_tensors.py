@@ -6,6 +6,7 @@ import pytest
 from excel_grapher.exporter.export_runtime.tensor import (
     Axis,
     AxisError,
+    Coordinate,
     CoordinateError,
     Domain,
     DomainError,
@@ -180,7 +181,11 @@ def test_domain_positions_are_shared_and_tensors_hold_only_values() -> None:
 
 def test_define_series_binds_schema_cells_and_values() -> None:
     domain = Domain.product(years(2025, 2026, 2027))
-    cells = {(2025,): "Data!B2", (2026,): "Data!C2", (2027,): "Data!D2"}
+    cells: dict[Coordinate, str] = {
+        (2025,): "Data!B2",
+        (2026,): "Data!C2",
+        (2027,): "Data!D2",
+    }
     series = define_series(
         "prices",
         domain,
@@ -192,7 +197,9 @@ def test_define_series_binds_schema_cells_and_values() -> None:
     assert series[2026] == 2.0
     assert series.schema.series_id == "prices"
     assert series.required is domain
-    assert series.cells[(2027,)] == "Data!D2"
+    bound_cells = series.cells
+    assert bound_cells is not None
+    assert bound_cells[(2027,)] == "Data!D2"
     rebuilt = series.collect(((coord, value) for coord, value in series.items()))
     assert rebuilt[2025] == 1.0
     assert rebuilt.schema is series.schema
@@ -200,10 +207,11 @@ def test_define_series_binds_schema_cells_and_values() -> None:
 
 def test_define_series_without_values_is_a_spec() -> None:
     domain = Domain.product(years(2025, 2026))
+    cells: dict[Coordinate, str] = {(2025,): "Sheet!B3", (2026,): "Sheet!C3"}
     spec = define_series(
         "twice",
         domain,
-        cells={(2025,): "Sheet!B3", (2026,): "Sheet!C3"},
+        cells=cells,
         value_types=(int, float, str, type(None)),
     )
     assert isinstance(spec, SeriesSpec)
@@ -216,11 +224,12 @@ def test_define_series_without_values_is_a_spec() -> None:
 def test_define_series_required_may_be_narrower_than_domain() -> None:
     domain = Domain.product(years(2025, 2026, 2027))
     required = Domain.product(years(2026, 2027))
+    cells: dict[Coordinate, str] = {(2025,): "A1", (2026,): "B1", (2027,): "C1"}
     series = define_series(
         "window",
         domain,
         (0.0, 1.0, 2.0),
-        cells={(2025,): "A1", (2026,): "B1", (2027,): "C1"},
+        cells=cells,
         value_types=(int, float, str, type(None)),
         required=required,
     )
