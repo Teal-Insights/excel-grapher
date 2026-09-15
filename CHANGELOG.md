@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.0.0 (2026-09-15)
+
+### Bug Fixes
+
+- **export**: Construct Series without overriding Tensor factories
+  ([#861](https://github.com/Teal-Insights/excel-grapher/pull/861),
+  [`6db1a25`](https://github.com/Teal-Insights/excel-grapher/commit/6db1a2553786da7bb8d74d7b624172adbd02badc))
+
+### Features
+
+- Bind inverted-tree series with define_series
+  ([#861](https://github.com/Teal-Insights/excel-grapher/pull/861),
+  [`6db1a25`](https://github.com/Teal-Insights/excel-grapher/commit/6db1a2553786da7bb8d74d7b624172adbd02badc))
+
+- **export**: Emit multi-series lookup tables as view strips
+  ([#857](https://github.com/Teal-Insights/excel-grapher/pull/857),
+  [`b84e880`](https://github.com/Teal-Insights/excel-grapher/commit/b84e8801fc95a1742ded5d76e949df3c87a9cdfa))
+
+- **export**: Fold lockstep string-key remaps into a dict lookup
+  ([#859](https://github.com/Teal-Insights/excel-grapher/pull/859),
+  [`ef291b1`](https://github.com/Teal-Insights/excel-grapher/commit/ef291b17aceed6a478f8545530ecc8d322da44ab))
+
+
 ## v19.0.2 (2026-09-14)
 
 ### Bug Fixes
