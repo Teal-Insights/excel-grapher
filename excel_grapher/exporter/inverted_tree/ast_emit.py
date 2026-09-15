@@ -483,7 +483,9 @@ def _string_follow_expr(
     Equality and templates already cover the same spelling and an embedded
     host label. A lockstep walk whose producer labels are a different
     vocabulary of a host key is that pairing as a dict, so formula families
-    collapse instead of branching on the host coordinate.
+    collapse instead of branching on the host coordinate. The pairing is a
+    function of the host key, so it still applies when the producer row is
+    pinned against a sliding `TIME_PERIOD` walk.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -556,8 +558,9 @@ def _named_keys(
     this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
     across vintages. Other fixed references stay literal. A lockstep walk
     whose producer string keys are a function of a host key is that
-    function as a dict. A label that embeds the host's own key is a
-    template over it; exact string equality is pass-through, not a template.
+    function as a dict, including when the producer row is pinned against
+    `TIME_PERIOD`. A label that embeds the host's own key is a template
+    over it; exact string equality is pass-through, not a template.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -582,9 +585,6 @@ def _named_keys(
         ):
             keys.append(issuance_var)
             continue
-        if field_axis in pinned:
-            keys.append(repr(target))
-            continue
         if isinstance(target, str):
             template = _key_template(target, ctx)
             if template is not None:
@@ -594,6 +594,9 @@ def _named_keys(
             if follow is not None:
                 keys.append(follow)
                 continue
+        if field_axis in pinned:
+            keys.append(repr(target))
+            continue
         if variable is not None and current == target:
             keys.append(variable)
             continue
