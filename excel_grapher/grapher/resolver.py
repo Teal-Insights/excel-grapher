@@ -28,7 +28,18 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.formula_normalization import expand_whole_column_row_for_parse
 from excel_grapher.core.operators_reference import apply_arithmetic
+from excel_grapher.core.range_shorthand import resolve_whole_column_span, resolve_whole_row_span
 from excel_grapher.core.types import CellValue, ExcelRange, XlError
+
+_RECT_DEFINED_NAME_RE = re.compile(
+    r"'?(?P<sheet>[^'!]+)'?!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)"
+    r":\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$"
+)
+_WHOLE_ROW_DEFINED_NAME_RE = re.compile(r"'?(?P<sheet>[^'!]+)'?!\$?(?P<r1>\d+):\$?(?P<r2>\d+)$")
+_WHOLE_COL_DEFINED_NAME_RE = re.compile(
+    r"'?(?P<sheet>[^'!]+)'?!\$?(?P<c1>[A-Z]{1,3}):\$?(?P<c2>[A-Z]{1,3})$"
+)
+_CELL_DEFINED_NAME_RE = re.compile(r"'?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$")
 
 
 @dataclass(frozen=True)
@@ -308,6 +319,54 @@ def _normalize_formula_for_parse(formula: str, bounds: dict[str, tuple[int, int]
     return expand_whole_column_row_for_parse(formula, bounds)
 
 
+def _excel_range_to_named_entry(rng: ExcelRange) -> tuple[str, str, str]:
+    """Return `(sheet, start_a1, end_a1)` for a resolved named-range rectangle."""
+    start = f"{get_column_letter(rng.start_col)}{rng.start_row}"
+    end = f"{get_column_letter(rng.end_col)}{rng.end_row}"
+    return (rng.sheet, start, end)
+
+
+def _used_extent_for_named_sheet(
+    bounds: dict[str, tuple[int, int]], sheet: str
+) -> tuple[str, tuple[int, int]] | None:
+    """Return `(canonical_sheet, (max_row, max_col))` or None if unknown.
+
+    Whole-row/column names need a used-range extent. Missing sheets stay
+    unresolved (fail closed) rather than expanding to `XFD`/`1048576`.
+    """
+    if sheet in bounds:
+        return sheet, bounds[sheet]
+    key = sheet.casefold()
+    for name, extent in bounds.items():
+        if name.casefold() == key:
+            return name, extent
+    return None
+
+
+def _try_resolve_whole_axis_defined_name(
+    attr_text: str,
+    bounds: dict[str, tuple[int, int]],
+) -> tuple[str, str, str] | None:
+    """Expand `Sheet!$5:$10` / `Sheet!$A:$C` against the sheet used range."""
+    m = _WHOLE_ROW_DEFINED_NAME_RE.match(attr_text)
+    if m is not None:
+        found = _used_extent_for_named_sheet(bounds, m.group("sheet"))
+        if found is None:
+            return None
+        sheet, extent = found
+        rng = resolve_whole_row_span(sheet, int(m.group("r1")), int(m.group("r2")), {sheet: extent})
+        return _excel_range_to_named_entry(rng)
+    m = _WHOLE_COL_DEFINED_NAME_RE.match(attr_text)
+    if m is not None:
+        found = _used_extent_for_named_sheet(bounds, m.group("sheet"))
+        if found is None:
+            return None
+        sheet, extent = found
+        rng = resolve_whole_column_span(sheet, m.group("c1"), m.group("c2"), {sheet: extent})
+        return _excel_range_to_named_entry(rng)
+    return None
+
+
 def _try_resolve_formula_defined_name(
     attr_text: str,
     wb: fastpyxl.Workbook,
@@ -347,12 +406,26 @@ def _try_resolve_formula_defined_name(
 def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
     """Map defined names to single-cell and range references.
 
-    Only includes simple definitions like Sheet1!$A$1 or Sheet1!$A$1:$B$10
-    (optionally quoted sheet name). Skips multi-area and complex formulas.
-    Formula-based names (OFFSET, INDIRECT) are evaluated using workbook values.
+    Accepted referents (optionally quoted sheet name):
+
+    - Single cells: `Sheet1!$A$1`
+    - Rectangles: `Sheet1!$A$1:$B$10`
+    - Whole-row spans: `Sheet1!$5:$134` / `Sheet1!$5:$5`
+    - Whole-column spans: `Sheet1!$A:$C` / `Sheet1!$A:$A`
+    - Evaluated `OFFSET` / `INDIRECT` formulas using workbook values
+
+    Whole-row and whole-column names expand the **implicit** axis against that
+    sheet's used range (`Worksheet.max_row` / `max_column`), the same policy as
+    formula shorthands in `excel_grapher.core.range_shorthand`. Named rows or
+    columns are kept; they are not clipped to the used extent. A missing sheet
+    is omitted rather than expanded to Excel's full grid (`XFD` / `1048576`).
+
+    Multi-area unions, `#REF!`, array constants, and other non-range formulas
+    are skipped.
     """
     cell_map: dict[str, tuple[str, str]] = {}
     range_map: dict[str, tuple[str, str, str]] = {}
+    bounds = _sheet_bounds(wb)
     for name, defn in wb.defined_names.items():
         attr_text = getattr(defn, "attr_text", None)
         if not isinstance(attr_text, str) or not attr_text:
@@ -370,26 +443,27 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
         if "," in attr_text:
             continue
         if ":" in attr_text:
-            m = re.match(
-                r"'?(?P<sheet>[^'!]+)'?!\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+):\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)$",
-                attr_text,
-            )
-            if not m:
-                resolved = _try_resolve_formula_defined_name(attr_text, wb)
-                if resolved is not None:
-                    if len(resolved) == 2:
-                        cell_map[str(name)] = (resolved[0], resolved[1])
-                    elif len(resolved) == 3:
-                        range_map[str(name)] = resolved
+            m = _RECT_DEFINED_NAME_RE.match(attr_text)
+            if m is not None:
+                sheet_name = m.group("sheet")
+                start = f"{m.group('c1')}{m.group('r1')}"
+                end = f"{m.group('c2')}{m.group('r2')}"
+                range_map[str(name)] = (sheet_name, start, end)
                 continue
-            sheet_name = m.group("sheet")
-            start = f"{m.group('c1')}{m.group('r1')}"
-            end = f"{m.group('c2')}{m.group('r2')}"
-            range_map[str(name)] = (sheet_name, start, end)
+            resolved_axis = _try_resolve_whole_axis_defined_name(attr_text, bounds)
+            if resolved_axis is not None:
+                range_map[str(name)] = resolved_axis
+                continue
+            resolved = _try_resolve_formula_defined_name(attr_text, wb)
+            if resolved is not None:
+                if len(resolved) == 2:
+                    cell_map[str(name)] = (resolved[0], resolved[1])
+                elif len(resolved) == 3:
+                    range_map[str(name)] = resolved
             continue
 
-        m = re.match(r"'?([^'!]+)'?!\$?([A-Z]{1,3})\$?(\d+)$", attr_text)
-        if not m:
+        m = _CELL_DEFINED_NAME_RE.match(attr_text)
+        if m is None:
             continue
         sheet_name = m.group(1)
         col = m.group(2)

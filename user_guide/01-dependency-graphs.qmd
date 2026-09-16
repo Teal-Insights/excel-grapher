@@ -11,10 +11,10 @@ guide-section: "Core workflow"
 - **Values are optional**: `load_values=True` loads cached Excel results in the same parse as formulas (`keep_formula_cache=True`); otherwise formula nodes have `value=None`.
 - **Extensible metadata**: each `Node` exposes `metadata` as a read-only `Mapping[str, Any]`. Nodes without metadata share one immutable empty mapping instead of allocating a dict, so hooks write through `node.set_metadata(...)` / `node.update_metadata(...)` (or `graph.set_node_metadata(key, ...)`) rather than `node.metadata[key] = value`.
 - **Range expansion**: ranges like `A1:A10` are expanded to individual cell dependencies (bounded by `max_range_cells`, default 50,000). A rectangle larger than the budget raises `ValueError` rather than silently keeping only the two corner cells.
-- **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid. These shorthands expand to every row/column in that extent even when a rectangular range of the same size would exceed `max_range_cells`.
+- **Whole-column/row shorthand**: Excel forms like `Data!A:A` and `Data!5:5` parse as syntactic shorthands and resolve to each sheet's **used range** (workbook dimensions), not Excel's full grid (`XFD` / `1048576`). These shorthands expand to every row/column in that extent even when a rectangular range of the same size would exceed `max_range_cells`. Defined names that use the same shorthand (`Macrofw!$5:$134`, `Macrofw!$A:$C`) follow this policy — see [Defined-name expansion](#defined-name-expansion).
 - **Formula AST**: each formula node stores `formula_ast`, the parsed tree extracted from the workbook (the canonical in-memory formula). `normalized_formula` is a derived view (`render_formula(..., style=A1_ABSOLUTE)`): sheet-qualified refs, resolved named ranges, and stripped `$` markers. It is not stored on the node or in the JSON graph cache. Formula cells are identified by `has_formula` (`formula_ast` or unparseable fallback text). Compression and projection rewrite the AST; the string view follows. Identity-transit compression rewrites `CellRefNode` leaves only: a transit mentioned as a range endpoint or whole-column/row leaf is left in place so the formula cannot name a removed node and range geometry is not rewritten. `replace_resolved_cell_ref` still retargets those leaves when called directly. `formula_shapes` is an optional eval/codegen overlay on top of that AST — see [Formula-shape overlay](#formula-shape-overlay).
 - **Array formulas**: extraction records `Node.is_array_formula` and the observed spill / CSE `ref` (`Node.array_formula_ref`) when fastpyxl surfaces an `ArrayFormula`. `write_workbook` emits `ArrayFormula` rather than a scalar formula string, and refuses a flagged cell whose `ref` was not observed. fastpyxl does not distinguish legacy CSE from dynamic-array spills; both round-trip as `t="array"`.
-- **Defined names**: extraction expands name tokens to A1 before parse. `write_workbook` emits those expanded formulas and, by default, writes the workbook name table from `named_ranges` / `named_range_ranges` so Excel still has the aliases.
+- **Defined names**: extraction expands name tokens to A1 before parse. `write_workbook` emits those expanded formulas and, by default, writes the workbook name table from `named_ranges` / `named_range_ranges` so Excel still has the aliases. Whole-row and whole-column referents expand as documented in [Defined-name expansion](#defined-name-expansion).
 - **Raw formulas are opt-in**: `Node.formula` (the workbook string, e.g. `=A1+$B$2`) is stored only with `create_dependency_graph(..., store_raw_formula=True)`. It is an audit/display field — see [Raw formula storage](#raw-formula-storage).
 
 ### Quick start: building a graph
@@ -230,13 +230,36 @@ another).
   (both-end forms like `"Sheet1!A1:Sheet1!B2"` are also accepted),
   `"'My Sheet'!A1:B2"`
 - defined names that resolve to a single cell or rectangular range:
-  `"MyInput"`, `"DataRange"`
+  `"MyInput"`, `"DataRange"` (including whole-row / whole-column names
+  expanded against the sheet used range)
 
 Range and named-range targets expand to one root per cell (subject to
 `max_range_cells`, default 50,000) and the BFS proceeds from the
 deduplicated union of roots.
 Rectangles larger than `max_range_cells` raise `ValueError`. Targets that are
 neither sheet-qualified nor a known defined name raise `ValueError`.
+
+### Defined-name expansion {#defined-name-expansion}
+
+`build_named_range_map` (used by `create_dependency_graph`) records names that
+resolve to a cell or a single rectangle:
+
+| Referent | Example | Mapped rectangle |
+|----------|---------|------------------|
+| Cell | `Sheet1!$A$1` | `Sheet1!A1` (cell map) |
+| Rectangle | `Sheet1!$A$1:$B$10` | `Sheet1!A1:B10` as written |
+| Whole-row span | `Macrofw!$5:$134` | `Macrofw!A5:{last used col}134` |
+| Whole-column span | `Macrofw!$A:$C` | `Macrofw!A1:C{last used row}` |
+
+**Expansion policy.** Whole-row and whole-column names fill only the *implicit*
+axis from the sheet's used range (`Worksheet.max_row` / `max_column` — the same
+bounds as formula shorthands `A:A` / `5:5`). The named rows or columns stay as
+written; they are not clipped to the used extent. This is **not** Excel's full
+grid (`XFD` / row `1048576`): expanding `$5:$134` to 16,384 columns would
+exceed `max_range_cells` and explode BFS. A name whose sheet is missing from
+the workbook is omitted (fail closed) rather than defaulting to those Excel
+limits. Multi-area unions, `#REF!`, cube refs, and other non-range formulas
+remain unsupported.
 
 ### Dynamic OFFSET/INDIRECT configuration
 
