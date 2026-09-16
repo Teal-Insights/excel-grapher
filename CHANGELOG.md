@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.1 (2026-09-16)
+
+### Bug Fixes
+
+- **export**: Refuse OFFSET height/width and align ISNUMBER naming
+  ([#865](https://github.com/Teal-Insights/excel-grapher/pull/865),
+  [`69c4786`](https://github.com/Teal-Insights/excel-grapher/commit/69c478639bc24c9dacdb67637e1cdc92c3bf0c82))
+
+- **export**: Route evaluate_targets through inverted-tree packages
+  ([#865](https://github.com/Teal-Insights/excel-grapher/pull/865),
+  [`69c4786`](https://github.com/Teal-Insights/excel-grapher/commit/69c478639bc24c9dacdb67637e1cdc92c3bf0c82))
+
+- **test**: Bind evaluate_targets to the formula demand cone
+  ([#865](https://github.com/Teal-Insights/excel-grapher/pull/865),
+  [`69c4786`](https://github.com/Teal-Insights/excel-grapher/commit/69c478639bc24c9dacdb67637e1cdc92c3bf0c82))
+
+- **test**: Demand-cone parity bindings and fail-closed OFFSET emit
+  ([#865](https://github.com/Teal-Insights/excel-grapher/pull/865),
+  [`69c4786`](https://github.com/Teal-Insights/excel-grapher/commit/69c478639bc24c9dacdb67637e1cdc92c3bf0c82))
+
+- **test**: Type bindings series as Any for ty iteration
+  ([#865](https://github.com/Teal-Insights/excel-grapher/pull/865),
+  [`69c4786`](https://github.com/Teal-Insights/excel-grapher/commit/69c478639bc24c9dacdb67637e1cdc92c3bf0c82))
+
+
 ## v20.3.0 (2026-09-16)
 
 ### Bug Fixes
