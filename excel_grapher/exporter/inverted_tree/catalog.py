@@ -149,6 +149,7 @@ class BoundSeries:
     raw: Mapping[str, Any]
     domain: tuple[KeyPoint, ...]
     statements: tuple[Statement, ...]
+    axis_labels: str | None = None
     holes: tuple[SeriesHole, ...] = ()
     authored_cells: tuple[CanonicalAddress, ...] | None = None
     authored_domain: tuple[KeyPoint, ...] | None = None
@@ -722,6 +723,32 @@ class SeriesCatalog:
         """Return constant series in bindings order."""
         return [self.series[sid] for sid in self.order if self.series[sid].direction == "constant"]
 
+    def labeller_for(self, axis_name: str, keys: Sequence[str | int]) -> BoundSeries | None:
+        """Return the authored labeller covering `keys` for `axis_name`."""
+        requested = set(keys)
+        matches = [
+            series
+            for series in self.series.values()
+            if series.axis_labels == axis_name
+            and series.tensor_domain.axes
+            and requested <= set(series.tensor_domain.axes[0].keys)
+        ]
+        if len(matches) > 1:
+            raise InvertedTreeExportError(
+                f"axis {axis_name!r}: multiple labellers cover keys {tuple(keys)!r}"
+            )
+        return matches[0] if matches else None
+
+    def runtime_labeller(self, axis_name: str, keys: Sequence[str | int]) -> BoundSeries | None:
+        """Return the non-constant labeller covering `keys` for `axis_name`.
+
+        A `constant` labeller is a static axis: keys are known at export.
+        """
+        labeller = self.labeller_for(axis_name, keys)
+        if labeller is None or labeller.direction == "constant":
+            return None
+        return labeller
+
 
 def _direction_of(entry: Mapping[str, Any]) -> Direction:
     if has_output_direction(cast(dict[str, Any], entry)):
@@ -1243,6 +1270,13 @@ def build_catalog(
             if entry.get("key"):
                 sources.extend(_structure_source_addresses(entry, authored_by_id[_series_id]))
         reader.prefetch(sources, graph=graph)
+        evaluate_addresses: set[str] = set()
+        evaluators: dict[int, Any] = {}
+        for series_id, entry, _cell_tuple in pending:
+            if entry.get("axis_labels"):
+                labeller_cells = authored_by_id[series_id]
+                evaluate_addresses.update(labeller_cells)
+                evaluate_addresses.update(_structure_source_addresses(entry, labeller_cells))
         for series_id, entry, cell_tuple in pending:
             key_fields = _key_fields_of(entry)
             components = {
@@ -1266,6 +1300,8 @@ def build_catalog(
                     concept_scheme=concept_scheme,
                     graph=graph,
                     reader=reader,
+                    evaluate_addresses=evaluate_addresses,
+                    evaluators=evaluators,
                 )
             except ValueError as exc:
                 raise InvertedTreeExportError(str(exc)) from exc
@@ -1295,6 +1331,7 @@ def build_catalog(
                 key_fields=key_fields,
                 dtype=_dtype_of(entry),
                 compute_name=_compute_name_of(entry, series_id),
+                axis_labels=str(entry["axis_labels"]) if entry.get("axis_labels") else None,
                 raw=entry,
                 domain=domain,
                 statements=(_whole_statement(series_id, cell_tuple, domain),),

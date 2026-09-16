@@ -36,6 +36,7 @@ def test_supported_schema_versions() -> None:
             "1.14.0",
             "1.15.0",
             "1.16.0",
+            "1.17.0",
         }
     )
     assert expected == SUPPORTED_SCHEMA_VERSIONS

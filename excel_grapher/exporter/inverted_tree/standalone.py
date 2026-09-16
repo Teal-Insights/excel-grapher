@@ -37,6 +37,7 @@ _MODULES = (
 # Names the shared core reaches only through annotations or guarded imports.
 _ALWAYS_REQUIRED = frozenset({"T", "np"})
 _TENSOR_MODULE = "excel_grapher.exporter.export_runtime.tensor"
+_PROVENANCE_MODULE = "excel_grapher.exporter.export_runtime.provenance"
 _INVERTED_EXCEL_MODULE = "excel_grapher.exporter.inverted_tree.excel"
 _COLUMN_LETTER = '''
 def _column_letter(index: int) -> str:
@@ -67,6 +68,8 @@ def _rewrite_imports(source: str, imports: list[ast.ImportFrom]) -> str:
             target = ".excel"
         elif node.module == _TENSOR_MODULE:
             target = ".tensor"
+        elif node.module == _PROVENANCE_MODULE:
+            target = ".provenance"
         else:
             target = ".excel"
         names = ", ".join(
