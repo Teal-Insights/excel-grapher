@@ -66,6 +66,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.blank_ranges import (
     BlankRangeRect,
     address_in_blank_ranges,
+    blank_rects_for_addresses,
 )
 from excel_grapher.series_bindings.geometry import parse_value_map
 from excel_grapher.series_bindings.normalize import is_override_input
@@ -114,7 +115,10 @@ def addresses_outside_blank_ranges(
     rects = current_blank_rects() if blank_rects is None else blank_rects
     if not rects:
         return list(addresses)
-    return [addr for addr in addresses if not address_in_blank_ranges(addr, rects)]
+    relevant = blank_rects_for_addresses(addresses, rects)
+    if not relevant:
+        return list(addresses)
+    return [addr for addr in addresses if not address_in_blank_ranges(addr, relevant)]
 
 
 @dataclass(frozen=True, slots=True)
@@ -166,12 +170,13 @@ def resolve_positional_range(
     without a series are always missing.
     """
     rects = current_blank_rects() if blank_rects is None else blank_rects
+    relevant = blank_rects_for_addresses(addresses, rects) if rects else ()
     cells: list[PositionalRangeCell] = []
     missing: list[CanonicalAddress] = []
     unbound_blanks: list[CanonicalAddress] = []
     owned = False
     for address in addresses:
-        if address_in_blank_ranges(address, rects):
+        if relevant and address_in_blank_ranges(address, relevant):
             cells.append(PositionalRangeCell(address, None, None, True))
             continue
         owner = catalog.series_for(address)
