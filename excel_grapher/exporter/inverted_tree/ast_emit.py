@@ -667,7 +667,7 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         if len(node.args) != required:
             return f"{ctx.use('xl_raise')}('#VALUE!')"
         if name == "ISNUMBER":
-            helper = "xl_isnumber_lazy"
+            helper = "xl_isnumber"
         elif name == "ISTEXT":
             helper = "xl_istext"
         else:
@@ -1237,6 +1237,11 @@ def _ref_anchor_address(node: AstNode, host_cell: CanonicalAddress) -> Canonical
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
         raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
+    if len(node.args) > 3:
+        raise _host_export_error(
+            ctx,
+            "OFFSET height/width is not supported (bound model is cell-shaped)",
+        )
     return _emit_named_offset(node, ctx)
 
 

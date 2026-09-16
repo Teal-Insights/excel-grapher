@@ -285,10 +285,10 @@ def test_xl_index_intersection_blank_and_ref() -> None:
 
 
 def test_xl_isnumber_blank_number_and_error() -> None:
-    assert xl_isnumber(None) is False
-    assert xl_isnumber(1.5) is True
-    assert xl_isnumber(True) is False
-    assert xl_isnumber("#N/A") is False
+    assert xl_isnumber(lambda: None) is False
+    assert xl_isnumber(lambda: 1.5) is True
+    assert xl_isnumber(lambda: True) is False
+    assert xl_isnumber(lambda: "#N/A") is False
 
 
 def test_xl_vlookup_exact_and_empty_table() -> None:

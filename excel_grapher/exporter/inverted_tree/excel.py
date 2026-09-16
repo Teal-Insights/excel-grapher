@@ -321,11 +321,14 @@ OPERATOR_TABLE = {
 
 
 def xl_bool(value: object) -> bool:
-    """Coerce an `IF` condition with Excel boolean rules."""
+    """Coerce an `IF` condition with Excel boolean rules.
+
+    `to_bool("")` is `False` (evaluator / `to_bool`), not Excel's `#VALUE!`.
+    Non-boolean text such as `"nope"` raises `#VALUE!`.
+    """
     _raise_stored_error(value)
     result = _adapt_core(to_bool(_as_formula(value)))
-    if not isinstance(result, bool):
-        raise TypeError(f"IF condition returned {type(result).__name__}")
+    assert isinstance(result, bool), f"IF condition returned {type(result).__name__}"
     return result
 
 
@@ -456,13 +459,6 @@ def xl_vlookup(
     return _adapt_core(vlookup_cells(lookup, table_array, col_index_num, range_lookup))
 
 
-def xl_isnumber(value: object) -> bool:
-    """Excel `ISNUMBER`: True only for non-bool numbers; False for blanks and errors."""
-    if isinstance(value, str) and is_error(value):
-        return False
-    return not isinstance(value, bool) and isinstance(value, int | float)
-
-
 def _call_shared(function: Callable[..., object], *args: object) -> object:
     """Translate the shared runtime's exception channel at the export boundary."""
     try:
@@ -524,7 +520,7 @@ def xl_isblank(value: Callable[[], object]) -> object:
     return _call_shared(_shared_isblank, _shared_thunk(value))
 
 
-def xl_isnumber_lazy(value: Callable[[], object]) -> object:
+def xl_isnumber(value: Callable[[], object]) -> object:
     """Inspect a possibly failing expression for a numeric value."""
     return _call_shared(_shared_isnumber, _shared_thunk(value))
 

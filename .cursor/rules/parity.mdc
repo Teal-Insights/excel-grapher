@@ -8,14 +8,14 @@ alwaysApply: false
 
 - **Excel** — Reference implementation (desktop Excel via automation when tests run it; otherwise values last saved in the workbook).
 - **Evaluator path** — `excel_grapher/evaluator/FormulaEvaluator`.
-- **Generated package path** — output of `excel_grapher/exporter/CodeGenerator.generate_modules` (series bindings required).
+- **Generated package path** — output of `excel_grapher/exporter/inverted_tree.emit.generate_inverted_tree_modules` (series bindings required).
 
 **Pairwise guarantees:**
 
 | Check | Typical tests / helpers |
 | ----- | ----------------------- |
 | **Evaluator ↔ Excel** | Compare evaluator output to workbook **cached** values (`tests/evaluator/excel_workbook_parity.py`), or to **live-recalculated** results when xlwings / Windows Excel / WSL+COM is available. |
-| **Evaluator ↔ exported packages (`export parity`)** | Inverted-tree tests under `tests/unit/exporter/inverted_tree/` and `tests/integration/exporter/inverted_tree/` (`generate_modules` with series bindings). Function-level tests use `evaluate_targets` in `tests/integration/utils/parity_harness.py`, which evaluates with `FormulaEvaluator` and asserts inverted-tree export agrees. |
+| **Evaluator ↔ exported packages (`export parity`)** | Inverted-tree tests under `tests/unit/exporter/inverted_tree/` and `tests/integration/exporter/inverted_tree/` (`generate_inverted_tree_modules` with series bindings). Function-level tests use `evaluate_targets` in `tests/integration/utils/parity_harness.py`, which evaluates with `FormulaEvaluator` and asserts inverted-tree export agrees. |
 
 When both evaluator↔Excel and evaluator↔export hold for overlapping coverage, you get **three-way parity** for those cells/features.
 
@@ -192,7 +192,7 @@ When adding a new function/operator or changing semantics:
 
 4) **Wire package export**
    - If the function is on the inverted-tree emit whitelist, add or extend a
-     bindings-backed `generate_modules` test. Address-keyed `CodeGenerator.generate`
+     bindings-backed `generate_inverted_tree_modules` test. Address-keyed `CodeGenerator.generate`
      was removed.
 
 5) **Add a pruning assertion** when runtime surface area might bloat generated output (optional).
