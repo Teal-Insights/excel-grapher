@@ -37,6 +37,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     SeriesCatalog,
     Statement,
     covering_series,
+    covering_series_of_range,
     fit_affine_map,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
@@ -63,7 +64,11 @@ from excel_grapher.exporter.inverted_tree.named_axes import (
     layout_keys_source,
     python_identifier,
 )
-from excel_grapher.grapher.blank_ranges import BlankRangeRect, address_in_blank_ranges
+from excel_grapher.grapher.blank_ranges import (
+    BlankRangeRect,
+    address_in_blank_ranges,
+    range_overlaps_blank_ranges,
+)
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -450,6 +455,11 @@ def _lockstep_producer_slots(ctx: EmitContext, producer: BoundSeries) -> dict[in
     those slots must lie on `prod = host + offset` so the pairing is the
     host walk, not a mixed neighbor or permutation.
     """
+    cache = ctx.host._emit_cache
+    cache_key = ("lockstep_slots", producer.series_id)
+    cached = cache.get(cache_key, _UNSET)
+    if cached is not _UNSET:
+        return cached
     per_host: dict[int, set[int]] = {}
     for edge in ctx.deps.edges:
         if edge.producer_id != producer.series_id or edge.consumer_id != ctx.host.series_id:
@@ -462,11 +472,14 @@ def _lockstep_producer_slots(ctx: EmitContext, producer: BoundSeries) -> dict[in
             continue
         per_host.setdefault(host_index, set()).add(producer_index)
     if not per_host or any(len(indices) != 1 for indices in per_host.values()):
+        cache[cache_key] = None
         return None
     slots = {host_index: next(iter(indices)) for host_index, indices in per_host.items()}
     fitted = fit_affine_map(list(slots.items()))
     if fitted is None or fitted[0] != 1:
+        cache[cache_key] = None
         return None
+    cache[cache_key] = slots
     return slots
 
 
@@ -636,10 +649,11 @@ def _named_keys(
                     )
                 keys.append(template)
                 continue
-            follow = _string_follow_expr(ctx, owner, key_field, target)
-            if follow is not None:
-                keys.append(follow)
-                continue
+            if current != target:
+                follow = _string_follow_expr(ctx, owner, key_field, target)
+                if follow is not None:
+                    keys.append(follow)
+                    continue
         if field_axis in pinned:
             keys.append(repr(target))
             continue
@@ -1161,12 +1175,14 @@ def _named_range_view(
     if parse_cell_coords(start)[0] != parse_cell_coords(end)[0]:
         return None
     if addresses is None:
-        addresses = iter_range_addresses(start, end)
-        if any(address_in_blank_ranges(address, ctx.blank_rects) for address in addresses):
+        if range_overlaps_blank_ranges(start, end, ctx.blank_rects):
             return None
+        addresses = iter_range_addresses(start, end)
+        owner = covering_series_of_range(ctx.catalog, start, end)
+    else:
+        owner = covering_series(ctx.catalog, addresses)
     if not addresses:
         return None
-    owner = covering_series(ctx.catalog, addresses)
     if owner is None or owner.is_scalar or owner.single_valued:
         return None
     indices = [owner.index_of(address) for address in addresses]

@@ -5,7 +5,11 @@ from unittest.mock import patch
 from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.addressing import split_sheet_qualified_address
 from excel_grapher.core.cell_types import CellKind, CellType, IntervalDomain
-from excel_grapher.grapher.blank_ranges import address_in_blank_ranges, parse_blank_range_spec
+from excel_grapher.grapher.blank_ranges import (
+    address_in_blank_ranges,
+    parse_blank_range_spec,
+    range_overlaps_blank_ranges,
+)
 from excel_grapher.grapher.builder import _workbook_sorted_sheet_a1_pairs
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefLimits,
@@ -57,6 +61,18 @@ def test_address_in_blank_ranges_handles_apostrophe_sheet_names() -> None:
     rects = (parse_blank_range_spec("'It''s Data'!A1:B2"),)
     assert address_in_blank_ranges("'It''s Data'!A1", rects)
     assert not address_in_blank_ranges("'It''s Data'!C3", rects)
+
+
+def test_range_overlaps_blank_ranges_uses_rectangle_geometry() -> None:
+    hole = parse_blank_range_spec("Data!C3")
+    other = tuple(parse_blank_range_spec(f"Other!A{index}") for index in range(1, 9))
+    rects = (hole, *other)
+    assert range_overlaps_blank_ranges("Data!B2", "Data!U16", rects)
+    assert not range_overlaps_blank_ranges("Data!B2", "Data!U16", other)
+    assert not range_overlaps_blank_ranges("Data!D4", "Data!E5", (hole,))
+    quoted = (parse_blank_range_spec("'It''s Data'!B2:B2"),)
+    assert range_overlaps_blank_ranges("'It''s Data'!A1", "'It''s Data'!C4", quoted)
+    assert not range_overlaps_blank_ranges("Data!A1", "Other!A1", rects)
 
 
 def test_split_sheet_qualified_address_soft_wrapper_handles_apostrophe_sheet_names() -> None:

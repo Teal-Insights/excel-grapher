@@ -9,7 +9,7 @@ from typing import TypeAlias
 
 import fastpyxl.utils.cell
 
-from excel_grapher.core.address_keys import normalize_key, parse_address
+from excel_grapher.core.address_keys import normalize_key, parse_address, parse_cell_coords
 
 BlankRangeRect: TypeAlias = tuple[str, int, int, int, int]  # sheet, r1, c1, r2, c2 inclusive
 
@@ -66,6 +66,73 @@ def address_in_blank_ranges(address: str, rects: Sequence[BlankRangeRect]) -> bo
     col_str, row = fastpyxl.utils.cell.coordinate_from_string(cell)
     col = fastpyxl.utils.cell.column_index_from_string(col_str)
     return cell_in_blank_ranges(sheet, int(row), col, rects)
+
+
+def _rects_overlap(left: BlankRangeRect, right: BlankRangeRect) -> bool:
+    """True when two inclusive rectangles share a cell."""
+    if left[0] != right[0]:
+        return False
+    return (
+        left[1] <= right[3] and right[1] <= left[3] and left[2] <= right[4] and right[2] <= left[4]
+    )
+
+
+def range_rect(start: str, end: str) -> BlankRangeRect | None:
+    """Inclusive same-sheet rectangle for `start:end`, or `None` if sheets differ."""
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    if sheet1 != sheet2:
+        return None
+    r1, r2 = (row1, row2) if row1 <= row2 else (row2, row1)
+    c1, c2 = (col1, col2) if col1 <= col2 else (col2, col1)
+    return (sheet1, r1, c1, r2, c2)
+
+
+def range_overlaps_blank_ranges(start: str, end: str, rects: Sequence[BlankRangeRect]) -> bool:
+    """True if the same-sheet rectangle `start:end` overlaps any blank rect."""
+    if not rects:
+        return False
+    probe = range_rect(start, end)
+    if probe is None:
+        return False
+    return any(_rects_overlap(probe, rect) for rect in rects)
+
+
+def overlapping_blank_rects(
+    sheet: str,
+    row1: int,
+    col1: int,
+    row2: int,
+    col2: int,
+    rects: Sequence[BlankRangeRect],
+) -> tuple[BlankRangeRect, ...]:
+    """Blank rectangles that geometrically overlap the given inclusive bounds."""
+    if not rects:
+        return ()
+    probe = (sheet, row1, col1, row2, col2)
+    return tuple(rect for rect in rects if _rects_overlap(probe, rect))
+
+
+def blank_rects_for_addresses(
+    addresses: Sequence[str],
+    rects: Sequence[BlankRangeRect],
+) -> tuple[BlankRangeRect, ...]:
+    """Blank rectangles that overlap the bounding box of `addresses`."""
+    if not addresses or not rects:
+        return ()
+    bounds: dict[str, tuple[int, int, int, int]] = {}
+    for address in addresses:
+        sheet, row, col = parse_cell_coords(address)
+        previous = bounds.get(sheet)
+        if previous is None:
+            bounds[sheet] = (row, col, row, col)
+            continue
+        r1, c1, r2, c2 = previous
+        bounds[sheet] = (min(r1, row), min(c1, col), max(r2, row), max(c2, col))
+    found: list[BlankRangeRect] = []
+    for sheet, (row1, col1, row2, col2) in bounds.items():
+        found.extend(overlapping_blank_rects(sheet, row1, col1, row2, col2, rects))
+    return tuple(found)
 
 
 class BlankRangesLoadError(ValueError):

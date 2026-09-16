@@ -401,6 +401,43 @@ def _hole_expression(
     return _as_measure_call(_py_literal(node.value), series)
 
 
+def _statement_member_groups(
+    series: BoundSeries,
+    cells: Sequence[CanonicalAddress],
+    graph: DependencyGraph,
+) -> list[list[int]]:
+    """On-graph catalog indices that share one statement and one lowered body.
+
+    Off-graph members stay omitted. Uniform statements sample first, interior,
+    and last members and replicate when those expressions match.
+    """
+    if series.single_valued:
+        if not cells or graph.get_node(cells[0]) is None:
+            return []
+        return [[0]]
+    statements = series.statements
+    if not statements:
+        return [[index] for index, cell in enumerate(cells) if graph.get_node(cell) is not None]
+    groups: list[list[int]] = []
+    for stmt in statements:
+        members = [
+            index
+            for index in range(stmt.start, min(stmt.stop, len(cells)))
+            if graph.get_node(cells[index]) is not None
+        ]
+        if members:
+            groups.append(members)
+    return groups
+
+
+def _sample_member_indices(members: Sequence[int]) -> list[int]:
+    """First, interior, and last indices used to detect a uniform family."""
+    if len(members) <= 3:
+        return list(members)
+    middle = members[len(members) // 2]
+    return list(dict.fromkeys((members[0], middle, members[-1])))
+
+
 def _semantic_body(
     series: BoundSeries,
     catalog: SeriesCatalog,
@@ -417,6 +454,9 @@ def _semantic_body(
     Returns the indented body lines and the runtime symbols they use. When
     `deferred` is set the body binds a demand-driven `CoordinateReader`
     instead of returning, so recurrence groups can share one evaluation.
+    Uniform statements lower first/interior/last samples and, when those
+    expressions match, replicate the grouped body; mixed statements still
+    emit one body per distinct expression.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
@@ -429,11 +469,8 @@ def _semantic_body(
     key_remaps: dict[str, dict[object, object]] = {}
     # A scalar layout publishes one observation: its first bound cell.
     cells = series.cells[:1] if series.single_valued else series.cells
-    for index, cell in enumerate(cells):
-        if graph.get_node(cell) is None:
-            # Retain authored off-graph metadata, but do not synthesize a
-            # value or request a formula outside the extracted graph.
-            continue
+
+    def lower_member(index: int, cell: CanonicalAddress) -> str:
         ctx = EmitContext(
             host=series,
             catalog=catalog,
@@ -456,28 +493,51 @@ def _semantic_body(
         else:
             expression = _as_measure_call(emit_expr(node, ctx), series)
         used.add("as_measure")
-        used |= ctx.used_runtime
+        used.update(ctx.used_runtime)
+        return expression
+
+    def alias_expression(expression: str) -> str:
         parsed = ast.parse(expression, mode="eval")
         if any(
             isinstance(item, ast.Name) and item.id == series.series_id for item in ast.walk(parsed)
         ):
+            nonlocal recursive
             recursive = True
-        if "lazy_table(" in expression or "view(" in expression:
-            local_names = set(names.values()) | scc_ids | {series.series_id}
-            for item in _outermost_tables(parsed, local_names):
-                source = ast.get_source_segment(expression, item)
-                if source is None:
-                    continue
-                if source not in tables:
-                    alias = f"_{series.series_id}_table_{len(tables)}"
-                    while alias in reserved:
-                        alias += "_"
-                    tables[source] = alias
-                    reserved.add(alias)
-            for source, alias in tables.items():
-                expression = expression.replace(source, alias)
+        if "lazy_table(" not in expression and "view(" not in expression:
+            return expression
+        local_names = set(names.values()) | scc_ids | {series.series_id}
+        for item in _outermost_tables(parsed, local_names):
+            source = ast.get_source_segment(expression, item)
+            if source is None:
+                continue
+            if source not in tables:
+                alias = f"_{series.series_id}_table_{len(tables)}"
+                while alias in reserved:
+                    alias += "_"
+                tables[source] = alias
+                reserved.add(alias)
+        for source, alias in tables.items():
+            expression = expression.replace(source, alias)
+        return expression
+
+    def record(index: int, expression: str) -> None:
         coord = tuple(series.domain[index][field] for field in series.key_fields)
         groups.setdefault(expression, []).append(coord)
+
+    for members in _statement_member_groups(series, cells, graph):
+        sampled = _sample_member_indices(members)
+        sample_exprs = {index: lower_member(index, cells[index]) for index in sampled}
+        unique = set(sample_exprs.values())
+        if len(unique) == 1:
+            expression = alias_expression(next(iter(unique)))
+            for index in members:
+                record(index, expression)
+            continue
+        for index in members:
+            expression = sample_exprs.get(index)
+            if expression is None:
+                expression = lower_member(index, cells[index])
+            record(index, alias_expression(expression))
     if literal_tables is not None and not series.single_valued:
         literals = {}
         literal_groups = []
