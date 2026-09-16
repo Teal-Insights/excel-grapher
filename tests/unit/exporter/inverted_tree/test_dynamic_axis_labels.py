@@ -270,7 +270,7 @@ def test_labeller_compiles_positionally_and_publishes_identity(tmp_path: Path) -
     modules = generate_inverted(workbook, _labelled_bindings())
     internals = modules["internals.py"]
     assert "data.YEAR_LABELS_POSITIONS" in internals
-    assert "from_labels(" in internals
+    assert "Series.from_labels(" in internals
     assert "label_axis('TIME_PERIOD'" in internals
     pkg = load_package(modules, tmp_path, name="labeller_body")
     catalog, _deps, graph = inverted_graph_parts(workbook, _labelled_bindings())
@@ -683,6 +683,116 @@ def test_labelled_offset_steps_on_the_labeller_axis(tmp_path: Path) -> None:
     assert [value for _coord, value in result.items()] == pytest.approx([1.0, 2.0, 3.0])
 
 
+def test_labelled_suffix_offset_walks_onto_history(tmp_path: Path) -> None:
+    """OFFSET from a projection suffix must land on the history series."""
+    sheets = _horizon_sheets()
+    sheets["Engine"]["C3"] = "=OFFSET(C3,0,-1)+C2"
+    sheets["Engine"]["D3"] = "=C3+D2"
+    sheets["Engine"]["E3"] = "=D3+E2"
+    workbook = write_workbook(tmp_path / "suffix_offset.xlsx", sheets)
+    first_year, year_labels, path = _horizon_labeller_and_path()
+    document = bindings_document(
+        first_year,
+        series_entry(
+            "growth",
+            "Inputs!A3:E3",
+            layout="series",
+            direction="input",
+            header_row=2,
+        ),
+        year_labels,
+        path,
+        series_entry(
+            "history",
+            "Engine!A3:B3",
+            layout="series",
+            direction="internal",
+            dtype="float",
+            header_row=1,
+        ),
+        series_entry(
+            "projection",
+            "Engine!C3:E3",
+            layout="series",
+            direction="output",
+            dtype="float",
+            header_row=1,
+        ),
+        schema_version="1.17.0",
+    )
+    modules = generate_inverted(workbook, document)
+    internals = modules["internals.py"]
+    assert re.search(
+        r"def projection\b[\s\S]*?"
+        r"history\[axis_step\(_ax_time_period, time_period, xl_neg\(1\)\)\]",
+        internals,
+    )
+    pkg = load_package(modules, tmp_path, name="suffix_offset_axis")
+    catalog, deps, graph = inverted_graph_parts(workbook, document)
+    assert "history" in deps["projection"].param_ids
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = pkg.compute_projection(
+        **{key: kwargs[key] for key in required_param_names(pkg.compute_projection)}
+    )
+    assert tuple(result.domain.axes[0].keys) == (2026, 2027, 2028)
+    assert [value for _coord, value in result.items()] == pytest.approx([6.0, 10.0, 15.0])
+
+
+def test_labelled_tensor_constant_overrides_without_identity_bind(tmp_path: Path) -> None:
+    """data.overrides must not bind AxisTemplate/SeriesSpec as a labeller tensor."""
+    workbook = write_workbook(
+        tmp_path / "const_override.xlsx",
+        {
+            "Inputs": {"A1": 2024},
+            "Engine": {
+                "A1": "=Inputs!A1",
+                "B1": "=A1+1",
+                "C1": "=B1+1",
+                "A2": 1.0,
+                "B2": 2.0,
+                "C2": 3.0,
+                "D2": "=SUM(A2:C2)+A1*0",
+            },
+        },
+    )
+    document = bindings_document(
+        series_entry("first_year", "Inputs!A1", direction="input", dtype="int"),
+        series_entry(
+            "year_labels",
+            "Engine!A1:C1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        series_entry(
+            "rates",
+            "Engine!A2:C2",
+            layout="series",
+            direction="constant",
+            header_row=1,
+        ),
+        series_entry("total", "Engine!D2", direction="output", dtype="float"),
+        schema_version="1.17.0",
+    )
+    modules = generate_inverted(workbook, document)
+    data = modules["data.py"]
+    assert "getattr(schema, 'bind'" not in data
+    assert "namespace[labeller.upper()]" not in data
+    pkg = load_package(modules, tmp_path, name="const_override")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    compute_kwargs = {key: kwargs[key] for key in required_param_names(pkg.compute_total)}
+    assert pkg.compute_total(**compute_kwargs) == pytest.approx(6.0)
+    original = pkg.data.RATES
+    zeros = original.with_values((0.0, 0.0, 0.0))
+    with pkg.data.overrides(RATES=zeros):
+        assert pkg.compute_total(**compute_kwargs) == pytest.approx(0.0)
+    assert pkg.data.RATES is original
+    assert pkg.compute_total(**compute_kwargs) == pytest.approx(6.0)
+
+
 def test_ragged_runtime_range_does_not_invent_keys(tmp_path: Path) -> None:
     """A non-contiguous labelled range must not span the interned hole."""
     workbook = write_workbook(
@@ -729,7 +839,9 @@ def test_ragged_runtime_range_does_not_invent_keys(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document, blank_ranges=["Engine!B2"])
     internals = modules["internals.py"]
-    assert "span(" not in internals or "span(_ax_time_period" not in internals
+    assert "span(" not in internals
+    assert "_ax_time_period.keys[0]" in internals
+    assert "_ax_time_period.keys[2]" in internals
     pkg = load_package(modules, tmp_path, name="ragged_axis")
     catalog, _deps, graph = inverted_graph_parts(workbook, document, blank_ranges=["Engine!B2"])
     kwargs = named_input_kwargs(pkg, catalog, graph)

@@ -513,14 +513,15 @@ def _semantic_body(
                 index_names.get(axis.name, names[axis.name]) for axis in series.tensor_domain.axes
             )
             groups[f"as_measure(data.{table}[{selectors},])"] = list(literals)
-    lines = [f"    {alias} = {source}" for source, alias in tables.items()]
+    table_lines = [f"    {alias} = {source}" for source, alias in tables.items()]
     if series.single_valued:
         if len(groups) != 1:
             raise InvertedTreeExportError(
                 f"series {series.series_id!r}: scalar series has no graph formula"
             )
         expression = next(iter(groups))
-        lines.extend(_runtime_axis_prologue(catalog, expression))
+        scanned = "\n".join((*tables, expression))
+        lines = [*_runtime_axis_prologue(catalog, scanned), *table_lines]
         if not deferred:
             lines.extend(
                 [
@@ -542,6 +543,7 @@ def _semantic_body(
             ]
         )
         return lines, used
+    lines = table_lines
     occupied = reserved
     required = _required_expr(series, catalog)
 
@@ -638,7 +640,8 @@ def _semantic_body(
         lines.extend(
             [
                 f"    {series.series_id} = CoordinateReader({series.series_id!r}, {required}, {formula})",
-                f"    return {_binding(series)}.from_labels(",
+                "    return Series.from_labels(",
+                f"        {_binding(series)},",
                 f"        label_axis({axis.name!r}, tuple({series.series_id}[p] for p in {required}), {axis.key_type.__name__})",
                 "    )",
             ]
@@ -659,7 +662,7 @@ def _materialize(series: BoundSeries, catalog: SeriesCatalog, required: str | No
     if _is_runtime_labeller(series):
         axis = series.tensor_domain.axes[0]
         return (
-            f"{_binding(series)}.from_labels("
+            f"Series.from_labels({_binding(series)}, "
             f"label_axis({axis.name!r}, tuple({series.series_id}[p] for p in {required}), "
             f"{axis.key_type.__name__}))"
         )
@@ -1929,24 +1932,7 @@ def emit_named_data(
             "    namespace = globals()",
             "    for name, value in values.items():",
             "        if name in _CONSTANT_SCHEMAS:",
-            "            schema = _CONSTANT_SCHEMAS[name]",
-            *(
-                [
-                    "            bind = getattr(schema, 'bind', None)",
-                    "            labelled = namespace.get('LABELLED_AXES', {})",
-                    "            if bind is not None and labelled:",
-                    "                kwargs = {",
-                    "                    axis: namespace[labeller.upper()]",
-                    "                    for axis, labeller in labelled.items()",
-                    "                    if labeller.upper() in namespace",
-                    "                }",
-                    "                if kwargs:",
-                    "                    schema = bind(**kwargs)",
-                ]
-                if labelled
-                else []
-            ),
-            "            schema.validate(value)",
+            "            _CONSTANT_SCHEMAS[name].validate(value)",
             "    previous = {name: namespace[name] for name in values}",
             "    namespace.update(values)",
             "    try:",

@@ -1354,6 +1354,15 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     rows = emit_expr(node.args[1], ctx)
     cols = emit_expr(node.args[2], ctx)
     name = ctx.param(table.series_id)
+    resolved = resolve_offset_destination_series(
+        node,
+        ctx.host_cell,
+        ctx.catalog,
+        ctx.graph,
+        blank_rects=ctx.blank_rects,
+    )
+    if resolved is not None:
+        name = ctx.param(resolved[0].series_id)
     anchor = _ref_anchor_address(node.args[0], ctx.host_cell)
     if anchor is None:
         raise _host_export_error(ctx, "OFFSET anchor must be a cell or range")

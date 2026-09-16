@@ -56,7 +56,7 @@ def test_series_from_labels_is_the_identity_map() -> None:
         ),
         cells={},
     )
-    labels = spec.from_labels(axis)
+    labels = Series.from_labels(spec, axis)
     assert isinstance(labels, Series)
     assert tuple(labels.domain.axes[0].keys) == (2026, 2027)
     assert list(labels.items()) == [((2026,), 2026), ((2027,), 2027)]

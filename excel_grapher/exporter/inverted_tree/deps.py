@@ -532,6 +532,28 @@ def shift_range_corners(
     )
 
 
+def offset_cell_destination(
+    node: FunctionCallNode, host_cell: CanonicalAddress
+) -> CanonicalAddress | None:
+    """Return the landing cell of a literal `OFFSET(cell, rows, cols)`.
+
+    Extra height/width arguments make a range `OFFSET`; those stay on the
+    `OFFSET(INDEX(...))` path. Off-grid moves return `None`.
+    """
+    if normalize_excel_function_name(node.name) != "OFFSET" or len(node.args) < 3:
+        return None
+    base = node.args[0]
+    if not isinstance(base, CellRefNode) or len(node.args) >= 4:
+        return None
+    rows = ast_literal_int(node.args[1])
+    cols = ast_literal_int(node.args[2])
+    if rows is None or cols is None:
+        return None
+    anchor = as_canonical(resolve_cell_ref(base, host_cell))
+    dest = shift_range_corners(anchor, anchor, rows, cols)
+    return dest[0] if dest is not None else None
+
+
 def offset_index_destination(
     node: FunctionCallNode, host_cell: CanonicalAddress
 ) -> tuple[CanonicalAddress, CanonicalAddress] | None:
@@ -612,9 +634,17 @@ def resolve_offset_destination_series(
 ) -> tuple[BoundSeries, CanonicalAddress] | None:
     """Return `(series, anchor)` for OFFSET whose base yields a reference.
 
-    Prefers a classified `OFFSET(INDEX(...), rows, cols)` window. Falls back
-    to graph `dynamic_offset` edges when the offset is not a literal.
+    Prefers a literal `OFFSET(cell, rows, cols)` landing cell, then a
+    classified `OFFSET(INDEX(...), rows, cols)` window. Falls back to graph
+    `dynamic_offset` edges when the offset is not a literal.
     """
+    cell_dest = offset_cell_destination(node, host_cell)
+    if cell_dest is not None:
+        addresses = addresses_outside_blank_ranges([cell_dest], blank_rects)
+        covered = covering_series(catalog, addresses) if addresses else None
+        if covered is None:
+            return None
+        return covered, cell_dest
     dest = offset_index_destination(node, host_cell)
     if dest is not None:
         addresses = addresses_outside_blank_ranges(
@@ -1099,8 +1129,19 @@ class _DepCollector:
         if isinstance(base, FunctionCallNode):
             self._visit_offset_from_expr(node, host_cell=host_cell, host_index=host_index)
             return
-        table = self._series_for_ref(base, host_cell)
-        self.emit_lookup(table, host_cell, self._ref_anchor(base, host_cell), "dynamic")
+        resolved = resolve_offset_destination_series(
+            node,
+            host_cell,
+            self.catalog,
+            self.graph,
+            blank_rects=self.blank_rects,
+        )
+        if resolved is not None:
+            table, anchor = resolved
+        else:
+            table = self._series_for_ref(base, host_cell)
+            anchor = self._ref_anchor(base, host_cell)
+        self.emit_lookup(table, host_cell, anchor, "dynamic")
         for arg in node.args[1:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 

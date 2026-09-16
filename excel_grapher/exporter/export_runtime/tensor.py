@@ -9,7 +9,10 @@ from dataclasses import dataclass, field
 from datetime import date, datetime
 from itertools import product
 from types import MappingProxyType
-from typing import Any, Generic, Self, TypeVar, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeVar, cast, overload
+
+if TYPE_CHECKING:
+    from .provenance import ProvenanceTemplate
 
 T = TypeVar("T")
 Coordinate = tuple[str | int, ...]
@@ -626,7 +629,9 @@ class Series(Tensor[T]):
     """
 
     schema: TensorSchema | SchemaTemplate = field(kw_only=True, repr=False, compare=False)
-    cells: Any = field(default=None, kw_only=True, repr=False, compare=False)
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None = field(
+        default=None, kw_only=True, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         super().__post_init__()
@@ -643,13 +648,15 @@ class Series(Tensor[T]):
         """Publish coordinate/value records over the series' required domain."""
         return cast(Self, _collect_series(type(self), self.schema, self.cells, records, domain))
 
-    def from_labels(self, axis: Axis) -> Self:
-        """Publish the identity tensor mapping each label to itself."""
+    @classmethod
+    def from_labels(cls, source: SeriesSpec[T] | Series[T], axis: Axis) -> Series[T]:
+        """Publish the identity tensor mapping each label to itself.
+
+        `source` supplies the series id, value types, and cell provenance.
+        """
         domain = Domain.product(axis)
-        schema = TensorSchema(self.schema.series_id, domain, self.schema.value_types)
-        return type(self)(
-            domain, cast(tuple[T, ...], tuple(axis.keys)), schema=schema, cells=self.cells
-        )
+        schema = TensorSchema(source.schema.series_id, domain, source.schema.value_types)
+        return cls(domain, cast(tuple[T, ...], tuple(axis.keys)), schema=schema, cells=source.cells)
 
     def with_values(self, values: Sequence[T]) -> Self:
         """Return a series over the same domain, schema, and cells."""
@@ -672,7 +679,7 @@ class SeriesSpec(Generic[T]):
 
     schema: TensorSchema | SchemaTemplate
     domain: Domain | DomainTemplate
-    cells: Any
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None
 
     @property
     def required(self) -> Domain | DomainTemplate:
@@ -684,12 +691,6 @@ class SeriesSpec(Generic[T]):
     ) -> Series[T]:
         """Publish coordinate/value records over the series' required domain."""
         return _collect_series(Series, self.schema, self.cells, records, domain)
-
-    def from_labels(self, axis: Axis) -> Series[T]:
-        """Publish the identity tensor mapping each label to itself."""
-        bound = Domain.product(axis)
-        schema = TensorSchema(self.schema.series_id, bound, self.schema.value_types)
-        return Series(bound, cast(tuple[T, ...], tuple(axis.keys)), schema=schema, cells=self.cells)
 
     def with_values(self, values: Sequence[T]) -> Series[T]:
         """Bind observations over the authored domain."""
@@ -715,7 +716,7 @@ class SeriesSpec(Generic[T]):
 def _collect_series(
     series_type: type[Series[T]],
     schema: TensorSchema | SchemaTemplate,
-    cells: Any,
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
     records: Iterable[tuple[Coordinate, T]],
     domain: Domain | None,
 ) -> Series[T]:
@@ -737,7 +738,7 @@ def define_series(
     domain: Domain,
     values: Sequence[T],
     *,
-    cells: Any,
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
     value_types: tuple[type, ...],
     required: Domain | DomainTemplate | None = None,
 ) -> Series[T]: ...
@@ -749,7 +750,7 @@ def define_series(
     domain: Domain | DomainTemplate,
     values: None = None,
     *,
-    cells: Any,
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
     value_types: tuple[type, ...],
     required: Domain | DomainTemplate | None = None,
 ) -> SeriesSpec[T]: ...
@@ -760,7 +761,7 @@ def define_series(
     domain: Domain | DomainTemplate,
     values: Sequence[T] | None = None,
     *,
-    cells: Any,
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
     value_types: tuple[type, ...],
     required: Domain | DomainTemplate | None = None,
 ) -> Series[T] | SeriesSpec[T]:

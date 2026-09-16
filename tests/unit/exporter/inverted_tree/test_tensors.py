@@ -1,3 +1,4 @@
+from collections.abc import Mapping
 from dataclasses import FrozenInstanceError
 from datetime import date, datetime
 
@@ -198,7 +199,7 @@ def test_define_series_binds_schema_cells_and_values() -> None:
     assert series.schema.series_id == "prices"
     assert series.required is domain
     bound_cells = series.cells
-    assert bound_cells is not None
+    assert isinstance(bound_cells, Mapping)
     assert bound_cells[(2027,)] == "Data!D2"
     rebuilt = series.collect(((coord, value) for coord, value in series.items()))
     assert rebuilt[2025] == 1.0
