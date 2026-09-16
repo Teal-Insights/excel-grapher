@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.2 (2026-09-16)
+
+### Bug Fixes
+
+- Construct slotted Series without zero-arg super()
+  ([#870](https://github.com/Teal-Insights/excel-grapher/pull/870),
+  [`0e0b78a`](https://github.com/Teal-Insights/excel-grapher/commit/0e0b78aac4972eb3fa853ffe680a2a8927fe030b))
+
+### Testing
+
+- Drop INDEX 1x1 evaluator copies and parametrize SUMPRODUCT cases
+  ([#866](https://github.com/Teal-Insights/excel-grapher/pull/866),
+  [`6e27648`](https://github.com/Teal-Insights/excel-grapher/commit/6e27648b0d2b5f44951aba342fd991a351d2483a))
+
+- Drop strict-subset evaluator copies of parity graphs
+  ([#866](https://github.com/Teal-Insights/excel-grapher/pull/866),
+  [`6e27648`](https://github.com/Teal-Insights/excel-grapher/commit/6e27648b0d2b5f44951aba342fd991a351d2483a))
+
+
 ## v20.3.1 (2026-09-16)
 
 ### Bug Fixes
