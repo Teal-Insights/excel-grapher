@@ -634,7 +634,8 @@ class Series(Tensor[T]):
     )
 
     def __post_init__(self) -> None:
-        super().__post_init__()
+        # Zero-arg super() closes over the pre-slots class dataclass replaces.
+        Tensor.__post_init__(self)
         self.schema.validate(self)
 
     @property
