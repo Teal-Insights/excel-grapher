@@ -1,15 +1,29 @@
-"""OFFSET: evaluator and generated export runtime agree on synthetic graphs (integration).
+"""OFFSET: evaluator ↔ export parity on synthetic graphs, plus known gaps.
 
-Guards volatile offset expansion through `evaluate_targets` so
-dynamic reference behavior matches embedded runtime helpers.
+Three-arg cell OFFSET goes through `evaluate_targets` (evaluator and inverted-tree
+export). Height/width is fail-closed at emit (`InvertedTreeExportError`). OFFSET
+past the sheet is `#REF!` in Excel/evaluator and `#VALUE!` in the bound model.
 """
 
 from __future__ import annotations
 
+from pathlib import Path
+
+import pytest
+
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
-from tests.integration.utils.parity_harness import evaluate_targets
+from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
+from excel_grapher.grapher.writeback import write_workbook
+from excel_grapher.series_bindings import validate_bindings_document
+from tests.integration.utils.parity_harness import (
+    _bindings_for_graph,
+    _write_axis_keys,
+    evaluate_targets,
+)
+from tests.unit.exporter.inverted_tree.helpers import load_package
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -84,10 +98,47 @@ def test_offset_parity_negative_offset() -> None:
 
 
 def test_offset_parity_invalid_returns_ref_error() -> None:
-    """OFFSET past the worksheet returns `#REF!` (evaluator; bound export uses `#VALUE!`)."""
+    """OFFSET past the worksheet returns `#REF!` in the evaluator."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!B1", "=OFFSET(S!A1, -1, 0)", None),
     )
     with FormulaEvaluator(graph) as ev:
         assert ev.evaluate(["S!B1"])["S!B1"] == XlError.REF
+
+
+def test_offset_past_sheet_bound_export_raises_value(tmp_path: Path) -> None:
+    """Bound inverted-tree OFFSET past the series is `#VALUE!`, not Excel `#REF!`."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!B1", "=OFFSET(S!A1, -1, 0)", None),
+    )
+    graph.sheet_order = ["S"]
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"])["S!B1"] == XlError.REF
+    workbook = tmp_path / "offset_ref.xlsx"
+    write_workbook(graph, workbook)
+    document, axis_plan = _bindings_for_graph(graph, ["S!B1"])
+    _write_axis_keys(workbook, axis_plan)
+    modules = generate_inverted_tree_modules(
+        graph,
+        series_bindings=validate_bindings_document(document),
+        bindings_workbook=workbook,
+    )
+    pkg = load_package(modules, tmp_path, name="offset_ref_div")
+    outputs = [series for series in document["series"] if "output" in series]
+    assert len(outputs) == 1
+    # Series-member emit stores the code rather than aborting the compute.
+    assert getattr(pkg, f"compute_{outputs[0]['id']}")() == "#VALUE!"
+
+
+def test_offset_height_width_evaluate_targets_is_fail_closed() -> None:
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!A2", None, 2),
+        _make_node("S!B1", None, 10),
+        _make_node("S!B2", None, 20),
+        _make_node("S!C1", "=SUM(OFFSET(S!A1, 0, 0, 2, 2))", None),
+    )
+    with pytest.raises(InvertedTreeExportError, match="height/width"):
+        evaluate_targets(graph, ["S!C1"])
