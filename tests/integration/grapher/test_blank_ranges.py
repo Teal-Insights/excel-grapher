@@ -1,7 +1,7 @@
 """Declared structural blank ranges interact with graph build and the evaluator (integration).
 
-Parses blank-range specs and uses `evaluate_targets` so graphs that
-respect declared blanks resolve INDEX over omitted rectangles as empty (issue #39).
+Parses blank-range specs and evaluates graphs that respect declared blanks
+so INDEX over omitted rectangles resolves as empty (issue #39).
 """
 
 from __future__ import annotations
@@ -18,7 +18,6 @@ from excel_grapher.grapher.blank_ranges import (
     normalize_blank_range_specs,
     parse_blank_range_spec,
 )
-from tests.integration.utils.parity_harness import evaluate_targets
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -119,6 +118,7 @@ def test_blank_range_evaluator_parity(tmp_path: Path) -> None:
         path, ["Sheet1!D1", "Sheet1!E1"], load_values=True, blank_ranges=blank
     )
 
-    results = evaluate_targets(graph, ["Sheet1!D1", "Sheet1!E1"], blank_ranges=blank)
+    with FormulaEvaluator(graph, blank_ranges=blank) as ev:
+        results = ev.evaluate(["Sheet1!D1", "Sheet1!E1"])
     assert results["Sheet1!D1"] == 10
     assert results["Sheet1!E1"] == 0

@@ -104,4 +104,3 @@ def test_numbervalue_text_index_match_eval_codegen_parity(tmp_path) -> None:
     )
     results = evaluate_targets(graph, ["Product Lookup!K16"])
     assert results["Product Lookup!K16"] == 1499.0
-    assert results["Product Lookup!K16"] == 1499.0

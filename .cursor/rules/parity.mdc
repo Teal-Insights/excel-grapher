@@ -15,7 +15,7 @@ alwaysApply: false
 | Check | Typical tests / helpers |
 | ----- | ----------------------- |
 | **Evaluator ↔ Excel** | Compare evaluator output to workbook **cached** values (`tests/evaluator/excel_workbook_parity.py`), or to **live-recalculated** results when xlwings / Windows Excel / WSL+COM is available. |
-| **Evaluator ↔ exported packages (`export parity`)** | Inverted-tree tests under `tests/unit/exporter/inverted_tree/` and `tests/integration/exporter/inverted_tree/` (`generate_modules` with series bindings). Function-level tests use `FormulaEvaluator` via `evaluate_targets` in `tests/integration/utils/parity_harness.py`. |
+| **Evaluator ↔ exported packages (`export parity`)** | Inverted-tree tests under `tests/unit/exporter/inverted_tree/` and `tests/integration/exporter/inverted_tree/` (`generate_modules` with series bindings). Function-level tests use `evaluate_targets` in `tests/integration/utils/parity_harness.py`, which evaluates with `FormulaEvaluator` and asserts inverted-tree export agrees. |
 
 When both evaluator↔Excel and evaluator↔export hold for overlapping coverage, you get **three-way parity** for those cells/features.
 
@@ -210,7 +210,9 @@ results = evaluate_targets(graph, targets)
 assert results["S!A1"] == 123
 ```
 
-Error targets compare as `XlError` sentinels from `FormulaEvaluator`. Package
-export uses the raise channel (`XlErrorException`) in inverted-tree tests.
+Error targets compare as `XlError` sentinels from `FormulaEvaluator`. `evaluate_targets`
+also emits a bindings-backed inverted-tree package and maps export raises onto those
+sentinels before comparing. Package export uses the raise channel (`XlErrorException`)
+in inverted-tree tests.
 
 Avoid duplicating operator or coercion behavior in both evaluator and export paths.

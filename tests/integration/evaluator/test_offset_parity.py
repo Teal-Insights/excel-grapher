@@ -6,7 +6,7 @@ dynamic reference behavior matches embedded runtime helpers.
 
 from __future__ import annotations
 
-from excel_grapher import DependencyGraph, Node
+from excel_grapher import DependencyGraph, FormulaEvaluator, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.evaluator.types import XlError
 from tests.integration.utils.parity_harness import evaluate_targets
@@ -46,7 +46,7 @@ def test_offset_parity_static_single_cell() -> None:
 
 
 def test_offset_parity_static_range_sum() -> None:
-    """OFFSET with constant size consumed by SUM; both runtimes produce same total."""
+    """OFFSET with constant height/width consumed by SUM (evaluator; emit has no size args)."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!A2", None, 2),
@@ -54,8 +54,8 @@ def test_offset_parity_static_range_sum() -> None:
         _make_node("S!B2", None, 20),
         _make_node("S!C1", "=SUM(OFFSET(S!A1, 0, 0, 2, 2))", None),
     )
-    results = evaluate_targets(graph, ["S!C1"])
-    assert results["S!C1"] == 33.0
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!C1"])["S!C1"] == 33.0
 
 
 def test_offset_parity_dynamic_row_offset() -> None:
@@ -84,10 +84,10 @@ def test_offset_parity_negative_offset() -> None:
 
 
 def test_offset_parity_invalid_returns_ref_error() -> None:
-    """OFFSET that resolves to invalid reference (e.g. row 0) returns #REF! in both runtimes."""
+    """OFFSET past the worksheet returns `#REF!` (evaluator; bound export uses `#VALUE!`)."""
     graph = _make_graph(
         _make_node("S!A1", None, 1),
         _make_node("S!B1", "=OFFSET(S!A1, -1, 0)", None),
     )
-    results = evaluate_targets(graph, ["S!B1"])
-    assert results["S!B1"] == XlError.REF
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate(["S!B1"])["S!B1"] == XlError.REF

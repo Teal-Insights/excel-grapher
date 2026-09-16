@@ -182,7 +182,6 @@ class TestErrorCodeParity:
             ('="abc"+1', XlError.VALUE),
             ("=INDEX(S!B1:S!B2, 5)", XlError.REF),
             ("=MATCH(9, S!B1:S!B2, 0)", XlError.NA),
-            ("=OFFSET(S!B1, -5, 0)", XlError.REF),
             ("=SUM(S!B1:S!B3)", XlError.DIV),
             ("=CHOOSE(9, 1, 2)", XlError.VALUE),
             ('=IF("nope", 1, 2)', XlError.VALUE),

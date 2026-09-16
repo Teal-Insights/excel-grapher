@@ -64,7 +64,6 @@ def test_index_omit_row_returns_column_for_match() -> None:
     )
     results = evaluate_targets(graph, ["S!E1"])
     assert results["S!E1"] == 2
-    assert results["S!E1"] == 2
 
 
 def test_index_omit_col_returns_row_for_match() -> None:
@@ -84,7 +83,6 @@ def test_index_omit_col_returns_row_for_match() -> None:
     )
     results = evaluate_targets(graph, ["S!E1"])
     assert results["S!E1"] == 2
-    assert results["S!E1"] == 2
 
 
 def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
@@ -97,7 +95,6 @@ def test_index_scalar_out_of_bounds_returns_ref_error() -> None:
         _make_node("S!C1", "=INDEX(S!A1:S!B2,3,1)", None),
     )
     results = evaluate_targets(graph, ["S!C1"])
-    assert results["S!C1"] == XlError.REF
     assert results["S!C1"] == XlError.REF
 
 
@@ -112,8 +109,6 @@ def test_index_row_zero_whole_column_match_and_sum() -> None:
     )
     results = evaluate_targets(graph, ["S!B1", "S!B2"])
     assert results["S!B1"] == 3
-    assert results["S!B1"] == 3
-    assert results["S!B2"] == 12
     assert results["S!B2"] == 12
 
 
@@ -129,10 +124,7 @@ def test_index_computed_array_row_zero_match_parity() -> None:
     )
     results = evaluate_targets(graph, ["S!B1", "S!B2", "S!B3"])
     assert results["S!B1"] == 1
-    assert results["S!B1"] == 1
     assert results["S!B2"] == 1
-    assert results["S!B2"] == 1
-    assert results["S!B3"] == 2
     assert results["S!B3"] == 2
 
 
@@ -154,10 +146,7 @@ def test_index_zero_axis_selectors_on_2d_array() -> None:
     )
     results = evaluate_targets(graph, ["S!E1", "S!E2", "S!E3"])
     assert results["S!E1"] == 15
-    assert results["S!E1"] == 15
     assert results["S!E2"] == 15
-    assert results["S!E2"] == 15
-    assert results["S!E3"] == 45
     assert results["S!E3"] == 45
 
 
@@ -170,5 +159,4 @@ def test_index_zero_over_computed_array_finds_later_nonzero() -> None:
         _make_node("S!B1", "=MATCH(TRUE,INDEX((S!A1:S!A3<>0),0),0)", None),
     )
     results = evaluate_targets(graph, ["S!B1"])
-    assert results["S!B1"] == 3
     assert results["S!B1"] == 3

@@ -48,9 +48,11 @@ def test_evaluator_column_without_reference_uses_calling_cell_column() -> None:
 
 def test_codegen_matches_evaluator_row_without_reference() -> None:
     graph = _make_graph(_make_node("S!D9", "=ROW()", None))
-    evaluate_targets(graph, ["S!D9"])
+    results = evaluate_targets(graph, ["S!D9"])
+    assert results["S!D9"] == 9
 
 
 def test_codegen_matches_evaluator_column_without_reference() -> None:
     graph = _make_graph(_make_node("S!F2", "=COLUMN()", None))
-    evaluate_targets(graph, ["S!F2"])
+    results = evaluate_targets(graph, ["S!F2"])
+    assert results["S!F2"] == 6

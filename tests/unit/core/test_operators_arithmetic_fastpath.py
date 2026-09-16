@@ -150,7 +150,6 @@ def test_large_numeric_sumproduct_eval_codegen_parity(tmp_path: Path) -> None:
     )
     results = evaluate_targets(graph, ["Data!C1"])
     assert results["Data!C1"] == pytest.approx(15_000.0)
-    assert results["Data!C1"] == pytest.approx(15_000.0)
 
 
 @pytest.mark.slow
