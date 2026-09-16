@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.3 (2026-09-16)
+
+### Bug Fixes
+
+- Keep lockstep remaps when identity samples would hide them
+  ([#869](https://github.com/Teal-Insights/excel-grapher/pull/869),
+  [`797024d`](https://github.com/Teal-Insights/excel-grapher/commit/797024d6ea5078b85c3cc1e1e84c591fe5b1aed6))
+
+- Skip per-cell replay of uniform named range emit
+  ([#869](https://github.com/Teal-Insights/excel-grapher/pull/869),
+  [`797024d`](https://github.com/Teal-Insights/excel-grapher/commit/797024d6ea5078b85c3cc1e1e84c591fe5b1aed6))
+
+
 ## v20.3.2 (2026-09-16)
 
 ### Bug Fixes
