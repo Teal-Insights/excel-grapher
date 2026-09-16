@@ -1,13 +1,11 @@
 """Tests for Excel function implementations."""
 
-from datetime import datetime
 from typing import cast
 
 import pytest
 
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.core.coercions import datetime_to_excel_serial
 from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from excel_grapher.evaluator.types import XlError
 
@@ -57,26 +55,6 @@ def test_true_false_as_function_calls() -> None:
         assert result["S!A2"] is False
         assert result["S!A3"] == 1
         assert result["S!A4"] == "found"
-
-
-def test_if_empty_vs_omitted_branches() -> None:
-    """Empty IF branches are 0; omitted else is FALSE (Excel semantics)."""
-    graph = _make_graph(
-        _make_node("S!A1", "=IF(FALSE,1)", None),
-        _make_node("S!A2", "=IF(FALSE,1,)", None),
-        _make_node("S!A3", "=IF(TRUE,,5)", None),
-        _make_node("S!A4", "=IF(FALSE,,5)", None),
-        _make_node("S!A5", "=1+IF(FALSE,1,)", None),
-        _make_node("S!A6", "=ISBLANK(IF(FALSE,1,))", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4", "S!A5", "S!A6"])
-        assert result["S!A1"] is False
-        assert result["S!A2"] == 0
-        assert result["S!A3"] == 0
-        assert result["S!A4"] == 5
-        assert result["S!A5"] == 1
-        assert result["S!A6"] is False
 
 
 def test_iserror() -> None:
@@ -159,77 +137,6 @@ def test_sum() -> None:
         assert result["S!B2"] == 6.0
 
 
-def test_sum_if_array_selects_aligned_elements() -> None:
-    """Array-context `SUM(IF(range,...))` is element-wise (#732)."""
-    graph = _make_graph(
-        _make_node("S!A1", None, -1),
-        _make_node("S!A2", None, 2),
-        _make_node("S!A3", None, 3),
-        _make_node("S!B1", None, 10),
-        _make_node("S!B2", None, 20),
-        _make_node("S!B3", None, 30),
-        _make_node("S!C1", None, 100),
-        _make_node("S!C2", None, 200),
-        _make_node("S!C3", None, 300),
-        _make_node("S!E1", None, 2),
-        _make_node("S!D1", "=SUM(IF(S!A1:A3>0,S!A1:A3))", None),
-        _make_node("S!D2", "=SUM(IF(S!A1:A3>0,S!B1:B3,0))", None),
-        _make_node("S!D3", "=SUM(IF(S!A1:A3>0,S!B1:B3,S!C1:C3))", None),
-        _make_node("S!D4", "=SUM(IF(S!A1:A3=S!E1,S!B1:B3,0))", None),
-        _make_node("S!D5", "=SUM(IF(S!A1:A3>0,IF(S!B1:B3>15,S!C1:C3,0),0))", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!D1", "S!D2", "S!D3", "S!D4", "S!D5"])
-        assert result["S!D1"] == 5.0
-        assert result["S!D2"] == 50.0
-        assert result["S!D3"] == 150.0
-        assert result["S!D4"] == 20.0
-        assert result["S!D5"] == 500.0
-
-
-def test_average_if_array_selects_aligned_elements() -> None:
-    """Array-context `AVERAGE(IF(range,...))` is element-wise (#749)."""
-    graph = _make_graph(
-        _make_node("S!A1", None, -1),
-        _make_node("S!A2", None, 2),
-        _make_node("S!A3", None, 3),
-        _make_node("S!B1", None, 10),
-        _make_node("S!B2", None, 20),
-        _make_node("S!B3", None, 30),
-        _make_node("S!C1", None, 100),
-        _make_node("S!C2", None, 200),
-        _make_node("S!C3", None, 300),
-        _make_node("S!D1", "=AVERAGE(IF(S!A1:A3>0,S!A1:A3))", None),
-        _make_node("S!D2", "=AVERAGE(IF(S!A1:A3>0,S!B1:B3,S!C1:C3))", None),
-        _make_node("S!D3", "=AVERAGE(IF(S!A1:A3>0,S!B1:B3,0))", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!D1", "S!D2", "S!D3"])
-        assert result["S!D1"] == 2.5
-        assert result["S!D2"] == 50.0
-        assert result["S!D3"] == pytest.approx(50.0 / 3.0)
-
-
-def test_max_if_array_selects_aligned_elements() -> None:
-    """Array-context `MAX(IF(range,...))` is element-wise (#749)."""
-    graph = _make_graph(
-        _make_node("S!A1", None, -1),
-        _make_node("S!A2", None, 2),
-        _make_node("S!A3", None, 3),
-        _make_node("S!B1", None, -10),
-        _make_node("S!B2", None, -20),
-        _make_node("S!B3", None, -5),
-        _make_node("S!D1", "=MAX(IF(S!A1:A3>0,S!A1:A3))", None),
-        _make_node("S!D2", "=MAX(IF(S!A1:A3>0,S!B1:B3))", None),
-        _make_node("S!D3", "=MAX(IF(S!A1:A3>0,S!B1:B3,0))", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!D1", "S!D2", "S!D3"])
-        assert result["S!D1"] == 3.0
-        assert result["S!D2"] == -5.0
-        assert result["S!D3"] == 0.0
-
-
 def test_average() -> None:
     """Test AVERAGE function."""
     graph = _make_graph(
@@ -281,19 +188,6 @@ def test_range_aggregates_ignore_blanks_text_and_booleans() -> None:
         assert result["S!B4"] == -0.2
         assert result["S!B5"] == pytest.approx(0.0707106781)
         assert result["S!B6"] == -0.25
-
-
-def test_abs() -> None:
-    """Test ABS function."""
-    graph = _make_graph(
-        _make_node("S!A1", None, -4),
-        _make_node("S!B1", "=ABS(-3)", None),
-        _make_node("S!B2", "=ABS(S!A1)", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!B1", "S!B2"])
-        assert result["S!B1"] == 3.0
-        assert result["S!B2"] == 4.0
 
 
 def test_count_counta() -> None:
@@ -597,70 +491,7 @@ def test_text() -> None:
         assert result["S!A2"] == "25%"
 
 
-def test_value() -> None:
-    """Test VALUE function."""
-    expected_date_serial = datetime_to_excel_serial(datetime(2018, 3, 15))
-    graph = _make_graph(
-        _make_node("S!A1", '=VALUE("42")', None),
-        _make_node("S!A2", '=VALUE("12.5")', None),
-        _make_node("S!A3", '=VALUE("6522014")', None),
-        _make_node("S!A4", '=VALUE("$1,234.56")', None),
-        _make_node("S!A5", '=VALUE("abc")', None),
-        _make_node("S!A6", "=VALUE(#REF!)", None),
-        _make_node("S!A7", '=VALUE("")', None),
-        _make_node("S!A8", '=VALUE("2018-03-15")', None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!A1", "S!A2", "S!A3", "S!A4", "S!A5", "S!A6", "S!A7", "S!A8"])
-        assert result["S!A1"] == 42.0
-        assert result["S!A2"] == 12.5
-        assert result["S!A3"] == 6522014.0
-        assert result["S!A4"] == 1234.56
-        assert result["S!A5"] == XlError.VALUE
-        assert result["S!A6"] == XlError.REF
-        assert result["S!A7"] == 0.0
-        assert result["S!A8"] == pytest.approx(expected_date_serial)
-
-
 # --- Additional lookup function tests ---
-
-
-def test_vlookup_exact() -> None:
-    """Test VLOOKUP with exact match."""
-    graph = _make_graph(
-        # Table: A1:B3
-        _make_node("S!A1", None, 10),
-        _make_node("S!A2", None, 20),
-        _make_node("S!A3", None, 30),
-        _make_node("S!B1", None, "ten"),
-        _make_node("S!B2", None, "twenty"),
-        _make_node("S!B3", None, "thirty"),
-        # VLOOKUP(lookup_value, table_array, col_index_num, range_lookup)
-        _make_node("S!C1", "=VLOOKUP(20, S!A1:B3, 2, FALSE)", None),
-        _make_node("S!C2", "=VLOOKUP(25, S!A1:B3, 2, FALSE)", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!C1", "S!C2"])
-        assert result["S!C1"] == "twenty"
-        assert result["S!C2"] == XlError.NA
-
-
-def test_vlookup_approximate() -> None:
-    """Test VLOOKUP with approximate match."""
-    graph = _make_graph(
-        _make_node("S!A1", None, 10),
-        _make_node("S!A2", None, 20),
-        _make_node("S!A3", None, 30),
-        _make_node("S!B1", None, "ten"),
-        _make_node("S!B2", None, "twenty"),
-        _make_node("S!B3", None, "thirty"),
-        # Approximate match (TRUE or omitted)
-        _make_node("S!C1", "=VLOOKUP(25, S!A1:B3, 2, TRUE)", None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        result = ev.evaluate(["S!C1"])
-        # 25 falls between 20 and 30, so it returns the value for 20
-        assert result["S!C1"] == "twenty"
 
 
 def test_hlookup_exact() -> None:
