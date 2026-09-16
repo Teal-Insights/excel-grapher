@@ -3,11 +3,13 @@
 Uniform formula families replay `_emit_range_table` once per statement, not
 once per catalog member. Range-vs-blank tests are geometric, so unrelated
 blank rectangles stay off the per-cell hot path. Lockstep producer slots
-are cached per `(host, producer)`.
+are cached per `(host, producer)`. A mixed identity/remap whose outlier is
+not a first/interior/last sample still lowers through the lockstep dict.
 """
 
 from __future__ import annotations
 
+import re
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -24,6 +26,7 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, Statement
 from excel_grapher.exporter.inverted_tree.deps import DependenceEdge, SeriesDeps
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     call_compute,
     generate_inverted,
@@ -174,9 +177,20 @@ def test_hole_does_not_replay_range_table_per_host(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     counts = _count_calls(monkeypatch, ast_emit_mod, "_emit_range_table")
-    book, blanks, document = _lockstep_workbook(tmp_path, 4, 4, blank_rects=80, hole="Data!C3")
-    generate_inverted(book, document, blank_ranges=blanks)
-    assert counts["n"] == 6
+    small_book, small_blanks, small_doc = _lockstep_workbook(
+        tmp_path, 4, 4, blank_rects=80, hole="Data!C3"
+    )
+    generate_inverted(small_book, small_doc, blank_ranges=small_blanks)
+    small = counts["n"]
+    counts["n"] = 0
+    large_book, large_blanks, large_doc = _lockstep_workbook(
+        tmp_path, 8, 4, blank_rects=80, hole="Data!C3"
+    )
+    generate_inverted(large_book, large_doc, blank_ranges=large_blanks)
+    large = counts["n"]
+    assert small > 0
+    assert large == small
+    assert small <= 6
 
 
 def test_lockstep_export_matches_evaluator_with_hole_and_unrelated_blanks(
@@ -207,29 +221,25 @@ def test_lockstep_export_matches_evaluator_with_hole_and_unrelated_blanks(
     assert "xl_sum(" in generate_inverted(workbook, document, blank_ranges=blanks)["internals.py"]
 
 
-def test_identity_string_keys_skip_lockstep_follow(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workbook = write_workbook(
-        tmp_path / "identity_keys.xlsx",
-        {
-            "Data": {
-                "A1": "COM1",
-                "A2": "COM2",
-                "A3": "COM3",
-                "B1": 1.0,
-                "B2": 2.0,
-                "B3": 3.0,
-                "C1": "=B1",
-                "C2": "=B2",
-                "C3": "=B3",
-            }
-        },
-    )
+def test_off_sample_lockstep_remap_still_uses_the_dict(tmp_path: Path) -> None:
+    """Identity samples must not hide a remap at an unsampled catalog index.
+
+    Seven lockstep rows sample indices 0, 3, and 6. Those three host keys
+    match the producer. The remap at index 1 is not a sample; replicating
+    `instrument` would read a missing producer key.
+    """
+    cells: dict[str, object] = {}
+    for index in range(7):
+        row = index + 1
+        cells[f"A{row}"] = f"COM{index + 1}"
+        cells[f"B{row}"] = float(index + 1)
+        cells[f"D{row}"] = "ALIAS" if index == 1 else f"COM{index + 1}"
+        cells[f"E{row}"] = f"=B{row}"
+    workbook = write_workbook(tmp_path / "off_sample_remap.xlsx", {"Data": cells})
     document = bindings_document(
         series_entry(
             "values",
-            "Data!B1:B3",
+            "Data!B1:B7",
             layout="series",
             direction="input",
             label_column="A",
@@ -238,19 +248,25 @@ def test_identity_string_keys_skip_lockstep_follow(
         ),
         series_entry(
             "result",
-            "Data!C1:C3",
+            "Data!E1:E7",
             layout="series",
             direction="output",
-            label_column="A",
+            label_column="D",
             key_concept="INSTRUMENT",
             key_read="string",
         ),
         schema_version="1.16.0",
     )
     document["concept_scheme"]["concepts"].append({"id": "INSTRUMENT", "dtype": "string"})
-    counts = _count_calls(monkeypatch, ast_emit_mod, "_string_follow_expr")
-    generate_inverted(workbook, document)
-    assert counts["n"] == 0
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "INSTRUMENT_TO_VALUES[instrument]" in internals
+    assert "values[INSTRUMENT_TO_VALUES[instrument]]" in internals
+    assert "ALIAS" in internals
+    assert not re.search(r"if instrument ==", internals)
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "off_sample_remap")
+    got = pkg.compute_result(values=pkg.data.VALUES_DEFAULT)
+    assert got["ALIAS"] == 2.0
+    assert got["COM7"] == 7.0
 
 
 class _CountingEdges:

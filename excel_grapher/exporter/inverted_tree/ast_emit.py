@@ -649,11 +649,10 @@ def _named_keys(
                     )
                 keys.append(template)
                 continue
-            if current != target:
-                follow = _string_follow_expr(ctx, owner, key_field, target)
-                if follow is not None:
-                    keys.append(follow)
-                    continue
+            follow = _string_follow_expr(ctx, owner, key_field, target)
+            if follow is not None:
+                keys.append(follow)
+                continue
         if field_axis in pinned:
             keys.append(repr(target))
             continue
