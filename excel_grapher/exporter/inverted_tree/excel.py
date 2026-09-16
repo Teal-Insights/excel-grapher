@@ -11,11 +11,18 @@ from collections.abc import Callable, Sequence
 from datetime import date, datetime
 from typing import Literal, NoReturn, TypeGuard, TypeVar, cast, overload
 
-from excel_grapher.core.coercions import to_number
+from excel_grapher.core.coercions import to_bool, to_number
 from excel_grapher.core.grid import Range
 from excel_grapher.core.logic_funcs import logical_and, logical_if, logical_not, logical_or
 from excel_grapher.core.lookup_funcs import index_cells, match_cells, vlookup_cells
-from excel_grapher.core.math_funcs import average_cells, exp_number, max_cells, min_cells, sum_cells
+from excel_grapher.core.math_funcs import (
+    abs_number,
+    average_cells,
+    exp_number,
+    max_cells,
+    min_cells,
+    sum_cells,
+)
 from excel_grapher.core.operators import xl_add as _core_add
 from excel_grapher.core.operators import xl_concat as _core_concat
 from excel_grapher.core.operators import xl_div as _core_div
@@ -31,6 +38,7 @@ from excel_grapher.core.operators import xl_pos as _core_pos
 from excel_grapher.core.operators import xl_pow as _core_pow
 from excel_grapher.core.operators import xl_sub as _core_sub
 from excel_grapher.core.sumproduct import sumproduct_cells
+from excel_grapher.core.text_funcs import value_from_text
 from excel_grapher.core.types import CellValue, FormulaValue
 from excel_grapher.core.types import XlError as CoreXlError
 from excel_grapher.core.types import XlErrorException as SharedXlError
@@ -40,6 +48,7 @@ from excel_grapher.exporter.export_runtime.error_funcs import xl_isblank as _sha
 from excel_grapher.exporter.export_runtime.error_funcs import xl_iserror as _shared_iserror
 from excel_grapher.exporter.export_runtime.error_funcs import xl_isna as _shared_isna
 from excel_grapher.exporter.export_runtime.error_funcs import xl_isnumber as _shared_isnumber
+from excel_grapher.exporter.export_runtime.error_funcs import xl_istext as _shared_istext
 from excel_grapher.exporter.export_runtime.lookup import xl_hlookup as _shared_hlookup
 from excel_grapher.exporter.export_runtime.lookup import xl_lookup as _shared_lookup
 from excel_grapher.exporter.export_runtime.lookup import xl_xlookup as _shared_xlookup
@@ -52,6 +61,7 @@ from excel_grapher.exporter.export_runtime.math import xl_rounddown as _shared_r
 from excel_grapher.exporter.export_runtime.math import xl_stdev as _shared_stdev
 from excel_grapher.exporter.export_runtime.text import xl_left as _shared_left
 from excel_grapher.exporter.export_runtime.text import xl_numbervalue as _shared_numbervalue
+from excel_grapher.exporter.export_runtime.text import xl_text as _shared_text
 from excel_grapher.series_bindings.input_coerce import (
     apply_input_value_map as apply_input_value_map,
 )
@@ -192,10 +202,12 @@ def _as_formula(value: object) -> FormulaValue:
 
 
 def _arith_operand(value: object) -> FormulaValue:
-    """Prepare an arithmetic operand for `core` (blank text is `0`)."""
+    """Prepare an arithmetic operand for `core`.
+
+    Blank cells (`None`) stay `None` so `to_number` coerces them to `0`. Empty
+    text (`""`) is left as text so arithmetic raises `#VALUE!` (Excel / #420).
+    """
     _raise_stored_error(value)
-    if isinstance(value, str) and value.replace("\u00a0", "").strip() == "":
-        return 0.0
     return _as_formula(value)
 
 
@@ -308,11 +320,39 @@ OPERATOR_TABLE = {
 }
 
 
+def xl_bool(value: object) -> bool:
+    """Coerce an `IF` condition with Excel boolean rules.
+
+    `to_bool("")` is `False` (evaluator / `to_bool`), not Excel's `#VALUE!`.
+    Non-boolean text such as `"nope"` raises `#VALUE!`.
+    """
+    _raise_stored_error(value)
+    result = _adapt_core(to_bool(_as_formula(value)))
+    assert isinstance(result, bool), f"IF condition returned {type(result).__name__}"
+    return result
+
+
 def xl_exp(*args: object) -> object:
     """Excel `EXP` via `core.math_funcs.exp_number`."""
     for arg in args:
         _raise_stored_error(arg)
     return _adapt_core(exp_number(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_abs(*args: object) -> object:
+    """Excel `ABS` via `core.math_funcs.abs_number`."""
+    for arg in args:
+        _raise_stored_error(arg)
+    return _adapt_core(abs_number(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_value(*args: object) -> object:
+    """Excel `VALUE` via `core.text_funcs.value_from_text`."""
+    for arg in args:
+        _raise_stored_error(arg)
+    if len(args) != 1:
+        raise XlError("#VALUE!")
+    return _adapt_core(value_from_text(cast(CellValue, args[0])))
 
 
 def xl_sum(*args: object) -> object:
@@ -419,13 +459,6 @@ def xl_vlookup(
     return _adapt_core(vlookup_cells(lookup, table_array, col_index_num, range_lookup))
 
 
-def xl_isnumber(value: object) -> bool:
-    """Excel `ISNUMBER`: True only for non-bool numbers; False for blanks and errors."""
-    if isinstance(value, str) and is_error(value):
-        return False
-    return not isinstance(value, bool) and isinstance(value, int | float)
-
-
 def _call_shared(function: Callable[..., object], *args: object) -> object:
     """Translate the shared runtime's exception channel at the export boundary."""
     try:
@@ -487,9 +520,14 @@ def xl_isblank(value: Callable[[], object]) -> object:
     return _call_shared(_shared_isblank, _shared_thunk(value))
 
 
-def xl_isnumber_lazy(value: Callable[[], object]) -> object:
+def xl_isnumber(value: Callable[[], object]) -> object:
     """Inspect a possibly failing expression for a numeric value."""
     return _call_shared(_shared_isnumber, _shared_thunk(value))
+
+
+def xl_istext(value: Callable[[], object]) -> object:
+    """Inspect a possibly failing expression for a text value."""
+    return _call_shared(_shared_istext, _shared_thunk(value))
 
 
 def xl_npv(*args: object) -> object:
@@ -530,6 +568,11 @@ def xl_rounddown(*args: object) -> object:
 def xl_numbervalue(*args: object) -> object:
     """Parse numeric text with the shared Excel implementation."""
     return _shared_value(_shared_numbervalue, *args)
+
+
+def xl_text(*args: object) -> object:
+    """Format a value as text with the shared Excel implementation."""
+    return _shared_value(_shared_text, *args)
 
 
 def xl_left(*args: object) -> object:

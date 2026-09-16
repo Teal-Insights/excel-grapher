@@ -18,7 +18,9 @@ from excel_grapher.core.address_keys import (
     parse_cell_coords,
 )
 from excel_grapher.core.addressing import index_excel_range
-from excel_grapher.core.excel_function_names import normalize_excel_function_name
+from excel_grapher.core.excel_function_names import (
+    normalize_excel_function_name as _normalize_excel_function_name,
+)
 from excel_grapher.core.formula_ast import (
     AbsoluteAxis,
     AstNode,
@@ -37,6 +39,7 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
 from excel_grapher.core.types import ExcelRange, XlError
+from excel_grapher.exporter.inverted_tree import excel as inverted_excel
 from excel_grapher.exporter.inverted_tree.access import (
     indirect_argument_addresses,
     indirect_target_addresses,
@@ -69,6 +72,18 @@ from excel_grapher.series_bindings.normalize import is_override_input
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
+
+_EMITTED_BUILTINS = frozenset(
+    name.removeprefix("xl_").removesuffix("_lazy").upper()
+    for name, value in vars(inverted_excel).items()
+    if name.startswith("xl_") and callable(value)
+)
+
+
+def normalize_excel_function_name(name: str) -> str:
+    """Normalize a formula token, stripping `_XLUDF.` for emitted builtins."""
+    return _normalize_excel_function_name(name, registered_builtins=_EMITTED_BUILTINS)
+
 
 _BLANK_RECTS: ContextVar[tuple[BlankRangeRect, ...]] = ContextVar(
     "excel_grapher_inverted_tree_blank_rects",

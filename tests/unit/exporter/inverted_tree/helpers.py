@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import importlib
 import inspect
@@ -236,6 +237,18 @@ def generate_inverted(
     )
 
 
+def unload_package(name: str, tmp_path: Path | None = None) -> None:
+    """Drop `name` from `sys.modules` and remove `tmp_path` from `sys.path`."""
+    for key in list(sys.modules):
+        if key == name or key.startswith(name + "."):
+            del sys.modules[key]
+    if tmp_path is None:
+        return
+    path_str = str(tmp_path)
+    with contextlib.suppress(ValueError):
+        sys.path.remove(path_str)
+
+
 def load_package(
     modules: Mapping[str, str],
     tmp_path: Path,
@@ -245,15 +258,22 @@ def load_package(
     pkg.mkdir(parents=True, exist_ok=True)
     for filename, content in modules.items():
         (pkg / filename).write_text(content, encoding="utf-8")
-    if str(tmp_path) not in sys.path:
-        sys.path.insert(0, str(tmp_path))
-    for key in list(sys.modules):
-        if key == name or key.startswith(name + "."):
-            del sys.modules[key]
-    pkg = importlib.import_module(name)
-    for sub in ("api", "internals", "runtime", "data", "validation"):
-        importlib.import_module(f"{name}.{sub}")
-    return pkg
+    path_str = str(tmp_path)
+    inserted = path_str not in sys.path
+    if inserted:
+        sys.path.insert(0, path_str)
+    try:
+        for key in list(sys.modules):
+            if key == name or key.startswith(name + "."):
+                del sys.modules[key]
+        imported = importlib.import_module(name)
+        for sub in ("api", "internals", "runtime", "data", "validation"):
+            importlib.import_module(f"{name}.{sub}")
+        return imported
+    finally:
+        if inserted:
+            with contextlib.suppress(ValueError):
+                sys.path.remove(path_str)
 
 
 def required_param_names(function: Callable[..., object]) -> tuple[str, ...]:

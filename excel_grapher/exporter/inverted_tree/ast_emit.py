@@ -8,7 +8,6 @@ from itertools import product
 from typing import TYPE_CHECKING, Any, cast
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_cell_coords
-from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AbsoluteAxis,
     AstNode,
@@ -50,6 +49,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     index_window_corners,
     iter_range_addresses,
     iter_ref_addresses,
+    normalize_excel_function_name,
     offset_index_destination,
     range_ref_label,
     resolve_offset_destination_series,
@@ -181,6 +181,12 @@ def _number_literal(value: float) -> str:
     return repr(value)
 
 
+def _range_is_single_cell(node: RangeNode) -> bool:
+    """True when both endpoints name the same worksheet cell."""
+    start, end = node.start_ref, node.end_ref
+    return start.sheet == end.sheet and start.col == end.col and start.row == end.row
+
+
 def emit_expr(node: AstNode, ctx: EmitContext) -> str:
     """Lower `node` to a Python expression against `ctx` parameters."""
     match node:
@@ -196,6 +202,8 @@ def emit_expr(node: AstNode, ctx: EmitContext) -> str:
             return "0"
         case CellRefNode():
             return _emit_cell_ref(node, ctx)
+        case RangeNode() if _range_is_single_cell(node):
+            return _emit_cell_ref(CellRefNode(node.start_ref), ctx)
         case RangeNode():
             raise InvertedTreeExportError(
                 f"series {ctx.host.series_id!r}: bare range in value position"
@@ -693,6 +701,8 @@ def _named_keys(
 
 def _emit_value_or_range(node: AstNode, ctx: EmitContext) -> str:
     """Emit a scalar expression or a positional range table."""
+    if isinstance(node, RangeNode) and _range_is_single_cell(node):
+        return _emit_cell_ref(CellRefNode(node.start_ref), ctx)
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
         return _emit_range_table(node, ctx)
     return emit_expr(node, ctx)
@@ -726,11 +736,16 @@ def _emit_unary(node: UnaryOpNode, ctx: EmitContext) -> str:
 
 def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
     name = normalize_excel_function_name(node.name)
-    if name in {"IFERROR", "IFNA", "ISERROR", "ISNA", "ISBLANK", "ISNUMBER"}:
+    if name in {"IFERROR", "IFNA", "ISERROR", "ISNA", "ISBLANK", "ISNUMBER", "ISTEXT"}:
         required = 2 if name in {"IFERROR", "IFNA"} else 1
         if len(node.args) != required:
             return f"{ctx.use('xl_raise')}('#VALUE!')"
-        helper = "xl_isnumber_lazy" if name == "ISNUMBER" else f"xl_{name.lower()}"
+        if name == "ISNUMBER":
+            helper = "xl_isnumber"
+        elif name == "ISTEXT":
+            helper = "xl_istext"
+        else:
+            helper = f"xl_{name.lower()}"
         lazy = ctx
         args = ", ".join(f"lambda: {emit_expr(arg, lazy)}" for arg in node.args)
         return f"{ctx.use(helper)}({args})"
@@ -824,9 +839,9 @@ def _emit_if(node: FunctionCallNode, ctx: EmitContext) -> str:
         return f"{ctx.use('xl_if')}({cond}, {then}, {otherwise})"
     cond = emit_expr(node.args[0], ctx)
     then = emit_expr(node.args[1], ctx)
-    # Array omitted else is Excel FALSE; scalar emit still uses 0.
-    otherwise = emit_expr(node.args[2], ctx) if len(node.args) > 2 else "0"
-    return f"({then} if {cond} else {otherwise})"
+    # Array omitted else is Excel FALSE; empty else is EmptyArgNode -> 0.
+    otherwise = emit_expr(node.args[2], ctx) if len(node.args) > 2 else "False"
+    return f"({then} if {ctx.use('xl_bool')}({cond}) else {otherwise})"
 
 
 def _contains_array_if_operand(node: AstNode) -> bool:
@@ -836,6 +851,8 @@ def _contains_array_if_operand(node: AstNode) -> bool:
     are not array-`IF` operands; those functions keep their own lowering.
     """
     match node:
+        case RangeNode() if _range_is_single_cell(node):
+            return False
         case RangeNode() | WholeColumnNode() | WholeRowNode():
             return True
         case BinaryOpNode(left=left, right=right):
@@ -1304,6 +1321,11 @@ def _ref_anchor_address(node: AstNode, host_cell: CanonicalAddress) -> Canonical
 def _emit_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 3:
         raise _host_export_error(ctx, "OFFSET expects anchor, rows, cols")
+    if len(node.args) > 3:
+        raise _host_export_error(
+            ctx,
+            "OFFSET height/width is not supported (bound model is cell-shaped)",
+        )
     return _emit_named_offset(node, ctx)
 
 

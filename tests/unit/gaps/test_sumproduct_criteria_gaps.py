@@ -128,7 +128,6 @@ def test_sumproduct_category_filter_eval_codegen_parity(tmp_path: Path) -> None:
     )
     results = evaluate_targets(graph, ["Product Lookup!I14"])
     assert results["Product Lookup!I14"] == pytest.approx(630.0)
-    assert results["Product Lookup!I14"] == pytest.approx(630.0)
 
 
 def test_sumproduct_threshold_count_eval_codegen_parity(tmp_path: Path) -> None:
@@ -141,7 +140,6 @@ def test_sumproduct_threshold_count_eval_codegen_parity(tmp_path: Path) -> None:
         use_cached_dynamic_refs=True,
     )
     results = evaluate_targets(graph, ["Product Lookup!I18"])
-    assert results["Product Lookup!I18"] == pytest.approx(3.0)
     assert results["Product Lookup!I18"] == pytest.approx(3.0)
 
 
@@ -156,7 +154,6 @@ def test_software_revenue_sumproduct_eval_codegen_parity(tmp_path: Path) -> None
     )
     results = evaluate_targets(graph, ["Product Lookup!K21"])
     assert results["Product Lookup!K21"] == pytest.approx(10598.0)
-    assert results["Product Lookup!K21"] == pytest.approx(10598.0)
 
 
 def test_sumproduct_price_threshold_k24_eval_codegen_parity(tmp_path: Path) -> None:
@@ -169,5 +166,4 @@ def test_sumproduct_price_threshold_k24_eval_codegen_parity(tmp_path: Path) -> N
         use_cached_dynamic_refs=True,
     )
     results = evaluate_targets(graph, ["Product Lookup!K24"])
-    assert results["Product Lookup!K24"] == pytest.approx(7.0)
     assert results["Product Lookup!K24"] == pytest.approx(7.0)

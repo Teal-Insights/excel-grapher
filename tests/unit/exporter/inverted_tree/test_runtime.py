@@ -13,10 +13,12 @@ from excel_grapher.exporter.inverted_tree.excel import (
     XlError,
     as_measure,
     is_error,
+    xl_abs,
     xl_add,
     xl_and,
     xl_at,
     xl_average,
+    xl_bool,
     xl_choose,
     xl_div,
     xl_eq,
@@ -39,6 +41,7 @@ from excel_grapher.exporter.inverted_tree.excel import (
     xl_sub,
     xl_sum,
     xl_sumproduct,
+    xl_value,
     xl_vlookup,
 )
 from excel_grapher.exporter.inverted_tree.runtime import (
@@ -197,12 +200,16 @@ def test_arithmetic_non_numeric_text_is_value_error(
     assert exc.value.code == expected
 
 
-def test_xl_div_coerces_empty_blank_and_bool() -> None:
-    assert xl_div("", 2) == 0.0
+def test_xl_div_coerces_blank_and_bool() -> None:
+    with pytest.raises(XlError) as exc:
+        xl_div("", 2)
+    assert exc.value.code == "#VALUE!"
+    with pytest.raises(XlError) as exc:
+        xl_add("", 5)
+    assert exc.value.code == "#VALUE!"
     assert xl_div(None, 2) == 0.0
     assert xl_div(True, 2) == 0.5
     assert xl_div(False, 2) == 0.0
-    assert xl_add("", 5) == 5.0
     assert xl_mul(True, 4) == 4.0
 
 
@@ -278,10 +285,10 @@ def test_xl_index_intersection_blank_and_ref() -> None:
 
 
 def test_xl_isnumber_blank_number_and_error() -> None:
-    assert xl_isnumber(None) is False
-    assert xl_isnumber(1.5) is True
-    assert xl_isnumber(True) is False
-    assert xl_isnumber("#N/A") is False
+    assert xl_isnumber(lambda: None) is False
+    assert xl_isnumber(lambda: 1.5) is True
+    assert xl_isnumber(lambda: True) is False
+    assert xl_isnumber(lambda: "#N/A") is False
 
 
 def test_xl_vlookup_exact_and_empty_table() -> None:
@@ -350,6 +357,29 @@ def test_xl_exp_numeric_and_overflow() -> None:
     assert exc.value.code == "#VALUE!"
     with pytest.raises(XlError) as exc:
         xl_exp(1, 2)
+    assert exc.value.code == "#VALUE!"
+
+
+def test_xl_abs_numeric_and_text() -> None:
+    assert xl_abs(-3) == 3.0
+    with pytest.raises(XlError) as exc:
+        xl_abs("not a number")
+    assert exc.value.code == "#VALUE!"
+
+
+def test_xl_value_parses_numeric_text() -> None:
+    assert xl_value("6522014") == 6522014.0
+    with pytest.raises(XlError) as exc:
+        xl_value("abc")
+    assert exc.value.code == "#VALUE!"
+
+
+def test_xl_bool_rejects_non_boolean_text() -> None:
+    assert xl_bool(1) is True
+    assert xl_bool(0) is False
+    assert xl_bool("TRUE") is True
+    with pytest.raises(XlError) as exc:
+        xl_bool("nope")
     assert exc.value.code == "#VALUE!"
 
 

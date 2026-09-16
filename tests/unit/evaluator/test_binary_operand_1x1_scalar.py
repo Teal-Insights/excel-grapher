@@ -135,4 +135,3 @@ def test_index_binary_ops_eval_codegen_parity(tmp_path) -> None:
         "S!B2": "Yes",
         "S!B3": "NoYes",
     }
-    assert results == results
