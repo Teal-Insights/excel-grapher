@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import ast
+import re
 from pathlib import Path
 from typing import Any
 
@@ -415,3 +416,449 @@ def test_model_cells_bind_runtime_keys_and_key_note(tmp_path: Path) -> None:
 def test_labeller_input_on_labelled_axis_is_an_export_error(tmp_path: Path) -> None:
     with pytest.raises(InvertedTreeExportError, match="keyed on labelled axis"):
         generate_inverted(_cycle_labeller_workbook(tmp_path), _cycle_labeller_bindings())
+
+
+def _horizon_sheets() -> dict[str, dict[str, object]]:
+    """Five-year labelled horizon with a cumulative path and split history/projection."""
+    return {
+        "Inputs": {
+            "B1": 2024,
+            "A2": 2024,
+            "B2": 2025,
+            "C2": 2026,
+            "D2": 2027,
+            "E2": 2028,
+            "A3": 1.0,
+            "B3": 1.0,
+            "C3": 1.0,
+            "D3": 1.0,
+            "E3": 1.0,
+        },
+        "Engine": {
+            "A1": "=Inputs!B1",
+            "B1": "=A1+1",
+            "C1": "=B1+1",
+            "D1": "=C1+1",
+            "E1": "=D1+1",
+            "A2": "=Inputs!A3",
+            "B2": "=A2+1",
+            "C2": "=B2+1",
+            "D2": "=C2+1",
+            "E2": "=D2+1",
+            "A3": "=A2",
+            "B3": "=A3+B2",
+            "C3": "=B3+C2",
+            "D3": "=C3+D2",
+            "E3": "=D3+E2",
+        },
+    }
+
+
+def _horizon_labeller_and_path() -> tuple[dict[str, Any], dict[str, Any], dict[str, Any]]:
+    return (
+        series_entry("first_year", "Inputs!B1", direction="input", dtype="int"),
+        series_entry(
+            "year_labels",
+            "Engine!A1:E1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        series_entry(
+            "path",
+            "Engine!A2:E2",
+            layout="series",
+            direction="internal",
+            header_row=1,
+        ),
+    )
+
+
+def _suffix_sheets() -> dict[str, dict[str, object]]:
+    sheets = _horizon_sheets()
+    sheets["Engine"]["C3"] = "=C2"
+    sheets["Engine"]["D3"] = "=C3+D2"
+    sheets["Engine"]["E3"] = "=D3+E2"
+    del sheets["Engine"]["A3"]
+    del sheets["Engine"]["B3"]
+    return sheets
+
+
+def _suffix_bindings() -> dict[str, Any]:
+    first_year, year_labels, path = _horizon_labeller_and_path()
+    return bindings_document(
+        first_year,
+        series_entry(
+            "growth",
+            "Inputs!A3:E3",
+            layout="series",
+            direction="input",
+            header_row=2,
+        ),
+        year_labels,
+        path,
+        series_entry(
+            "projection",
+            "Engine!C3:E3",
+            layout="series",
+            direction="output",
+            dtype="float",
+            header_row=1,
+        ),
+        schema_version="1.17.0",
+    )
+
+
+def _prefix_bindings() -> dict[str, Any]:
+    first_year, year_labels, path = _horizon_labeller_and_path()
+    return bindings_document(
+        first_year,
+        series_entry(
+            "growth",
+            "Inputs!A3:E3",
+            layout="series",
+            direction="input",
+            header_row=2,
+        ),
+        year_labels,
+        path,
+        series_entry(
+            "history",
+            "Engine!A3:C3",
+            layout="series",
+            direction="output",
+            dtype="float",
+            header_row=1,
+        ),
+        schema_version="1.17.0",
+    )
+
+
+def test_suffix_series_family_and_lag(tmp_path: Path) -> None:
+    """A projection suffix seeds at labeller position 2, not series-local 0."""
+    workbook = write_workbook(tmp_path / "suffix.xlsx", _suffix_sheets())
+    document = _suffix_bindings()
+    modules = generate_inverted(workbook, document)
+    internals = modules["internals.py"]
+    assert re.search(r"def projection\b[\s\S]*?_p_time_period == 2", internals)
+    pkg = load_package(modules, tmp_path, name="suffix_axis")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = pkg.compute_projection(
+        **{key: kwargs[key] for key in required_param_names(pkg.compute_projection)}
+    )
+    assert tuple(result.domain.axes[0].keys) == (2026, 2027, 2028)
+    assert [value for _coord, value in result.items()] == pytest.approx([3.0, 7.0, 12.0])
+    shifted_growth = _shift_tensor(kwargs["growth"], 10)
+    shifted = pkg.compute_projection(first_year=kwargs["first_year"] + 10, growth=shifted_growth)
+    assert tuple(shifted.domain.axes[0].keys) == (2036, 2037, 2038)
+    assert [value for _coord, value in shifted.items()] == pytest.approx([3.0, 7.0, 12.0])
+
+
+def test_prefix_series_family_and_lag(tmp_path: Path) -> None:
+    workbook = write_workbook(tmp_path / "prefix.xlsx", _horizon_sheets())
+    document = _prefix_bindings()
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="prefix_axis")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = pkg.compute_history(
+        **{key: kwargs[key] for key in required_param_names(pkg.compute_history)}
+    )
+    assert tuple(result.domain.axes[0].keys) == (2024, 2025, 2026)
+    assert [value for _coord, value in result.items()] == pytest.approx([1.0, 3.0, 6.0])
+
+
+def test_subset_input_default_import(tmp_path: Path) -> None:
+    """A runtime-axis input covering only the projection suffix still imports."""
+    workbook = write_workbook(
+        tmp_path / "subset_input.xlsx",
+        {
+            "Inputs": {
+                "B1": 2024,
+                "C2": 2026,
+                "D2": 2027,
+                "E2": 2028,
+                "C3": 1.0,
+                "D3": 2.0,
+                "E3": 3.0,
+            },
+            "Engine": {
+                "A1": "=Inputs!B1",
+                "B1": "=A1+1",
+                "C1": "=B1+1",
+                "D1": "=C1+1",
+                "E1": "=D1+1",
+                "C2": "=Inputs!C3",
+                "D2": "=Inputs!D3",
+                "E2": "=Inputs!E3",
+            },
+        },
+    )
+    document = bindings_document(
+        series_entry("first_year", "Inputs!B1", direction="input", dtype="int"),
+        series_entry(
+            "growth",
+            "Inputs!C3:E3",
+            layout="series",
+            direction="input",
+            header_row=2,
+        ),
+        series_entry(
+            "year_labels",
+            "Engine!A1:E1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        series_entry(
+            "path",
+            "Engine!C2:E2",
+            layout="series",
+            direction="output",
+            header_row=1,
+        ),
+        schema_version="1.17.0",
+    )
+    modules = generate_inverted(workbook, document)
+    assert "source=(2024, 2025, 2026, 2027, 2028)" in modules["data.py"]
+    pkg = load_package(modules, tmp_path, name="subset_input")
+    assert tuple(pkg.data.GROWTH.domain.axes[0].keys) == (2026, 2027, 2028)
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = pkg.compute_path(
+        **{key: kwargs[key] for key in required_param_names(pkg.compute_path)}
+    )
+    assert tuple(result.domain.axes[0].keys) == (2026, 2027, 2028)
+    assert [value for _coord, value in result.items()] == pytest.approx([1.0, 2.0, 3.0])
+
+
+def test_labelled_offset_steps_on_the_labeller_axis(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "offset.xlsx",
+        {
+            "Inputs": {"A1": 2024},
+            "Engine": {
+                "A1": "=Inputs!A1",
+                "B1": "=A1+1",
+                "C1": "=B1+1",
+                "A2": 1.0,
+                "B2": "=OFFSET(B2,0,-1)+1",
+                "C2": "=OFFSET(C2,0,-1)+1",
+            },
+        },
+    )
+    document = bindings_document(
+        series_entry("first_year", "Inputs!A1", direction="input", dtype="int"),
+        series_entry(
+            "year_labels",
+            "Engine!A1:C1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        series_entry(
+            "path",
+            "Engine!A2:C2",
+            layout="series",
+            direction="output",
+            header_row=1,
+        ),
+        schema_version="1.17.0",
+    )
+    modules = generate_inverted(workbook, document)
+    assert "axis_step(" in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="offset_axis")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = pkg.compute_path(
+        **{key: kwargs[key] for key in required_param_names(pkg.compute_path)}
+    )
+    assert tuple(result.domain.axes[0].keys) == (2024, 2025, 2026)
+    assert [value for _coord, value in result.items()] == pytest.approx([1.0, 2.0, 3.0])
+
+
+def test_ragged_runtime_range_does_not_invent_keys(tmp_path: Path) -> None:
+    """A non-contiguous labelled range must not span the interned hole."""
+    workbook = write_workbook(
+        tmp_path / "ragged.xlsx",
+        {
+            "Inputs": {"A1": 2024},
+            "Engine": {
+                "A1": "=Inputs!A1",
+                "B1": "=A1+1",
+                "C1": "=B1+1",
+                "A2": 1.0,
+                "C2": 3.0,
+                "D2": "=SUM(A2:C2)+A1*0",
+            },
+        },
+    )
+    odd = series_entry(
+        "odd_years",
+        "Engine!A2:C2",
+        layout="series",
+        direction="input",
+        header_row=1,
+    )
+    odd["exclude_columns"] = ["B"]
+    document = bindings_document(
+        series_entry("first_year", "Inputs!A1", direction="input", dtype="int"),
+        series_entry(
+            "year_labels",
+            "Engine!A1:C1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        odd,
+        series_entry(
+            "total",
+            "Engine!D2",
+            direction="output",
+            dtype="float",
+        ),
+        schema_version="1.17.0",
+    )
+    modules = generate_inverted(workbook, document, blank_ranges=["Engine!B2"])
+    internals = modules["internals.py"]
+    assert "span(" not in internals or "span(_ax_time_period" not in internals
+    pkg = load_package(modules, tmp_path, name="ragged_axis")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document, blank_ranges=["Engine!B2"])
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = pkg.compute_total(
+        **{key: kwargs[key] for key in required_param_names(pkg.compute_total)}
+    )
+    assert result == pytest.approx(4.0)
+
+
+def test_runtime_string_remap_is_an_export_error(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "string_remap.xlsx",
+        {
+            "Data": {
+                "A1": "name",
+                "B1": "ifs",
+                "C1": "code",
+                "A2": "Alpha",
+                "B2": 10.0,
+                "C2": "=D2",
+                "D2": "A",
+                "E2": "=B2",
+                "A3": "Beta",
+                "B3": 20.0,
+                "C3": "=D3",
+                "D3": "B",
+                "E3": "=B3",
+            }
+        },
+    )
+    document = bindings_document(
+        series_entry("code_a", "Data!D2", direction="input", dtype="string", key_read="string"),
+        series_entry("code_b", "Data!D3", direction="input", dtype="string", key_read="string"),
+        series_entry(
+            "codes",
+            "Data!C2:C3",
+            layout="series",
+            direction="internal",
+            dtype="string",
+            label_column="C",
+            key_concept="REF_AREA",
+            key_read="string",
+            axis_labels="REF_AREA",
+        ),
+        series_entry(
+            "catalog_ifs",
+            "Data!B2:B3",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+        series_entry(
+            "trigger_ifs",
+            "Data!E2:E3",
+            layout="series",
+            direction="output",
+            label_column="C",
+            key_concept="REF_AREA",
+            key_read="string",
+        ),
+        schema_version="1.17.0",
+    )
+    document["concept_scheme"]["concepts"].append({"id": "REF_AREA", "dtype": "string"})
+    with pytest.raises(InvertedTreeExportError, match="remap"):
+        generate_inverted(workbook, document)
+
+
+def test_two_runtime_labellers_for_one_axis_name_are_an_export_error(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "two_labellers.xlsx",
+        {
+            "Engine": {
+                "A1": "=2023+1",
+                "B1": "=A1+1",
+                "C1": "=2025+1",
+                "D1": "=C1+1",
+                "A2": "=A1",
+                "B2": "=B1",
+                "C2": "=C1",
+                "D2": "=D1",
+            }
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "history_labels",
+            "Engine!A1:B1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        series_entry(
+            "projection_labels",
+            "Engine!C1:D1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        series_entry(
+            "path",
+            "Engine!A2:D2",
+            layout="series",
+            direction="output",
+            header_row=1,
+        ),
+        schema_version="1.17.0",
+    )
+    with pytest.raises(InvertedTreeExportError, match="multiple runtime labellers"):
+        generate_inverted(workbook, document)
+
+
+def test_evaluator_override_on_same_graph_matches_shifted_package(tmp_path: Path) -> None:
+    document = _labelled_bindings()
+    workbook = _labelled_workbook(tmp_path)
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="p5_eval")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    delta = 5
+    graph.set_node_value("Inputs!A1", kwargs["first_year"] + delta)
+    expected = FormulaEvaluator(graph).evaluate(list(catalog.get("path").cells))
+    got = pkg.compute_path(
+        first_year=kwargs["first_year"] + delta,
+        growth=_shift_tensor(kwargs["growth"], delta),
+    )
+    for (_coord, value), cell in zip(got.items(), catalog.get("path").cells, strict=True):
+        assert value == pytest.approx(expected[cell])

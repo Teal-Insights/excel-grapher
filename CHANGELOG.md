@@ -12,7 +12,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Features
 
 - **series-bindings**: Runtime `axis_labels` key every tensor on an axis by
-  the labeller's evaluated values ([#841](https://github.com/Teal-Insights/excel-grapher/issues/841))
+  the labeller's evaluated values ([#841](https://github.com/Teal-Insights/excel-grapher/issues/841)).
+  Family conditions, lags, and literal tables index the labeller, so suffix
+  series and sliced inputs share one horizon. `AxisTemplate.bind` accepts an
+  already-sliced axis. Host-key remaps and key templates over a runtime
+  string axis fail at export. `TensorSchema.validate` names unknown labels
+  whenever extra and missing keys coincide, including on static packages.
 
 
 ## v20.2.0 (2026-09-15)

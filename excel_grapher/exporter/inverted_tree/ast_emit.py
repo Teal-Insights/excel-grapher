@@ -143,6 +143,13 @@ class EmitContext:
         """Return the non-constant labeller covering `axis`, if any."""
         return self.catalog.runtime_labeller(axis.name, axis.keys)
 
+    def layout_axis(self, axis: Any) -> Any:
+        """Return the labeller axis used for position indexes, else `axis`."""
+        labeller = self.runtime_labeller_for(axis)
+        if labeller is None:
+            return axis
+        return labeller.tensor_domain.axes[0]
+
     def host_uses_positions(self, axis: Any) -> bool:
         """True when the host iterates `axis` by position (it is that axis's labeller)."""
         return self.host.axis_labels == axis.name and self.host.direction != "constant"
@@ -531,6 +538,12 @@ def _string_follow_expr(
         )
     )
     host_field, variable, mapping = ranked[0]
+    host_axis = ctx.host.tensor_domain.axes[ctx.host.key_fields.index(host_field)]
+    if ctx.runtime_labeller_for(host_axis) is not None:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: host-key remaps over runtime axis "
+            f"{host_axis.name!r} are unsupported"
+        )
     name = _remap_constant_name(host_field, owner.series_id, key_field)
     existing = ctx.key_remaps.get(name)
     if existing is not None and existing != mapping:
@@ -539,10 +552,10 @@ def _string_follow_expr(
     return f"{name}[{variable}]"
 
 
-def _key_template(target: str, ctx: EmitContext) -> str | None:
+def _key_template(target: str, ctx: EmitContext) -> tuple[str, str] | None:
     """An f-string over a host key embedded in the label `target`."""
     host_point = ctx.host.domain[ctx.host_index].as_mapping()
-    best: tuple[str, str] | None = None
+    best: tuple[str, str, str] | None = None
     for key_field, variable in ctx.coordinate_vars.items():
         value = host_point.get(key_field)
         if not isinstance(value, str) or len(value) < 2 or value == target or value not in target:
@@ -550,13 +563,13 @@ def _key_template(target: str, ctx: EmitContext) -> str | None:
         if any(char in value for char in "'\\\"{}"):
             continue
         if best is None or len(value) > len(best[0]):
-            best = (value, variable)
+            best = (value, variable, key_field)
     if best is None:
         return None
-    value, variable = best
+    value, variable, key_field = best
     quoted = repr(target)
     inner = quoted[1:-1].replace("{", "{{").replace("}", "}}")
-    return f"f{quoted[0]}{inner.replace(value, '{' + variable + '}')}{quoted[0]}"
+    return f"f{quoted[0]}{inner.replace(value, '{' + variable + '}')}{quoted[0]}", key_field
 
 
 def _named_keys(
@@ -604,12 +617,11 @@ def _named_keys(
             keys.append(issuance_var)
             continue
         if isinstance(target, str):
-            template = _key_template(target, ctx)
-            if template is not None:
-                if any(
-                    ctx.runtime_labeller_for(axis) is not None
-                    for axis in ctx.host.tensor_domain.axes
-                ):
+            templated = _key_template(target, ctx)
+            if templated is not None:
+                template, templated_field = templated
+                host_axis = ctx.host.tensor_domain.axes[ctx.host.key_fields.index(templated_field)]
+                if ctx.runtime_labeller_for(host_axis) is not None:
                     raise InvertedTreeExportError(
                         f"series {ctx.host.series_id!r}: key templates over a runtime axis "
                         "are unsupported"
@@ -624,6 +636,7 @@ def _named_keys(
             keys.append(repr(target))
             continue
         owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
+        layout = ctx.layout_axis(owner_axis)
         runtime = ctx.runtime_labeller_for(owner_axis)
         if variable is not None and current == target:
             keys.append(variable)
@@ -633,7 +646,7 @@ def _named_keys(
             if driver is not None:
                 variable, current = driver
                 if runtime is not None:
-                    difference = owner_axis.keys.index(target) - owner_axis.keys.index(current)
+                    difference = layout.keys.index(target) - layout.keys.index(current)
                     if ctx.host_uses_positions(owner_axis):
                         sign = "+" if difference > 0 else "-"
                         keys.append(
@@ -654,15 +667,17 @@ def _named_keys(
             driver = _string_driver(ctx, key_field, field_axis, target)
             if driver is not None:
                 if runtime is not None:
-                    host_runtime = next(
-                        (
-                            ctx.runtime_labeller_for(axis)
-                            for axis in ctx.host.tensor_domain.axes
-                            if ctx.runtime_labeller_for(axis) is not None
-                        ),
-                        None,
+                    driver_field = next(
+                        field for field, name in ctx.coordinate_vars.items() if name == driver
                     )
-                    if host_runtime is None:
+                    host_axis = ctx.host.tensor_domain.axes[ctx.host.key_fields.index(driver_field)]
+                    host_labeller = ctx.runtime_labeller_for(host_axis)
+                    owner_labeller = ctx.runtime_labeller_for(owner_axis)
+                    if (
+                        host_labeller is None
+                        or owner_labeller is None
+                        or host_labeller.series_id != owner_labeller.series_id
+                    ):
                         raise InvertedTreeExportError(
                             f"series {ctx.host.series_id!r}: cross-field key equality between "
                             f"runtime axis {owner_axis.name!r} and a static axis is unsupported"
@@ -670,7 +685,7 @@ def _named_keys(
                 keys.append(driver)
                 continue
         if runtime is not None:
-            keys.append(f"{ctx.axis_source(owner_axis)}.keys[{owner_axis.keys.index(target)}]")
+            keys.append(f"{ctx.axis_source(owner_axis)}.keys[{layout.keys.index(target)}]")
             continue
         keys.append(repr(target))
     return keys
@@ -1160,6 +1175,8 @@ def _named_range_view(
         axis_src = ctx.axis_source(axis)
         start_key, end_key = first_keys[position], last_keys[position]
         if ctx.runtime_labeller_for(axis) is not None:
+            if seen != keys[first : last + 1]:
+                return None
             if first == 0 and last == len(keys) - 1:
                 expr = f"{axis_src}.keys"
             elif start_key == end_key:

@@ -1013,13 +1013,21 @@ def validate_series_bindings(
     and `geometry_in_id` (A1 cell or rectangle tokens in series ids and
     `series_context` values).
     """
-    from excel_grapher.series_bindings.resolve import _WorkbookValues, resolve_series_binding
+    from excel_grapher.series_bindings.resolve import (
+        _WorkbookValues,
+        labeller_evaluate_addresses,
+        resolve_series_binding,
+    )
 
     issues: list[ValidationIssue] = []
     concept_dtypes = _concept_dtype_map(bindings)
     shared_reader: _WorkbookValues | None = None
     seen_ranges: dict[str, str] = {}
     occupancy_rows: list[tuple[dict[str, Any], list[str]]] = []
+    evaluate_addresses = (
+        labeller_evaluate_addresses(bindings, workbook) if workbook is not None else set()
+    )
+    evaluators: dict[int, Any] = {}
 
     try:
         for series in bindings.get("series", []):
@@ -1131,6 +1139,8 @@ def validate_series_bindings(
                         series,
                         direction=direction,
                         reader=shared_reader,
+                        evaluate_addresses=evaluate_addresses,
+                        evaluators=evaluators,
                     )
                     issues.extend(resolved["issues"])
                     if resolved["requires_address"]:

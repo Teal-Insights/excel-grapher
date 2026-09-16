@@ -250,6 +250,22 @@ def _index_names_for(
     }
 
 
+def _runtime_axis_prologue(catalog: SeriesCatalog, source: str) -> list[str]:
+    """Bind `_ax_*` labeller axes referenced by a scalar formula body."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for series in catalog.series.values():
+        if not _is_runtime_labeller(series) or not series.tensor_domain.axes:
+            continue
+        axis = series.tensor_domain.axes[0]
+        variable = _axis_var_name(axis)
+        if variable not in source or series.series_id in seen:
+            continue
+        seen.add(series.series_id)
+        lines.append(f"    {variable} = {series.series_id}.domain.axes[0]")
+    return lines
+
+
 def _bind_kwargs(series: BoundSeries, catalog: SeriesCatalog) -> str:
     parts = [
         f"{axis.name}={labeller.series_id}"
@@ -269,12 +285,27 @@ def _required_expr(series: BoundSeries, catalog: SeriesCatalog) -> str:
     return f"{_binding(series)}.required"
 
 
+def _layout_axis(axis: Any, catalog: SeriesCatalog) -> Any:
+    """Return the labeller (or interned-master analog) used for position indexes."""
+    labeller = catalog.runtime_labeller(axis.name, axis.keys)
+    if labeller is None:
+        return axis
+    return labeller.tensor_domain.axes[0]
+
+
 def _labelled_axes_map(catalog: SeriesCatalog) -> dict[str, str]:
     """Map each runtime axis name to its labeller series id."""
     mapping: dict[str, str] = {}
     for series in _retained(catalog):
-        if _is_runtime_labeller(series) and series.axis_labels is not None:
-            mapping[series.axis_labels] = series.series_id
+        if not _is_runtime_labeller(series) or series.axis_labels is None:
+            continue
+        name = series.axis_labels
+        existing = mapping.get(name)
+        if existing is not None and existing != series.series_id:
+            raise InvertedTreeExportError(
+                f"axis {name!r}: multiple runtime labellers {existing!r} and {series.series_id!r}"
+            )
+        mapping[name] = series.series_id
     return mapping
 
 
@@ -390,6 +421,7 @@ def _semantic_body(
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
     index_names = _index_names_for(series, catalog, names)
+    layout_axes = tuple(_layout_axis(axis, catalog) for axis in series.tensor_domain.axes)
     groups: dict[str, list[tuple[object, ...]]] = {}
     tables: dict[str, str] = {}
     used: set[str] = {"XlError"}
@@ -472,7 +504,7 @@ def _semantic_body(
                 literals = {
                     tuple(
                         axis.keys.index(key) if axis.name in index_names else key
-                        for axis, key in zip(series.tensor_domain.axes, coord, strict=True)
+                        for axis, key in zip(layout_axes, coord, strict=True)
                     ): value
                     for coord, value in literals.items()
                 }
@@ -488,6 +520,7 @@ def _semantic_body(
                 f"series {series.series_id!r}: scalar series has no graph formula"
             )
         expression = next(iter(groups))
+        lines.extend(_runtime_axis_prologue(catalog, expression))
         if not deferred:
             lines.extend(
                 [
@@ -550,7 +583,7 @@ def _semantic_body(
         synthesized = _family_condition(
             coordinates,
             all_coordinates,
-            series.tensor_domain.axes,
+            layout_axes,
             names,
             index_names=index_names,
         )
@@ -564,7 +597,7 @@ def _semantic_body(
             indexed = tuple(
                 tuple(
                     axis.keys.index(key) if axis.name in index_names else key
-                    for axis, key in zip(series.tensor_domain.axes, coord, strict=True)
+                    for axis, key in zip(layout_axes, coord, strict=True)
                 )
                 for coord in coordinates
             )
@@ -1893,10 +1926,27 @@ def emit_named_data(
             "    unknown = values.keys() - _CONSTANT_NAMES",
             "    if unknown:",
             "        raise AttributeError(f'unknown constants: {sorted(unknown)}')",
+            "    namespace = globals()",
             "    for name, value in values.items():",
             "        if name in _CONSTANT_SCHEMAS:",
-            "            _CONSTANT_SCHEMAS[name].validate(value)",
-            "    namespace = globals()",
+            "            schema = _CONSTANT_SCHEMAS[name]",
+            *(
+                [
+                    "            bind = getattr(schema, 'bind', None)",
+                    "            labelled = namespace.get('LABELLED_AXES', {})",
+                    "            if bind is not None and labelled:",
+                    "                kwargs = {",
+                    "                    axis: namespace[labeller.upper()]",
+                    "                    for axis, labeller in labelled.items()",
+                    "                    if labeller.upper() in namespace",
+                    "                }",
+                    "                if kwargs:",
+                    "                    schema = bind(**kwargs)",
+                ]
+                if labelled
+                else []
+            ),
+            "            schema.validate(value)",
             "    previous = {name: namespace[name] for name in values}",
             "    namespace.update(values)",
             "    try:",

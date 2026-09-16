@@ -1270,6 +1270,13 @@ def build_catalog(
             if entry.get("key"):
                 sources.extend(_structure_source_addresses(entry, authored_by_id[_series_id]))
         reader.prefetch(sources, graph=graph)
+        evaluate_addresses: set[str] = set()
+        evaluators: dict[int, Any] = {}
+        for series_id, entry, _cell_tuple in pending:
+            if entry.get("axis_labels"):
+                labeller_cells = authored_by_id[series_id]
+                evaluate_addresses.update(labeller_cells)
+                evaluate_addresses.update(_structure_source_addresses(entry, labeller_cells))
         for series_id, entry, cell_tuple in pending:
             key_fields = _key_fields_of(entry)
             components = {
@@ -1293,6 +1300,8 @@ def build_catalog(
                     concept_scheme=concept_scheme,
                     graph=graph,
                     reader=reader,
+                    evaluate_addresses=evaluate_addresses,
+                    evaluators=evaluators,
                 )
             except ValueError as exc:
                 raise InvertedTreeExportError(str(exc)) from exc

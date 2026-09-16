@@ -5,6 +5,7 @@ from __future__ import annotations
 import re
 import warnings
 from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Any, Literal
 
@@ -38,7 +39,9 @@ from excel_grapher.series_bindings.normalize import (
     input_mode,
 )
 from excel_grapher.series_bindings.ranges import (
+    apply_series_excludes,
     expand_bound_series_addresses_for_graph,
+    expand_data_range,
     series_data_ranges,
 )
 from excel_grapher.series_bindings.types import (
@@ -277,21 +280,34 @@ def _structure_source_addresses(
     return addresses
 
 
-def _read_cell_value(graph: DependencyGraph | None, reader: _WorkbookValues, address: str) -> Any:
+def _read_cell_value(
+    graph: DependencyGraph | None,
+    reader: _WorkbookValues,
+    address: str,
+    *,
+    evaluate_addresses: AbstractSet[str] | None = None,
+    evaluators: dict[int, Any] | None = None,
+) -> Any:
     if graph is not None and address in graph:
         node = graph.get_node(address)
         if node is not None:
             if node.value is not None or not node.has_formula:
                 return node.value
-            return _evaluate_formula_cell(graph, address)
+            if evaluate_addresses is not None and address in evaluate_addresses:
+                cache = evaluators if evaluators is not None else {}
+                return _evaluate_formula_cell(graph, address, cache)
     return reader.read(address)
 
 
-def _evaluate_formula_cell(graph: DependencyGraph, address: str) -> Any:
+def _evaluate_formula_cell(graph: DependencyGraph, address: str, evaluators: dict[int, Any]) -> Any:
     """Compute a formula cell that has no cached workbook value."""
     from excel_grapher.evaluator import FormulaEvaluator
 
-    return FormulaEvaluator(graph).evaluate([address])[address]
+    evaluator = evaluators.get(id(graph))
+    if evaluator is None:
+        evaluator = FormulaEvaluator(graph)
+        evaluators[id(graph)] = evaluator
+    return evaluator.evaluate([address])[address]
 
 
 def _lookup_concept_dtype(
@@ -425,6 +441,8 @@ def _resolve_label(
     index: int,
     address_for: Any,
     concept_hint: str,
+    evaluate_addresses: AbstractSet[str] | None = None,
+    evaluators: dict[int, Any] | None = None,
 ) -> Any:
     """Read a row_label or column_header source value honoring skip/include/fill.
 
@@ -438,6 +456,9 @@ def _resolve_label(
         address_for: Callable mapping a source index to a sheet-qualified
             address.
         concept_hint: Bind description used in missing-label error messages.
+        evaluate_addresses: Labeller cells whose uncached formulas may be
+            evaluated.
+        evaluators: Shared `FormulaEvaluator` cache keyed by `id(graph)`.
 
     Returns:
         The raw label value, or None when no source label exists and the
@@ -452,7 +473,13 @@ def _resolve_label(
     def source_value(candidate: int) -> Any:
         if not _is_label_source(candidate, sources, is_include=is_include):
             return None
-        raw = _read_cell_value(graph, reader, address_for(candidate))
+        raw = _read_cell_value(
+            graph,
+            reader,
+            address_for(candidate),
+            evaluate_addresses=evaluate_addresses,
+            evaluators=evaluators,
+        )
         return None if _is_blank_label(raw) else raw
 
     raw = source_value(index)
@@ -477,13 +504,21 @@ def _execute_bind(
     reader: _WorkbookValues,
     data_address: str,
     inferred_read_as: str | None = None,
+    evaluate_addresses: AbstractSet[str] | None = None,
+    evaluators: dict[int, Any] | None = None,
 ) -> Scalar:
     kind = bind.get("kind")
     read_as = _effective_read_as(bind, inferred_dtype=inferred_read_as)
     normalize = str(bind.get("normalize", "strip"))
 
     if kind == "data_cell":
-        raw = _read_cell_value(graph, reader, data_address)
+        raw = _read_cell_value(
+            graph,
+            reader,
+            data_address,
+            evaluate_addresses=evaluate_addresses,
+            evaluators=evaluators,
+        )
         return coerce_scalar(raw, read_as)
 
     if kind == "constant":
@@ -491,7 +526,13 @@ def _execute_bind(
 
     if kind == "cell":
         address = str(bind["address"])
-        raw = _read_cell_value(graph, reader, address)
+        raw = _read_cell_value(
+            graph,
+            reader,
+            address,
+            evaluate_addresses=evaluate_addresses,
+            evaluators=evaluators,
+        )
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
         return coerce_scalar(raw, read_as)
@@ -508,6 +549,8 @@ def _execute_bind(
             index=column_index_from_string(col),
             address_for=lambda c: format_key(sheet, f"{get_column_letter(c)}{header_row}"),
             concept_hint=f"column_header row {header_row}",
+            evaluate_addresses=evaluate_addresses,
+            evaluators=evaluators,
         )
         if raw is None:
             return None
@@ -525,6 +568,8 @@ def _execute_bind(
             index=row,
             address_for=lambda r: format_key(sheet, f"{label_column}{r}"),
             concept_hint=f"row_label column {label_column}",
+            evaluate_addresses=evaluate_addresses,
+            evaluators=evaluators,
         )
         if raw is None:
             return None
@@ -692,6 +737,8 @@ def resolve_key_domain(
     concept_scheme: dict[str, Any] | None = None,
     graph: DependencyGraph | None = None,
     reader: _WorkbookValues | None = None,
+    evaluate_addresses: AbstractSet[str] | None = None,
+    evaluators: dict[int, Any] | None = None,
 ) -> tuple[dict[str, Scalar], ...]:
     """Resolve per-cell key coordinates for `cells` in expansion order.
 
@@ -757,6 +804,8 @@ def resolve_key_domain(
                         reader=active_reader,
                         data_address=address,
                         inferred_read_as=inferred,
+                        evaluate_addresses=evaluate_addresses,
+                        evaluators=evaluators,
                     )
                 except UnknownBindKindError as exc:
                     if field_name in key_fields:
@@ -999,6 +1048,8 @@ def resolve_series_binding(
     export_addresses: Iterable[str] | None = None,
     concept_scheme: dict[str, Any] | None = None,
     reader: _WorkbookValues | None = None,
+    evaluate_addresses: AbstractSet[str] | None = None,
+    evaluators: dict[int, Any] | None = None,
 ) -> SeriesResolution:
     """Resolve each participating cell in a series binding to coordinates and record fields.
 
@@ -1119,6 +1170,8 @@ def resolve_series_binding(
                         reader=active_reader,
                         data_address=address,
                         inferred_read_as=measure_inferred_read,
+                        evaluate_addresses=evaluate_addresses,
+                        evaluators=evaluators,
                     )
 
                 for dim in structure.get("dimensions") or []:
@@ -1139,6 +1192,8 @@ def resolve_series_binding(
                         reader=active_reader,
                         data_address=address,
                         inferred_read_as=inferred,
+                        evaluate_addresses=evaluate_addresses,
+                        evaluators=evaluators,
                     )
                     coordinates[field_name] = value
                     if scope == "series":
@@ -1158,6 +1213,8 @@ def resolve_series_binding(
                         reader=active_reader,
                         data_address=address,
                         inferred_read_as=inferred,
+                        evaluate_addresses=evaluate_addresses,
+                        evaluators=evaluators,
                     )
             except (KeyError, ValueError, TypeError) as exc:
                 bind_failures.setdefault(str(exc), []).append(address)
@@ -1235,6 +1292,25 @@ def _series_supports_direction(series: dict[str, Any], direction: BindingDirecti
     return has_output_direction(series)
 
 
+def labeller_evaluate_addresses(bindings: WorkbookSeriesBindings, workbook: Path | str) -> set[str]:
+    """Addresses of `axis_labels` series cells and their header sources.
+
+    Binding resolution evaluates uncached formulas only at these addresses so
+    ordinary data cells keep cache/`reader` values.
+    """
+    addresses: set[str] = set()
+    for entry in bindings.get("series", []):
+        if not isinstance(entry, dict) or not entry.get("axis_labels"):
+            continue
+        cells: list[str] = []
+        for data_range in series_data_ranges(entry):
+            cells.extend(expand_data_range(data_range, workbook=workbook))
+        cells = list(apply_series_excludes(cells, entry))
+        addresses.update(cells)
+        addresses.update(_structure_source_addresses(entry, cells))
+    return addresses
+
+
 def resolve_series_bindings(
     graph: DependencyGraph,
     bindings: WorkbookSeriesBindings,
@@ -1262,6 +1338,8 @@ def resolve_series_bindings(
     concept_scheme = bindings.get("concept_scheme")
     if not isinstance(concept_scheme, dict):
         concept_scheme = None
+    evaluate_addresses = labeller_evaluate_addresses(bindings, workbook)
+    evaluators: dict[int, Any] = {}
     with _WorkbookValues(workbook) as reader:
         for series in bindings.get("series", []):
             if not isinstance(series, dict):
@@ -1276,6 +1354,8 @@ def resolve_series_bindings(
                 export_addresses=export_addresses,
                 concept_scheme=concept_scheme,
                 reader=reader,
+                evaluate_addresses=evaluate_addresses,
+                evaluators=evaluators,
             )
             series_results.append(result)
             all_issues.extend(result["issues"])

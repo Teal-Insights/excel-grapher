@@ -233,6 +233,7 @@ def plan_inverted_tree(
     deps = collect_all_deps(catalog, graph, catalog_edges=catalog_edges)
     labellers = [series for series in catalog.series.values() if series.axis_labels]
     identities: set[tuple[str, tuple[str | int, ...]]] = set()
+    runtime_by_name: dict[str, str] = {}
     for labeller in labellers:
         axis = labeller.tensor_domain.axes[0]
         identity = (axis.name, axis.keys)
@@ -242,6 +243,14 @@ def plan_inverted_tree(
             )
         identities.add(identity)
         authored = labeller.authored_cells or labeller.cells
+        if labeller.direction != "constant":
+            existing = runtime_by_name.get(axis.name)
+            if existing is not None:
+                raise InvertedTreeExportError(
+                    f"axis {axis.name!r}: multiple runtime labellers "
+                    f"{existing!r} and {labeller.series_id!r}"
+                )
+            runtime_by_name[axis.name] = labeller.series_id
         if labeller.graph_cells is not None and not set(authored) <= labeller.graph_cells:
             missing = tuple(cell for cell in authored if cell not in labeller.graph_cells)
             raise InvertedTreeExportError(

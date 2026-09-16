@@ -253,7 +253,11 @@ class AxisTemplate:
     source: tuple[str | int, ...] | None = None
 
     def bind(self, axis: Axis) -> Axis:
-        """Return `axis`, or the snapshot-aligned slice of a longer labeller axis."""
+        """Return `axis`, or the snapshot-aligned slice of a longer labeller axis.
+
+        `axis` may already be the subset (`len(keys) == size`) or the full
+        labeller (`len(keys) == len(source)`). Other lengths fail closed.
+        """
         if axis.name != self.name:
             raise AxisError(
                 f"axis {self.name!r}: expected name {self.name!r}, received {axis.name!r}"
@@ -264,18 +268,13 @@ class AxisTemplate:
                 f"received {axis.key_type.__name__}"
             )
         source = self.source if self.source is not None else self.snapshot
-        if len(axis.keys) != len(source):
-            raise AxisError(
-                f"axis {self.name!r}: expected {len(source)} keys, received {len(axis.keys)}"
-            )
-        if source == self.snapshot:
-            if len(axis.keys) != self.size:
-                raise AxisError(
-                    f"axis {self.name!r}: expected {self.size} keys, received {len(axis.keys)}"
-                )
+        n_keys = len(axis.keys)
+        if n_keys == self.size:
             return axis
-        keys = tuple(axis.keys[source.index(key)] for key in self.snapshot)
-        return Axis(self.name, keys, self.key_type)
+        if n_keys == len(source) and source != self.snapshot:
+            keys = tuple(axis.keys[source.index(key)] for key in self.snapshot)
+            return Axis(self.name, keys, self.key_type)
+        raise AxisError(f"axis {self.name!r}: expected {self.size} keys, received {n_keys}")
 
 
 def _bound_axis(axis: Axis | AxisTemplate, labellers: Mapping[str, Tensor[Any]]) -> Axis:
@@ -581,7 +580,12 @@ class TensorSchema:
         object.__setattr__(self, "value_types", tuple(self.value_types))
 
     def validate(self, tensor: object, *, exact: bool = False) -> None:
-        """Check semantic axes, required coordinates, and values."""
+        """Check semantic axes, required coordinates, and values.
+
+        A same-rank tensor whose keys are neither a subset nor a superset of
+        the required keys raises `SchemaError` naming the unknown labels.
+        That message is not labelled-axis-specific.
+        """
         if not isinstance(tensor, Tensor):
             raise SchemaError(f"{self.series_id}: expected Tensor")
         expected = tuple((axis.name, axis.key_type) for axis in self.domain.axes)

@@ -74,6 +74,53 @@ def test_axis_template_bind_checks_name_type_and_size() -> None:
         template.bind(Axis("TIME_PERIOD", (2026,), int))
 
 
+def test_axis_template_bind_accepts_already_sliced_axis() -> None:
+    """A subset template binds a full labeller or a tensor that is already sliced."""
+    template = AxisTemplate(
+        "TIME_PERIOD",
+        int,
+        size=3,
+        labeller="year_labels",
+        snapshot=(2026, 2027, 2028),
+        source=(2024, 2025, 2026, 2027, 2028),
+    )
+    labeller = Axis("TIME_PERIOD", (2034, 2035, 2036, 2037, 2038), int)
+    assert template.bind(labeller) == Axis("TIME_PERIOD", (2036, 2037, 2038), int)
+    sliced = Axis("TIME_PERIOD", (2036, 2037, 2038), int)
+    assert template.bind(sliced) is sliced
+    with pytest.raises(AxisError, match="expected 3 keys"):
+        template.bind(Axis("TIME_PERIOD", (2036, 2037), int))
+    with pytest.raises(AxisError, match="expected 3 keys"):
+        template.bind(Axis("TIME_PERIOD", (2034, 2035, 2036, 2037), int))
+
+
+def test_schema_template_validate_accepts_sliced_tensor_own_axes() -> None:
+    schema = SchemaTemplate(
+        "growth",
+        DomainTemplate.product(
+            AxisTemplate(
+                "TIME_PERIOD",
+                int,
+                size=3,
+                labeller="year_labels",
+                snapshot=(2026, 2027, 2028),
+                source=(2024, 2025, 2026, 2027, 2028),
+            )
+        ),
+        (int, float, str, type(None)),
+    )
+    tensor = Tensor.from_nested(
+        domain=Domain.product(Axis("TIME_PERIOD", (2026, 2027, 2028), int)),
+        values=(1.0, 2.0, 3.0),
+    )
+    schema.validate(tensor)
+    labels = Tensor.from_nested(
+        domain=Domain.product(Axis("TIME_PERIOD", (2024, 2025, 2026, 2027, 2028), int)),
+        values=(2024, 2025, 2026, 2027, 2028),
+    )
+    schema.bind(TIME_PERIOD=labels).validate(tensor)
+
+
 def test_domain_and_schema_templates_bind_labellers_by_axis_name() -> None:
     years = AxisTemplate("TIME_PERIOD", int, size=2, labeller="year_labels", snapshot=(1, 2))
     domain = DomainTemplate.product(years)

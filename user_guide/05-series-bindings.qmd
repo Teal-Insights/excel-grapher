@@ -829,21 +829,27 @@ series:
 The labeller's values become the keys of every tensor on that axis — inputs
 after validation, internals, and `compute_*` results. `internals.x.sel(TIME_PERIOD=2026)`
 selects 2026. Positions remain the codegen's layout truth and are emitted as
-positions (`axis_step`, `_p == 0`), never as snapshot literals.
+positions (`axis_step`, `_p == 2` on a projection suffix), never as snapshot
+literals. Family conditions, lags, and literal-table subscripts index the
+labeller (or interned master), not the series' sliced axis.
 
 **Authoring rules.** The named axis must be the series' only key. Measure type
-must match the axis key type. Duplicate labeller identities, a labeller cell
-outside the extracted graph, cached values that disagree with snapshot keys,
-or an input on the labelled axis in the labeller's leaf closure fail at
-export. Non-injective header formulas fail at `compute_*` with `AxisError`.
+must match the axis key type. Duplicate labeller identities, two runtime
+labellers for the same axis name, a labeller cell outside the extracted graph,
+cached values that disagree with snapshot keys, or an input on the labelled
+axis in the labeller's leaf closure fail at export. Non-injective header
+formulas fail at `compute_*` with `AxisError`.
 
 **Defaults.** Workbook-default input tensors are published over the snapshot
-axis. Shifting the labeller's input without re-keying those tensors raises
-`SchemaError` listing the accepted labels.
+axis. A suffix input (fewer keys than the labeller) still imports: `AxisTemplate.bind`
+accepts an already-sliced axis. Shifting the labeller's input without re-keying
+those tensors raises `SchemaError` listing the accepted labels. The same
+unknown-labels message applies to any tensor whose keys overlap the required
+set on neither side.
 
 **Out of scope.** Translated input enums / `value_map` needles; f-string key
-templates over a runtime string axis; cross-field key equality between a
-runtime axis and a static axis.
+templates over a runtime string axis; host-key remaps over a runtime string
+axis; cross-field key equality between a runtime axis and a static axis.
 
 ## Input domains (1.13.0)
 
