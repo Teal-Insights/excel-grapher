@@ -425,7 +425,7 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
     """
     cell_map: dict[str, tuple[str, str]] = {}
     range_map: dict[str, tuple[str, str, str]] = {}
-    bounds = _sheet_bounds(wb)
+    bounds: dict[str, tuple[int, int]] | None = None
     for name, defn in wb.defined_names.items():
         attr_text = getattr(defn, "attr_text", None)
         if not isinstance(attr_text, str) or not attr_text:
@@ -450,10 +450,15 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
                 end = f"{m.group('c2')}{m.group('r2')}"
                 range_map[str(name)] = (sheet_name, start, end)
                 continue
-            resolved_axis = _try_resolve_whole_axis_defined_name(attr_text, bounds)
-            if resolved_axis is not None:
-                range_map[str(name)] = resolved_axis
-                continue
+            if _WHOLE_ROW_DEFINED_NAME_RE.match(attr_text) or _WHOLE_COL_DEFINED_NAME_RE.match(
+                attr_text
+            ):
+                if bounds is None:
+                    bounds = _sheet_bounds(wb)
+                resolved_axis = _try_resolve_whole_axis_defined_name(attr_text, bounds)
+                if resolved_axis is not None:
+                    range_map[str(name)] = resolved_axis
+                    continue
             resolved = _try_resolve_formula_defined_name(attr_text, wb)
             if resolved is not None:
                 if len(resolved) == 2:
