@@ -100,6 +100,7 @@ def series_entry(
     header_row: int | None = None,
     label_column: str | None = None,
     compute_name: str | None = None,
+    axis_labels: str | None = None,
     key: Sequence[str] | None = None,
     key_concept: str = "TIME_PERIOD",
     key_read: str = "int",
@@ -161,6 +162,8 @@ def series_entry(
         entry["constant"] = {}
     else:
         raise ValueError(f"unknown direction {direction!r}")
+    if axis_labels is not None:
+        entry["axis_labels"] = axis_labels
     return entry
 
 
@@ -475,9 +478,23 @@ def oriented_addresses(addresses: Sequence[str], orientation: str) -> tuple[str,
     return tuple(transpose_address(address) for address in addresses)
 
 
-def named_input_kwargs(
-    pkg: Any, catalog: SeriesCatalog, graph: DependencyGraph
-) -> dict[str, object]:
+def _snapshot_domain(domain: object, pkg: Any) -> Any:
+    """Materialize a `DomainTemplate` over its snapshot keys for input construction."""
+    domain_from_axes = getattr(domain, "domain_from_axes", None)
+    axes = getattr(domain, "axes", None)
+    if domain_from_axes is None or axes is None:
+        return domain
+    bound = []
+    for axis in axes:
+        snapshot = getattr(axis, "snapshot", None)
+        if snapshot is None:
+            bound.append(axis)
+            continue
+        bound.append(pkg.Axis(axis.name, snapshot, axis.key_type))
+    return domain_from_axes(tuple(bound))
+
+
+def named_input_kwargs(pkg: Any, catalog: SeriesCatalog, graph: DependencyGraph) -> dict[str, Any]:
     """Supply graph values by coordinate without changing Excel input types."""
     values = {}
     for series in catalog.input_series():
@@ -487,7 +504,7 @@ def named_input_kwargs(
             node = graph.get_node(series.cells[0])
             values[series.series_id] = None if node is None else node.value
             continue
-        domain = getattr(pkg.data, series.series_id.upper()).required
+        domain = _snapshot_domain(getattr(pkg.data, series.series_id.upper()).required, pkg)
         records = []
         cells = series.coordinate_cells
         for coordinate in domain:
@@ -495,6 +512,24 @@ def named_input_kwargs(
             records.append((coordinate, None if node is None else node.value))
         values[series.series_id] = pkg.Tensor.from_records(domain=domain, records=records)
     return values
+
+
+def _evaluator_pairs(series: BoundSeries, got: Any) -> list[tuple[str, Any]]:
+    """Pair evaluator cells with package values, mapping runtime keys by position."""
+    cells_by_coordinate = series.coordinate_cells
+    snapshot = [coord for coord in series.tensor_domain if coord in series.required_coordinates]
+    runtime = list(got.domain)
+    if runtime == snapshot:
+        return [(cells_by_coordinate[coord], got[coord]) for coord in runtime]
+    if len(runtime) != len(snapshot):
+        raise AssertionError(
+            f"{series.series_id}: runtime domain {runtime!r} does not align with "
+            f"snapshot coordinates {snapshot!r}"
+        )
+    return [
+        (cells_by_coordinate[snapshot_coord], got[runtime_coord])
+        for runtime_coord, snapshot_coord in zip(runtime, snapshot, strict=True)
+    ]
 
 
 def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, object]) -> Any:
@@ -558,11 +593,7 @@ def assert_package_matches_evaluator(
         accepted = set(inspect.signature(function).parameters)
         got = function(**{key: value for key, value in kwargs.items() if key in accepted})
         kwargs[series.series_id] = got
-        if series.single_valued:
-            pairs = [(series.cells[0], got)]
-        else:
-            cells_by_coordinate = series.coordinate_cells
-            pairs = [(cells_by_coordinate[coord], got[coord]) for coord in got.domain]
+        pairs = [(series.cells[0], got)] if series.single_valued else _evaluator_pairs(series, got)
         for cell, value in pairs:
             want = expected[cell]
             if isinstance(want, float) and isinstance(value, float):

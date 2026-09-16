@@ -7,6 +7,58 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.0 (2026-09-16)
+
+### Bug Fixes
+
+- **export**: Index runtime-labelled suffixes on the labeller axis
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+- **export**: Keep labelled data.overrides size-only
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+### Features
+
+- Add axis_labels schema and runtime axis templates
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+- Key runtime-labelled axes by labeller values
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+- **export**: Key runtime-labelled axes by labeller values
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+### Testing
+
+- Cover runtime axis_labels and labelled tiny DSA
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+- Satisfy ty on published helper metadata
+  ([#862](https://github.com/Teal-Insights/excel-grapher/pull/862),
+  [`b53cb33`](https://github.com/Teal-Insights/excel-grapher/commit/b53cb3377fbfc43f69e32f48b5fcac5dffaf0ab5))
+
+
+## Unreleased
+
+### Features
+
+- **series-bindings**: Runtime `axis_labels` key every tensor on an axis by
+  the labeller's evaluated values ([#841](https://github.com/Teal-Insights/excel-grapher/issues/841)).
+  Family conditions, lags, and literal tables index the labeller, so suffix
+  series and sliced inputs share one horizon. `data.overrides` validates
+  labelled tensor constants by size without treating `data.py` labeller
+  bindings as evaluated tensors. `AxisTemplate.bind` accepts an
+  already-sliced axis. Host-key remaps and key templates over a runtime
+  string axis fail at export. `TensorSchema.validate` names unknown labels
+  whenever extra and missing keys coincide, including on static packages.
+
+
 ## v20.2.0 (2026-09-15)
 
 ### Features

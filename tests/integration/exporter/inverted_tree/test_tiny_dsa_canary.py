@@ -93,6 +93,10 @@ def test_helper_inventory_matches_bound_formula_series(tiny_dsa_pkg) -> None:
     assert "def set_" not in inspect.getsource(tiny_dsa_pkg.api)
     api_src = inspect.getsource(tiny_dsa_pkg.api)
     assert "data.OutputShocked" in api_src
+    data_src = inspect.getsource(tiny_dsa_pkg.data)
+    assert "AxisTemplate" not in data_src
+    assert "LABELLED_AXES" not in data_src
+    assert "def cells(self" not in api_src
 
 
 def test_baseline_leaf_closure_excludes_shock_args(tiny_dsa_pkg) -> None:

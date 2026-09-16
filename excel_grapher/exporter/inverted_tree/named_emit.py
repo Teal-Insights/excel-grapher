@@ -125,6 +125,7 @@ def named_codegen_fingerprint(catalog: SeriesCatalog) -> str:
                 "series_id": series.series_id,
                 "direction": series.direction,
                 "dtype": series.dtype,
+                "axis_labels": series.axis_labels,
                 "domain": domain.to_dict(),
                 "required": [coord for coord in domain if coord in required],
                 "provenance": list(series.coordinate_cells.items()),
@@ -201,9 +202,18 @@ def _value_types(dtype: str) -> str:
     return "(" + ", ".join(dict.fromkeys([*types, "str", "type(None)"])) + ")"
 
 
-def _coordinate_names(series: BoundSeries, reserved: set[str]) -> dict[str, str]:
+def _coordinate_names(
+    series: BoundSeries, reserved: set[str], *, positional: bool = False
+) -> dict[str, str]:
     """Return a loop-variable name for every key field of `series`."""
     names: dict[str, str] = {}
+    if positional and len(series.key_fields) == 1:
+        candidate = "_p"
+        while candidate in reserved:
+            candidate += "_"
+        names[series.key_fields[0]] = candidate
+        reserved.add(candidate)
+        return names
     for field in series.key_fields:
         candidate = python_identifier(field.lower())
         if candidate.startswith("xl_"):
@@ -213,6 +223,104 @@ def _coordinate_names(series: BoundSeries, reserved: set[str]) -> dict[str, str]
         names[field] = candidate
         reserved.add(candidate)
     return names
+
+
+def _is_runtime_labeller(series: BoundSeries) -> bool:
+    return series.axis_labels is not None and series.direction != "constant"
+
+
+def _axis_position_name(axis: Any) -> str:
+    return "_p_" + python_identifier(axis.name.lower())
+
+
+def _axis_var_name(axis: Any) -> str:
+    return "_ax_" + python_identifier(axis.name.lower())
+
+
+def _index_names_for(
+    series: BoundSeries, catalog: SeriesCatalog, names: Mapping[str, str]
+) -> dict[str, str]:
+    """Map runtime axis names to the position variable used in family tests."""
+    if _is_runtime_labeller(series):
+        return dict(names)
+    return {
+        axis.name: _axis_position_name(axis)
+        for axis in series.tensor_domain.axes
+        if catalog.runtime_labeller(axis.name, axis.keys) is not None
+    }
+
+
+def _runtime_axis_prologue(catalog: SeriesCatalog, source: str) -> list[str]:
+    """Bind `_ax_*` labeller axes referenced by a scalar formula body."""
+    lines: list[str] = []
+    seen: set[str] = set()
+    for series in catalog.series.values():
+        if not _is_runtime_labeller(series) or not series.tensor_domain.axes:
+            continue
+        axis = series.tensor_domain.axes[0]
+        variable = _axis_var_name(axis)
+        if variable not in source or series.series_id in seen:
+            continue
+        seen.add(series.series_id)
+        lines.append(f"    {variable} = {series.series_id}.domain.axes[0]")
+    return lines
+
+
+def _bind_kwargs(series: BoundSeries, catalog: SeriesCatalog) -> str:
+    parts = [
+        f"{axis.name}={labeller.series_id}"
+        for axis in series.tensor_domain.axes
+        if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
+        and labeller.series_id != series.series_id
+    ]
+    return ", ".join(parts)
+
+
+def _required_expr(series: BoundSeries, catalog: SeriesCatalog) -> str:
+    if _is_runtime_labeller(series):
+        return f"{_binding(series)}_POSITIONS"
+    kwargs = _bind_kwargs(series, catalog)
+    if kwargs:
+        return f"{_binding(series)}.required.bind({kwargs})"
+    return f"{_binding(series)}.required"
+
+
+def _layout_axis(axis: Any, catalog: SeriesCatalog) -> Any:
+    """Return the labeller (or interned-master analog) used for position indexes."""
+    labeller = catalog.runtime_labeller(axis.name, axis.keys)
+    if labeller is None:
+        return axis
+    return labeller.tensor_domain.axes[0]
+
+
+def _labelled_axes_map(catalog: SeriesCatalog) -> dict[str, str]:
+    """Map each runtime axis name to its labeller series id."""
+    mapping: dict[str, str] = {}
+    for series in _retained(catalog):
+        if not _is_runtime_labeller(series) or series.axis_labels is None:
+            continue
+        name = series.axis_labels
+        existing = mapping.get(name)
+        if existing is not None and existing != series.series_id:
+            raise InvertedTreeExportError(
+                f"axis {name!r}: multiple runtime labellers {existing!r} and {series.series_id!r}"
+            )
+        mapping[name] = series.series_id
+    return mapping
+
+
+def _deferred_runtime_inputs(catalog: SeriesCatalog) -> frozenset[str]:
+    """Inputs keyed on a runtime axis they do not themselves label."""
+    return frozenset(
+        series.series_id
+        for series in _retained(catalog)
+        if series.direction == "input"
+        and any(
+            (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
+            and labeller.series_id != series.series_id
+            for axis in series.tensor_domain.axes
+        )
+    )
 
 
 def _result_type(scc: Sequence[str]) -> str:
@@ -311,7 +419,9 @@ def _semantic_body(
     instead of returning, so recurrence groups can share one evaluation.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
-    names = _coordinate_names(series, reserved)
+    names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
+    index_names = _index_names_for(series, catalog, names)
+    layout_axes = tuple(_layout_axis(axis, catalog) for axis in series.tensor_domain.axes)
     groups: dict[str, list[tuple[object, ...]]] = {}
     tables: dict[str, str] = {}
     used: set[str] = {"XlError"}
@@ -390,16 +500,28 @@ def _semantic_body(
             for expression in literal_groups:
                 del groups[expression]
             table = f"_{series.series_id.upper()}_LITERALS"
+            if index_names:
+                literals = {
+                    tuple(
+                        axis.keys.index(key) if axis.name in index_names else key
+                        for axis, key in zip(layout_axes, coord, strict=True)
+                    ): value
+                    for coord, value in literals.items()
+                }
             literal_tables[table] = literals
-            selectors = ", ".join(names.values()) + ","
-            groups[f"as_measure(data.{table}[{selectors}])"] = list(literals)
-    lines = [f"    {alias} = {source}" for source, alias in tables.items()]
+            selectors = ", ".join(
+                index_names.get(axis.name, names[axis.name]) for axis in series.tensor_domain.axes
+            )
+            groups[f"as_measure(data.{table}[{selectors},])"] = list(literals)
+    table_lines = [f"    {alias} = {source}" for source, alias in tables.items()]
     if series.single_valued:
         if len(groups) != 1:
             raise InvertedTreeExportError(
                 f"series {series.series_id!r}: scalar series has no graph formula"
             )
         expression = next(iter(groups))
+        scanned = "\n".join((*tables, expression))
+        lines = [*_runtime_axis_prologue(catalog, scanned), *table_lines]
         if not deferred:
             lines.extend(
                 [
@@ -421,7 +543,9 @@ def _semantic_body(
             ]
         )
         return lines, used
+    lines = table_lines
     occupied = reserved
+    required = _required_expr(series, catalog)
 
     def temporary(base: str) -> str:
         candidate = base
@@ -432,20 +556,54 @@ def _semantic_body(
 
     formula = temporary(f"{series.series_id}_formula" if deferred else "formula")
     parameters = ", ".join(
-        f"{names[axis.name]}: {axis.key_type.__name__}" for axis in series.tensor_domain.axes
+        f"{names[axis.name]}: {axis.key_type.__name__}"
+        if not _is_runtime_labeller(series)
+        else f"{names[axis.name]}: int"
+        for axis in series.tensor_domain.axes
     )
+    prologue: list[str] = []
+    if not _is_runtime_labeller(series):
+        seen_labellers: set[str] = set()
+        for axis in series.tensor_domain.axes:
+            labeller = catalog.runtime_labeller(axis.name, axis.keys)
+            if labeller is None or labeller.series_id in seen_labellers:
+                continue
+            seen_labellers.add(labeller.series_id)
+            prologue.append(f"    {_axis_var_name(axis)} = {labeller.series_id}.domain.axes[0]")
+    lines.extend(prologue)
     lines.append(f"    def {formula}({parameters}) -> {_value_annotation(series)}:")
+    for axis in series.tensor_domain.axes:
+        if axis.name in index_names and not _is_runtime_labeller(series):
+            lines.append(
+                f"        {index_names[axis.name]} = {_axis_var_name(axis)}.position({names[axis.name]})"
+            )
     for remap_name, mapping in key_remaps.items():
         lines.append(f"        {remap_name} = {mapping!r}")
     all_coordinates = {coord for coordinates in groups.values() for coord in coordinates}
 
     def condition(coordinates: list[tuple[object, ...]]) -> str:
         synthesized = _family_condition(
-            coordinates, all_coordinates, series.tensor_domain.axes, names
+            coordinates,
+            all_coordinates,
+            layout_axes,
+            names,
+            index_names=index_names,
         )
         if synthesized is not None:
             return synthesized
         selectors = ", ".join(names[axis.name] for axis in series.tensor_domain.axes)
+        if index_names:
+            selectors = ", ".join(
+                index_names.get(axis.name, names[axis.name]) for axis in series.tensor_domain.axes
+            )
+            indexed = tuple(
+                tuple(
+                    axis.keys.index(key) if axis.name in index_names else key
+                    for axis, key in zip(layout_axes, coord, strict=True)
+                )
+                for coord in coordinates
+            )
+            return f"({selectors},) in {indexed!r}"
         return f"({selectors},) in {tuple(coordinates)!r}"
 
     # Put the largest family last as the unconditional return, avoiding an
@@ -461,32 +619,57 @@ def _semantic_body(
     if recursive:
         used.add("CoordinateReader")
         lines.append(
-            f"    {series.series_id} = CoordinateReader({series.series_id!r}, {_binding(series)}.required, {formula})"
+            f"    {series.series_id} = CoordinateReader({series.series_id!r}, {required}, {formula})"
         )
         if not deferred and deps.is_scan and deps.scan_direction == "reversed":
             coordinate = temporary("coordinate")
             lines.extend(
                 [
-                    f"    for {coordinate} in reversed(tuple({_binding(series)}.required)):",
+                    f"    for {coordinate} in reversed(tuple({required})):",
                     f"        {series.series_id}[{coordinate}]",
                 ]
             )
         if not deferred:
-            lines.append(f"    return {_materialize(series)}")
+            if _is_runtime_labeller(series):
+                used.add("label_axis")
+            lines.append(f"    return {_materialize(series, catalog, required)}")
+    elif _is_runtime_labeller(series):
+        used.add("label_axis")
+        used.add("CoordinateReader")
+        axis = series.tensor_domain.axes[0]
+        lines.extend(
+            [
+                f"    {series.series_id} = CoordinateReader({series.series_id!r}, {required}, {formula})",
+                "    return Series.from_labels(",
+                f"        {_binding(series)},",
+                f"        label_axis({axis.name!r}, tuple({series.series_id}[p] for p in {required}), {axis.key_type.__name__})",
+                "    )",
+            ]
+        )
     else:
         used.add("evaluate")
-        lines.append(
-            f"    return {_binding(series)}.collect(evaluate({formula}, {_binding(series)}.required))"
-        )
+        collect = f"{_binding(series)}.collect(evaluate({formula}, {required})"
+        if required != f"{_binding(series)}.required":
+            collect += f", domain={required}"
+        lines.append(f"    return {collect})")
     return lines, used
 
 
-def _materialize(series: BoundSeries) -> str:
+def _materialize(series: BoundSeries, catalog: SeriesCatalog, required: str | None = None) -> str:
     """Publish a completed demand-driven reader as an immutable tensor."""
-    return (
-        f"{_binding(series)}.collect("
-        f"(coord, {series.series_id}[coord]) for coord in {_binding(series)}.required)"
-    )
+    if required is None:
+        required = _required_expr(series, catalog)
+    if _is_runtime_labeller(series):
+        axis = series.tensor_domain.axes[0]
+        return (
+            f"Series.from_labels({_binding(series)}, "
+            f"label_axis({axis.name!r}, tuple({series.series_id}[p] for p in {required}), "
+            f"{axis.key_type.__name__}))"
+        )
+    records = f"(coord, {series.series_id}[coord]) for coord in {required}"
+    if required != f"{_binding(series)}.required":
+        return f"{_binding(series)}.collect(({records}), domain={required})"
+    return f"{_binding(series)}.collect({records})"
 
 
 # ---------------------------------------------------------------------------
@@ -499,17 +682,23 @@ def _signature(name: str, params: Sequence[BoundSeries], returns: str) -> str:
     return f"def {name}({('*, ' + joined) if joined else ''}) -> {returns}:"
 
 
-def _schema_checks(params: Sequence[BoundSeries]) -> list[str]:
+def _schema_checks(params: Sequence[BoundSeries], catalog: SeriesCatalog) -> list[str]:
     """Validate tensor parameters that arrive from outside the generated model.
 
     Results of other named functions are `Series` instances validated on
     construction, so only inputs and constants are checked again here.
     """
-    return [
-        f"    {_binding(series)}.schema.validate({series.series_id})"
-        for series in params
-        if not series.single_valued and series.direction in {"input", "constant"}
-    ]
+    lines: list[str] = []
+    for series in params:
+        if series.single_valued or series.direction not in {"input", "constant"}:
+            continue
+        kwargs = _bind_kwargs(series, catalog)
+        schema = f"{_binding(series)}.schema"
+        if kwargs:
+            lines.append(f"    {schema}.bind({kwargs}).validate({series.series_id})")
+        else:
+            lines.append(f"    {schema}.validate({series.series_id})")
+    return lines
 
 
 def _publish_line(series: BoundSeries, constants: str | None = None) -> str:
@@ -564,11 +753,15 @@ def emit_named_internals(
                     _publish_line(series),
                     _signature(series.series_id, params, _annotation(series)),
                     f'    """Compute `{series.series_id}` using authored coordinate identities."""',
-                    *_schema_checks(params),
+                    *_schema_checks(params, catalog),
                     *body,
                 ]
             )
         )
+    tensor_names = ["Domain", "Series"]
+    if "label_axis" in used:
+        tensor_names.append("label_axis")
+        used.remove("label_axis")
     lines = [
         '"""Named calculation functions for every bound formula series."""',
         "from __future__ import annotations",
@@ -576,7 +769,7 @@ def emit_named_internals(
         "from datetime import datetime",
         "from typing import cast",
         "from . import data",
-        "from .tensor import Domain, Series",
+        f"from .tensor import {', '.join(tensor_names)}",
         *_generated_helper_imports(used),
         "",
         "\n\n".join(functions),
@@ -590,6 +783,7 @@ def _family_condition(
     universe: set[tuple[object, ...]],
     axes: Sequence[Any],
     names: Mapping[str, str],
+    index_names: Mapping[str, str] | None = None,
 ) -> str | None:
     """Describe a formula family by its axis relations rather than a coordinate list.
 
@@ -601,28 +795,32 @@ def _family_condition(
     members = set(coordinates)
     tests: list[str] = []
     selected: list[set[object]] = []
+    positions = index_names or {}
     for index, axis in enumerate(axes):
         present = [key for key in axis.keys if any(coord[index] == key for coord in universe)]
         keys = [key for key in present if any(coord[index] == key for coord in members)]
         selected.append(set(keys))
-        name = names[axis.name]
+        name = positions.get(axis.name, names[axis.name])
+        emitted = [axis.keys.index(key) for key in keys] if axis.name in positions else list(keys)
         if len(keys) == len(present):
             continue
         if len(keys) == 1:
-            tests.append(f"{name} == {keys[0]!r}")
+            tests.append(f"{name} == {emitted[0]!r}")
             continue
         first, last = present.index(keys[0]), present.index(keys[-1])
         contiguous = present[first : last + 1] == keys
-        ascending = axis.key_type is int and present == sorted(cast(Sequence[int], present))
+        ascending = axis.name in positions or (
+            axis.key_type is int and present == sorted(cast(Sequence[int], present))
+        )
         if contiguous and ascending:
             if last == len(present) - 1:
-                tests.append(f"{name} >= {keys[0]!r}")
+                tests.append(f"{name} >= {emitted[0]!r}")
             elif first == 0:
-                tests.append(f"{name} <= {keys[-1]!r}")
+                tests.append(f"{name} <= {emitted[-1]!r}")
             else:
-                tests.append(f"{keys[0]!r} <= {name} <= {keys[-1]!r}")
+                tests.append(f"{emitted[0]!r} <= {name} <= {emitted[-1]!r}")
             continue
-        tests.append(f"{name} in {tuple(keys)!r}")
+        tests.append(f"{name} in {tuple(emitted)!r}")
     product = {
         coord
         for coord in universe
@@ -630,10 +828,12 @@ def _family_condition(
     }
     if product == members:
         return " and ".join(tests) if tests else None
-    relation = _diagonal_condition(members, universe, product, tests, axes, names)
+    relation = _diagonal_condition(
+        members, universe, product, tests, axes, names, index_names=positions
+    )
     if relation is not None:
         return relation
-    return _union_condition(members, universe, axes, names)
+    return _union_condition(members, universe, axes, names, index_names=positions)
 
 
 def _diagonal_condition(
@@ -643,20 +843,33 @@ def _diagonal_condition(
     tests: Sequence[str],
     axes: Sequence[Any],
     names: Mapping[str, str],
+    index_names: Mapping[str, str] | None = None,
 ) -> str | None:
     """A family on one diagonal band of two integer axes."""
-    integer_axes = [index for index, axis in enumerate(axes) if axis.key_type is int]
+    positions = index_names or {}
+    integer_axes = [
+        index for index, axis in enumerate(axes) if axis.key_type is int or axis.name in positions
+    ]
     for position, left in enumerate(integer_axes):
         for right in integer_axes[position + 1 :]:
+            use_positions = axes[left].name in positions or axes[right].name in positions
 
-            def difference(coord: tuple[object, ...], left: int = left, right: int = right) -> int:
+            def difference(
+                coord: tuple[object, ...],
+                left: int = left,
+                right: int = right,
+                use_positions: bool = use_positions,
+            ) -> int:
+                if use_positions:
+                    return axes[right].keys.index(coord[right]) - axes[left].keys.index(coord[left])
                 return cast(int, coord[right]) - cast(int, coord[left])
 
             differences = sorted({difference(coord) for coord in members})
             low, high = differences[0], differences[-1]
             if differences != list(range(low, high + 1)):
                 continue
-            left_name, right_name = names[axes[left].name], names[axes[right].name]
+            left_name = positions.get(axes[left].name, names[axes[left].name])
+            right_name = positions.get(axes[right].name, names[axes[right].name])
             for candidates, prefix in ((universe, []), (product, tests)):
                 if {coord for coord in candidates if low <= difference(coord) <= high} != members:
                     continue
@@ -680,21 +893,25 @@ def _union_condition(
     universe: set[tuple[object, ...]],
     axes: Sequence[Any],
     names: Mapping[str, str],
+    index_names: Mapping[str, str] | None = None,
 ) -> str | None:
     """A family that splits along one axis into a few expressible sub-families."""
+    positions = index_names or {}
     for index, axis in enumerate(axes):
         keys = [key for key in axis.keys if any(coord[index] == key for coord in members)]
         if not 2 <= len(keys) <= 8:
             continue
         parts: list[str] = []
+        name = positions.get(axis.name, names[axis.name])
         for key in keys:
             group = [coord for coord in members if coord[index] == key]
             restricted = {coord for coord in universe if coord[index] == key}
-            selector = f"{names[axis.name]} == {key!r}"
+            emitted = axis.keys.index(key) if axis.name in positions else key
+            selector = f"{name} == {emitted!r}"
             if set(group) == restricted:
                 parts.append(selector)
                 continue
-            inner = _family_condition(group, restricted, axes, names)
+            inner = _family_condition(group, restricted, axes, names, index_names=positions)
             if inner is None:
                 break
             parts.append(f"({selector} and {inner})")
@@ -728,7 +945,7 @@ def _emit_recurrence_group(
             "",
             _signature(scan_function_name(scc), params, result_type),
             f'    """Evaluate the recurrence group {joined} and publish complete tensors."""',
-            *_schema_checks(params),
+            *_schema_checks(params, catalog),
         ]
     )
     members = frozenset(scc)
@@ -748,7 +965,7 @@ def _emit_recurrence_group(
     lines.append(f"    return {result_type}(")
     for sid in scc:
         series = catalog.get(sid)
-        value = f"{sid}[()]" if series.single_valued else _materialize(series)
+        value = f"{sid}[()]" if series.single_valued else _materialize(series, catalog)
         lines.append(f"        {sid}={value},")
     lines.append("    )")
     return "\n".join(lines), used
@@ -791,12 +1008,16 @@ def _python_literal(value: object) -> str:
     return repr(value)
 
 
-def _check_signature(series_id: str, annotation: str) -> str:
+def _check_signature(series_id: str, annotation: str, extra: Sequence[str] = ()) -> str:
     """Write a check signature, wrapping only when the one-liner exceeds 100 columns."""
     name = f"_check_{series_id}"
-    one_line = f"def {name}({series_id}: {annotation}) -> {annotation}:"
+    extras = ", ".join(extra)
+    arguments = f"{series_id}: {annotation}" + (f", *, {extras}" if extras else "")
+    one_line = f"def {name}({arguments}) -> {annotation}:"
     if len(one_line) <= 100:
         return one_line
+    if extras:
+        return f"def {name}(\n    {series_id}: {annotation},\n    *,\n    {extras},\n) -> {annotation}:"
     return f"def {name}(\n    {series_id}: {annotation},\n) -> {annotation}:"
 
 
@@ -806,14 +1027,28 @@ def _binding_dtype(series: BoundSeries) -> str:
     return {"str": "string", "integer": "int", "date": "datetime"}.get(raw, raw)
 
 
-def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
+def _input_check(
+    series: BoundSeries, catalog: SeriesCatalog
+) -> tuple[list[str], set[str], list[str]]:
     """Coerce dtype, validate schema and domain, then apply the value map."""
     lines: list[str] = []
     used: set[str] = set()
     series_id = series.series_id
     quoted_id = _python_literal(series_id)
+    runtime_axes = [
+        (axis, labeller)
+        for axis in series.tensor_domain.axes
+        if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
+        and labeller.series_id != series.series_id
+    ]
+    bind = ", ".join(f"{axis.name}={axis.name}" for axis, _labeller in runtime_axes)
+    extras = [f"{axis.name}: {_annotation(labeller)}" for axis, labeller in runtime_axes]
     if not series.single_valued:
-        lines.append(f"    {_binding(series)}.schema.validate({series_id})")
+        schema = f"{_binding(series)}.schema"
+        if bind:
+            lines.append(f"    {schema}.bind({bind}).validate({series_id})")
+        else:
+            lines.append(f"    {schema}.validate({series_id})")
     used.add("coerce_input_measure")
     lines.append(
         f"    {series_id} = coerce_input_measure("
@@ -830,9 +1065,14 @@ def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
         else:
             # Restrict validation to this extraction's required domain;
             # wider source tensors retain their off-graph observations.
+            required = (
+                f"{_binding(series)}.required.bind({bind})"
+                if bind
+                else f"{_binding(series)}.required"
+            )
             lines.extend(
                 [
-                    f"    for coordinate in {_binding(series)}.required:",
+                    f"    for coordinate in {required}:",
                     f"        require_input_domain({series_id}[coordinate], {domain_literal}, series_id={quoted_id} + repr(coordinate))",
                 ]
             )
@@ -844,7 +1084,7 @@ def _input_check(series: BoundSeries) -> tuple[list[str], set[str]]:
         )
     else:
         lines.append(f"    return {series_id}")
-    return lines, used
+    return lines, used, extras
 
 
 def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str], set[str]]:
@@ -855,7 +1095,7 @@ def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str]
     for series in _retained(catalog):
         if series.direction != "input":
             continue
-        body, check_used = _input_check(series)
+        body, check_used, extras = _input_check(series, catalog)
         if len(body) == 1 and body[0] == f"    return {series.series_id}":
             continue
         used |= check_used
@@ -864,7 +1104,7 @@ def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str]
         checks.append(
             "\n".join(
                 [
-                    _check_signature(series.series_id, annotation),
+                    _check_signature(series.series_id, annotation, extras),
                     f'    """Validate `{series.series_id}` before the model reads it."""',
                     *body,
                 ]
@@ -940,6 +1180,103 @@ def _model_recurrence_group(
     return lines
 
 
+def _model_init(catalog: SeriesCatalog) -> list[str]:
+    """Bind static inputs, evaluate labellers, then check runtime-axis inputs."""
+    deferred_ids = _deferred_runtime_inputs(catalog)
+    deferred = tuple(
+        series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
+    )
+    lines = [
+        "",
+        "    def __init__(self, **inputs: object) -> None:",
+        "        for name, value in inputs.items():",
+    ]
+    if deferred:
+        names = ", ".join(repr(name) for name in deferred)
+        lines.append(f"            if name in {{{names}}}:")
+        lines.append("                continue")
+    lines.extend(
+        [
+            "            check = validation.CHECKS.get(name)",
+            "            setattr(self, name, value if check is None else check(value))",
+        ]
+    )
+    if not deferred:
+        return lines
+    labellers = tuple(
+        series.series_id for series in _retained(catalog) if _is_runtime_labeller(series)
+    )
+    quoted = ", ".join(repr(name) for name in labellers)
+    lines.append(f"        for name in ({quoted},):")
+    lines.append("            getattr(self, name)")
+    for series_id in deferred:
+        series = catalog.get(series_id)
+        extras = []
+        for axis in series.tensor_domain.axes:
+            labeller = catalog.runtime_labeller(axis.name, axis.keys)
+            if labeller is not None and labeller.series_id != series.series_id:
+                extras.append(f"{axis.name}=self.{labeller.series_id}")
+        extra = f", {', '.join(extras)}" if extras else ""
+        lines.extend(
+            [
+                f"        if {series_id!r} in inputs:",
+                f"            value = inputs[{series_id!r}]",
+                f"            check = validation.CHECKS.get({series_id!r})",
+                "            setattr(",
+                "                self,",
+                f"                {series_id!r},",
+                f"                value if check is None else check(value{extra}),",
+                "            )",
+            ]
+        )
+    return lines
+
+
+def _model_cells_method() -> list[str]:
+    """Bind provenance templates over this model's evaluated labellers."""
+    return [
+        "",
+        "    def cells(self, series_id: str) -> object:",
+        '        """Authored worksheet cells of `series_id` over this model\'s labels."""',
+        "        binding = getattr(data, series_id.upper())",
+        "        cells = getattr(binding, 'cells', None)",
+        "        if cells is None:",
+        "            cells = getattr(data, f'{series_id.upper()}_CELLS')",
+        "        bind = getattr(cells, 'bind', None)",
+        "        if bind is None:",
+        "            return cells",
+        "        return bind(",
+        "            **{",
+        "                axis: getattr(self, labeller)",
+        "                for axis, labeller in data.LABELLED_AXES.items()",
+        "            }",
+        "        )",
+    ]
+
+
+def _key_note(
+    output: BoundSeries,
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps],
+) -> list[str]:
+    """Docstring lines naming the inputs that determine runtime axis keys."""
+    notes: list[str] = []
+    for axis in output.tensor_domain.axes:
+        labeller = catalog.runtime_labeller(axis.name, axis.keys)
+        if labeller is None:
+            continue
+        inputs = [
+            sid
+            for sid in leaf_closure(labeller.series_id, catalog=catalog, deps=dict(deps))
+            if catalog.get(sid).direction == "input"
+        ]
+        if not inputs:
+            continue
+        listed = ", ".join(f"`{sid}`" for sid in inputs)
+        notes.append(f"    Keys along `{axis.name}` are determined by {listed}.")
+    return notes
+
+
 def emit_named_api(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
@@ -960,15 +1297,9 @@ def emit_named_api(
     ]
     for series in inputs:
         model.append(f"    {series.series_id}: {_annotation(series)}")
-    model.extend(
-        [
-            "",
-            "    def __init__(self, **inputs: object) -> None:",
-            "        for name, value in inputs.items():",
-            "            check = validation.CHECKS.get(name)",
-            "            setattr(self, name, value if check is None else check(value))",
-        ]
-    )
+    model.extend(_model_init(catalog))
+    if _labelled_axes_map(catalog):
+        model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
     for series in _retained_formula_series(catalog):
         scc = scc_map.get(series.series_id, (series.series_id,))
@@ -986,7 +1317,7 @@ def emit_named_api(
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
-        source, name = _public_function(output, leaves, catalog, constant_sets[constants])
+        source, name = _public_function(output, leaves, catalog, constant_sets[constants], deps)
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
@@ -1079,14 +1410,18 @@ def _public_function(
     leaves: Sequence[str],
     catalog: SeriesCatalog,
     constants: str,
+    deps: Mapping[str, SeriesDeps] | None = None,
 ) -> tuple[str, str]:
     inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
     name = output.compute_name or f"compute_{output.series_id}"
+    summary = f"Compute `{output.series_id}` using authored coordinate identities."
+    notes = _key_note(output, catalog, deps) if deps is not None else []
+    docstring = [f'    """{summary}', "", *notes, '    """'] if notes else [f'    """{summary}"""']
     source = "\n".join(
         [
             _publish_line(output, constants),
             _signature(name, inputs, _annotation(output)),
-            f'    """Compute `{output.series_id}` using authored coordinate identities."""',
+            *docstring,
             f"    return Model(**locals()).{output.series_id}",
         ]
     )
@@ -1133,7 +1468,10 @@ def _read_defaults(catalog: SeriesCatalog, workbook: Path | str) -> dict[str, di
 
 
 def _provenance_source(
-    series: BoundSeries, named_axes: NamedAxes, domain_source: str | None = None
+    series: BoundSeries,
+    named_axes: NamedAxes,
+    domain_source: str | None = None,
+    catalog: SeriesCatalog | None = None,
 ) -> str:
     """Describe authored cells as a worksheet rectangle when they form one.
 
@@ -1145,7 +1483,7 @@ def _provenance_source(
     literal = repr(dict(cells))
     if not cells or series.single_valued:
         return literal
-    rectangle = _rectangle_source(series, cells, named_axes)
+    rectangle = _rectangle_source(series, cells, named_axes, catalog)
     if rectangle is not None:
         return rectangle
     domain = domain_source or f"{series.series_id.upper()}_DOMAIN"
@@ -1156,7 +1494,10 @@ def _provenance_source(
 
 
 def _rectangle_source(
-    series: BoundSeries, cells: Mapping[tuple[Any, ...], CanonicalAddress], named_axes: NamedAxes
+    series: BoundSeries,
+    cells: Mapping[tuple[Any, ...], CanonicalAddress],
+    named_axes: NamedAxes,
+    catalog: SeriesCatalog | None = None,
 ) -> str | None:
     """Describe a dense rectangle over one or two axes, or `None`."""
     from excel_grapher.core.address_keys import format_cell_key
@@ -1169,6 +1510,11 @@ def _rectangle_source(
     sheet, first_row, first_col, last_row, last_col = rect
     height, width = last_row - first_row + 1, last_col - first_col + 1
     axes = series.tensor_domain.axes
+
+    def layout_arg(axis: Any) -> str:
+        if catalog is None:
+            return layout_keys_source(axis, named_axes)
+        return _axis_source_for_domain(axis, named_axes, catalog)
 
     def matches(layout: Mapping[tuple[Any, ...], str]) -> dict[tuple[Any, ...], str]:
         return {coord: address for coord, address in cells.items() if layout.get(coord) != address}
@@ -1183,7 +1529,7 @@ def _rectangle_source(
             if not matches(layout):
                 return (
                     f"row_cells({sheet!r}, {first_row}, {column_letter(first_col)!r}, "
-                    f"{layout_keys_source(axis, named_axes)})"
+                    f"{layout_arg(axis)})"
                 )
         if width == 1 and len(axis.keys) == height:
             layout = {
@@ -1193,7 +1539,7 @@ def _rectangle_source(
             if not matches(layout):
                 return (
                     f"column_cells({sheet!r}, {column_letter(first_col)!r}, {first_row}, "
-                    f"{layout_keys_source(axis, named_axes)})"
+                    f"{layout_arg(axis)})"
                 )
         return None
     if len(axes) == 2:
@@ -1215,8 +1561,8 @@ def _rectangle_source(
                 repr(sheet),
                 str(first_row),
                 repr(column_letter(first_col)),
-                layout_keys_source(row_axis, named_axes),
-                layout_keys_source(col_axis, named_axes),
+                layout_arg(row_axis),
+                layout_arg(col_axis),
             ]
             if row_position == 1:
                 arguments.append("cols_first=True")
@@ -1303,9 +1649,21 @@ def _product_axis_source(axis: Any, named_axes: NamedAxes) -> str:
 
 
 def _coordinates_source(
-    coordinates: Sequence[tuple[Any, ...]], axes: Sequence[Any], named_axes: NamedAxes
+    coordinates: Sequence[tuple[Any, ...]],
+    axes: Sequence[Any],
+    named_axes: NamedAxes,
+    catalog: SeriesCatalog | None = None,
 ) -> str:
     """List sparse coordinates as runs along the last axis when that is shorter."""
+    runtime = catalog is not None and any(
+        catalog.runtime_labeller(axis.name, axis.keys) is not None for axis in axes
+    )
+    if runtime:
+        positions = tuple(
+            tuple(axis.keys.index(key) for axis, key in zip(axes, coord, strict=True))
+            for coord in coordinates
+        )
+        return repr(positions)
     literal = repr(tuple(coordinates))
     if not coordinates or not axes:
         return literal
@@ -1324,11 +1682,35 @@ def _coordinates_source(
     return source if len(source) < len(literal) else literal
 
 
-def _domain_source(series: BoundSeries, named_axes: NamedAxes) -> str:
+def _axis_source_for_domain(axis: Any, named_axes: NamedAxes, catalog: SeriesCatalog) -> str:
+    """Name an interned axis, or an `AxisTemplate` for a runtime-labelled axis."""
+    labeller = catalog.runtime_labeller(axis.name, axis.keys)
+    if labeller is None:
+        return _product_axis_source(axis, named_axes)
+    emitted = named_axes.emitted(axis)
+    if axis.keys == emitted.keys:
+        return named_axes.constant(axis)
+    source = labeller.tensor_domain.axes[0].keys
+    extra = f", source={source!r}" if source != axis.keys else ""
+    return (
+        f"AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
+        f"size={len(axis.keys)}, labeller={labeller.series_id!r}, snapshot={axis.keys!r}{extra})"
+    )
+
+
+def _domain_source(series: BoundSeries, named_axes: NamedAxes, catalog: SeriesCatalog) -> str:
     domain = series.tensor_domain
+    runtime = any(
+        catalog.runtime_labeller(axis.name, axis.keys) is not None for axis in domain.axes
+    )
     if domain.coordinates is None:
-        axes = ", ".join(_product_axis_source(axis, named_axes) for axis in domain.axes)
-        return f"Domain.product({axes})"
+        axes = ", ".join(_axis_source_for_domain(axis, named_axes, catalog) for axis in domain.axes)
+        ctor = "DomainTemplate" if runtime else "Domain"
+        return f"{ctor}.product({axes})"
+    if runtime:
+        axes = ", ".join(_axis_source_for_domain(axis, named_axes, catalog) for axis in domain.axes)
+        coordinates = _coordinates_source(tuple(domain), domain.axes, named_axes, catalog)
+        return f"DomainTemplate.explicit(axes=({axes},), coordinates={coordinates})"
     axes = ", ".join(named_axes.constant(axis) for axis in domain.axes)
     emitted = tuple(named_axes.emitted(axis) for axis in domain.axes)
     coordinates = _coordinates_source(tuple(domain), emitted, named_axes)
@@ -1383,6 +1765,26 @@ def emit_named_data(
 
     retained = _retained(catalog)
     defaults = _read_defaults(catalog, workbook)
+    labelled = _labelled_axes_map(catalog)
+    tensor_names = [
+        "Axis",
+        "Domain",
+        "Series",
+        "SeriesSpec",
+        "coordinate_runs",
+        "define_series",
+    ]
+    if labelled:
+        tensor_names = [
+            "Axis",
+            "AxisTemplate",
+            "Domain",
+            "DomainTemplate",
+            "Series",
+            "SeriesSpec",
+            "coordinate_runs",
+            "define_series",
+        ]
     lines = [
         '"""Authored domains, validated tensor types, and workbook defaults."""',
         "from __future__ import annotations",
@@ -1391,17 +1793,30 @@ def emit_named_data(
         "from datetime import datetime",
         "from .provenance import block_cells, column_cells, grid_cells, row_cells",
         "from .runtime import span",
-        "from .tensor import Axis, Domain, Series, SeriesSpec, coordinate_runs, define_series",
+        f"from .tensor import {', '.join(tensor_names)}",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
         "",
     ]
     for constant, axis in named_axes.items():
-        lines.append(f"{constant} = Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})")
+        labeller = catalog.runtime_labeller(axis.name, axis.keys)
+        if labeller is None:
+            lines.append(
+                f"{constant} = Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})"
+            )
+            continue
+        source = labeller.tensor_domain.axes[0].keys
+        extra = f", source={source!r}" if source != axis.keys else ""
+        lines.append(
+            f"{constant} = AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
+            f"size={len(axis.keys)}, labeller={labeller.series_id!r}, snapshot={axis.keys!r}{extra})"
+        )
+    if labelled:
+        lines.append(f"LABELLED_AXES = {labelled!r}")
     lines.append("")
     dtypes = sorted({series.python_dtype for series in retained if not series.single_valued})
     lines.extend(f"{dtype.upper()}_VALUES = {_value_types(dtype)}" for dtype in dtypes)
-    domain_owner: dict[str, str] = {}
+    domain_owner: dict[str | tuple[str, str], str] = {}
     constant_series: list[BoundSeries] = []
     for series in retained:
         name = series.series_id.upper()
@@ -1415,33 +1830,61 @@ def emit_named_data(
                 lines.append(f"{constant} = {_py_literal(value)}")
             continue
         domain = series.tensor_domain
-        constructed = _domain_source(series, named_axes)
+        constructed = _domain_source(series, named_axes, catalog)
         required_coords = series.required_coordinates
         required = tuple(coord for coord in domain if coord in required_coords)
         required_differs = len(required) != len(domain)
+        runtime = any(
+            catalog.runtime_labeller(axis.name, axis.keys) is not None for axis in domain.axes
+        )
         uses_grid = _uses_grid_cells(series, named_axes)
-        owner = domain_owner.get(domain.fingerprint)
-        if owner is None:
-            domain_owner[domain.fingerprint] = name
-            if uses_grid or required_differs or constructed.startswith("Domain.explicit"):
+        if runtime:
+            owner = domain_owner.get(("rt", domain.fingerprint))
+            if owner is None:
+                domain_owner[("rt", domain.fingerprint)] = name
                 domain_source = f"{name}_DOMAIN"
                 lines.append(f"{name}_DOMAIN = {constructed}")
             else:
-                domain_source = constructed
+                domain_source = f"{owner}_DOMAIN"
         else:
-            domain_source = f"{owner}.domain"
-        cells_source = _provenance_source(series, named_axes, domain_source)
+            owner = domain_owner.get(domain.fingerprint)
+            if owner is None:
+                domain_owner[domain.fingerprint] = name
+                if uses_grid or required_differs or constructed.startswith("Domain.explicit"):
+                    domain_source = f"{name}_DOMAIN"
+                    lines.append(f"{name}_DOMAIN = {constructed}")
+                else:
+                    domain_source = constructed
+            else:
+                domain_source = f"{owner}.domain"
+        cells_source = _provenance_source(series, named_axes, domain_source, catalog)
         required_source = None
         if required_differs:
+            ctor = "DomainTemplate" if runtime else "Domain"
             required_source = (
-                f"Domain.explicit(axes={domain_source}.axes, "
-                f"coordinates={_coordinates_source(required, domain.axes, named_axes)})"
+                f"{ctor}.explicit(axes={domain_source}.axes, "
+                f"coordinates={_coordinates_source(required, domain.axes, named_axes, catalog)})"
             )
         values_source = None
+        define_domain = domain_source
+        if runtime and series.direction in {"input", "constant"}:
+            snapshot = ", ".join(
+                f"Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})"
+                for axis in domain.axes
+            )
+            define_domain = f"Domain.product({snapshot})"
+            if required_source is None:
+                required_source = domain_source
         if series.direction in {"input", "constant"}:
             cells = series.coordinate_cells
             values = tuple(defaults[series.series_id][cells[coord]] for coord in domain)
             values_source = _py_literal(values)
+        if _is_runtime_labeller(series):
+            axis = domain.axes[0]
+            lines.append(
+                f"{name}_POSITIONS = Domain.product(Axis({axis.name!r}, "
+                f"{tuple(range(len(axis.keys)))!r}, int))"
+            )
         annotation = (
             f"Series[{_value_annotation(series)}]"
             if values_source is not None
@@ -1451,7 +1894,7 @@ def emit_named_data(
             _format_define_series(
                 name,
                 series.series_id,
-                domain_source,
+                define_domain,
                 values_source,
                 cells_source,
                 _schema_types(series),
@@ -1486,10 +1929,10 @@ def emit_named_data(
             "    unknown = values.keys() - _CONSTANT_NAMES",
             "    if unknown:",
             "        raise AttributeError(f'unknown constants: {sorted(unknown)}')",
+            "    namespace = globals()",
             "    for name, value in values.items():",
             "        if name in _CONSTANT_SCHEMAS:",
             "            _CONSTANT_SCHEMAS[name].validate(value)",
-            "    namespace = globals()",
             "    previous = {name: namespace[name] for name in values}",
             "    namespace.update(values)",
             "    try:",

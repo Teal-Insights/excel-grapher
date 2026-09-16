@@ -547,6 +547,28 @@ def shift_range_corners(
     )
 
 
+def offset_cell_destination(
+    node: FunctionCallNode, host_cell: CanonicalAddress
+) -> CanonicalAddress | None:
+    """Return the landing cell of a literal `OFFSET(cell, rows, cols)`.
+
+    Extra height/width arguments make a range `OFFSET`; those stay on the
+    `OFFSET(INDEX(...))` path. Off-grid moves return `None`.
+    """
+    if normalize_excel_function_name(node.name) != "OFFSET" or len(node.args) < 3:
+        return None
+    base = node.args[0]
+    if not isinstance(base, CellRefNode) or len(node.args) >= 4:
+        return None
+    rows = ast_literal_int(node.args[1])
+    cols = ast_literal_int(node.args[2])
+    if rows is None or cols is None:
+        return None
+    anchor = as_canonical(resolve_cell_ref(base, host_cell))
+    dest = shift_range_corners(anchor, anchor, rows, cols)
+    return dest[0] if dest is not None else None
+
+
 def offset_index_destination(
     node: FunctionCallNode, host_cell: CanonicalAddress
 ) -> tuple[CanonicalAddress, CanonicalAddress] | None:
@@ -627,9 +649,17 @@ def resolve_offset_destination_series(
 ) -> tuple[BoundSeries, CanonicalAddress] | None:
     """Return `(series, anchor)` for OFFSET whose base yields a reference.
 
-    Prefers a classified `OFFSET(INDEX(...), rows, cols)` window. Falls back
-    to graph `dynamic_offset` edges when the offset is not a literal.
+    Prefers a literal `OFFSET(cell, rows, cols)` landing cell, then a
+    classified `OFFSET(INDEX(...), rows, cols)` window. Falls back to graph
+    `dynamic_offset` edges when the offset is not a literal.
     """
+    cell_dest = offset_cell_destination(node, host_cell)
+    if cell_dest is not None:
+        addresses = addresses_outside_blank_ranges([cell_dest], blank_rects)
+        covered = covering_series(catalog, addresses) if addresses else None
+        if covered is None:
+            return None
+        return covered, cell_dest
     dest = offset_index_destination(node, host_cell)
     if dest is not None:
         addresses = addresses_outside_blank_ranges(
@@ -1114,8 +1144,19 @@ class _DepCollector:
         if isinstance(base, FunctionCallNode):
             self._visit_offset_from_expr(node, host_cell=host_cell, host_index=host_index)
             return
-        table = self._series_for_ref(base, host_cell)
-        self.emit_lookup(table, host_cell, self._ref_anchor(base, host_cell), "dynamic")
+        resolved = resolve_offset_destination_series(
+            node,
+            host_cell,
+            self.catalog,
+            self.graph,
+            blank_rects=self.blank_rects,
+        )
+        if resolved is not None:
+            table, anchor = resolved
+        else:
+            table = self._series_for_ref(base, host_cell)
+            anchor = self._ref_anchor(base, host_cell)
+        self.emit_lookup(table, host_cell, anchor, "dynamic")
         for arg in node.args[1:]:
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 
@@ -2287,12 +2328,35 @@ def collect_all_deps(
     """
     if catalog_edges is None:
         catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
-    return {
+    deps = {
         series.series_id: series_deps_from_edges(
             series, catalog_edges.by_consumer.get(series.series_id, ()), catalog, graph
         )
         for series in catalog.formula_series()
     }
+    return _with_labeller_edges(catalog, deps)
+
+
+def _with_labeller_edges(
+    catalog: SeriesCatalog, deps: dict[str, SeriesDeps]
+) -> dict[str, SeriesDeps]:
+    """Depend every series with a runtime axis on that axis's labeller."""
+    for series in catalog.formula_series():
+        info = deps.get(series.series_id)
+        if info is None:
+            continue
+        extra = [
+            labeller.series_id
+            for axis in series.tensor_domain.axes
+            if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
+            and labeller.series_id != series.series_id
+            and labeller.series_id not in info.param_ids
+        ]
+        if not extra:
+            continue
+        extras = tuple(sid for sid in catalog.order if sid in set(extra))
+        deps[series.series_id] = replace(info, param_ids=info.param_ids + extras)
+    return deps
 
 
 def leaf_closure(

@@ -123,6 +123,64 @@ def _validate_series_identity(series: dict[str, Any]) -> list[ValidationIssue]:
     return issues
 
 
+def _validate_axis_labels(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Validate the local shape and scalar type of an axis labeller."""
+    axis = series.get("axis_labels")
+    if axis is None:
+        return []
+    series_id = str(series.get("id") or "") or None
+    key = series.get("key") or []
+    issues: list[ValidationIssue] = []
+    if key != [axis]:
+        issues.append(
+            _issue(
+                "error",
+                "invalid_axis_labels_key",
+                f"axis_labels {axis!r} must be the series' only key",
+                series_id=series_id,
+            )
+        )
+        return issues
+    structure = series.get("structure") or {}
+    dimensions = structure.get("dimensions") or []
+    dimension = next(
+        (
+            item
+            for item in dimensions
+            if isinstance(item, dict) and effective_dimension_id(item) == axis
+        ),
+        None,
+    )
+    if dimension is None:
+        issues.append(
+            _issue(
+                "error",
+                "invalid_axis_labels_axis",
+                f"axis_labels {axis!r} does not name a series dimension",
+                series_id=series_id,
+            )
+        )
+        return issues
+    measure = structure.get("measure") or {}
+    measure_dtype = measure.get("dtype") or (measure.get("bind") or {}).get("read")
+    dimension_dtype = dimension.get("dtype") or (dimension.get("bind") or {}).get("read")
+    aliases = {"integer": "int", "str": "string"}
+    measure_dtype = aliases.get(measure_dtype, measure_dtype)
+    dimension_dtype = aliases.get(dimension_dtype, dimension_dtype)
+    if measure_dtype not in {"int", "string"} or (
+        dimension_dtype not in {None, "auto"} and measure_dtype != dimension_dtype
+    ):
+        issues.append(
+            _issue(
+                "error",
+                "invalid_axis_labels_dtype",
+                "labeller measure dtype must match its string or integer axis key type",
+                series_id=series_id,
+            )
+        )
+    return issues
+
+
 def _series_validation_flags(series: dict[str, Any]) -> tuple[bool, bool]:
     validation = effective_validation(series)
     intersect = validation.get("intersect_graph_leaves", True)
@@ -955,13 +1013,21 @@ def validate_series_bindings(
     and `geometry_in_id` (A1 cell or rectangle tokens in series ids and
     `series_context` values).
     """
-    from excel_grapher.series_bindings.resolve import _WorkbookValues, resolve_series_binding
+    from excel_grapher.series_bindings.resolve import (
+        _WorkbookValues,
+        labeller_evaluate_addresses,
+        resolve_series_binding,
+    )
 
     issues: list[ValidationIssue] = []
     concept_dtypes = _concept_dtype_map(bindings)
     shared_reader: _WorkbookValues | None = None
     seen_ranges: dict[str, str] = {}
     occupancy_rows: list[tuple[dict[str, Any], list[str]]] = []
+    evaluate_addresses = (
+        labeller_evaluate_addresses(bindings, workbook) if workbook is not None else set()
+    )
+    evaluators: dict[int, Any] = {}
 
     try:
         for series in bindings.get("series", []):
@@ -969,6 +1035,7 @@ def validate_series_bindings(
                 continue
             series_id = str(series.get("id") or "")
             issues.extend(_validate_series_identity(series))
+            issues.extend(_validate_axis_labels(series))
             data_range_text = format_series_data_range(series)
             if series_id and series_id in seen_ranges:
                 issues.append(
@@ -1072,6 +1139,8 @@ def validate_series_bindings(
                         series,
                         direction=direction,
                         reader=shared_reader,
+                        evaluate_addresses=evaluate_addresses,
+                        evaluators=evaluators,
                     )
                     issues.extend(resolved["issues"])
                     if resolved["requires_address"]:
