@@ -50,34 +50,6 @@ def test_text_index_match_promotes_single_cell_index_to_scalar() -> None:
         assert evaluator.evaluate("PL!K16") == "1499.00"
 
 
-def test_numbervalue_text_index_match_returns_numeric_price(tmp_path) -> None:
-    """``NUMBERVALUE(TEXT(INDEX(...)))`` returns the looked-up price (K16 shape)."""
-    workbook = tmp_path / "numbervalue_lookup.xlsx"
-    writer = xlsxwriter.Workbook(workbook)
-    worksheet = writer.add_worksheet("Product Lookup")
-    worksheet.write_string(4, 10, "PRD-001")
-    for row, sku in enumerate(["PRD-001", "PRD-002"], start=5):
-        worksheet.write_string(row - 1, 0, sku)
-        worksheet.write_number(row - 1, 4, 1499.0)
-    worksheet.write_formula(
-        15,
-        10,
-        '=IFERROR(NUMBERVALUE(TEXT(INDEX($E$5:$E$19,MATCH($K$5,$A$5:$A$19,0)),"0.00"),".",","),"N/A")',
-        None,
-        1499,
-    )
-    writer.close()
-
-    graph = create_dependency_graph(
-        workbook,
-        ["Product Lookup!K16"],
-        load_values=True,
-        use_cached_dynamic_refs=True,
-    )
-    with FormulaEvaluator(graph) as evaluator:
-        assert evaluator.evaluate("Product Lookup!K16") == 1499.0
-
-
 def test_numbervalue_text_index_match_eval_codegen_parity(tmp_path) -> None:
     """Evaluator and export agree on the K16 ``NUMBERVALUE(TEXT(INDEX(...)))`` chain."""
     workbook = tmp_path / "numbervalue_lookup_parity.xlsx"

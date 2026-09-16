@@ -75,16 +75,6 @@ def test_index_concat_returns_scalar_string() -> None:
         assert evaluator.evaluate("S!B3") == "NoYes"
 
 
-def test_literal_1x1_range_if_equality() -> None:
-    """`IF(A1:A1="Yes", 1, 2)` treats the 1x1 range as a scalar."""
-    graph = _make_graph(
-        _make_node("S!A1", None, "Yes"),
-        _make_node("S!B1", '=IF(S!A1:S!A1="Yes",1,2)', None),
-    )
-    with FormulaEvaluator(graph) as evaluator:
-        assert evaluator.evaluate("S!B1") == 1
-
-
 def test_literal_1x1_range_unary_and_broadcast_parity() -> None:
     """Evaluator and export agree on literal 1x1 range operator formulas."""
     graph = _make_graph(

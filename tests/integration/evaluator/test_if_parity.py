@@ -5,6 +5,8 @@ Live Excel parity lives in `test_if_excel_parity.py` (slow, run-if-available).
 
 from __future__ import annotations
 
+import pytest
+
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from tests.integration.utils.parity_harness import evaluate_targets
@@ -54,9 +56,30 @@ def test_sum_if_array_codegen_parity() -> None:
         _make_node("S!D8", "=AVERAGE(IF(S!A1:A3>0,S!B1:B3,S!C1:C3))", None),
         _make_node("S!D9", "=MAX(IF(S!A1:A3>0,S!A1:A3))", None),
         _make_node("S!D10", "=MAX(IF(S!A1:A3>0,S!C1:C3))", None),
+        _make_node("S!D11", "=AVERAGE(IF(S!A1:A3>0,S!B1:B3,0))", None),
+        _make_node("S!F1", None, -10),
+        _make_node("S!F2", None, -20),
+        _make_node("S!F3", None, -5),
+        _make_node("S!D12", "=MAX(IF(S!A1:A3>0,S!F1:F3))", None),
+        _make_node("S!D13", "=MAX(IF(S!A1:A3>0,S!F1:F3,0))", None),
     )
     results = evaluate_targets(
-        graph, ["S!D1", "S!D2", "S!D3", "S!D4", "S!D5", "S!D6", "S!D7", "S!D8", "S!D9", "S!D10"]
+        graph,
+        [
+            "S!D1",
+            "S!D2",
+            "S!D3",
+            "S!D4",
+            "S!D5",
+            "S!D6",
+            "S!D7",
+            "S!D8",
+            "S!D9",
+            "S!D10",
+            "S!D11",
+            "S!D12",
+            "S!D13",
+        ],
     )
     assert results["S!D1"] == 5.0
     assert results["S!D2"] == 50.0
@@ -68,3 +91,6 @@ def test_sum_if_array_codegen_parity() -> None:
     assert results["S!D8"] == 50.0
     assert results["S!D9"] == 3.0
     assert results["S!D10"] == 300.0
+    assert results["S!D11"] == pytest.approx(50.0 / 3.0)
+    assert results["S!D12"] == -5.0
+    assert results["S!D13"] == 0.0

@@ -38,38 +38,26 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
-def test_value_parity_with_lic_dsf_style_key() -> None:
+def test_value_parity() -> None:
+    """VALUE parses numbers, currency, ISO dates, blanks, and error/invalid text."""
+    expected_date_serial = datetime_to_excel_serial(datetime(2018, 3, 15))
     graph = _make_graph(
-        _make_node("S!A1", '=VALUE("6522014")', None),
+        _make_node("S!A1", '=VALUE("42")', None),
+        _make_node("S!A2", '=VALUE("12.5")', None),
+        _make_node("S!A3", '=VALUE("6522014")', None),
+        _make_node("S!A4", '=VALUE("$1,234.56")', None),
+        _make_node("S!A5", '=VALUE("abc")', None),
+        _make_node("S!A6", "=VALUE(#REF!)", None),
+        _make_node("S!A7", '=VALUE("")', None),
+        _make_node("S!A8", '=VALUE("2018-03-15")', None),
     )
 
-    results = evaluate_targets(graph, ["S!A1"])
-    assert results["S!A1"] == 6522014.0
-
-
-def test_value_parity_with_currency() -> None:
-    graph = _make_graph(
-        _make_node("S!B1", '=VALUE("$1,234.56")', None),
-    )
-
-    results = evaluate_targets(graph, ["S!B1"])
-    assert results["S!B1"] == 1234.56
-
-
-def test_value_parity_with_invalid_text() -> None:
-    graph = _make_graph(
-        _make_node("S!C1", '=VALUE("abc")', None),
-    )
-
-    results = evaluate_targets(graph, ["S!C1"])
-    assert results["S!C1"] == XlError.VALUE
-
-
-def test_value_parity_with_iso_date_string() -> None:
-    graph = _make_graph(
-        _make_node("S!D1", '=VALUE("2018-03-15")', None),
-    )
-
-    results = evaluate_targets(graph, ["S!D1"])
-    expected = datetime_to_excel_serial(datetime(2018, 3, 15))
-    assert results["S!D1"] == pytest.approx(expected)
+    results = evaluate_targets(graph, [f"S!A{i}" for i in range(1, 9)])
+    assert results["S!A1"] == 42.0
+    assert results["S!A2"] == 12.5
+    assert results["S!A3"] == 6522014.0
+    assert results["S!A4"] == 1234.56
+    assert results["S!A5"] == XlError.VALUE
+    assert results["S!A6"] == XlError.REF
+    assert results["S!A7"] == 0.0
+    assert results["S!A8"] == pytest.approx(expected_date_serial)

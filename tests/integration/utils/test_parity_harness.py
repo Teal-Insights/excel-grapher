@@ -73,6 +73,12 @@ def test_evaluator_row_without_reference() -> None:
     assert results["S!E12"] == 12
 
 
+def test_evaluator_column_without_reference() -> None:
+    graph = _make_graph(_make_node("S!F2", "=COLUMN()", None))
+    results = evaluate_targets(graph, ["S!F2"])
+    assert results["S!F2"] == 6
+
+
 def test_evaluator_column_and_columns_with_offset() -> None:
     graph = _make_graph(
         _make_node("S!D4", None, 10),
