@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+from typing import Any
 
 import pytest
 
@@ -34,20 +35,12 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     return graph
 
 
-def _constant_ranges(document: dict[str, object]) -> set[str]:
-    return {
-        str(series["data_range"])
-        for series in document["series"]  # type: ignore[union-attr]
-        if "constant" in series
-    }
+def _constant_ranges(document: dict[str, Any]) -> set[str]:
+    return {str(series["data_range"]) for series in document["series"] if "constant" in series}
 
 
-def _formula_series(document: dict[str, object]) -> list[dict[str, object]]:
-    return [
-        series
-        for series in document["series"]  # type: ignore[union-attr]
-        if "output" in series or "internal" in series
-    ]
+def _formula_series(document: dict[str, Any]) -> list[dict[str, Any]]:
+    return [series for series in document["series"] if "output" in series or "internal" in series]
 
 
 def test_evaluator_simple_arithmetic() -> None:
