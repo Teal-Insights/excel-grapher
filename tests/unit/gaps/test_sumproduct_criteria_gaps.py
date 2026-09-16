@@ -7,6 +7,7 @@ Regression coverage for element-wise range comparisons and products inside
 # ruff: noqa: E402
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any, cast
 
@@ -25,19 +26,13 @@ from tests.unit.gaps.workbook_helpers import (
 )
 from tests.utils.excel_workbook_parity import assert_workbook_parity
 
-_SUMPRODUCT_CASES: tuple[tuple[str, str, float], ...] = (
-    ("cached_k21.xlsx", "Product Lookup!K21", 10598.0),
-    ("cached_k24.xlsx", "Product Lookup!K24", 7.0),
-    ("cached_i14.xlsx", "Product Lookup!I14", 630.0),
-    ("cached_i18.xlsx", "Product Lookup!I18", 3.0),
+_SUMPRODUCT_CASES: tuple[tuple[str, str, float, Callable[[Path], Path]], ...] = (
+    ("cached_k21.xlsx", "Product Lookup!K21", 10598.0, write_software_revenue_sumproduct),
+    ("cached_k24.xlsx", "Product Lookup!K24", 7.0, write_sumproduct_price_threshold_k24),
+    ("cached_i14.xlsx", "Product Lookup!I14", 630.0, write_sumproduct_category_filter),
+    ("cached_i18.xlsx", "Product Lookup!I18", 3.0, write_sumproduct_threshold_count),
 )
-
-_SUMPRODUCT_WRITERS = {
-    "Product Lookup!K21": write_software_revenue_sumproduct,
-    "Product Lookup!K24": write_sumproduct_price_threshold_k24,
-    "Product Lookup!I14": write_sumproduct_category_filter,
-    "Product Lookup!I18": write_sumproduct_threshold_count,
-}
+_SUMPRODUCT_IDS = [address for _filename, address, _expected, _writer in _SUMPRODUCT_CASES]
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -55,12 +50,19 @@ def _make_node(address: str, formula: str | None, value: object) -> Node:
     )
 
 
-def _sumproduct_workbooks(tmp_path: Path) -> list[tuple[Path, str, float]]:
-    cases: list[tuple[Path, str, float]] = []
-    for filename, address, expected in _SUMPRODUCT_CASES:
-        writer = _SUMPRODUCT_WRITERS[address]
-        cases.append((writer(tmp_path / filename), address, expected))
-    return cases
+def _sumproduct_graph(
+    tmp_path: Path,
+    filename: str,
+    address: str,
+    write_workbook: Callable[[Path], Path],
+) -> DependencyGraph:
+    workbook = write_workbook(tmp_path / filename)
+    return create_dependency_graph(
+        workbook,
+        [address],
+        load_values=True,
+        use_cached_dynamic_refs=True,
+    )
 
 
 def test_standalone_range_comparison_returns_elementwise_array() -> None:
@@ -77,26 +79,35 @@ def test_standalone_range_comparison_returns_elementwise_array() -> None:
     assert actual == [[True], [False], [True]]
 
 
-def test_sumproduct_criteria_evaluator_matches_excel_cached_values(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("filename", "address", "write_workbook"),
+    [(filename, address, writer) for filename, address, _, writer in _SUMPRODUCT_CASES],
+    ids=_SUMPRODUCT_IDS,
+)
+def test_sumproduct_criteria_evaluator_matches_excel_cached_values(
+    tmp_path: Path,
+    filename: str,
+    address: str,
+    write_workbook: Callable[[Path], Path],
+) -> None:
     """Evaluator agrees with Excel cached values embedded in gap workbooks."""
-    for workbook, address, _expected in _sumproduct_workbooks(tmp_path):
-        graph = create_dependency_graph(
-            workbook,
-            [address],
-            load_values=True,
-            use_cached_dynamic_refs=True,
-        )
-        assert_workbook_parity(graph, [address])
+    graph = _sumproduct_graph(tmp_path, filename, address, write_workbook)
+    assert_workbook_parity(graph, [address])
 
 
-def test_sumproduct_criteria_eval_codegen_parity(tmp_path: Path) -> None:
-    """Evaluator and inverted-tree export agree on the four SUMPRODUCT gap workbooks."""
-    for workbook, address, expected in _sumproduct_workbooks(tmp_path):
-        graph = create_dependency_graph(
-            workbook,
-            [address],
-            load_values=True,
-            use_cached_dynamic_refs=True,
-        )
-        results = evaluate_targets(graph, [address])
-        assert results[address] == pytest.approx(expected)
+@pytest.mark.parametrize(
+    ("filename", "address", "expected", "write_workbook"),
+    _SUMPRODUCT_CASES,
+    ids=_SUMPRODUCT_IDS,
+)
+def test_sumproduct_criteria_eval_codegen_parity(
+    tmp_path: Path,
+    filename: str,
+    address: str,
+    expected: float,
+    write_workbook: Callable[[Path], Path],
+) -> None:
+    """Evaluator and inverted-tree export agree on the SUMPRODUCT gap workbook."""
+    graph = _sumproduct_graph(tmp_path, filename, address, write_workbook)
+    results = evaluate_targets(graph, [address])
+    assert results[address] == pytest.approx(expected)

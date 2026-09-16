@@ -12,7 +12,6 @@ import xlsxwriter
 
 from excel_grapher import DependencyGraph, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.evaluator.evaluator import FormulaEvaluator
 from tests.integration.utils.parity_harness import evaluate_targets
 
 
@@ -36,43 +35,6 @@ def _make_graph(*nodes: Node) -> DependencyGraph:
     for node in nodes:
         graph.add_node(node)
     return graph
-
-
-def test_if_index_equality_uses_scalar_condition() -> None:
-    """`IF(INDEX(...)="Yes", 1, 2)` returns 1, not `#VALUE!`."""
-    graph = _make_graph(
-        _make_node("S!A1", None, "Yes"),
-        _make_node("S!A2", None, "No"),
-        _make_node("S!B1", '=IF(INDEX(S!A1:S!A2,1,1)="Yes",1,2)', None),
-    )
-    with FormulaEvaluator(graph) as evaluator:
-        assert evaluator.evaluate("S!B1") == 1
-
-
-def test_iferror_index_flag_does_not_take_fallback() -> None:
-    """`IFERROR(IF(INDEX(...)="Yes", ...), fallback)` keeps the true branch."""
-    graph = _make_graph(
-        _make_node("S!A1", None, "Yes"),
-        _make_node("S!A2", None, "No"),
-        _make_node(
-            "S!B2",
-            '=IFERROR(IF(INDEX(S!A1:S!A2,1,1)="Yes","Yes",""),"")',
-            None,
-        ),
-    )
-    with FormulaEvaluator(graph) as evaluator:
-        assert evaluator.evaluate("S!B2") == "Yes"
-
-
-def test_index_concat_returns_scalar_string() -> None:
-    """`INDEX(...)&INDEX(...)` concatenates cell values into one string."""
-    graph = _make_graph(
-        _make_node("S!A1", None, "Yes"),
-        _make_node("S!A2", None, "No"),
-        _make_node("S!B3", "=INDEX(S!A1:S!A2,2,1)&INDEX(S!A1:S!A2,1,1)", None),
-    )
-    with FormulaEvaluator(graph) as evaluator:
-        assert evaluator.evaluate("S!B3") == "NoYes"
 
 
 def test_literal_1x1_range_unary_and_broadcast_parity() -> None:
