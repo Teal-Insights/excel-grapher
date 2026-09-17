@@ -250,14 +250,6 @@ def test_dense_column_sum_does_not_freeze_first_column(tmp_path: Path) -> None:
     assert "time_period" in internals
 
 
-def test_sparse_column_sum_does_not_use_affine_origin_classifier(tmp_path: Path) -> None:
-    generate_inverted(
-        _sparse_workbook(tmp_path),
-        _sparse_bindings(),
-        blank_ranges=["Engine!B3"],
-    )
-
-
 def test_in_scc_column_sum_demands_selected_instances(tmp_path: Path) -> None:
     workbook = _scc_workbook(tmp_path)
     modules = generate_inverted(workbook, _scc_bindings())

@@ -99,19 +99,6 @@ def _host_countries(size: int) -> tuple[str, ...]:
     return tuple(f"Country {row}" for row in range(2, size + 2))
 
 
-def test_repeated_keyed_reads_do_not_embed_producer_domain(tmp_path: Path) -> None:
-    size = 20
-    workbook = _domain_workbook(tmp_path, size)
-    document = _domain_bindings(size)
-    catalog, deps, _graph = inverted_graph_parts(workbook, document)
-    internals = generate_inverted(workbook, document)["internals.py"]
-    domain = _producer_domain(size)
-    assert internals.count(repr(domain)) <= 1
-    assert internals.count(".index(") == 0
-    countries = _host_countries(size)
-    assert internals.count(repr(countries)) <= 1
-
-
 def test_keyed_domain_source_does_not_copy_per_read(tmp_path: Path) -> None:
     sizes = (10, 20, 40)
     internals_sizes: list[int] = []
@@ -121,6 +108,7 @@ def test_keyed_domain_source_does_not_copy_per_read(tmp_path: Path) -> None:
         internals_sizes.append(len(internals.encode()))
         assert internals.count(repr(_producer_domain(size))) <= 1
         assert internals.count(".index(") == 0
+        assert internals.count(repr(_host_countries(size))) <= 1
     # Two-read formulas must not pay the producer domain once per read.
     # Affine / interned maps grow far slower than embedding the cartesian key
     # tuple at each site (the pre-fix 10→40 growth was ~2.8×).

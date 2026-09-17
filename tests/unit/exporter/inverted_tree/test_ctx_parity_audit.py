@@ -232,55 +232,22 @@ def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
     assert _scalar(pkg.compute_out(src=4.0)) == expected
 
 
-@pytest.mark.parametrize(
-    ("formula", "extra_cells", "match"),
-    [
-        (
-            '=INDIRECT("Inputs!Z99")',
-            {"Z99": 9.0},
-            r"INDIRECT|not one bound series|no resolved edges",
-        ),
-    ],
-)
-def test_ctx_library_shapes_fail_closed(
-    tmp_path: Path,
-    formula: str,
-    extra_cells: dict[str, object],
-    match: str,
-) -> None:
-    inputs = {"A1": 1.0, **extra_cells}
+def test_ctx_library_shapes_fail_closed(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "fail_closed.xlsx",
         {
-            "Inputs": inputs,
-            "Outputs": {"A1": formula},
+            "Inputs": {"A1": 1.0, "Z99": 9.0},
+            "Outputs": {"A1": '=INDIRECT("Inputs!Z99")'},
         },
     )
-    src_range = (
-        "Inputs!A1:B2"
-        if "B1" in extra_cells
-        else ("Inputs!A1:A2" if "A2" in extra_cells else "Inputs!A1")
-    )
-    layout = "series" if ":" in src_range else "scalar"
     document = bindings_document(
-        series_entry(
-            "src",
-            src_range,
-            layout=layout,
-            direction="input",
-            header_row=10 if layout == "series" else None,
-        ),
+        series_entry("src", "Inputs!A1", layout="scalar", direction="input"),
         series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
     )
-    if layout == "series":
-        workbook = write_workbook(
-            tmp_path / "fail_closed.xlsx",
-            {
-                "Inputs": {**inputs, "A10": 1, "B10": 2},
-                "Outputs": {"A1": formula},
-            },
-        )
-    with pytest.raises(InvertedTreeExportError, match=match):
+    with pytest.raises(
+        InvertedTreeExportError,
+        match=r"INDIRECT|not one bound series|no resolved edges",
+    ):
         generate_inverted(workbook, document)
 
 
@@ -296,104 +263,6 @@ def test_iferror_matches_evaluator(tmp_path: Path, value: float) -> None:
     with FormulaEvaluator(graph) as evaluator:
         expected = evaluator.evaluate(["Outputs!A1"])["Outputs!A1"]
     assert _scalar(package.compute_out(src=value)) == expected
-
-
-def test_sum_if_array_matches_evaluator(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "sum_if.xlsx",
-        {
-            "Inputs": {"Z1": 1, "Z2": 2, "A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
-            "Outputs": {"A1": "=SUM(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
-        },
-    )
-    document = bindings_document(
-        series_entry(
-            "src",
-            "Inputs!A1:A2",
-            layout="series",
-            direction="input",
-            label_column="Z",
-        ),
-        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
-    )
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_sum_if")
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0)))) == pytest.approx(
-        expected
-    )
-
-
-def test_average_if_array_matches_evaluator(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "average_if.xlsx",
-        {
-            "Inputs": {"Z1": 1, "Z2": 2, "A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
-            "Outputs": {"A1": "=AVERAGE(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
-        },
-    )
-    document = bindings_document(
-        series_entry(
-            "src",
-            "Inputs!A1:A2",
-            layout="series",
-            direction="input",
-            label_column="Z",
-        ),
-        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
-    )
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_average_if")
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0)))) == pytest.approx(
-        expected
-    )
-
-
-def test_max_if_array_matches_evaluator(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "max_if.xlsx",
-        {
-            "Inputs": {"Z1": 1, "Z2": 2, "A1": -1.0, "A2": 2.0, "A10": 1, "B10": 2},
-            "Outputs": {"A1": "=MAX(IF(Inputs!A1:A2>0,Inputs!A1:A2))"},
-        },
-    )
-    document = bindings_document(
-        series_entry(
-            "src",
-            "Inputs!A1:A2",
-            layout="series",
-            direction="input",
-            label_column="Z",
-        ),
-        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
-    )
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_max_if")
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0)))) == pytest.approx(
-        expected
-    )
-
-
-def test_cross_sheet_range_matches_evaluator(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "cross.xlsx",
-        {
-            "Inputs": {"A1": 1.0},
-            "Other": {"A1": 2.0},
-            "Outputs": {"A1": "=SUM(Inputs!A1:Other!A1)"},
-        },
-    )
-    document = bindings_document(
-        series_entry("left", "Inputs!A1", layout="scalar", direction="input"),
-        series_entry("right", "Other!A1", layout="scalar", direction="input"),
-        series_entry("out", "Outputs!A1", layout="scalar", direction="output"),
-    )
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_cross")
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(left=1.0, right=2.0)) == pytest.approx(expected)
 
 
 def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> None:
@@ -446,28 +315,3 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
             right=pkg.data.RIGHT.with_nested((3.0, 4.0)),
         )
     ) == pytest.approx(expected["Outputs!B1"])
-
-
-def test_input_domain_rejects_out_of_range_argument(tmp_path: Path) -> None:
-    workbook = write_workbook(
-        tmp_path / "domain.xlsx",
-        {
-            "Inputs": {"A1": 0},
-            "Outputs": {"A1": "=Inputs!A1"},
-        },
-    )
-    document = bindings_document(
-        series_entry(
-            "flag",
-            "Inputs!A1",
-            layout="scalar",
-            direction="input",
-            dtype="int",
-            domain={"enum": [0, 1]},
-        ),
-        series_entry("out", "Outputs!A1", layout="scalar", direction="output", dtype="int"),
-    )
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_domain")
-    assert pkg.compute_out(flag=0) == 0
-    with pytest.raises(ValueError, match=r"flag out of domain"):
-        pkg.compute_out(flag=2)

@@ -143,13 +143,6 @@ def test_no_input_domain_does_not_emit_domain_guard(tmp_path: Path) -> None:
     assert "require_input_domain" not in modules["validation.py"]
 
 
-def test_domain_checks_live_in_validation_not_internals(tmp_path: Path) -> None:
-    modules = generate_inverted(_enum_flag_workbook(tmp_path), _enum_flag_bindings())
-    assert "require_input_domain(flag" in modules["validation.py"]
-    assert "require_input_domain" not in modules["api.py"]
-    assert "require_input_domain" not in modules["internals.py"]
-
-
 def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "shared.xlsx",

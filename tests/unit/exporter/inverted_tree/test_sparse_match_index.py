@@ -149,6 +149,7 @@ def test_mcve_exports_next_nonblank_without_blank_ranges(tmp_path: Path) -> None
     assert "xl_match(" in internals
     assert "xl_index(" in internals
     assert "xl_ne(" in internals
+    assert "((lambda: None,), (lambda: quoted[3],), (lambda: None,))" in internals
 
 
 def test_declared_blanks_are_optional_for_off_graph_holes(tmp_path: Path) -> None:
@@ -169,15 +170,6 @@ def test_omit_exclude_rows_still_keeps_hole_positions(tmp_path: Path) -> None:
     )
     assert got == pytest.approx(want)
     assert got == pytest.approx(0.03)
-
-
-def test_shifted_holes_would_return_blank_not_next_quote(tmp_path: Path) -> None:
-    """Dropping N11 from the MATCH vector would INDEX into the hole."""
-    got, want, modules = _export_interp(tmp_path, stem="sparse_shift")
-    assert got == pytest.approx(want)
-    assert got == pytest.approx(0.03)
-    internals = modules["internals.py"]
-    assert "((lambda: None,), (lambda: quoted[3],), (lambda: None,))" in internals
 
 
 def test_on_graph_unbound_formula_in_window_fails_closed(tmp_path: Path) -> None:

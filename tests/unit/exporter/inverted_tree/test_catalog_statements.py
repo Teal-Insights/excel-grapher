@@ -74,11 +74,6 @@ def test_mixed_formulas_partition_into_one_statement_per_shape_run(tmp_path: Pat
     )
     catalog = build_catalog(bindings, workbook=workbook, graph=graph)
     series = catalog.get("path")
-    assert [stmt.shape_key for stmt in series.statements] == [
-        series.statements[0].shape_key,
-        series.statements[1].shape_key,
-        series.statements[2].shape_key,
-    ]
     assert len({stmt.shape_key for stmt in series.statements}) == 3
     assert [(stmt.start, stmt.stop) for stmt in series.statements] == [(0, 1), (1, 2), (2, 3)]
     assert [stmt.statement_id for stmt in series.statements] == [

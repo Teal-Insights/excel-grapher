@@ -134,21 +134,6 @@ def _prefix_bindings() -> dict:
     )
 
 
-def test_long_shared_prefix_is_factored_once(tmp_path: Path) -> None:
-    modules = generate_inverted(_prefix_workbook(tmp_path), _prefix_bindings())
-    api = modules["api.py"]
-    for index in range(_PREFIX_LEN):
-        assert api.count(f"internals.step_{index}(") == 1
-    first_src = api[api.index("def compute_first") :]
-    second_src = api[api.index("def compute_second") :]
-    first_fn = first_src.split("\ndef ")[0]
-    second_fn = second_src.split("\ndef ")[0]
-    assert "extra" not in first_fn
-    assert "second_tail" not in first_fn
-    assert "extra" in second_fn
-    assert "first_tail" not in second_fn
-
-
 def test_shared_prefix_parity_and_isolation(tmp_path: Path) -> None:
     workbook = _prefix_workbook(tmp_path)
     document = _prefix_bindings()

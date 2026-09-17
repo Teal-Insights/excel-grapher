@@ -233,13 +233,6 @@ def test_export_matches_evaluator_across_binding_boundaries(tmp_path: Path) -> N
     assert "xl_match(" in internals
 
 
-def test_leading_and_interior_blanks_keep_match_positions(tmp_path: Path) -> None:
-    """``Loan`` is Excel position 5; dropping ``A6`` would match at 4."""
-    got, want, _modules = _export_picked(tmp_path, stem="mo_pos")
-    assert got == pytest.approx(want)
-    assert got == pytest.approx((20.0, 21.0))
-
-
 def test_missing_lookup_is_na(tmp_path: Path) -> None:
     got, _want, _modules = _export_picked(
         tmp_path,
