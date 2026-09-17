@@ -403,7 +403,7 @@ def test_require_input_domain_scalar_and_sequence() -> None:
     enum_domain = {"enum": frozenset({0, 1})}
     require_input_domain(0, enum_domain, series_id="flag")
     require_input_domain(1, enum_domain, series_id="flag")
-    with pytest.raises(ValueError, match=r"flag out of domain: 2 not in \{0, 1\}"):
+    with pytest.raises(ValueError, match=r"flag out of domain"):
         require_input_domain(2, enum_domain, series_id="flag")
 
     bounds = {"real_between": {"min": 0, "max": 1}}

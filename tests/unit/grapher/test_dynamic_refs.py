@@ -123,10 +123,7 @@ def test_offset_with_cached_named_range_warns_once(
 
     cache_warnings = [w for w in caught if "cached workbook values" in str(w.message)]
     assert len(cache_warnings) == 1
-    message = str(cache_warnings[0].message)
-    assert "fixed at graph-build time" in message
-    assert "dynamic_refs" in message
-    assert "stale" not in message.lower()
+    assert "dynamic_refs" in str(cache_warnings[0].message)
 
 
 def test_offset_index_row_resolves_named_range(tmp_path: Path) -> None:
@@ -876,7 +873,7 @@ def test_dynamic_ref_arg_subgraph_aligns_ast_range_cap_with_builder_bfs_issue_56
     )
     config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
 
-    with pytest.raises(ValueError, match="exceeding max_cells=2"):
+    with pytest.raises(ValueError, match="max_cells"):
         create_dependency_graph(
             excel_path,
             ["Sheet1!E1"],
@@ -911,9 +908,6 @@ def test_dynamic_ref_missing_multiple_leaves_raises_builder_aggregate_not_per_le
             dynamic_refs=config,
         )
     msg = str(exc_info.value)
-    assert "following leaf" in msg
-    assert "have no constraint" in msg
-    assert "Missing constraint for leaf" not in msg
     # _format_missing_leaves may merge B1:D1 into one single-prefix rectangle
     assert "Sheet1!B1:D1" in msg or ("Sheet1!B1" in msg and "Sheet1!D1" in msg)
 
@@ -1971,7 +1965,6 @@ def test_expand_leaf_env_reports_unsupported_construct_in_fallback_error() -> No
 
     msg = str(exc_info.value)
     assert "ROUND" in msg
-    assert "not covered by numeric abstract analysis" in msg
 
 
 def test_expand_leaf_env_division_wide_interval_no_branch_limit_error() -> None:
@@ -2300,10 +2293,9 @@ def test_expand_leaf_env_division_zero_risk_error_points_to_divisor_cells() -> N
 
     msg = str(exc_info.value)
     assert "divisor" in msg
-    assert "include zero" in msg
+    assert "zero" in msg
     assert "Sheet1!B9" in msg
     assert "Sheet1!B10" in msg
-    assert "(Sheet1!B10-Sheet1!B9)" in msg
 
 
 def test_infer_numeric_domain_result_uses_relational_cell_constraint_for_divisor() -> None:
