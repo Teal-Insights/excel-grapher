@@ -24,7 +24,7 @@ from excel_grapher.core.address_keys import (
 def test_address_keys_reject_arbitrary_attributes(key_cls: type[str], text: str) -> None:
     key = key_cls(text)
     with pytest.raises(AttributeError):
-        key.dynamic_attr = 1  # type: ignore[attr-defined]
+        object.__setattr__(key, "dynamic_attr", 1)
     assert key == text
     assert hash(key) == hash(text)
     assert {key: "ok"}[text] == "ok"
