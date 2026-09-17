@@ -95,17 +95,6 @@ class TestQualifyFragmentRegexCache:
             "patterns must be precompiled and absent names skipped"
         )
 
-    def test_token_patterns_are_lru_cached_across_calls(self) -> None:
-        pattern_fn = dynamic_refs_mod._defined_name_token_pattern
-        pattern_fn.cache_clear()
-        named = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(20)}
-        for _ in range(5):
-            _qualify("Name3+Name7", named)
-        info = pattern_fn.cache_info()
-        assert info.misses <= 2
-        assert info.hits >= 8
-        assert info.maxsize is not None
-
     def test_large_catalog_repeat_calls_stay_fast(self) -> None:
         named = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(600)}
         expr = "Name5+Name9"

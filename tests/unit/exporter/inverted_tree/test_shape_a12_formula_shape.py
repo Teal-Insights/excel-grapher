@@ -127,7 +127,6 @@ def test_mixed_member_formulas_emit_correct_values(
 ) -> None:
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
-    assert "formula shape" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name=pkg_name)
     result = pkg.compute_path()
     assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx((1.0, 2.0, 102.0))

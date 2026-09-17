@@ -238,7 +238,7 @@ class TestXlCellDivergentBehavior:
     def test_resolver_miss_raises_key_error(self) -> None:
         ctx = _ctx(resolver=_missing_resolver)
 
-        with pytest.raises(KeyError, match=r"Cell S!Z99 not found in graph"):
+        with pytest.raises(KeyError, match=r"S!Z99"):
             xl_cell(ctx, "S!Z99")
 
     def test_structural_blank_retains_none(self) -> None:

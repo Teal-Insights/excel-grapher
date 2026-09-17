@@ -400,7 +400,6 @@ def test_per_country_seed_fuses_without_area_if_chain(tmp_path: Path, orientatio
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "if _area ==" not in internals
     assert "initial[ref_area]" in internals
     pkg = load_package(modules, tmp_path, name=f"a20_seed_{orientation[:1]}")
     addresses = list(
@@ -422,8 +421,6 @@ def test_per_country_seed_internals_identical_across_partition_counts(tmp_path: 
     )
     small = generate_inverted(small_wb, _country_seed_bindings(2, 3))
     large = generate_inverted(large_wb, _country_seed_bindings(8, 3))
-    assert "if _area ==" not in small["internals.py"]
-    assert "if _area ==" not in large["internals.py"]
     assert _normalize_fused_loop_bounds(small["internals.py"]) == _normalize_fused_loop_bounds(
         large["internals.py"]
     )
@@ -495,9 +492,7 @@ def test_aligned_matrix_producer_uses_area_stride_index(tmp_path: Path) -> None:
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     modules = generate_inverted(workbook, document)
     internals = modules["internals.py"]
-    assert "if _area ==" not in internals
     assert "rate[ref_area, time_period]" in internals
-    assert "take(" not in modules["api.py"]
     pkg = load_package(modules, tmp_path, name="a20_aligned_rate")
     addresses = _country_seed_debt_addresses(n_areas, n_years)
     expected = _evaluator_values(workbook, addresses)

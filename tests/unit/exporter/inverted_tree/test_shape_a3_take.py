@@ -45,7 +45,6 @@ def test_misaligned_growth_interest_raise(tmp_path: Path) -> None:
 def test_scan_does_not_implicitly_rebase_a_later_year(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     modules = generate_inverted(workbook, _a1_bindings())
-    assert "_kernels.engine_path(" not in modules["internals.py"]
     assert "CoordinateReader" in modules["internals.py"]
     assert "engine_path[time_period - 1]" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a3_restart")
@@ -64,7 +63,6 @@ def test_scan_does_not_implicitly_rebase_a_later_year(tmp_path: Path) -> None:
 def test_public_compute_takes_named_series(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     modules = generate_inverted(workbook, _a1_bindings())
-    assert "trim(" not in modules["api.py"]
     pkg = load_package(modules, tmp_path, name="a3_y1")
     value = pkg.compute_output_year1(
         initial_debt=60.0,

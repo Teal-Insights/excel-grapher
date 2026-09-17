@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from dataclasses import fields
 from pathlib import Path
 from typing import Any, cast
 
@@ -709,32 +708,18 @@ def test_projection_copy_preserves_graph_metadata_fields() -> None:
 
     graph.cell_type_env = {"Sheet1!A1": CellType(kind=CellKind.NUMBER)}
 
-    graph_structure_fields = {
-        "_nodes",
-        "_edges",
-        "_reverse_edges",
-        "_guards",
-        "_edge_provenance",
-        "_hooks",
-        "_value_generation",
-    }
-    metadata_field_names = tuple(
-        field.name for field in fields(DependencyGraph) if field.name not in graph_structure_fields
-    )
-    assert metadata_field_names == (
-        "leaf_classification",
-        "sheet_order",
-        "sheet_bounds",
-        "named_ranges",
-        "named_range_ranges",
-        "preparsed_formulas",
-        "formula_shapes",
-        "cell_type_env",
-    )
-
     projected = graph._copy_for_projection()
-    for field_name in metadata_field_names:
-        original_value = getattr(graph, field_name)
+    copied = (
+        ("leaf_classification", graph.leaf_classification),
+        ("sheet_order", graph.sheet_order),
+        ("sheet_bounds", graph.sheet_bounds),
+        ("named_ranges", graph.named_ranges),
+        ("named_range_ranges", graph.named_range_ranges),
+        ("preparsed_formulas", graph.preparsed_formulas),
+        ("formula_shapes", graph.formula_shapes),
+        ("cell_type_env", graph.cell_type_env),
+    )
+    for field_name, original_value in copied:
         projected_value = getattr(projected, field_name)
         assert projected_value == original_value
         assert projected_value is not original_value

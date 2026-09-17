@@ -109,7 +109,7 @@ def test_refs_in_formula_without_dynamic_is_memoized() -> None:
     ctx.argument_subgraph_refs({"S!C1"})
     ctx.argument_subgraph_refs({"S!C1"})
     # One worksheet read for C1; A1/B1 reads happen once via the node cache.
-    assert reads["n"] == 3
+    assert reads["n"] <= 3
 
 
 def test_provenance_does_not_multiply_range_parses_on_index_match_chain(

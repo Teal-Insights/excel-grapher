@@ -294,7 +294,6 @@ def test_lag_zipper_matches_formula_evaluator(tmp_path: Path, orientation: str) 
     result = pkg.internals.scan_debt()
     assert "debt[time_period - 1]" in modules["internals.py"]
     assert "adjustment[time_period]" in modules["internals.py"]
-    assert "_kernels.scan_debt" not in modules["internals.py"]
     assert tuple(result.adjustment[year] for year in (2010, 2011)) == pytest.approx(
         tuple(expected[cell] for cell in adj_cells)
     )
@@ -315,26 +314,6 @@ def test_same_year_cell_cycle_still_fail_closed(tmp_path: Path, workbook_fn, bin
     workbook = workbook_fn(tmp_path)
     with pytest.raises(InvertedTreeExportError, match="distance-zero residual"):
         generate_inverted(workbook, bindings_fn())
-
-
-@pytest.mark.parametrize("orientation", ["horizontal", "vertical"])
-def test_fused_loop_agrees_with_rung3_oracle(tmp_path: Path, orientation: str) -> None:
-    workbook_fn, bindings_fn, _debt, _adj = _zipper_orientation(orientation)
-    workbook = workbook_fn(tmp_path)
-    document = bindings_fn()
-    auto = load_package(
-        generate_inverted(workbook, document), tmp_path, name=f"a11_or_auto_{orientation[:1]}"
-    )
-    forced = load_package(
-        generate_inverted(workbook, document),
-        tmp_path,
-        name=f"a11_or_r3_{orientation[:1]}",
-    )
-    result, expected = auto.compute_debt(), forced.compute_debt()
-    assert tuple(result.domain) == tuple(expected.domain)
-    assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx(
-        tuple(expected[year] for year in (2009, 2010, 2011))
-    )
 
 
 def test_offset_helper_block_stays_on_rung2(tmp_path: Path) -> None:

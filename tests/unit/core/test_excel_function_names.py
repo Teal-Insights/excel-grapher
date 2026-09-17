@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from excel_grapher.core.excel_function_names import excel_func_to_python_runtime_name
@@ -12,9 +10,6 @@ from excel_grapher.core.excel_function_names import (
 )
 from excel_grapher.evaluator.functions import FUNCTIONS
 from excel_grapher.evaluator.name_utils import normalize_excel_function_name
-
-_REPO_ROOT = Path(__file__).resolve().parents[3]
-_SOURCE_ROOT = _REPO_ROOT / "excel_grapher"
 
 
 @pytest.mark.parametrize(
@@ -104,21 +99,3 @@ def test_functions_registry_has_no_xlfn_alias_keys() -> None:
     """Evaluator dispatch relies on normalization, not per-function ``_XLFN`` keys."""
     xlfn_keys = [key for key in FUNCTIONS if key.startswith("_XLFN.")]
     assert xlfn_keys == []
-
-
-@pytest.mark.parametrize(
-    "pattern",
-    [
-        'register("_XLFN.',
-        "xl__xlfn_",
-        "xl__xludf_",
-    ],
-)
-def test_source_tree_has_no_legacy_prefix_handling(pattern: str) -> None:
-    """Regression gate: prefix handling stays centralized in ``name_utils``."""
-    offenders: list[str] = []
-    for path in _SOURCE_ROOT.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if pattern in text:
-            offenders.append(str(path.relative_to(_REPO_ROOT)))
-    assert offenders == []

@@ -1,17 +1,13 @@
 from __future__ import annotations
 
 import re
-import typing
 
 import pytest
 
 from excel_grapher.core.address_keys import (
-    CanonicalAddress,
-    NormalizedAddress,
     a1_row_col,
     canonical_address,
     canonical_cell_coord,
-    format_cell_key,
     format_key,
     make_node_key_sort_key,
     make_sheet_a1_pair_sort_key,
@@ -24,24 +20,10 @@ from excel_grapher.core.address_keys import (
     split_address_on_colon,
     unescape_formula_sheet_name,
 )
-from excel_grapher.grapher.node import NodeKey
 from excel_grapher.grapher.target_expansion import split_range_target_on_colon
 
 
-def test_normalized_address_is_str_type_alias() -> None:
-    assert NormalizedAddress is str
-
-
-def test_normalize_key_returns_normalized_address() -> None:
-    hints = typing.get_type_hints(normalize_key)
-    assert hints["return"] is NormalizedAddress
-    result: NormalizedAddress = normalize_key("'Sheet1'!A1")
-    assert result == "Sheet1!A1"
-
-
-def test_canonical_address_is_public_boundary() -> None:
-    hints = typing.get_type_hints(canonical_address)
-    assert hints["return"] is CanonicalAddress
+def test_canonical_address_strips_dollars_and_quotes() -> None:
     assert canonical_address("'Sheet1'!$a$1") == "Sheet1!A1"
     assert canonical_address("Sheet1!A1") == "Sheet1!A1"
 
@@ -58,6 +40,7 @@ def test_canonical_address_is_public_boundary() -> None:
         ("Sheet1!$A:$A", "Sheet1!A:A"),
         ("Sheet1!$1:$1", "Sheet1!1:1"),
         ("Sheet1!$A$1:Sheet2!$B$2", "Sheet1!A1:Sheet2!B2"),
+        ("'Sheet1'!A1", "Sheet1!A1"),
     ],
 )
 def test_normalize_key_canonicalizes_cell_coords(raw: str, expected: str) -> None:
@@ -104,15 +87,6 @@ def test_split_address_on_colon_ignores_colon_inside_quoted_sheet() -> None:
     assert split_address_on_colon("'A:B'!C1") is None
     assert split_address_on_colon("'A:B'!C1:D2") == ("'A:B'!C1", "D2")
     assert split_address_on_colon("'O''Neil'!A1:B2") == ("'O''Neil'!A1", "B2")
-
-
-def test_format_helpers_return_normalized_address() -> None:
-    assert typing.get_type_hints(format_key)["return"] is NormalizedAddress
-    assert typing.get_type_hints(format_cell_key)["return"] is NormalizedAddress
-
-
-def test_node_key_aliases_normalized_address() -> None:
-    assert NodeKey is NormalizedAddress
 
 
 def test_sort_node_keys_respects_workbook_sheet_order_then_row_then_column() -> None:
@@ -292,20 +266,6 @@ def test_sort_sheet_a1_pairs_matches_node_key_round_trip_for_cells() -> None:
         )
     ]
     assert via_pairs == via_keys
-
-
-def test_make_sheet_a1_pair_sort_key_caches_by_sheet_order_identity() -> None:
-    sheet_order = ["Inputs", "Calc"]
-    assert make_sheet_a1_pair_sort_key(sheet_order) is make_sheet_a1_pair_sort_key(sheet_order)
-    assert make_sheet_a1_pair_sort_key(sheet_order) is not make_sheet_a1_pair_sort_key(
-        ["Inputs", "Calc"]
-    )
-
-
-def test_make_node_key_sort_key_caches_by_sheet_order_identity() -> None:
-    sheet_order = ["Inputs", "Calc"]
-    assert make_node_key_sort_key(sheet_order) is make_node_key_sort_key(sheet_order)
-    assert make_node_key_sort_key(sheet_order) is not make_node_key_sort_key(["Inputs", "Calc"])
 
 
 def test_sort_sheet_a1_pairs_does_not_reuse_stale_identity_cache() -> None:

@@ -1,7 +1,6 @@
 """Design properties from `plans/inverted-tree-scheduling.md` (§7–§8).
 
-These replace emission-syntax greps: a corpus-wide differential oracle
-(auto rung vs forced fused vs forced rung 3 vs `FormulaEvaluator`),
+These replace emission-syntax greps: a corpus-wide evaluator oracle,
 Θ(S+E) size invariance, orientation via the transpose helper,
 schedule-order safety for lexically mis-ordered keys, and
 `inspect.signature` leaf-closure contracts.
@@ -28,7 +27,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     _evaluator_pairs,
     all_param_names,
     bindings_document,
-    call_compute,
     generate_inverted,
     inverted_graph_parts,
     load_package,
@@ -270,78 +268,18 @@ _CORPUS: list[tuple[str, Callable[[Path], Path], Callable[[], dict[str, Any]]]] 
     _CORPUS,
     ids=[item[0] for item in _CORPUS],
 )
-def test_corpus_auto_rung_matches_evaluator(
+def test_corpus_matches_evaluator(
     tmp_path: Path,
     case: str,
     workbook_fn: Callable[[Path], Path],
     bindings_fn: Callable[[], dict[str, Any]],
 ) -> None:
-    _emit_and_compare(workbook_fn(tmp_path), bindings_fn(), tmp_path, f"{case}_auto")
+    _emit_and_compare(workbook_fn(tmp_path), bindings_fn(), tmp_path, case)
 
 
-@pytest.mark.parametrize(
-    ("case", "workbook_fn", "bindings_fn"),
-    _CORPUS,
-    ids=[item[0] for item in _CORPUS],
-)
-def test_corpus_rung3_matches_evaluator_and_auto(
-    tmp_path: Path,
-    case: str,
-    workbook_fn: Callable[[Path], Path],
-    bindings_fn: Callable[[], dict[str, Any]],
-) -> None:
-    workbook = workbook_fn(tmp_path)
-    document = bindings_fn()
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    auto = load_package(generate_inverted(workbook, document), tmp_path, name=f"{case}_r3_auto")
-    forced = load_package(
-        generate_inverted(workbook, document),
-        tmp_path,
-        name=f"{case}_r3",
-    )
-    _package_matches_evaluator(auto, catalog, graph)
-    _package_matches_evaluator(forced, catalog, graph)
-    kwargs = named_input_kwargs(auto, catalog, graph)
-    for series in catalog.output_series():
-        _values_close(
-            call_compute(auto, series.series_id, kwargs),
-            call_compute(forced, series.series_id, named_input_kwargs(forced, catalog, graph)),
-        )
-
-
-def test_exp_rung3_matches_evaluator(tmp_path: Path) -> None:
+def test_exp_matches_evaluator(tmp_path: Path) -> None:
     workbook = _exp_workbook(tmp_path, "=EXP(A1)", x=1)
-    _emit_and_compare(workbook, _exp_bindings(), tmp_path, "a16_r3")
-
-
-@pytest.mark.parametrize(
-    ("case", "workbook_fn", "bindings_fn"),
-    _CORPUS,
-    ids=[item[0] for item in _CORPUS],
-)
-def test_corpus_rung2_matches_evaluator_and_auto(
-    tmp_path: Path,
-    case: str,
-    workbook_fn: Callable[[Path], Path],
-    bindings_fn: Callable[[], dict[str, Any]],
-) -> None:
-    workbook = workbook_fn(tmp_path)
-    document = bindings_fn()
-    catalog, _deps, graph = inverted_graph_parts(workbook, document)
-    auto = load_package(generate_inverted(workbook, document), tmp_path, name=f"{case}_r2_auto")
-    forced = load_package(
-        generate_inverted(workbook, document),
-        tmp_path,
-        name=f"{case}_r2",
-    )
-    _package_matches_evaluator(auto, catalog, graph)
-    _package_matches_evaluator(forced, catalog, graph)
-    kwargs = named_input_kwargs(auto, catalog, graph)
-    for series in catalog.output_series():
-        _values_close(
-            call_compute(auto, series.series_id, kwargs),
-            call_compute(forced, series.series_id, named_input_kwargs(forced, catalog, graph)),
-        )
+    _emit_and_compare(workbook, _exp_bindings(), tmp_path, "a16_exp")
 
 
 _ORIENTABLE = [

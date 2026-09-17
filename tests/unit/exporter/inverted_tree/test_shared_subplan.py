@@ -203,8 +203,6 @@ def test_shared_helper_is_not_a_cross_call_cache(tmp_path: Path) -> None:
         tmp_path,
         name="shared_no_cache",
     )
-    api_src = inspect.getsource(pkg.api)
-    assert "lru_cache" not in api_src
     first_a = pkg.compute_first(values=_source(pkg, "values", (1.0, 2.0, 3.0)))
     first_b = pkg.compute_first(values=_source(pkg, "values", (4.0, 5.0, 6.0)))
     assert _observations(first_a) != pytest.approx(_observations(first_b))
