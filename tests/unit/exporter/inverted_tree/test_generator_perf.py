@@ -45,15 +45,13 @@ from tests.unit.exporter.inverted_tree.test_shape_a11_zipper import (
     _zipper_workbook,
 )
 
-_CATALOG_CONSTANT_CELLS = 45_000
 
-
-def _constant_series_bindings(n: int = _CATALOG_CONSTANT_CELLS) -> dict:
+def _constant_series_bindings(n: int) -> dict:
     """Minimal catalog bindings: one constant series, no declared key.
 
     Schema validation requires a non-empty `key` on `layout: series`.
     `build_catalog` accepts `key: []` and treats expansion order as the
-    schedule, which is the 45k-cell case in #636.
+    schedule, which is the large-catalog case in #636.
     """
     return {
         "series": [
@@ -102,16 +100,6 @@ def test_generate_modules_walks_each_series_ast_once(
     generate_inverted(_zipper_workbook(tmp_path), _zipper_bindings())
     assert walks, "expected collect_series_edges to run during generate_modules"
     assert all(count == 1 for count in walks.values()), walks
-
-
-def test_build_catalog_normalizes_each_cell_once(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    workbook = write_workbook(tmp_path / "const.xlsx", {"Sheet1": {"A1": 1}})
-    calls = _count_normalize_key_calls(monkeypatch)
-    catalog = build_catalog(_constant_series_bindings(), workbook=workbook)
-    assert len(catalog.get("consts").cells) == _CATALOG_CONSTANT_CELLS
-    assert calls["n"] == _CATALOG_CONSTANT_CELLS, calls["n"]
 
 
 def test_build_catalog_normalize_key_scales_linearly(

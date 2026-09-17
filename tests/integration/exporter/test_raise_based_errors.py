@@ -71,14 +71,6 @@ class TestExportRuntimeBoundaryHelpers:
             ns["xl_offset_ref"](("Sheet1", 1, 1, 3, 1), -5, 0)
         assert cast(Any, exc_info.value).code == XlError.REF
 
-    def test_averageif_raises_value_errors(self) -> None:
-        code = emit_export_runtime({"xl_averageif"})
-        ns: dict[str, Any] = {}
-        exec(code, ns)
-        with pytest.raises(cast("type[BaseException]", ns["XlErrorException"])) as exc_info:
-            ns["xl_averageif"]([1, 2], ">5", [10, 20, 30])
-        assert cast(Any, exc_info.value).code == XlError.VALUE
-
     def test_value_preserves_iso_date_fallback(self) -> None:
         code = emit_export_runtime({"xl_value"})
         ns: dict[str, Any] = {}

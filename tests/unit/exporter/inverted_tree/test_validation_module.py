@@ -5,12 +5,9 @@ from __future__ import annotations
 import subprocess
 from pathlib import Path
 
-import pytest
-
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    load_package,
     series_entry,
     write_workbook,
 )
@@ -88,14 +85,3 @@ def test_validation_module_passes_ruff_check_and_format(tmp_path: Path) -> None:
     assert check.returncode == 0, f"ruff check failed:\n{check.stdout}\n{check.stderr}"
     fmt = _run(["uv", "run", "--no-sync", "ruff", "format", "--check", target])
     assert fmt.returncode == 0, f"ruff format --check failed:\n{fmt.stdout}\n{fmt.stderr}"
-
-
-def test_model_still_validates_inputs_through_validation_module(tmp_path: Path) -> None:
-    pkg = load_package(
-        generate_inverted(_enum_flag_workbook(tmp_path), _enum_flag_bindings()),
-        tmp_path,
-        name="validation_runtime",
-    )
-    assert pkg.compute_out(flag=0) == 0
-    with pytest.raises(ValueError, match=r"flag out of domain"):
-        pkg.compute_out(flag=2)

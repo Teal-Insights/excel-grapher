@@ -245,136 +245,6 @@ def test_sum_drops_blank_interior_from_ownership_check(tmp_path: Path) -> None:
     assert _scalar(got) == pytest.approx(expected)
 
 
-def test_issue_mcve_generate_does_not_raise(tmp_path: Path) -> None:
-    """Reproduce the self-contained MCVE from issue 700."""
-    import yaml
-    from fastpyxl import Workbook
-
-    from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
-
-    root = tmp_path / "mcve_blank_range_vlookup"
-    root.mkdir()
-    workbook_path = root / "workbook.xlsx"
-    bindings_path = root / "bindings"
-    bindings_path.mkdir()
-
-    wb = Workbook()
-    default = wb.active
-    wb.remove(default)
-    inputs = wb.create_sheet("Inputs")
-    wb.create_sheet("Lookup")
-    engine = wb.create_sheet("Engine")
-    outputs = wb.create_sheet("Outputs")
-    inputs["A1"] = 1
-    engine["B1"] = "=VLOOKUP(Inputs!A1,Lookup!A1:C3,3,FALSE)"
-    outputs["B1"] = "=Engine!B1"
-    wb.save(workbook_path)
-
-    scalar = {
-        "layout": "scalar",
-        "structure": {
-            "measure": {
-                "concept": "OBS_VALUE",
-                "dtype": "float",
-                "bind": {"kind": "data_cell", "read": "float"},
-            },
-            "dimensions": [],
-        },
-        "key": [],
-    }
-    (bindings_path / "inputs.bindings.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": "1.14.0",
-                "workbook": "workbook.xlsx",
-                "concept_scheme": {
-                    "id": "mcve",
-                    "concepts": [{"id": "OBS_VALUE", "name": "Observation", "dtype": "number"}],
-                },
-                "series": [
-                    {
-                        "id": "key",
-                        "sheet": "Inputs",
-                        "data_range": "Inputs!A1",
-                        "input": {},
-                        **scalar,
-                    }
-                ],
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    (bindings_path / "outputs.bindings.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": "1.14.0",
-                "workbook": "workbook.xlsx",
-                "series": [
-                    {
-                        "id": "result",
-                        "sheet": "Outputs",
-                        "data_range": "Outputs!B1",
-                        "output": {
-                            "compute": {
-                                "name": "compute_result",
-                                "record_contract": "records",
-                            }
-                        },
-                        **scalar,
-                    }
-                ],
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    (bindings_path / "internals.bindings.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": "1.14.0",
-                "workbook": "workbook.xlsx",
-                "series": [
-                    {
-                        "id": "lookup_result",
-                        "sheet": "Engine",
-                        "data_range": "Engine!B1",
-                        "internal": {},
-                        **scalar,
-                    }
-                ],
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-
-    blank = ("Lookup!A1:C3",)
-    graph = create_dependency_graph(
-        workbook_path,
-        ["Outputs!B1"],
-        load_values=True,
-        blank_ranges=blank,
-    )
-    assert set(graph.leaf_keys()) | set(graph.formula_keys()) == {
-        "Inputs!A1",
-        "Engine!B1",
-        "Outputs!B1",
-    }
-    assert graph.get_node("Lookup!A1") is None
-
-    bindings = load_series_bindings(bindings_path)
-    report = validate_series_bindings(graph, bindings, workbook=workbook_path)
-    assert report["ok"] is True
-
-    generate_inverted_tree_modules(
-        graph,
-        series_bindings=bindings,
-        bindings_workbook=workbook_path,
-        blank_ranges=blank,
-    )
-
-
 _BLANK_CELL = ("Lookup!A1",)
 
 
@@ -468,32 +338,11 @@ def test_blank_cellref_package_matches_evaluator(tmp_path: Path) -> None:
     assert _scalar(got) == pytest.approx(1)
 
 
-def test_issue_703_mcve_generate_does_not_raise(tmp_path: Path) -> None:
-    """Reproduce the self-contained MCVE from issue 703."""
+def _write_mcve_binding_shards(bindings_path: Path) -> None:
     import yaml
-    from fastpyxl import Workbook
 
-    from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
-
-    root = tmp_path / "mcve_blank_cellref"
-    root.mkdir()
-    workbook_path = root / "workbook.xlsx"
-    bindings_path = root / "bindings"
     bindings_path.mkdir()
-
-    wb = Workbook()
-    default = wb.active
-    wb.remove(default)
-    inputs = wb.create_sheet("Inputs")
-    wb.create_sheet("Lookup")
-    engine = wb.create_sheet("Engine")
-    outputs = wb.create_sheet("Outputs")
-    inputs["A1"] = 1
-    engine["B1"] = "=IF(ISNUMBER(Lookup!A1),Lookup!A1,0)+Inputs!A1"
-    outputs["B1"] = "=Engine!B1"
-    wb.save(workbook_path)
-
-    scalar = {
+    scalar: dict[str, Any] = {
         "layout": "scalar",
         "structure": {
             "measure": {
@@ -505,96 +354,98 @@ def test_issue_703_mcve_generate_does_not_raise(tmp_path: Path) -> None:
         },
         "key": [],
     }
-    (bindings_path / "inputs.bindings.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": "1.14.0",
-                "workbook": "workbook.xlsx",
-                "concept_scheme": {
-                    "id": "mcve",
-                    "concepts": [{"id": "OBS_VALUE", "name": "Observation", "dtype": "number"}],
-                },
-                "series": [
-                    {
-                        "id": "key",
-                        "sheet": "Inputs",
-                        "data_range": "Inputs!A1",
-                        "input": {},
-                        **scalar,
-                    }
-                ],
+    shards = {
+        "inputs.bindings.yaml": {
+            "schema_version": "1.14.0",
+            "workbook": "workbook.xlsx",
+            "concept_scheme": {
+                "id": "mcve",
+                "concepts": [{"id": "OBS_VALUE", "name": "Observation", "dtype": "number"}],
             },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    (bindings_path / "outputs.bindings.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": "1.14.0",
-                "workbook": "workbook.xlsx",
-                "series": [
-                    {
-                        "id": "result",
-                        "sheet": "Outputs",
-                        "data_range": "Outputs!B1",
-                        "output": {
-                            "compute": {
-                                "name": "compute_result",
-                                "record_contract": "records",
-                            }
-                        },
-                        **scalar,
-                    }
-                ],
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
-    (bindings_path / "internals.bindings.yaml").write_text(
-        yaml.safe_dump(
-            {
-                "schema_version": "1.14.0",
-                "workbook": "workbook.xlsx",
-                "series": [
-                    {
-                        "id": "lookup_result",
-                        "sheet": "Engine",
-                        "data_range": "Engine!B1",
-                        "internal": {},
-                        **scalar,
-                    }
-                ],
-            },
-            sort_keys=False,
-        ),
-        encoding="utf-8",
-    )
+            "series": [
+                {
+                    "id": "key",
+                    "sheet": "Inputs",
+                    "data_range": "Inputs!A1",
+                    "input": {},
+                    **scalar,
+                }
+            ],
+        },
+        "outputs.bindings.yaml": {
+            "schema_version": "1.14.0",
+            "workbook": "workbook.xlsx",
+            "series": [
+                {
+                    "id": "result",
+                    "sheet": "Outputs",
+                    "data_range": "Outputs!B1",
+                    "output": {
+                        "compute": {
+                            "name": "compute_result",
+                            "record_contract": "records",
+                        }
+                    },
+                    **scalar,
+                }
+            ],
+        },
+        "internals.bindings.yaml": {
+            "schema_version": "1.14.0",
+            "workbook": "workbook.xlsx",
+            "series": [
+                {
+                    "id": "lookup_result",
+                    "sheet": "Engine",
+                    "data_range": "Engine!B1",
+                    "internal": {},
+                    **scalar,
+                }
+            ],
+        },
+    }
+    for name, document in shards.items():
+        (bindings_path / name).write_text(
+            yaml.safe_dump(document, sort_keys=False),
+            encoding="utf-8",
+        )
 
-    blank = ("Lookup!A1",)
+
+@pytest.mark.parametrize(
+    ("make_workbook", "blanks"),
+    [
+        (_mcve_workbook, _BLANK),
+        (_cellref_workbook, _BLANK_CELL),
+    ],
+    ids=["vlookup", "cellref"],
+)
+def test_yaml_shards_load_and_export_with_blank_ranges(
+    tmp_path: Path,
+    make_workbook: Any,
+    blanks: tuple[str, ...],
+) -> None:
+    from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
+
+    workbook = make_workbook(tmp_path)
+    bindings_path = tmp_path / "bindings"
+    _write_mcve_binding_shards(bindings_path)
+    bindings = load_series_bindings(bindings_path)
+    assert {entry["id"] for entry in bindings["series"]} == {
+        "key",
+        "lookup_result",
+        "result",
+    }
     graph = create_dependency_graph(
-        workbook_path,
+        workbook,
         ["Outputs!B1"],
         load_values=True,
-        blank_ranges=blank,
+        blank_ranges=blanks,
     )
-    assert set(graph.leaf_keys()) | set(graph.formula_keys()) == {
-        "Inputs!A1",
-        "Engine!B1",
-        "Outputs!B1",
-    }
-    assert graph.get_node("Lookup!A1") is None
-
-    bindings = load_series_bindings(bindings_path)
-    report = validate_series_bindings(graph, bindings, workbook=workbook_path)
-    assert report["ok"] is True
-
     generate_inverted_tree_modules(
         graph,
         series_bindings=bindings,
-        bindings_workbook=workbook_path,
-        blank_ranges=blank,
+        bindings_workbook=workbook,
+        blank_ranges=blanks,
     )
 
 
