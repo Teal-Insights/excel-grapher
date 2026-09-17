@@ -238,9 +238,9 @@ def test_ast_cache_seed_respects_maxsize() -> None:
         parsed.append(formula)
         return evaluator_parser.parse(formula)
 
-    cache.get("=1", parse_fn=parse_fn)
     cache.get("=2", parse_fn=parse_fn)
     cache.get("=3", parse_fn=parse_fn)
+    cache.get("=1", parse_fn=parse_fn)
     assert parsed == ["=1"]
 
 
