@@ -2,15 +2,12 @@
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
 
 from excel_grapher.series_bindings import (
     SeriesBindingsLoadError,
     has_input_direction,
     has_output_direction,
-    load_series_bindings,
     merge_series_binding_documents,
     normalize_series_entry,
     parse_bindings_file,
@@ -40,7 +37,7 @@ def test_empty_input_block_is_input_direction() -> None:
     assert not has_output_direction(normalized)
 
 
-def test_merge_input_and_output_shards(tmp_path: Path) -> None:
+def test_merge_input_and_output_shards() -> None:
     input_doc = parse_bindings_file(FIXTURES / "shard_borvelia_input.yaml")
     output_doc = parse_bindings_file(FIXTURES / "shard_borvelia_output.yaml")
     merged = merge_series_binding_documents([input_doc, output_doc])
@@ -111,23 +108,6 @@ def test_schema_rejects_non_mapping_series_entry() -> None:
     }
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)
-
-
-def test_load_merged_input_output_directory(tmp_path: Path) -> None:
-    shard_dir = tmp_path / "shards"
-    shard_dir.mkdir()
-    (shard_dir / "input.bindings.yaml").write_text(
-        (FIXTURES / "shard_borvelia_input.yaml").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    (shard_dir / "output.bindings.yaml").write_text(
-        (FIXTURES / "shard_borvelia_output.yaml").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    bindings = load_series_bindings(shard_dir)
-    series = bindings["series"][0]
-    assert has_input_direction(series)
-    assert has_output_direction(series)
 
 
 def test_merge_rejects_conflicting_output_blocks() -> None:

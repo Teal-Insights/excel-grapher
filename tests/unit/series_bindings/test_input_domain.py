@@ -20,7 +20,6 @@ from excel_grapher.series_bindings.schema import (
 )
 from excel_grapher.series_bindings.types import ValidationReport
 from excel_grapher.series_bindings.validate import validate_series_bindings
-from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 
 
 def _scalar_string_doc(*, domain: dict[str, Any] | None = None) -> dict[str, Any]:
@@ -130,10 +129,6 @@ def _report_for_domain_dtype(
     graph = create_dependency_graph(workbook, ["Inputs!A1"], load_values=True)
     bindings = validate_bindings_document(_scalar_numeric_doc(dtype=dtype, domain=domain))
     return validate_series_bindings(graph, bindings, workbook=workbook)
-
-
-def test_schema_version_1_13_0_supported() -> None:
-    assert "1.13.0" in SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_schema_accepts_enum_between_and_real_between_domains() -> None:

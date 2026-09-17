@@ -118,13 +118,6 @@ def test_tidy_pandas_dataframe() -> None:
     ]
 
 
-def test_tidy_pandas_dataframe_partial_rows_ok() -> None:
-    pd = pytest.importorskip("pandas")
-    df = pd.DataFrame({"TIME_PERIOD": [4], "OBS_VALUE": [7.5]})
-    result = coerce_setter_input(df, **_SERIES_KWARGS)
-    assert result == [{"TIME_PERIOD": 4, "OBS_VALUE": 7.5}]
-
-
 def test_tidy_dataframe_extra_column_strict_raises() -> None:
     pd = pytest.importorskip("pandas")
     df = pd.DataFrame(

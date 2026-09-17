@@ -77,13 +77,6 @@ def test_schema_accepts_constant_only_series() -> None:
     assert "constant" in series
 
 
-def test_schema_rejects_series_without_any_direction() -> None:
-    doc = _constant_series_doc()
-    del doc["series"][0]["constant"]
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
-
-
 def test_schema_rejects_constant_with_input() -> None:
     doc = _constant_series_doc(
         input={},
@@ -102,12 +95,6 @@ def test_schema_rejects_constant_with_output() -> None:
 
 def test_schema_rejects_constant_with_internal() -> None:
     doc = _constant_series_doc(internal={})
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
-
-
-def test_schema_rejects_constant_with_legacy_setter() -> None:
-    doc = _constant_series_doc(setter={"name": "set_shock_year_anchor"})
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)
 

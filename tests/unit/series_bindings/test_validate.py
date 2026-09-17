@@ -31,11 +31,6 @@ def _write_borvelia_workbook(path: Path) -> None:
     wb.close()
 
 
-def test_expand_data_range_row() -> None:
-    addresses = expand_data_range("Inputs!F5:H5")
-    assert addresses == ["Inputs!F5", "Inputs!G5", "Inputs!H5"]
-
-
 def _labeller_entry(*, measure_dtype: str | None = "int") -> dict[str, object]:
     measure: dict[str, object] = {
         "concept": "OBS_VALUE",

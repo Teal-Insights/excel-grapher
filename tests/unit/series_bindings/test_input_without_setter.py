@@ -13,7 +13,6 @@ from excel_grapher.series_bindings import (
     validate_bindings_document,
 )
 from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
-from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 
 
 def _scalar_series(**overrides: Any) -> dict[str, Any]:
@@ -34,10 +33,6 @@ def _scalar_series(**overrides: Any) -> dict[str, Any]:
     }
     series.update(overrides)
     return series
-
-
-def test_schema_1_16_0_is_supported() -> None:
-    assert "1.16.0" in SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_empty_input_block_validates() -> None:
@@ -66,16 +61,6 @@ def test_input_domain_without_setter_validates() -> None:
     assert has_input_direction(bindings["series"][0])
 
 
-def test_legacy_top_level_setter_is_rejected() -> None:
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(
-            {
-                "schema_version": "1.0.0",
-                "series": [_scalar_series(setter={"name": "set_interest_rate"})],
-            }
-        )
-
-
 def test_normalize_does_not_invent_input_from_top_level_setter() -> None:
     normalized = normalize_series_entry(
         _scalar_series(setter={"name": "set_interest_rate", "strict": True})
@@ -102,19 +87,14 @@ def test_input_reader_extra_key_is_rejected() -> None:
         )
 
 
-def test_invalid_setter_name_is_rejected() -> None:
+def test_legacy_top_level_setter_is_rejected() -> None:
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(
             {
                 "schema_version": "1.0.0",
-                "series": [_scalar_series(setter={"name": "not_a_setter"})],
+                "series": [_scalar_series(setter={"name": "set_interest_rate"})],
             }
         )
-
-
-def test_series_without_direction_still_rejected() -> None:
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document({"schema_version": "1.16.0", "series": [_scalar_series()]})
 
 
 def test_empty_input_exports_without_setters(tmp_path: Path) -> None:

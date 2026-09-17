@@ -18,7 +18,6 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 
 
 def _matrix_doc(
@@ -90,10 +89,6 @@ def _resolve_doc(tmp_path: Path, doc: dict[str, Any]) -> dict[str, Any]:
     graph = create_dependency_graph(wb_path, targets, load_values=True)
     bindings = validate_bindings_document(doc)
     return resolve_series_binding(graph, wb_path, bindings["series"][0])
-
-
-def test_schema_version_1_12_0_supported() -> None:
-    assert "1.12.0" in SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_schema_accepts_exclude_columns_single_and_range() -> None:

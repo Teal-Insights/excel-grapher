@@ -102,36 +102,6 @@ def test_schema_error_for_missing_key_names_series_id() -> None:
     assert "key" in errors[0]
 
 
-def test_schema_accepts_empty_input_without_setter() -> None:
-    doc = {
-        "schema_version": "1.0.0",
-        "series": [
-            {
-                "id": "bad",
-                "sheet": "S",
-                "data_range": "S!A1",
-                "layout": "scalar",
-                "input": {},
-                "structure": {
-                    "measure": {"concept": "OBS_VALUE", "bind": {"kind": "data_cell"}},
-                    "dimensions": [
-                        {
-                            "concept": "X",
-                            "role": "key",
-                            "scope": "series",
-                            "bind": {"kind": "constant", "value": "x"},
-                        }
-                    ],
-                },
-                "key": ["X"],
-            }
-        ],
-    }
-    bindings = validate_bindings_document(doc)
-    assert bindings["series"][0]["input"] == {}
-    assert "setter" not in bindings["series"][0]
-
-
 def test_schema_accepts_bare_defined_name_data_range() -> None:
     doc = {
         "schema_version": "1.0.0",
@@ -330,23 +300,6 @@ def test_schema_accepts_read_bool_on_column_header_bind() -> None:
     assert bind["read"] == "bool"
 
 
-def test_schema_accepts_measure_dtype_bool() -> None:
-    doc = _scalar_series_doc(
-        structure={
-            "measure": {
-                "concept": "OBS_VALUE",
-                "dtype": "bool",
-                "bind": {"kind": "data_cell", "read": "bool"},
-            },
-            "dimensions": [],
-        },
-        key=[],
-    )
-
-    bindings = validate_bindings_document(doc)
-    assert bindings["series"][0]["structure"]["measure"]["dtype"] == "bool"
-
-
 def test_schema_accepts_boolean_constant_bind_value() -> None:
     doc = _scalar_series_doc(
         structure={
@@ -424,38 +377,44 @@ def test_schema_accepts_concept_scheme_bool_dtype() -> None:
 
 
 @pytest.mark.parametrize(
-    ("field_path", "invalid_value"),
+    ("dtype", "read", "field_path", "invalid_value"),
     [
-        ("measure.bind.read", "boolean"),
-        ("measure.dtype", "boolean"),
-        ("dimensions.0.bind.read", "boolean"),
+        ("bool", "bool", "measure.bind.read", "boolean"),
+        ("bool", "bool", "measure.dtype", "boolean"),
+        ("bool", "bool", "dimensions.0.bind.read", "boolean"),
+        ("datetime", "datetime", "measure.bind.read", "date"),
+        ("datetime", "datetime", "measure.dtype", "date"),
+        ("datetime", "datetime", "dimensions.0.bind.read", "DateTime"),
     ],
 )
-def test_schema_rejects_non_enum_bool_tokens(
+def test_schema_rejects_non_enum_read_and_dtype_tokens(
+    dtype: str,
+    read: str,
     field_path: str,
     invalid_value: str,
 ) -> None:
+    concept = "IS_ACTIVE" if dtype == "bool" else "TIME_PERIOD"
     doc = _scalar_series_doc(
         structure={
             "measure": {
                 "concept": "OBS_VALUE",
-                "dtype": "bool",
-                "bind": {"kind": "data_cell", "read": "bool"},
+                "dtype": dtype,
+                "bind": {"kind": "data_cell", "read": read},
             },
             "dimensions": [
                 {
-                    "concept": "IS_ACTIVE",
+                    "concept": concept,
                     "role": "key",
                     "scope": "cell",
                     "bind": {
                         "kind": "column_header",
                         "header_row": 1,
-                        "read": "bool",
+                        "read": read,
                     },
                 }
             ],
         },
-        key=["IS_ACTIVE"],
+        key=[concept],
     )
     series = doc["series"][0]
     structure = series["structure"]
@@ -552,24 +511,6 @@ def test_schema_accepts_read_datetime_on_column_header_bind() -> None:
     assert bind["read"] == "datetime"
 
 
-def test_schema_accepts_measure_dtype_datetime() -> None:
-    doc = _scalar_series_doc(
-        schema_version="1.4.0",
-        structure={
-            "measure": {
-                "concept": "OBS_VALUE",
-                "dtype": "datetime",
-                "bind": {"kind": "data_cell", "read": "datetime"},
-            },
-            "dimensions": [],
-        },
-        key=[],
-    )
-
-    bindings = validate_bindings_document(doc)
-    assert bindings["series"][0]["structure"]["measure"]["dtype"] == "datetime"
-
-
 def test_schema_accepts_iso_datetime_constant_bind_value() -> None:
     doc = _scalar_series_doc(
         schema_version="1.4.0",
@@ -649,56 +590,6 @@ def test_schema_accepts_concept_scheme_datetime_dtype() -> None:
     bindings = validate_bindings_document(doc)
     concept = bindings["concept_scheme"]["concepts"][0]
     assert concept["dtype"] == "datetime"
-
-
-@pytest.mark.parametrize(
-    ("field_path", "invalid_value"),
-    [
-        ("measure.bind.read", "date"),
-        ("measure.dtype", "date"),
-        ("dimensions.0.bind.read", "DateTime"),
-    ],
-)
-def test_schema_rejects_non_enum_datetime_tokens(
-    field_path: str,
-    invalid_value: str,
-) -> None:
-    doc = _scalar_series_doc(
-        schema_version="1.4.0",
-        structure={
-            "measure": {
-                "concept": "OBS_VALUE",
-                "dtype": "datetime",
-                "bind": {"kind": "data_cell", "read": "datetime"},
-            },
-            "dimensions": [
-                {
-                    "concept": "TIME_PERIOD",
-                    "role": "key",
-                    "scope": "cell",
-                    "bind": {
-                        "kind": "column_header",
-                        "header_row": 1,
-                        "read": "datetime",
-                    },
-                }
-            ],
-        },
-        key=["TIME_PERIOD"],
-    )
-    series = doc["series"][0]
-    structure = series["structure"]
-    if field_path == "measure.bind.read":
-        structure["measure"]["bind"]["read"] = invalid_value
-    elif field_path == "measure.dtype":
-        structure["measure"]["dtype"] = invalid_value
-    elif field_path == "dimensions.0.bind.read":
-        structure["dimensions"][0]["bind"]["read"] = invalid_value
-
-    errors = format_schema_errors(doc)
-    assert errors
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
 
 
 def test_schema_accepts_input_mode_override() -> None:

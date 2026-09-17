@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from importlib.resources import files
 from pathlib import Path
 
 import xlsxwriter
@@ -16,30 +18,13 @@ from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
-def test_supported_schema_versions() -> None:
-    expected = frozenset(
-        {
-            "1.0.0",
-            "1.1.0",
-            "1.2.0",
-            "1.3.0",
-            "1.4.0",
-            "1.5.0",
-            "1.6.0",
-            "1.7.0",
-            "1.8.0",
-            "1.9.0",
-            "1.10.0",
-            "1.11.0",
-            "1.12.0",
-            "1.13.0",
-            "1.14.0",
-            "1.15.0",
-            "1.16.0",
-            "1.17.0",
-        }
+def test_supported_schema_versions_match_json_schema_enum() -> None:
+    schema = json.loads(
+        files("excel_grapher.series_bindings")
+        .joinpath("series_binding.schema.json")
+        .read_text(encoding="utf-8")
     )
-    assert expected == SUPPORTED_SCHEMA_VERSIONS
+    assert frozenset(schema["properties"]["schema_version"]["enum"]) == SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_validate_explicit_matrix_no_implementation_warnings(tmp_path: Path) -> None:
