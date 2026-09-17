@@ -134,30 +134,30 @@ class TestFormulaNormalizerCaching:
     def test_unique_formulas_use_one_name_regex_sub(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Name substitution must not call `re.sub` once per catalog name."""
 
+        calls = {"n": 0}
+        original = formula_normalization_mod.re.sub
+
+        def counting(
+            pattern: object,
+            repl: object,
+            string: str,
+            count: int = 0,
+            flags: int = 0,
+        ) -> str:
+            calls["n"] += 1
+            return original(pattern, repl, string, count=count, flags=flags)
+
+        monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+
         def re_sub_ops(n_names: int, n_formulas: int) -> int:
             named_ranges = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(n_names)}
             n = FormulaNormalizer(named_ranges=named_ranges)
-            calls = {"n": 0}
-            original = formula_normalization_mod.re.sub
-
-            def counting(
-                pattern: object,
-                repl: object,
-                string: str,
-                count: int = 0,
-                flags: int = 0,
-            ) -> str:
-                calls["n"] += 1
-                return original(pattern, repl, string, count=count, flags=flags)
-
-            monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+            calls["n"] = 0
             for i in range(n_formulas):
                 assert n.normalize(f"=Name{i}*2", "Sheet1") == f"=Sheet1!A{i + 1}*2"
             return calls["n"]
 
-        small_catalog = re_sub_ops(50, 10)
-        large_catalog = re_sub_ops(200, 10)
-        assert small_catalog == large_catalog
+        assert re_sub_ops(50, 10) == re_sub_ops(200, 10)
 
 
 class TestFormulaNormalizerOutlierFormula:
@@ -177,8 +177,22 @@ class TestFormulaNormalizerOutlierFormula:
         named_range_ranges = {
             f"RangeName{i}": ("DataSheet", f"C{i + 1}", f"D{i + 10}") for i in range(39)
         }
+        calls = {"n": 0}
+        original = formula_normalization_mod.re.sub
 
-        def re_sub_ops(
+        def counting(
+            pattern: object,
+            repl: object,
+            string: str,
+            count: int = 0,
+            flags: int = 0,
+        ) -> str:
+            calls["n"] += 1
+            return original(pattern, repl, string, count=count, flags=flags)
+
+        monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+
+        def normalize_with(
             named_ranges: dict[str, tuple[str, str]],
             named_range_ranges: dict[str, tuple[str, str, str]],
         ) -> tuple[str, int]:
@@ -186,24 +200,11 @@ class TestFormulaNormalizerOutlierFormula:
                 named_ranges=named_ranges,
                 named_range_ranges=named_range_ranges,
             )
-            calls = {"n": 0}
-            original = formula_normalization_mod.re.sub
-
-            def counting(
-                pattern: object,
-                repl: object,
-                string: str,
-                count: int = 0,
-                flags: int = 0,
-            ) -> str:
-                calls["n"] += 1
-                return original(pattern, repl, string, count=count, flags=flags)
-
-            monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+            calls["n"] = 0
             result = n.normalize(formula, current_sheet)
             return result, calls["n"]
 
-        result, large_ops = re_sub_ops(named_ranges, named_range_ranges)
-        empty_result, empty_ops = re_sub_ops({}, {})
-        assert result == empty_result == "='Input 7 - Residual Financing'!G14"
-        assert large_ops == empty_ops
+        result, large_ops = normalize_with(named_ranges, named_range_ranges)
+        tiny_result, tiny_ops = normalize_with({"Unrelated": ("DataSheet", "A1")}, {})
+        assert result == tiny_result == "=+'Input 7 - Residual Financing'!G14"
+        assert large_ops == tiny_ops
