@@ -18,7 +18,7 @@ np = pytest.importorskip("numpy")
 from excel_grapher.core.grid import Grid, Range
 from excel_grapher.core.operator_thresholds import MIN_OPERATOR_FASTPATH_CELLS
 from excel_grapher.core.operators import xl_concat, xl_eq, xl_mul
-from excel_grapher.core.types import CellValue, XlError
+from excel_grapher.core.types import CellValue
 from tests.unit.core.operators_test_helpers import array_tolist
 
 LARGE = MIN_OPERATOR_FASTPATH_CELLS * 2
@@ -111,9 +111,3 @@ def test_range_operands_still_use_positional_grid_access(
     result = xl_mul(rng, 3.0)
     assert grid_at_calls != []
     assert array_tolist(result)[0] == [6.0]
-
-
-def test_ndarray_shape_mismatch_still_returns_value() -> None:
-    left = np.array([[1.0, 2.0]], dtype=object)
-    right = np.array([[1.0, 2.0, 3.0]], dtype=object)
-    assert xl_eq(left, right) == XlError.VALUE

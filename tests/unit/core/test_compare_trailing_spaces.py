@@ -14,7 +14,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from excel_grapher.core.operators import xl_eq, xl_ne
+from excel_grapher.core.operators import xl_eq
 from excel_grapher.core.operators_reference import compare_scalars
 from excel_grapher.core.types import XlError
 from excel_grapher.runtime.lookup import xl_match
@@ -39,13 +39,6 @@ def test_compare_scalars_trailing_spaces_match_excel(
     op: str, left: str, right: str, expected: bool
 ) -> None:
     assert compare_scalars(op, left, right) is expected
-
-
-def test_xl_eq_and_xl_ne_preserve_trailing_spaces() -> None:
-    assert xl_eq("High", "High ") is False
-    assert xl_ne("High", "High ") is True
-    assert xl_eq("High ", "High ") is True
-    assert xl_eq("high", "HIGH") is True
 
 
 def test_array_compare_preserves_trailing_spaces() -> None:

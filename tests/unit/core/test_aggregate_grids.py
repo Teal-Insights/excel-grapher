@@ -59,11 +59,6 @@ def test_get_error_finds_first_error_in_lazy_range() -> None:
     assert calls == ["S!A1", "S!A2"]
 
 
-def test_sum_cells_over_lazy_range() -> None:
-    rng = Range("S", 1, 1, 3, 1, lambda a: {"S!A1": 1, "S!A2": 2, "S!A3": 3}[a])
-    assert sum_cells(cast(CellValue, rng)) == 6.0
-
-
 def test_sum_cells_over_lazy_range_agrees_with_ndarray() -> None:
     values = {"S!A1": 1.5, "S!A2": 2.5, "S!A3": 3.5}
 

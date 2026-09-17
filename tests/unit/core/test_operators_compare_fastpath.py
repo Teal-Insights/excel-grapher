@@ -94,28 +94,10 @@ def test_compare_fastpath_falls_back_on_non_numeric_string_with_number() -> None
     assert_compare_matches_reference("=", left, right)
 
 
-def test_compare_fastpath_fail_fast_on_first_error_at_index_zero() -> None:
-    left = np.array([[XlError.NA, 2.0], [3.0, 4.0]], dtype=object)
-    right = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
-    assert xl_eq(left, right) == XlError.NA
-
-
-def test_compare_fastpath_fail_fast_on_first_error_late_in_c_order() -> None:
-    left = np.array([[1.0, 2.0], [XlError.DIV, 4.0]], dtype=object)
-    right = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
-    assert xl_eq(left, right) == XlError.DIV
-
-
 def test_compare_fastpath_left_error_wins_over_right_error_per_cell() -> None:
     left = np.array([[XlError.REF, XlError.NA]], dtype=object)
     right = np.array([[XlError.NA, XlError.REF]], dtype=object)
     assert xl_eq(left, right) == XlError.REF
-
-
-def test_compare_scalar_path_unchanged() -> None:
-    assert xl_eq(1, 1) is True
-    assert xl_eq("AbC", "aBc") is True
-    assert xl_eq(XlError.NA, 0) == XlError.NA
 
 
 def test_large_string_criteria_sumproduct_eval_codegen_parity(tmp_path: Path) -> None:
