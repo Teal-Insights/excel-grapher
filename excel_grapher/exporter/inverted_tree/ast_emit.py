@@ -448,12 +448,60 @@ _UNSET = object()
 _NON_SLOT_ACCESS = frozenset({"whole", "dynamic"})
 
 
+def _axis_key_position(series: BoundSeries, field: str, catalog_index: int) -> int | None:
+    """Return the axis index of `field` at `catalog_index`, if present."""
+    if catalog_index >= len(series.domain):
+        return None
+    axis = next((item for item in series.tensor_domain.axes if item.name == field), None)
+    if axis is None:
+        return None
+    try:
+        value = series.domain[catalog_index][field]
+    except KeyError:
+        return None
+    if type(value) is not axis.key_type:
+        return None
+    try:
+        return axis.keys.index(value)
+    except ValueError:
+        return None
+
+
+def _shared_axis_lockstep(
+    host: BoundSeries,
+    producer: BoundSeries,
+    slots: Mapping[int, int],
+) -> bool:
+    """Whether each shared key walks `prod_axis = host_axis + offset`.
+
+    A 1-D host that copies one column of a matrix has producer catalog
+    indexes `0, 2, 4, …` (or `0, 3, 6, …`). Flat-index slope is then not
+    1, but the shared axis still is.
+    """
+    shared = [name for name in producer.key_fields if name in host.key_fields]
+    if not shared:
+        return False
+    for name in shared:
+        pairs: list[tuple[int, int]] = []
+        for host_index, producer_index in slots.items():
+            host_pos = _axis_key_position(host, name, host_index)
+            producer_pos = _axis_key_position(producer, name, producer_index)
+            if host_pos is None or producer_pos is None:
+                return False
+            pairs.append((host_pos, producer_pos))
+        fitted = fit_affine_map(pairs)
+        if fitted is None or fitted[0] != 1:
+            return False
+    return True
+
+
 def _lockstep_producer_slots(ctx: EmitContext, producer: BoundSeries) -> dict[int, int] | None:
     """Host catalog index -> producer index for a lockstep single-slot walk.
 
-    Each host member that reads `producer` must read exactly one slot, and
-    those slots must lie on `prod = host + offset` so the pairing is the
-    host walk, not a mixed neighbor or permutation.
+    Each host member that reads `producer` must read exactly one slot.
+    Alignment is `prod = host + offset` on flat catalog indexes, or the
+    same slope-1 walk on every shared key axis so a copied matrix column
+    still pairs with the host.
     """
     cache = ctx.host._emit_cache
     cache_key = ("lockstep_slots", producer.series_id)
@@ -476,7 +524,7 @@ def _lockstep_producer_slots(ctx: EmitContext, producer: BoundSeries) -> dict[in
         return None
     slots = {host_index: next(iter(indices)) for host_index, indices in per_host.items()}
     fitted = fit_affine_map(list(slots.items()))
-    if fitted is None or fitted[0] != 1:
+    if (fitted is None or fitted[0] != 1) and not _shared_axis_lockstep(ctx.host, producer, slots):
         cache[cache_key] = None
         return None
     cache[cache_key] = slots
@@ -490,7 +538,11 @@ def _lockstep_string_map(
     slots: Mapping[int, int],
     host_field: str,
 ) -> dict[object, object] | None:
-    """Return host_field -> producer_field values when that pairing is a function."""
+    """Return host_field -> producer_field values when that pairing is a function.
+
+    A constant producer field (every host maps to the same label) stays a
+    literal, not a remap through the host key.
+    """
     mapping: dict[object, object] = {}
     for host_index in sorted(slots):
         producer_index = slots[host_index]
@@ -507,7 +559,9 @@ def _lockstep_string_map(
         if existing is not _UNSET and existing != producer_value:
             return None
         mapping[host_value] = producer_value
-    if len(mapping) < 2 or all(source == target for source, target in mapping.items()):
+    if len(mapping) < 2 or len(set(mapping.values())) < 2:
+        return None
+    if all(source == target for source, target in mapping.items()):
         return None
     return mapping
 
