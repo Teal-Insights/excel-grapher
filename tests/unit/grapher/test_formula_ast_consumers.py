@@ -91,22 +91,6 @@ def test_set_node_ast_omitting_formula_keeps_raw_audit_string() -> None:
     assert cleared.formula is None
 
 
-def test_set_node_formula_preserves_relative_axes_from_raw_text() -> None:
-    graph = DependencyGraph()
-    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
-    graph.add_node(make_cell_node("Sheet1", "B", 1, is_leaf=False))
-    graph.set_node_formula("Sheet1!B1", "=A1+2", "=Sheet1!A1+2")
-    view = graph.get_node("Sheet1!B1")
-    assert view is not None
-    assert view.formula_ast == parse_preserving_axes("=A1+2", anchor="Sheet1!B1")
-    assert view.normalized_formula == "=Sheet1!A1+2"
-    assert isinstance(view.formula_ast, BinaryOpNode)
-    left = view.formula_ast.left
-    assert isinstance(left, CellRefNode)
-    assert isinstance(left.ref.col, RelativeAxis)
-    assert left.ref.col.offset == -1
-
-
 def test_evaluator_uses_formula_ast_even_when_normalized_text_is_stale() -> None:
     graph = DependencyGraph()
     graph.add_node(make_cell_node("S", "A", 1, value=10, is_leaf=True))

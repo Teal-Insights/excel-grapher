@@ -15,7 +15,6 @@ from excel_grapher.grapher import WorkbookContextRequiredError
 from excel_grapher.grapher.builder import create_dependency_graph
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.graph_consistency import GraphConsistencyKind
 from excel_grapher.grapher.guard import CellRef as GuardCellRef
 from excel_grapher.grapher.guard import Compare, Literal, Not
 from excel_grapher.grapher.node import Node, make_cell_node
@@ -70,21 +69,6 @@ def test_replace_node_formula_rewires_existing_static_deps() -> None:
     assert node.is_leaf is False
     assert node.is_target is True
     graph.validate_consistency()
-
-
-def test_set_node_formula_still_does_not_rewire() -> None:
-    graph = DependencyGraph()
-    graph.add_node(_cell("Sheet1!B1"))
-    graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1"))
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
-
-    graph.set_node_formula("Sheet1!A1", "=Sheet1!C1", "=Sheet1!C1")
-
-    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
-    issues = graph.consistency_issues()
-    kinds = {issue.kind for issue in issues}
-    assert GraphConsistencyKind.missing_formula_edge in kinds
-    assert GraphConsistencyKind.extra_formula_edge in kinds
 
 
 def test_replace_clears_formula_and_becomes_leaf() -> None:

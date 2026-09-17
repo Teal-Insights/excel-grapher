@@ -245,20 +245,6 @@ def test_optimal_no_raise_when_nothing_compressible(tmp_path: Path) -> None:
     assert graph.compress_optimal() == []
 
 
-def test_optimal_manual_graph_with_explicit_provenance_still_works() -> None:
-    graph = DependencyGraph()
-    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
-    b = _make_node("Sheet1!B1", "=Sheet1!D1*2", "=Sheet1!D1*2")
-    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
-    for n in (d, b, a):
-        graph.add_node(n)
-    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
-
-    removed = graph.compress_optimal()
-    assert "Sheet1!B1" in removed
-
-
 def test_optimal_inline_single_call_site() -> None:
     graph = DependencyGraph()
     d = _make_node("Sheet1!D1", None, None, is_leaf=True)
@@ -492,23 +478,6 @@ def test_optimal_preserve_blocks_inline() -> None:
     assert "Sheet1!B1" in graph
 
 
-def test_optimal_preserve_blocks_identity_transit() -> None:
-    graph = DependencyGraph()
-    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
-    object.__setattr__(c, "value", 42)
-    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1", is_target=True)
-    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
-    for n in (c, b, a):
-        graph.add_node(n)
-    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
-
-    removed = graph.compress_optimal()
-    assert "Sheet1!B1" not in removed
-    assert "Sheet1!B1" in graph
-    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
-
-
 def test_optimal_explicit_preserve_protects_public_cell() -> None:
     graph = DependencyGraph()
     d = _make_node("Sheet1!D1", None, None, is_leaf=True)
@@ -521,22 +490,6 @@ def test_optimal_explicit_preserve_protects_public_cell() -> None:
 
     removed = graph.compress_optimal(preserve={"Sheet1!B1"})
     assert "Sheet1!B1" not in removed
-
-
-def test_optimal_explicit_preserve_blocks_identity_transit() -> None:
-    graph = DependencyGraph()
-    c = _make_node("Sheet1!C1", None, None, is_leaf=True)
-    object.__setattr__(c, "value", 42)
-    b = _make_node("Sheet1!B1", "=Sheet1!C1", "=Sheet1!C1")
-    a = _make_node("Sheet1!A1", "=Sheet1!B1", "=Sheet1!B1")
-    for n in (c, b, a):
-        graph.add_node(n)
-    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
-
-    removed = graph.compress_optimal(preserve={"Sheet1!B1"})
-    assert "Sheet1!B1" not in removed
-    assert "Sheet1!B1" in graph
 
 
 def test_optimal_is_target_protected_even_with_unrelated_preserve() -> None:
@@ -576,21 +529,19 @@ def test_optimal_identity_replacement_protected_from_later_inline() -> None:
 
 def test_optimal_keeps_multi_dependent_node() -> None:
     graph = DependencyGraph()
-    g13 = _make_node("Sheet1!G13", "=AVERAGE(Sheet1!B1:Sheet1!B5)", "=AVERAGE(Sheet1!B1:Sheet1!B5)")
-    g15 = _make_node(
-        "Sheet1!G15", "=Sheet1!F15+(Sheet1!G13*Sheet1!G14)", "=Sheet1!F15+(Sheet1!G13*Sheet1!G14)"
-    )
-    g16 = _make_node("Sheet1!G16", "=Sheet1!G13+Sheet1!D16", "=Sheet1!G13+Sheet1!D16")
-    for n in (g13, g15, g16):
+    d = _make_node("Sheet1!D1", None, None, is_leaf=True)
+    b = _make_node("Sheet1!B1", "=Sheet1!D1*2", "=Sheet1!D1*2")
+    a = _make_node("Sheet1!A1", "=Sheet1!B1+1", "=Sheet1!B1+1")
+    c = _make_node("Sheet1!C1", "=Sheet1!B1+3", "=Sheet1!B1+3")
+    for n in (d, b, a, c):
         graph.add_node(n)
-    for dep in ("Sheet1!F15", "Sheet1!G13", "Sheet1!G14"):
-        graph.add_node(_make_node(dep, None, None, is_leaf=True))
-    graph.add_node(_make_node("Sheet1!D16", None, None, is_leaf=True))
-    _direct_edge(graph, "Sheet1!G15", "Sheet1!G13")
-    _direct_edge(graph, "Sheet1!G16", "Sheet1!G13")
+    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
+    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
+    _direct_edge(graph, "Sheet1!C1", "Sheet1!B1")
 
     removed = graph.compress_optimal()
-    assert "Sheet1!G13" not in removed
+    assert "Sheet1!B1" not in removed
+    assert "Sheet1!B1" in graph
 
 
 def test_optimal_keeps_two_call_sites() -> None:

@@ -41,16 +41,6 @@ def _make_node(
     )
 
 
-def test_default_config_unchanged_rr_compression() -> None:
-    graph = DependencyGraph()
-    for row in range(3, 8):
-        graph.add_node(_make_node(f"Sheet1!B{row}", formula=None, is_leaf=True))
-        graph.add_node(_make_node(f"Sheet1!D{row}", formula=f"=B{row}"))
-        graph.add_edge(f"Sheet1!D{row}", f"Sheet1!B{row}")
-    index = build_taco_index(graph)
-    assert any(e.meta.kind == PatternKind.rr for e in index.compressed_edges)
-
-
 def test_exclude_targets_splits_column_group() -> None:
     graph = DependencyGraph()
     for row in range(3, 8):

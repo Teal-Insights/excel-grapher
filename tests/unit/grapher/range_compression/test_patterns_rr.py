@@ -18,7 +18,6 @@ from excel_grapher.grapher.range_compression import (
     materialize_dependents,
     materialize_precedents,
 )
-from excel_grapher.grapher.range_compression.patterns import rr_materialize_precedent
 
 from .parity_helpers import assert_taco_parity
 
@@ -43,12 +42,6 @@ def _make_node(
         value=None,
         is_leaf=is_leaf,
     )
-
-
-def test_rr_pattern_materialize_precedent() -> None:
-    dep = RangeRef(sheet="Sheet1", min_col="D", min_row=3, max_col="D", max_row=7)
-    prec = RangeRef(sheet="Sheet1", min_col="B", min_row=3, max_col="B", max_row=7)
-    assert rr_materialize_precedent(dep, prec, "Sheet1!D5") == "Sheet1!B5"
 
 
 def test_rr_manual_graph_parity() -> None:

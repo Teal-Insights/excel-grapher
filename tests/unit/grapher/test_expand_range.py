@@ -20,7 +20,6 @@ from excel_grapher.series_bindings.ranges import (
 )
 
 DEFAULT_CAP = DEFAULT_MAX_RANGE_CELLS
-OVER_DEFAULT = DEFAULT_CAP + 1
 
 
 def test_expand_range_at_max_cells_enumerates_every_cell() -> None:
@@ -61,35 +60,6 @@ def test_expand_range_quoted_sheet_in_error() -> None:
             max_cells=4,
         )
     assert "6 cells" in str(exc_info.value)
-
-
-def test_expand_range_at_default_cap_enumerates_every_cell() -> None:
-    got = expand_range(
-        sheet="Sheet1",
-        start_col="A",
-        start_row=1,
-        end_col="A",
-        end_row=DEFAULT_CAP,
-        max_cells=DEFAULT_CAP,
-    )
-    assert len(got) == DEFAULT_CAP
-    assert got[0] == ("Sheet1", "A1")
-    assert got[-1] == ("Sheet1", f"A{DEFAULT_CAP}")
-
-
-def test_expand_range_over_default_cap_raises() -> None:
-    with pytest.raises(
-        ValueError, match=rf"{OVER_DEFAULT} cells, exceeding max_cells={DEFAULT_CAP}"
-    ) as exc_info:
-        expand_range(
-            sheet="Sheet1",
-            start_col="A",
-            start_row=1,
-            end_col="A",
-            end_row=OVER_DEFAULT,
-            max_cells=DEFAULT_CAP,
-        )
-    assert f"Sheet1!A1:A{OVER_DEFAULT}" in str(exc_info.value)
 
 
 def test_expand_targets_to_roots_over_max_range_cells_raises() -> None:

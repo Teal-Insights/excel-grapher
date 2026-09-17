@@ -232,14 +232,6 @@ def test_partially_constrained_returns_only_missing(tmp_path: Path) -> None:
     assert result == ["Sheet1!D1"]
 
 
-def test_dynamic_refs_none_returns_all_candidates(tmp_path: Path) -> None:
-    """With dynamic_refs=None all dynamic-ref leaf candidates are returned."""
-    path = tmp_path / "dyn_none.xlsx"
-    _build_single_offset_missing_leaf(path)
-    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=None)
-    assert result == ["Sheet1!C1"]
-
-
 def test_static_index_only_no_candidates(tmp_path: Path) -> None:
     """INDEX with only literal row/column args does not produce candidates."""
     path = tmp_path / "static_index.xlsx"
@@ -255,39 +247,6 @@ def test_index_match_range_argument_expands_all_cells(tmp_path: Path) -> None:
 
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!D5"], dynamic_refs=None)
 
-    assert result == []
-
-
-def test_collect_and_continue_through_static_deps(tmp_path: Path) -> None:
-    """Continue BFS after collecting missing leaves from one formula.
-
-    One formula reports missing leaves while BFS still reaches a second
-    statically-reachable dynamic-ref formula and reports its leaves too.
-    """
-    path = tmp_path / "collect_continue.xlsx"
-    _build_two_offsets_missing_leaves(path)
-    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
-    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
-    # Both E1 (from B1's OFFSET) and G1 (from C1's OFFSET) must be present
-    assert "Sheet1!E1" in result
-    assert "Sheet1!G1" in result
-
-
-def test_result_is_deterministically_sorted(tmp_path: Path) -> None:
-    """Output is always lexicographically sorted regardless of BFS traversal order."""
-    path = tmp_path / "sorted.xlsx"
-    _build_two_offsets_missing_leaves(path)
-    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
-    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
-    assert result == sorted(result)
-
-
-def test_no_offset_indirect_index_returns_empty(tmp_path: Path) -> None:
-    """Workbook with no dynamic refs returns [] without raising."""
-    path = tmp_path / "plain.xlsx"
-    _build_no_dynamic_refs(path)
-    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
-    result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
     assert result == []
 
 

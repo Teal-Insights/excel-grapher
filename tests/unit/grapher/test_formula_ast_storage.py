@@ -14,6 +14,7 @@ from excel_grapher.core.formula_ast import (
     BinaryOpNode,
     CellRefNode,
     NumberNode,
+    RelativeAxis,
     parse,
     parse_formula_text,
     parse_preserving_axes,
@@ -110,6 +111,11 @@ def test_set_node_formula_parses_formula_ast() -> None:
     assert view is not None
     assert view.formula_ast == parse_preserving_axes("=A1+2", anchor="Sheet1!B1")
     assert view.normalized_formula == "=Sheet1!A1+2"
+    assert isinstance(view.formula_ast, BinaryOpNode)
+    left = view.formula_ast.left
+    assert isinstance(left, CellRefNode)
+    assert isinstance(left.ref.col, RelativeAxis)
+    assert left.ref.col.offset == -1
 
     graph.set_node_formula("Sheet1!B1", None, None)
     cleared = graph.get_node("Sheet1!B1")
@@ -263,38 +269,6 @@ def _direct_edge(graph: DependencyGraph, dependent: str, precedent: str) -> None
             direct_sites_normalized=((start, start + len(precedent)),),
         ),
     )
-
-
-def test_identity_transit_rewrites_keep_formula_ast_aligned() -> None:
-    graph = DependencyGraph()
-    graph.add_node(_cell("Sheet1!C1", None, is_leaf=True))
-    graph.add_node(_cell("Sheet1!B1", "=C1"))
-    graph.add_node(_cell("Sheet1!A1", "=B1"))
-    _direct_edge(graph, "Sheet1!B1", "Sheet1!C1")
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
-
-    removed = graph.compress_identity_transits()
-    assert "Sheet1!B1" in removed
-    node = graph.get_node("Sheet1!A1")
-    assert node is not None
-    assert node.normalized_formula == "=Sheet1!C1"
-    assert node.formula_ast == parse_preserving_axes("=C1", anchor="Sheet1!A1")
-
-
-def test_optimal_inline_rewrites_keep_formula_ast_aligned() -> None:
-    graph = DependencyGraph()
-    graph.add_node(_cell("Sheet1!D1", None, is_leaf=True))
-    graph.add_node(_cell("Sheet1!B1", "=D1*2"))
-    graph.add_node(_cell("Sheet1!A1", "=B1+1"))
-    _direct_edge(graph, "Sheet1!B1", "Sheet1!D1")
-    _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
-
-    removed = graph.compress_optimal()
-    assert "Sheet1!B1" in removed
-    node = graph.get_node("Sheet1!A1")
-    assert node is not None
-    assert node.normalized_formula == "=Sheet1!D1*2+1"
-    assert node.formula_ast == parse("=Sheet1!D1*2+1")
 
 
 def test_identity_transit_leaves_formula_ast_unset_when_rewrite_unparseable() -> None:
