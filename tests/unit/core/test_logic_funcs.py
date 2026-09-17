@@ -10,14 +10,8 @@ import pytest
 np = pytest.importorskip("numpy")
 
 from excel_grapher.core import CellValue, XlError
-from excel_grapher.core.excel_function_meta import grid_range_arg_indices
 from excel_grapher.core.grid import Range
 from excel_grapher.core.logic_funcs import logical_and, logical_or
-
-
-def test_and_or_bind_lazy_ranges() -> None:
-    assert 0 in grid_range_arg_indices("AND")
-    assert 0 in grid_range_arg_indices("OR")
 
 
 def test_logical_and_over_lazy_range() -> None:

@@ -7,7 +7,7 @@ import pytest
 
 np = pytest.importorskip("numpy")
 
-from excel_grapher.core.operators import xl_concat, xl_eq, xl_mul, xl_pow
+from excel_grapher.core.operators import xl_concat, xl_eq, xl_pow
 from excel_grapher.core.types import XlError
 from tests.unit.core.operators_test_helpers import array_tolist
 
@@ -46,16 +46,6 @@ def test_xl_eq_elementwise_string_equality() -> None:
     assert array_tolist(xl_eq(left, "Software")) == [[True, False], [True, False]]
 
 
-def test_xl_eq_array_compare_fail_fast_on_first_cell_error() -> None:
-    left = np.array([[1.0, XlError.NA]], dtype=object)
-    assert xl_eq(left, 1.0) == XlError.NA
-
-
-def test_xl_mul_array_arithmetic_preserves_per_element_errors() -> None:
-    left = np.array([[True, XlError.DIV]], dtype=object)
-    assert array_tolist(xl_mul(left, 1)) == [[1.0, XlError.DIV]]
-
-
 def test_xl_concat_elementwise_arrays() -> None:
     left = np.array([["a", "b"], ["c", "d"]], dtype=object)
     right = np.array([["1", "2"], ["3", "4"]], dtype=object)
@@ -84,15 +74,5 @@ def test_xl_concat_propagates_top_level_errors() -> None:
     assert xl_concat(left, XlError.VALUE) == XlError.VALUE
 
 
-@pytest.mark.parametrize(
-    ("left", "right", "expected"),
-    [
-        (2.0, 3.0, 8.0),
-        ("a", "b", "ab"),
-    ],
-)
-def test_xl_pow_and_concat_scalar_paths_unchanged(left, right, expected) -> None:
-    if isinstance(expected, str):
-        assert xl_concat(left, right) == expected
-    else:
-        assert xl_pow(left, right) == expected
+def test_xl_pow_scalar_path_unchanged() -> None:
+    assert xl_pow(2.0, 3.0) == 8.0

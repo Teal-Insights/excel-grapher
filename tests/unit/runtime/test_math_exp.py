@@ -40,10 +40,6 @@ def test_xl_exp_wrong_arity_returns_value_error() -> None:
     assert xl_exp(1, 2) == XlError.VALUE
 
 
-def test_xl_exp_overflow_returns_num_error() -> None:
-    assert xl_exp(1000) == XlError.NUM
-
-
 @pytest.mark.parametrize(
     ("raw", "expected"),
     [

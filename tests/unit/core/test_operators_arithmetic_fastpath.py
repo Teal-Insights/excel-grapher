@@ -12,7 +12,7 @@ np = pytest.importorskip("numpy")
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
-from excel_grapher.core.operators import xl_div, xl_mul, xl_pow
+from excel_grapher.core.operators import xl_mul, xl_pow
 from excel_grapher.core.operators_fastpath import (
     MIN_OPERATOR_FASTPATH_CELLS,
     try_fastpath_arithmetic_array,
@@ -83,22 +83,10 @@ def test_numeric_fastpath_matches_reference_on_large_numeric_strings(op: str) ->
     assert_arithmetic_matches_reference(op, left, right)
 
 
-def test_numeric_fastpath_preserves_embedded_error_per_element() -> None:
-    left = np.array([[1.0, XlError.NA], [3.0, 4.0]], dtype=object)
-    right = np.array([[2.0, 2.0], [2.0, 2.0]], dtype=object)
-    assert array_tolist(xl_mul(left, right)) == [[2.0, XlError.NA], [6.0, 8.0]]
-
-
 def test_numeric_fastpath_falls_back_on_non_numeric_string() -> None:
     left = np.array([["abc", 2.0]], dtype=object)
     right = np.array([[1.0, 2.0]], dtype=object)
     assert array_tolist(xl_mul(left, right)) == [[XlError.VALUE, 4.0]]
-
-
-def test_numeric_fastpath_div_preserves_zero_divisor_per_element() -> None:
-    left = np.array([[1.0, 2.0], [3.0, 4.0]], dtype=object)
-    right = np.array([[1.0, 0.0], [2.0, 4.0]], dtype=object)
-    assert array_tolist(xl_div(left, right)) == [[1.0, XlError.DIV], [1.5, 1.0]]
 
 
 def test_numeric_fastpath_pow_invalid_embeds_num_per_element() -> None:

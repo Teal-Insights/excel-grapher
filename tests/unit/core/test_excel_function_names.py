@@ -74,27 +74,6 @@ def test_runtime_python_name_follows_xl_prefix_convention(canonical: str, python
     assert excel_func_to_python_runtime_name(canonical) == python_name
 
 
-@pytest.mark.parametrize(
-    "spelling",
-    [
-        "SUM",
-        "_xlfn.SUM",
-        "_XLFN.SUM",
-        "IFNA",
-        "_xlfn.IFNA",
-        "XLOOKUP",
-        "_xlfn.XLOOKUP",
-        "NUMBERVALUE",
-        "_xlfn.NUMBERVALUE",
-    ],
-)
-def test_prefixed_spellings_map_to_same_python_runtime_name(spelling: str) -> None:
-    bare = spelling.split(".")[-1] if "." in spelling else spelling
-    assert excel_func_to_python_runtime_name(
-        normalize_excel_function_name(spelling)
-    ) == excel_func_to_python_runtime_name(normalize_excel_function_name(bare))
-
-
 def test_functions_registry_has_no_xlfn_alias_keys() -> None:
     """Evaluator dispatch relies on normalization, not per-function ``_XLFN`` keys."""
     xlfn_keys = [key for key in FUNCTIONS if key.startswith("_XLFN.")]

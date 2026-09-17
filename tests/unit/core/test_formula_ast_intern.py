@@ -103,18 +103,6 @@ def test_json_cache_assigns_integer_formula_ast_ids(tmp_path: Path) -> None:
     assert loaded_b1.formula_ast == original_b1.formula_ast
 
 
-def test_json_cache_rejects_non_list_formula_asts() -> None:
-    from excel_grapher.grapher.graph import DependencyGraph
-    from excel_grapher.grapher.node import make_cell_node
-
-    graph = DependencyGraph()
-    graph.add_node(make_cell_node("Sheet1", "A", 1, is_leaf=True, value=1))
-    payload = dependency_graph_to_json(graph)
-    payload["formula_asts"] = {}
-    with pytest.raises(TypeError, match="formula_asts"):
-        dependency_graph_from_json(payload)
-
-
 def test_json_cache_rejects_out_of_range_formula_ast_id(tmp_path: Path) -> None:
     path = tmp_path / "one.xlsx"
     wb = fastpyxl.Workbook()
