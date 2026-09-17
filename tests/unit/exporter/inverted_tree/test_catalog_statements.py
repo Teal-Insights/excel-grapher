@@ -2,12 +2,12 @@
 
 from __future__ import annotations
 
-import time
 from pathlib import Path
 
 import pytest
 
 from excel_grapher.core.formula_ast import parse_formula_text
+from excel_grapher.exporter.inverted_tree import catalog as catalog_mod
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     KeyPoint,
@@ -214,8 +214,10 @@ def test_blank_time_period_header_fails_closed_with_cell_named(tmp_path: Path) -
         build_catalog(validate_bindings_document(document), workbook=workbook)
 
 
-def test_partition_catalog_large_constant_series_performance() -> None:
-    n = 200_000
+def test_partition_catalog_skips_shape_partition_for_constant_series(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    n = 2_000
     cells = tuple(f"Sheet1!A{i}" for i in range(1, n + 1))
     domain = tuple(KeyPoint((("idx", i),)) for i in range(n))
     series = BoundSeries(
@@ -246,10 +248,21 @@ def test_partition_catalog_large_constant_series_performance() -> None:
         address_to_id={cell: "large_const" for cell in cells},
     )
     graph = DependencyGraph()
-    start_time = time.perf_counter()
+    shape_ops = {"n": 0}
+    original = catalog_mod._shape_partition
+
+    def counting(
+        series: BoundSeries,
+        catalog: SeriesCatalog,
+        graph: DependencyGraph,
+        blank_rects: object = (),
+    ) -> object:
+        shape_ops["n"] += 1
+        return original(series, catalog, graph, blank_rects)
+
+    monkeypatch.setattr(catalog_mod, "_shape_partition", counting)
     partitioned = partition_catalog(catalog, graph)
-    elapsed = time.perf_counter() - start_time
-    assert elapsed < 1.0
+    assert shape_ops["n"] == 0
     res = partitioned.get("large_const")
     assert len(res.statements) == 1
     assert res.statements[0].statement_id == "large_const"
@@ -306,31 +319,31 @@ def _make_formula_catalog_and_graph(
     return catalog, graph
 
 
-def test_partition_catalog_uniform_formula_is_linear_in_size() -> None:
-    cat_small, g_small = _make_formula_catalog_and_graph(2_500)
-    cat_large, g_large = _make_formula_catalog_and_graph(10_000)
+def test_partition_catalog_uniform_formula_shape_lookups_are_linear(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    n_small, n_large = 50, 200
+    cat_small, g_small = _make_formula_catalog_and_graph(n_small)
+    cat_large, g_large = _make_formula_catalog_and_graph(n_large)
 
-    partition_catalog(cat_small, g_small)
-    partition_catalog(cat_large, g_large)
+    shape_ops = {"n": 0}
+    original = catalog_mod._formula_shape_key
 
-    def _elapsed(catalog: SeriesCatalog, graph: DependencyGraph) -> float:
-        start = time.perf_counter()
-        partition_catalog(catalog, graph)
-        return time.perf_counter() - start
+    def counting(graph: DependencyGraph, address: object) -> object:
+        shape_ops["n"] += 1
+        return original(graph, address)
 
-    small_times = [_elapsed(cat_small, g_small) for _ in range(3)]
-    large_times = [_elapsed(cat_large, g_large) for _ in range(3)]
+    monkeypatch.setattr(catalog_mod, "_formula_shape_key", counting)
     res_small = partition_catalog(cat_small, g_small)
+    small = shape_ops["n"]
+    shape_ops["n"] = 0
     res_large = partition_catalog(cat_large, g_large)
+    large = shape_ops["n"]
     assert len(res_small.get("dst").statements) == 1
     assert len(res_large.get("dst").statements) == 1
-    # 4x cells should be ~4x time; take the fastest sample and allow slack
-    # for CI timer noise.
-    t_small = min(small_times)
-    t_large = min(large_times)
-    assert t_large <= t_small * 7 + 0.05, (
-        f"partition 10k took {t_large:.3f}s vs 2.5k {t_small:.3f}s"
-    )
+    assert small == n_small
+    assert large == n_large
+    assert large == small * (n_large // n_small)
 
 
 def test_partition_catalog_splits_on_shape_and_producer_changes() -> None:

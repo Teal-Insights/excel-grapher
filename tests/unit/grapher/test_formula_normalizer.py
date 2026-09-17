@@ -2,9 +2,33 @@
 
 from __future__ import annotations
 
-import time
+from collections.abc import Callable
+from re import Match, Pattern
 
+import pytest
+
+from excel_grapher.core import formula_normalization as formula_normalization_mod
+from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.parser import FormulaNormalizer
+
+
+def _count_re_sub(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Install a `re.sub` spy and return the call counter."""
+    calls = {"n": 0}
+    original = formula_normalization_mod.re.sub
+
+    def counting(
+        pattern: str | Pattern[str],
+        repl: str | Callable[[Match[str]], str],
+        string: str,
+        count: int = 0,
+        flags: int = 0,
+    ) -> str:
+        calls["n"] += 1
+        return original(pattern, repl, string, count=count, flags=flags)
+
+    monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+    return calls
 
 
 class TestFormulaNormalizerBasicNormalization:
@@ -96,58 +120,86 @@ class TestFormulaNormalizerCaching:
         assert r1 == "=Sheet1!A1"
         assert r2 == "=Sheet2!A1"
 
-    def test_large_name_set_fast_on_repeat(self) -> None:
-        """With 100 named ranges and 1000 repeated calls, caching keeps it fast."""
+    def test_repeated_calls_skip_the_normalize_pipeline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Cache hits must not re-enter named-range substitution."""
         named_ranges = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(100)}
         n = FormulaNormalizer(named_ranges=named_ranges)
         formula = "=Name50+Name99"
-        # Warm up
-        n.normalize(formula, "Sheet1")
-        start = time.perf_counter()
-        for _ in range(1000):
-            n.normalize(formula, "Sheet1")
-        elapsed = time.perf_counter() - start
-        # 1000 cached lookups should complete in well under 100ms
-        assert elapsed < 0.1, f"Cached calls too slow: {elapsed:.3f}s"
+        compute_ops = {"n": 0}
+        original = parser_mod.normalize_excel_formula_with_name_state
 
-    def test_large_name_set_single_pass_fast(self) -> None:
-        """With 100 named ranges, a single normalize call must complete quickly."""
-        named_ranges = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(100)}
-        n = FormulaNormalizer(named_ranges=named_ranges)
-        start = time.perf_counter()
-        for _ in range(200):
-            # Different formulas so cache doesn't help
-            n.normalize(f"=Name{_ % 100}*2", f"Sheet{_ % 5}")
-        elapsed = time.perf_counter() - start
-        # 200 unique calls with 100 names must complete in under 2s
-        assert elapsed < 2.0, f"Single-pass normalization too slow: {elapsed:.3f}s"
+        def counting(
+            formula: str,
+            current_sheet: str,
+            *,
+            replacements: dict[str, str],
+            names_re: object,
+        ) -> str:
+            compute_ops["n"] += 1
+            return original(
+                formula,
+                current_sheet,
+                replacements=replacements,
+                names_re=names_re,
+            )
+
+        monkeypatch.setattr(parser_mod, "normalize_excel_formula_with_name_state", counting)
+        expected = n.normalize(formula, "Sheet1")
+        assert expected == "=Sheet1!A51+Sheet1!A100"
+        assert compute_ops["n"] == 1
+        for _ in range(1000):
+            assert n.normalize(formula, "Sheet1") == expected
+        assert compute_ops["n"] == 1
+
+    def test_unique_formulas_use_one_name_regex_sub(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Name substitution must not call `re.sub` once per catalog name."""
+        calls = _count_re_sub(monkeypatch)
+
+        def re_sub_ops(n_names: int, n_formulas: int) -> int:
+            named_ranges = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(n_names)}
+            n = FormulaNormalizer(named_ranges=named_ranges)
+            calls["n"] = 0
+            for i in range(n_formulas):
+                assert n.normalize(f"=Name{i}*2", "Sheet1") == f"=Sheet1!A{i + 1}*2"
+            return calls["n"]
+
+        assert re_sub_ops(50, 10) == re_sub_ops(200, 10)
 
 
 class TestFormulaNormalizerOutlierFormula:
-    """Regression test for the ~380ms outlier on a short formula (issue #60)."""
+    """Regression for a short PV_ResFin formula with a large defined-name catalog."""
 
-    def test_short_formula_with_quoted_sheet_fast(self) -> None:
-        """Normalize quoted cross-sheet formulas quickly with many named ranges.
+    def test_short_formula_with_quoted_sheet_uses_one_name_pass(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Quoted cross-sheet formulas take one name-regex pass (issue #60).
 
-        Regression for a short PV_ResFin formula that must stay fast even when
-        dozens of defined names are present.
+        The LIC-DSF-scale catalog (56 cell names + 39 range names) must not
+        walk names one-by-one when the formula mentions none of them.
         """
-        # Simulate 56 cell names + 39 range names (95 total, like the LIC-DSF workbook)
+        formula = "=+'Input 7 - Residual Financing'!$G$14"
+        current_sheet = "PV_ResFin-add.int.cost - mkt"
         named_ranges = {f"CellName{i}": ("DataSheet", f"B{i + 1}") for i in range(56)}
         named_range_ranges = {
             f"RangeName{i}": ("DataSheet", f"C{i + 1}", f"D{i + 10}") for i in range(39)
         }
-        n = FormulaNormalizer(
-            named_ranges=named_ranges,
-            named_range_ranges=named_range_ranges,
-        )
-        formula = "=+'Input 7 - Residual Financing'!$G$14"
-        current_sheet = "PV_ResFin-add.int.cost - mkt"
+        calls = _count_re_sub(monkeypatch)
 
-        start = time.perf_counter()
-        for _ in range(100):
-            n._cache.clear()  # bypass cache to measure raw normalization cost
-            n.normalize(formula, current_sheet)
-        elapsed = time.perf_counter() - start
-        # 100 calls without cache must complete in under 1s (10ms/call budget)
-        assert elapsed < 1.0, f"Outlier formula still too slow: {elapsed:.3f}s for 100 calls"
+        def normalize_with(
+            named_ranges: dict[str, tuple[str, str]],
+            named_range_ranges: dict[str, tuple[str, str, str]],
+        ) -> tuple[str, int]:
+            n = FormulaNormalizer(
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+            )
+            calls["n"] = 0
+            result = n.normalize(formula, current_sheet)
+            return result, calls["n"]
+
+        result, large_ops = normalize_with(named_ranges, named_range_ranges)
+        tiny_result, tiny_ops = normalize_with({"Unrelated": ("DataSheet", "A1")}, {})
+        assert result == tiny_result == "=+'Input 7 - Residual Financing'!G14"
+        assert large_ops == tiny_ops

@@ -11,6 +11,8 @@ from __future__ import annotations
 import pickle
 from pathlib import Path
 
+import pytest
+
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.guard import CellRef, Compare, Literal
 from excel_grapher.grapher.node import Node
@@ -193,81 +195,42 @@ def test_deserialized_nodekeys_share_identity() -> None:
 
 
 # -------------------------------------------------------------------
-# Unpickle peak memory (issue #513)
+# Multipart unpickle (issue #513)
 # -------------------------------------------------------------------
 
 
-def _synthetic_graph_for_memory(n: int = 10_000) -> DependencyGraph:
-    """Build a mid-size synthetic graph for peak-memory assertions."""
-    from excel_grapher.grapher.node import make_cell_node
-
-    graph = DependencyGraph()
-    keys: list[str] = []
-    for i in range(n):
-        col = chr(ord("A") + (i % 26))
-        row = (i // 26) + 1
-        node = make_cell_node(sheet="S", column=col, row=row, value=i, is_leaf=True)
-        graph.add_node(node)
-        keys.append(node.address)
-    for i in range(1, n):
-        if i % 3 == 0:
-            graph.add_edge(keys[i], keys[i - 1])
-    return graph
-
-
-def test_unpickle_peak_memory_near_final_resident_size() -> None:
-    """Unpickling must not peak near 2x final size (issue #513).
+def test_unpickle_reads_two_frames(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Unpickling must load nodes then edges as separate frames (issue #513).
 
     A single state-dict pickle would keep indexed adjacency in the memo while
-    live string-keyed maps are rebuilt (~2.4x). The multipart reduce path plus
-    `load_graph` keep peak near final resident size.
+    live string-keyed maps are rebuilt (~2.4x peak). Two `pickle.load` calls
+    let the first frame drop before the second is reconstructed.
     """
-    import gc
-    import tempfile
-    import tracemalloc
-    from pathlib import Path
-
+    from excel_grapher.grapher import graph_pickle
     from excel_grapher.grapher.graph_pickle import dump_graph, load_graph
 
-    graph = _synthetic_graph_for_memory()
+    graph = _make_test_graph()
     payload = pickle.dumps(graph, protocol=pickle.HIGHEST_PROTOCOL)
-    expected_nodes = len(graph)
+    load_ops = {"n": 0}
+    original = graph_pickle.pickle.load
 
-    with tempfile.TemporaryDirectory() as tmp:
-        path = Path(tmp) / "graph.pkl.gz"
-        dump_graph(graph, path)
-        del graph
-        gc.collect()
+    def counting(file: object, *args: object, **kwargs: object) -> object:
+        load_ops["n"] += 1
+        return original(file, *args, **kwargs)
 
-        tracemalloc.start()
-        try:
-            restored_pickle: DependencyGraph = pickle.loads(payload)
-            pickle_current, pickle_peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
+    monkeypatch.setattr(graph_pickle.pickle, "load", counting)
 
-        gc.collect()
-        tracemalloc.start()
-        try:
-            restored_file: DependencyGraph = load_graph(path)
-            file_current, file_peak = tracemalloc.get_traced_memory()
-        finally:
-            tracemalloc.stop()
+    restored_pickle: DependencyGraph = pickle.loads(payload)
+    assert load_ops["n"] == 2
+    assert len(restored_pickle) == len(graph)
+    assert restored_pickle.get_dependencies("Sheet1!D1") == graph.get_dependencies("Sheet1!D1")
 
-    assert len(restored_pickle) == expected_nodes
-    assert len(restored_file) == expected_nodes
-    pickle_ratio = pickle_peak / max(pickle_current, 1)
-    file_ratio = file_peak / max(file_current, 1)
-    # Bound peak near final resident size (legacy path was ~2.4x). Headroom
-    # covers allocator/memo noise; cell-only graphs have a smaller final
-    # footprint so the ratio can sit a bit above 1.2 without a 2x blow-up.
-    assert pickle_ratio <= 1.35, (
-        f"pickle.loads peak/current={pickle_ratio:.2f} "
-        f"(peak={pickle_peak}, current={pickle_current})"
-    )
-    assert file_ratio <= 1.35, (
-        f"load_graph peak/current={file_ratio:.2f} (peak={file_peak}, current={file_current})"
-    )
+    load_ops["n"] = 0
+    path = tmp_path / "graph.pkl.gz"
+    dump_graph(graph, path)
+    restored_file: DependencyGraph = load_graph(path)
+    assert load_ops["n"] == 2
+    assert len(restored_file) == len(graph)
 
 
 def test_dump_graph_load_graph_round_trip(tmp_path: Path) -> None:

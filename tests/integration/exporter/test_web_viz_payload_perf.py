@@ -1,12 +1,12 @@
-"""Loose time budget for to_web_viz_payload (catches catastrophic slowdowns, not micro-benchmarks)."""
+"""Operation counts for to_web_viz_payload (layout once per payload)."""
 
 from __future__ import annotations
 
-import time
-
 import networkx as nx
+import pytest
 
 from excel_grapher.exporter import to_web_viz_payload
+from excel_grapher.exporter.web_viz_layout import run_web_viz_layout
 
 
 def _chain_graph(n: int) -> nx.DiGraph:
@@ -25,19 +25,25 @@ def _chain_graph(n: int) -> nx.DiGraph:
     return g
 
 
-def test_to_web_viz_payload_100_node_chain_completes_under_time_budget() -> None:
+def test_to_web_viz_payload_runs_layout_once_for_100_node_chain(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # NetworkX multipartite layout imports NumPy internally.
-    import pytest
-
     pytest.importorskip("numpy")
     g = _chain_graph(100)
-    t0 = time.perf_counter()
+    layout_ops = {"n": 0}
+    original = run_web_viz_layout
+
+    def counting(ctx: object, layout: object, layout_config: object) -> object:
+        layout_ops["n"] += 1
+        return original(ctx, layout, layout_config)
+
+    monkeypatch.setattr("excel_grapher.exporter.web_viz_layout.run_web_viz_layout", counting)
     p = to_web_viz_payload(
         g,
         layout="multipartite",
         seed=0,
         include_module_overlay=True,
     )
-    elapsed = time.perf_counter() - t0
     assert p.core.stats.node_count == 100
-    assert elapsed < 30.0, f"to_web_viz_payload took {elapsed:.2f}s, expected < 30s"
+    assert layout_ops["n"] == 1

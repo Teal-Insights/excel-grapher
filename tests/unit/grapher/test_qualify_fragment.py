@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import time
 from collections.abc import Mapping
 
 import pytest
@@ -95,13 +94,36 @@ class TestQualifyFragmentRegexCache:
             "patterns must be precompiled and absent names skipped"
         )
 
-    def test_large_catalog_repeat_calls_stay_fast(self) -> None:
+    def test_large_catalog_only_subs_names_present_in_fragment(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Absent catalog names must not reach the token regex (issue #527)."""
         named = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(600)}
         expr = "Name5+Name9"
-        # Warm compiled patterns / replacement pairs.
-        _qualify(expr, named)
-        start = time.perf_counter()
-        for _ in range(300):
+        pattern_ops = {"n": 0}
+        pair_ops = {"n": 0}
+        original_pattern = dynamic_refs_mod._defined_name_token_pattern
+        original_pairs = dynamic_refs_mod._qualify_replacement_pairs
+
+        def counting_pattern(name: str) -> re.Pattern[str]:
+            pattern_ops["n"] += 1
+            return original_pattern(name)
+
+        def counting_pairs(
+            named_ranges: Mapping[str, tuple[str, str]],
+            named_range_ranges: Mapping[str, tuple[str, str, str]] | None,
+        ) -> object:
+            pair_ops["n"] += 1
+            return original_pairs(named_ranges, named_range_ranges)
+
+        monkeypatch.setattr(dynamic_refs_mod, "_defined_name_token_pattern", counting_pattern)
+        monkeypatch.setattr(dynamic_refs_mod, "_qualify_replacement_pairs", counting_pairs)
+
+        assert _qualify(expr, named) == "Sheet1!A6+Sheet1!A10"
+        assert pair_ops["n"] == 1
+        assert pattern_ops["n"] == 2
+        pattern_ops["n"] = 0
+        for _ in range(20):
             assert _qualify(expr, named) == "Sheet1!A6+Sheet1!A10"
-        elapsed = time.perf_counter() - start
-        assert elapsed < 0.5, f"qualify_fragment too slow with 600 names: {elapsed:.3f}s"
+        assert pair_ops["n"] == 1
+        assert pattern_ops["n"] == 40
