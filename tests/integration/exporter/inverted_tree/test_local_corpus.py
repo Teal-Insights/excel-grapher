@@ -1,4 +1,4 @@
-"""Local workbook pool gate: rung 3 == evaluator, auto == rung 3 (#656).
+"""Local workbook pool gate: export == `FormulaEvaluator` (#656).
 
 Opt in with `pytest -m local_corpus`. Missing pool workbooks `pytest.skip`
 with the path (parity.mdc run-if-available).
@@ -42,7 +42,7 @@ def test_local_corpus_path_and_manifest() -> None:
 
 @pytest.mark.local_corpus
 @pytest.mark.parametrize("entry_id", ["tiny_dsa", "qcraft", "lic_dsf"])
-def test_corpus_rung3_matches_evaluator_and_auto(
+def test_corpus_matches_evaluator(
     tmp_path: Path,
     corpus_entries: tuple[CorpusEntry, ...],
     entry_id: str,
@@ -56,7 +56,7 @@ def test_corpus_rung3_matches_evaluator_and_auto(
         pytest.skip(f"{entry.id} exceeds max_cells={entry.max_cells}")
     topo = statement_topo_order(catalog, deps)
     modules = generate_corpus_modules(entry, graph, catalog)
-    pkg = load_package(modules, tmp_path, name=f"{entry.id}_auto")
+    pkg = load_package(modules, tmp_path, name=entry.id)
     lines = compare_package_to_evaluator(pkg, catalog, graph, topo=topo)
     assert not lines, "export diverged from evaluator:\n" + "\n".join(lines)
     assert_no_per_cell_unroll(modules)

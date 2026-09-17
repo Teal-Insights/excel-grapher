@@ -274,7 +274,7 @@ def test_corpus_matches_evaluator(
     workbook_fn: Callable[[Path], Path],
     bindings_fn: Callable[[], dict[str, Any]],
 ) -> None:
-    _emit_and_compare(workbook_fn(tmp_path), bindings_fn(), tmp_path, f"{case}_auto")
+    _emit_and_compare(workbook_fn(tmp_path), bindings_fn(), tmp_path, case)
 
 
 def test_exp_matches_evaluator(tmp_path: Path) -> None:

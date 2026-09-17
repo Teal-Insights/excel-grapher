@@ -1,8 +1,8 @@
 # Inverted-tree shape tests
 
 Tier 1 distilled workbooks live in `test_shape_*.py` and the `_CORPUS`
-oracle in `test_design_properties.py`. They run in every orientation and
-forced rung.
+oracle in `test_design_properties.py`. They run in every orientation
+against `FormulaEvaluator`.
 
 ## Distillation rule
 
