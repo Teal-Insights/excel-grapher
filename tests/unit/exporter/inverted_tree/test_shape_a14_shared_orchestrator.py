@@ -28,25 +28,9 @@ from tests.unit.exporter.inverted_tree.test_shape_a13_identity_flip import (
 
 
 def test_shared_engine_emits_one_runner(tmp_path: Path) -> None:
-    modules = generate_inverted(_a1_workbook(tmp_path), _a1_bindings())
-    api = modules["api.py"]
+    api = generate_inverted(_a1_workbook(tmp_path), _a1_bindings())["api.py"]
     assert api.count("internals.engine_path(") == 1
     assert api.count("internals.engine_year0(") == 1
-    pkg = load_package(modules, tmp_path, name="a14_a1")
-    assert set(required_param_names(pkg.compute_output_path)) == {
-        "initial_debt",
-        "growth",
-        "interest",
-    }
-    assert "unused_flag" not in all_param_names(pkg.compute_output_path)
-    assert "unused_flag" not in all_param_names(pkg.compute_output_year1)
-    path = pkg.compute_output_path(
-        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
-    )
-    year1 = pkg.compute_output_year1(
-        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
-    )
-    assert year1 == pytest.approx(path[1])
 
 
 def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:

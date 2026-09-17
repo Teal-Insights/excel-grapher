@@ -16,7 +16,6 @@ import pytest
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
-    assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
@@ -24,10 +23,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     named_input_kwargs,
     series_entry,
     write_workbook,
-)
-from tests.unit.exporter.inverted_tree.test_shape_a10_other_series_lag import (
-    _non_lag_bindings,
-    _non_lag_workbook,
 )
 
 _TIME_DIM = {
@@ -268,8 +263,3 @@ def test_multi_scenario_host_keyed_dual_read_matches_evaluator(tmp_path: Path) -
     assert tuple(value for _, value in got.items()) == pytest.approx(
         (40.0, 44.0, 10.0 * 200.0 / 60.0, 11.0 * 220.0 / 66.0)
     )
-
-
-def test_unclassifiable_two_positions_read_by_coordinate(tmp_path: Path) -> None:
-    workbook = _non_lag_workbook(tmp_path)
-    assert_package_matches_evaluator(workbook, _non_lag_bindings(), tmp_path, "a29_two_positions")

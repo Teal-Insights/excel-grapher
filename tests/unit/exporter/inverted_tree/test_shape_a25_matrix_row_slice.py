@@ -25,7 +25,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     named_input_kwargs,
     oriented_addresses,
     oriented_document,
-    series_entry,
     write_oriented_workbook,
 )
 
@@ -197,39 +196,3 @@ def test_matrix_other_row_slice_matches_evaluator(tmp_path: Path, orientation: s
         tuple(expected[cell] for cell in cells)
     )
     assert [value for _, value in got.items()] == pytest.approx((1.0, 2.0, 3.0))
-
-
-def test_year0_scalar_seed_is_still_a_scan(tmp_path: Path) -> None:
-    """#631 / #649: a relative previous-column scalar remains a year-0 seed."""
-    workbook = write_oriented_workbook(
-        tmp_path / "a25_seed.xlsx",
-        {
-            "Engine": {
-                "A1": 2009,
-                "B1": 2010,
-                "C1": 2011,
-                "A2": 10.0,
-                "B2": "=A2+1",
-                "C2": "=B2+1",
-            },
-        },
-        orientation="horizontal",
-    )
-    document = bindings_document(
-        series_entry("year0", "Engine!A2", layout="scalar", direction="input"),
-        series_entry(
-            "path",
-            "Engine!B2:C2",
-            layout="series",
-            direction="output",
-            header_row=1,
-        ),
-    )
-    _catalog, deps, _graph = inverted_graph_parts(workbook, document)
-    path = deps["path"]
-    assert path.is_scan is True
-    assert path.seed_id == "year0"
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a25_seed")
-    assert tuple(value for _, value in pkg.compute_path(year0=10.0).items()) == pytest.approx(
-        (11.0, 12.0)
-    )

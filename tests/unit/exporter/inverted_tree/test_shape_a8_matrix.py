@@ -153,13 +153,9 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     with pkg.data.overrides(PROFILE_TABLE=replacement):
         assert _measure(pkg.compute_output_cell()) == pytest.approx(99.0)
     assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
-
-
-def test_matrix_cell_ref_matches_formula_evaluator(tmp_path: Path) -> None:
-    workbook = _profile_workbook(tmp_path)
-    pkg = load_package(generate_inverted(workbook, _profile_bindings()), tmp_path, name="a8_num")
-    graph = create_dependency_graph(workbook, ["Outputs!A1"], load_values=True)
-    expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, ["Outputs!A1"], load_values=True)
+    ).evaluate(["Outputs!A1"])
     assert _measure(pkg.compute_output_cell()) == pytest.approx(expected["Outputs!A1"])
 
 

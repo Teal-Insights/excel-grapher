@@ -112,15 +112,10 @@ def test_splice_indexes_last_growth_then_trajectory(tmp_path: Path) -> None:
     assert pkg.compute_growth_keep(
         gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0))
     ) == pytest.approx(110 / 100)
-
-
-def test_splice_matches_formula_evaluator(tmp_path: Path) -> None:
-    workbook = _splice_workbook(tmp_path)
     targets = ["Engine!D6", "Engine!E6", "Engine!F6", "Engine!G6"]
-    pkg = load_package(generate_inverted(workbook, _splice_bindings()), tmp_path, name="a18_eval")
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-    expected = FormulaEvaluator(graph).evaluate(targets)
-    got = pkg.compute_result(gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)))
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, targets, load_values=True)
+    ).evaluate(targets)
     assert [got[year] for year in (2011, 2012, 2013, 2014)] == pytest.approx(
         tuple(expected[addr] for addr in targets)
     )

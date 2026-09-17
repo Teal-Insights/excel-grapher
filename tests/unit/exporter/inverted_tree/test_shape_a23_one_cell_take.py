@@ -122,15 +122,9 @@ def test_one_cell_helper_indexes_taken_window(tmp_path: Path) -> None:
     assert tuple(got.domain) == ((2011,),)
     got = got[2011]
     assert got == pytest.approx(5.0)
-
-
-def test_one_cell_take_matches_formula_evaluator(tmp_path: Path) -> None:
-    workbook = _one_cell_workbook(tmp_path)
-    pkg = load_package(generate_inverted(workbook, _one_cell_bindings()), tmp_path, name="a23_eval")
-    graph = create_dependency_graph(workbook, ["Engine!C3"], load_values=True)
-    expected = FormulaEvaluator(graph).evaluate(["Engine!C3"])
-    got = pkg.compute_last_growth(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
-    got = got[2011]
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, ["Engine!C3"], load_values=True)
+    ).evaluate(["Engine!C3"])
     assert got == pytest.approx(expected["Engine!C3"])
 
 

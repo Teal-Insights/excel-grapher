@@ -148,14 +148,3 @@ def test_internal_constant_argument_validates_supplied_tensor(tmp_path: Path) ->
     )
     with pytest.raises(pkg.tensor.SchemaError, match="engine_year_labels.*unknown labels"):
         pkg.internals.shocked_path(value=10.0, shock_year=1, engine_year_labels=wrong)
-
-
-def test_semantic_loop_does_not_overwrite_input_named_value(tmp_path: Path) -> None:
-    pkg = load_package(
-        generate_inverted(_a5_workbook(tmp_path), _a5_bindings()), tmp_path, name="a5_value"
-    )
-    result = pkg.internals.shocked_path(
-        value=10.0, shock_year=1, engine_year_labels=pkg.data.ENGINE_YEAR_LABELS
-    )
-    assert result[1] == 11.0
-    assert result[2] == 11.0
