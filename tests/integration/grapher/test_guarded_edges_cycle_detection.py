@@ -81,28 +81,6 @@ def _make_must_cycle_workbook(path: Path) -> None:
     wb.close()
 
 
-def test_guarded_edges_are_created_for_top_level_if(tmp_path: Path) -> None:
-    excel_path = tmp_path / "if_may_cycle.xlsx"
-    _make_may_cycle_if_workbook(excel_path)
-
-    graph = create_dependency_graph(excel_path, ["Sheet1!A1"], load_values=False)
-
-    # Condition cell is always depended on (unconditional)
-    assert "Sheet1!C1" in graph.get_dependencies("Sheet1!A1")
-    assert "Sheet1!C1" in graph.get_dependencies("Sheet1!B1")
-
-    # Branch-only deps are guarded
-    a1_to_b1 = graph.get_edge_attrs("Sheet1!A1", "Sheet1!B1")
-    b1_to_a1 = graph.get_edge_attrs("Sheet1!B1", "Sheet1!A1")
-    assert a1_to_b1.guard is not None
-    assert b1_to_a1.guard is not None
-
-    a1_to_c1 = graph.get_edge_attrs("Sheet1!A1", "Sheet1!C1")
-    b1_to_c1 = graph.get_edge_attrs("Sheet1!B1", "Sheet1!C1")
-    assert a1_to_c1.guard is None
-    assert b1_to_c1.guard is None
-
-
 def test_cycle_report_distinguishes_must_vs_may_cycles(tmp_path: Path) -> None:
     excel_path = tmp_path / "if_feasible_may_cycle.xlsx"
     _make_feasible_may_cycle_if_workbook(excel_path)

@@ -103,9 +103,12 @@ def test_generate_modules_computes_input_series(workbook: Path, tmp_path: Path) 
     )
 
     joined = "\n".join(modules.values())
+    assert "def compute_borvelia_primary_balance_out(" in joined
     assert "def set_borvelia_primary_balance(" not in joined
     assert "def list_setters(" not in joined
     assert "def list_readers(" not in joined
+    assert "def list_computes(" not in joined
+    assert "-> Records:" not in joined
     assert not hasattr(pkg, "set_borvelia_primary_balance")
     assert not hasattr(pkg, "make_context")
 

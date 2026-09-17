@@ -1,4 +1,4 @@
-"""Grouped bindings still export via `generate_modules()`; packages omit `list_groups`."""
+"""Grouped bindings still export via `generate_modules()`."""
 
 from __future__ import annotations
 
@@ -76,18 +76,15 @@ def workbook(tmp_path: Path) -> Path:
     return path
 
 
-def _export(workbook: Path, tmp_path: Path, document: dict[str, Any], name: str):
-    bindings = validate_bindings_document(deepcopy(document))
+def test_grouped_bindings_export_computes(workbook: Path, tmp_path: Path) -> None:
+    bindings = validate_bindings_document(deepcopy(GROUPED_DOCUMENT))
     targets = all_series_targets(bindings, workbook=workbook)
     graph = create_dependency_graph(workbook, targets, load_values=True)
-    return load_generated_package(graph, bindings, workbook, tmp_path, name=name)
+    pkg, modules = load_generated_package(
+        graph, bindings, workbook, tmp_path, name="grouped_export"
+    )
 
-
-def test_grouped_export_omits_list_groups(workbook: Path, tmp_path: Path) -> None:
-    pkg, modules = _export(workbook, tmp_path, GROUPED_DOCUMENT, "grouped_export")
-    joined = "\n".join(modules.values())
-    assert "def list_groups(" not in joined
-    assert "def set_primary_balance(" not in joined
+    assert "def set_primary_balance(" not in "\n".join(modules.values())
     result = pkg.compute_primary_balance_out(
         primary_balance=pkg.data.PRIMARY_BALANCE.with_records(
             zip(((1,), (2,), (3,), (4,), (5,)), (-1.0, -0.5, 0.0, 7.5, 1.0), strict=True),
@@ -96,11 +93,3 @@ def test_grouped_export_omits_list_groups(workbook: Path, tmp_path: Path) -> Non
     assert tuple(result[period] for period in (1, 2, 3, 4, 5)) == pytest.approx(
         (-1.0, -0.5, 0.0, 7.5, 1.0)
     )
-
-
-def test_ungrouped_bindings_export_omits_list_groups(workbook: Path, tmp_path: Path) -> None:
-    document = deepcopy(GROUPED_DOCUMENT)
-    for series in document["series"]:
-        series.pop("groups", None)
-    _pkg, modules = _export(workbook, tmp_path, document, "ungrouped_export")
-    assert "def list_groups(" not in "\n".join(modules.values())

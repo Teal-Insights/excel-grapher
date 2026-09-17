@@ -163,7 +163,14 @@ def test_targets_deduplicate_overlaps(tmp_path: Path) -> None:
         load_values=False,
     )
 
-    assert sorted(graph_overlap) == sorted(graph_single)
+    assert set(graph_overlap) == set(graph_single)
+    for key in graph_single:
+        assert graph_overlap.get_dependencies(key) == graph_single.get_dependencies(key)
+        overlap_node = graph_overlap.get_node(key)
+        single_node = graph_single.get_node(key)
+        assert overlap_node is not None and single_node is not None
+        assert overlap_node.is_target == single_node.is_target
+        assert overlap_node.formula == single_node.formula
 
 
 def test_create_dependency_graph_stores_named_range_maps(tmp_path: Path) -> None:

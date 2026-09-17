@@ -38,6 +38,6 @@ def test_get_calc_settings_defaults_when_missing(tmp_path: Path) -> None:
     wb.close()
 
     settings = get_calc_settings(path)
-    assert settings.iterate_enabled in {True, False}
-    assert isinstance(settings.iterate_count, int)
-    assert isinstance(settings.iterate_delta, float)
+    assert settings.iterate_enabled is False
+    assert settings.iterate_count == 100
+    assert settings.iterate_delta == 0.001
