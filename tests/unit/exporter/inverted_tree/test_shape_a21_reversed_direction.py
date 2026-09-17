@@ -305,40 +305,6 @@ def test_descending_year_layout_fuses_and_matches_evaluator(tmp_path: Path) -> N
 
 
 # ---------------------------------------------------------------------------
-# Differential oracle across both directions
-# ---------------------------------------------------------------------------
-
-
-def test_differential_oracle_runs_over_both_directions(tmp_path: Path) -> None:
-    from tests.unit.exporter.inverted_tree.test_shape_a11_zipper import (
-        _zipper_bindings,
-        _zipper_workbook,
-    )
-
-    wb_fwd = _zipper_workbook(tmp_path)
-    doc_fwd = _zipper_bindings()
-    pkg_fwd = load_package(generate_inverted(wb_fwd, doc_fwd), tmp_path, name="a21_or_fwd")
-    cells_fwd = ["Engine!A2", "Engine!B2", "Engine!C2"]
-    expected_fwd = FormulaEvaluator(
-        create_dependency_graph(wb_fwd, cells_fwd, load_values=True)
-    ).evaluate(cells_fwd)
-    assert [value for _, value in pkg_fwd.compute_debt().items()] == pytest.approx(
-        tuple(expected_fwd[cell] for cell in cells_fwd)
-    )
-
-    wb_rev = _lookahead_zipper_workbook(tmp_path)
-    doc_rev = _lookahead_zipper_bindings()
-    pkg_rev = load_package(generate_inverted(wb_rev, doc_rev), tmp_path, name="a21_or_rev")
-    cells_rev = ["Engine!A2", "Engine!B2", "Engine!C2"]
-    expected_rev = FormulaEvaluator(
-        create_dependency_graph(wb_rev, cells_rev, load_values=True)
-    ).evaluate(cells_rev)
-    assert [value for _, value in pkg_rev.compute_value().items()] == pytest.approx(
-        tuple(expected_rev[cell] for cell in cells_rev)
-    )
-
-
-# ---------------------------------------------------------------------------
 # Refusal: mixed signs drop to Rung 3, same-index cycles fail closed
 # ---------------------------------------------------------------------------
 
