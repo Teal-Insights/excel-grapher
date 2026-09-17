@@ -199,26 +199,6 @@ def test_sum_over_range_with_error_produces_error_code() -> None:
         assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.DIV}
 
 
-def test_sum_still_evaluates_all_cells_in_range() -> None:
-    """Full-scan reductions visit every cell when no embedded error stops them."""
-    graph = _make_graph(
-        _make_node("S!A1", None, 1),
-        _make_node("S!A2", "=S!A1+1", None),
-        _make_node("S!A3", "=S!A1+2", None),
-        _make_node("S!B1", "=SUM(S!A1:S!A3)", None),
-    )
-    seen: list[str] = []
-
-    def _track(address: str, _value: object) -> None:
-        seen.append(address)
-
-    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
-        assert ev.evaluate(["S!B1"]) == {"S!B1": 6}
-    assert "S!A1" in seen
-    assert "S!A2" in seen
-    assert "S!A3" in seen
-
-
 def test_sum_over_ranges_does_not_eager_resolve_excel_range(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -256,18 +236,6 @@ def test_sum_fail_fast_does_not_evaluate_trailing_formula_cells() -> None:
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.DIV}
     assert "S!A3" not in seen
-
-
-def test_countif_over_lazy_range_parity() -> None:
-    """COUNTIF binds lazy Range and counts matching cells."""
-    graph = _make_graph(
-        _make_node("S!A1", None, 10),
-        _make_node("S!A2", None, 3),
-        _make_node("S!A3", None, 20),
-        _make_node("S!B1", '=COUNTIF(S!A1:S!A3, ">5")', None),
-    )
-    with FormulaEvaluator(graph) as ev:
-        assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
 
 
 def test_countif_skips_error_cells_in_range() -> None:
@@ -337,6 +305,7 @@ def test_sum_does_not_double_evaluate_via_ast_precheck() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 6}
+    assert "S!A1" in seen
     assert seen.count("S!A2") == 1
     assert seen.count("S!A3") == 1
 

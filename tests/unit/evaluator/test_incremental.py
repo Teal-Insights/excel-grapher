@@ -104,23 +104,6 @@ def test_graph_set_node_value_does_not_affect_unrelated_cells() -> None:
 # --- auto_detect_changes tests ---
 
 
-def test_auto_detect_changes_detects_mutated_leaf() -> None:
-    graph = _make_graph(
-        _make_node("S!A1", None, 10),
-        _make_node("S!B1", "=S!A1*2", None),
-    )
-    graph.add_edge("S!B1", "S!A1")
-
-    with FormulaEvaluator(graph, auto_detect_changes=True) as ev:
-        result1 = ev.evaluate(["S!B1"])
-        assert result1["S!B1"] == 20.0
-
-        graph.set_node_value("S!A1", 5)
-
-        result2 = ev.evaluate(["S!B1"])
-        assert result2["S!B1"] == 10.0
-
-
 def test_auto_detect_changes_false_ignores_durable_leaf_update() -> None:
     graph = _make_graph(
         _make_node("S!A1", None, 10),

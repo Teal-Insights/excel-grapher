@@ -121,15 +121,6 @@ def test_evaluator_memoizes_cell_computation() -> None:
         assert seen.count("S!A1") == 1
 
 
-def test_evaluator_detects_cycles() -> None:
-    graph = _make_graph(
-        _make_node("S!A1", "=S!B1", None),
-        _make_node("S!B1", "=S!A1", None),
-    )
-    with FormulaEvaluator(graph) as ev, pytest.warns(CircularReferenceWarning):
-        assert ev.evaluate(["S!A1"]) == {"S!A1": 0}
-
-
 def test_evaluator_re_emits_circular_reference_warning_on_memoized_re_evaluate() -> None:
     """Issue #130: repeated root evaluation must not silently drop cycle diagnostics."""
     graph = _make_graph(
@@ -141,8 +132,8 @@ def test_evaluator_re_emits_circular_reference_warning_on_memoized_re_evaluate()
     with warnings.catch_warnings(record=True) as caught:
         warnings.simplefilter("always")
         with FormulaEvaluator(graph) as evaluator:
-            evaluator.evaluate("S!A1")
-            evaluator.evaluate("S!A1")
+            assert evaluator.evaluate("S!A1") == 0
+            assert evaluator.evaluate("S!A1") == 0
 
     assert len(caught) == 2
     assert all(w.category is CircularReferenceWarning for w in caught)

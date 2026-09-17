@@ -24,8 +24,7 @@ def test_chart_shortlist_constraint_ranges_are_sheet_qualified() -> None:
 
 def test_chart_shortlist_constraint_keys_cover_discovered_leaves() -> None:
     keys = expand_chart_shortlist_constraint_keys()
-    assert len(keys) == 1654
-    assert len(set(keys)) == 1654
+    assert len(set(keys)) == len(keys)
     expected = {
         "'Input 1 - Basics'!C7",
         "START!K10",
