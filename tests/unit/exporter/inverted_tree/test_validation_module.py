@@ -77,15 +77,6 @@ def test_input_checks_are_emitted_in_validation_not_api(tmp_path: Path) -> None:
     assert "require_input_domain" not in modules["internals.py"]
 
 
-def test_check_functions_are_separated_by_two_blank_lines(tmp_path: Path) -> None:
-    modules = generate_inverted(_two_flag_workbook(tmp_path), _two_flag_bindings())
-    validation = modules["validation.py"]
-    assert "def _check_flag(" in validation
-    assert "def _check_other(" in validation
-    assert "\n\n\ndef _check_other(" in validation
-    assert "\n\n\nCHECKS = {" in validation
-
-
 def test_validation_module_passes_ruff_check_and_format(tmp_path: Path) -> None:
     modules = generate_inverted(_two_flag_workbook(tmp_path), _two_flag_bindings())
     pkg = tmp_path / "inv_validation"

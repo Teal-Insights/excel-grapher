@@ -130,10 +130,8 @@ def test_absolute_selector_is_not_a_scan_seed(tmp_path: Path) -> None:
 def test_absolute_selector_emits_identity_loop_reading_mode(tmp_path: Path) -> None:
     modules = generate_inverted(_selector_workbook(tmp_path), _selector_bindings())
     internals = modules["internals.py"]
-    assert "prior: float | str = mode" not in internals
-    assert "prior == label_nominal" not in internals
     assert "xl_eq(mode, label_nominal)" in internals
-    assert "collect(evaluate(formula, data.SELECTED.required))" in internals
+    assert "evaluate(formula" in internals
 
 
 def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:

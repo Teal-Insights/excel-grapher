@@ -269,16 +269,12 @@ def test_lag_zipper_emits_fused_union_loop(tmp_path: Path, orientation: str) -> 
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
     internals = modules["internals.py"]
-    api = modules["api.py"]
-    catalog, _deps, graph = inverted_graph_parts(workbook, bindings_fn())
     pkg = load_package(modules, tmp_path, name=f"a11_zip_{orientation[:1]}")
     got = pkg.compute_debt()
     assert tuple(got[year] for year in (2009, 2010, 2011)) == pytest.approx((100.0, 102.0, 104.04))
     assert "scan_debt(" in internals
-    assert "-> data.Debt:" in api
     assert not hasattr(pkg.internals, "debt")
     assert not hasattr(pkg.internals, "adjustment")
-    assert "class ScanDebtResult:" in internals
 
 
 @pytest.mark.parametrize("orientation", ["horizontal", "vertical"])

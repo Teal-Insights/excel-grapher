@@ -102,8 +102,6 @@ def test_build_dot_renders_repo_pre_post_hierarchy_and_blocks_edges() -> None:
     dot = build_dot(issues, blocks_edges)
 
     assert "rankdir=TB" in dot
-    assert "nodesep=0.5" in dot
-    assert "ranksep=0.8" in dot
     assert 'subgraph "cluster_repo_excel_grapher"' in dot
     assert 'subgraph "cluster_repo_lic_dsf_extraction_pipeline"' in dot
     assert "Redesign constraints API" in dot

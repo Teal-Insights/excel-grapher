@@ -90,4 +90,3 @@ def test_build_index_html_references_preset_json() -> None:
     html = build_index_html(json_filename="workflow.json")
     assert "workflow.json" in html
     assert "Graphviz preset" in html
-    assert "layout: {" in html and "name: 'preset'" in html

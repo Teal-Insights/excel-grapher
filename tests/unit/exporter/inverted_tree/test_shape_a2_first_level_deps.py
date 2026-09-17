@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from pathlib import Path
 from typing import Literal
 
@@ -70,19 +71,17 @@ def _a2_dynamic_refs() -> DynamicRefConfig:
 
 def test_choose_and_offset_live_on_the_series_that_owns_them(tmp_path: Path) -> None:
     workbook = _a2_workbook(tmp_path)
-    modules = generate_inverted(workbook, _a2_bindings(), dynamic_refs=_a2_dynamic_refs())
-    internals = modules["internals.py"]
-    assert "xl_choose" in internals
-    assert "CHOOSE" in internals or "xl_choose" in internals
-    # OFFSET is lowered to indexing on shock_magnitude_resolved, not on path.
-    growth_fn_start = internals.index("def shocked_growth")
-    path_fn_start = internals.index("def path")
-    growth_body = internals[growth_fn_start:path_fn_start]
-    path_body = internals[path_fn_start:]
-    mag_body = internals[internals.index("def shock_magnitude_resolved") : growth_fn_start]
-    assert "xl_choose" in growth_body
-    assert "xl_choose" not in path_body
-    assert "shock_magnitudes" in mag_body
+    pkg = load_package(
+        generate_inverted(workbook, _a2_bindings(), dynamic_refs=_a2_dynamic_refs()),
+        tmp_path,
+        name="a2_owners",
+    )
+    growth_src = inspect.getsource(pkg.internals.shocked_growth)
+    path_src = inspect.getsource(pkg.internals.path)
+    mag_src = inspect.getsource(pkg.internals.shock_magnitude_resolved)
+    assert "xl_choose" in growth_src
+    assert "xl_choose" not in path_src
+    assert "shock_magnitudes" in mag_src
 
 
 def test_path_does_not_take_shock_type(tmp_path: Path) -> None:

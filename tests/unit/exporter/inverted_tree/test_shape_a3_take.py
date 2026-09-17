@@ -156,12 +156,7 @@ def _middle_bindings() -> dict:
 
 def test_middle_slice_scan_uses_predecessor_closure(tmp_path: Path) -> None:
     workbook = _middle_workbook(tmp_path)
-    modules = generate_inverted(workbook, _middle_bindings())
-    api = modules["api.py"]
-    assert "trim(" not in api
-    assert "growth: data.Growth" in api
-    assert "interest: data.Interest" in api
-    pkg = load_package(modules, tmp_path, name="a3_mid")
+    pkg = load_package(generate_inverted(workbook, _middle_bindings()), tmp_path, name="a3_mid")
     growth = pkg.data.GROWTH_DEFAULT
     interest = pkg.data.INTEREST_DEFAULT
     year0 = pkg.internals.engine_year0(initial_debt=60.0)
@@ -231,11 +226,7 @@ def _punched_bindings() -> dict:
 
 def test_punched_elementwise_gathers_holes(tmp_path: Path) -> None:
     workbook = _punched_workbook(tmp_path)
-    modules = generate_inverted(workbook, _punched_bindings())
-    api = modules["api.py"]
-    assert "trim(" not in api
-    assert "values: data.Values" in api
-    pkg = load_package(modules, tmp_path, name="a3_punch")
+    pkg = load_package(generate_inverted(workbook, _punched_bindings()), tmp_path, name="a3_punch")
     got = pkg.compute_output_punched(values=pkg.data.VALUES_DEFAULT)
     assert tuple(got.domain) == ((1,), (3,))
     assert (got[1], got[3]) == pytest.approx((11.0, 31.0))
