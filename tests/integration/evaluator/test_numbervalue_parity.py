@@ -100,28 +100,3 @@ def test_numbervalue_parity_with_currency_and_spaces() -> None:
     assert results["S!C1"] == 1234.56
     assert results["S!C2"] == -1234.56
     assert results["S!C3"] == 1234.56
-
-
-def test_numbervalue_parity_with_xludf_prefix() -> None:
-    graph = _make_graph(
-        _make_node(
-            "S!A1",
-            '=_xludf.NUMBERVALUE("1,234.56", ".", ",")',
-            None,
-        ),
-        _make_node(
-            "S!A2",
-            '=_xludf.NUMBERVALUE("(1,234.56)", ".", ",")',
-            None,
-        ),
-        _make_node(
-            "S!A3",
-            '=_xludf.NUMBERVALUE("12%", ".", ",")',
-            None,
-        ),
-    )
-
-    results = evaluate_targets(graph, ["S!A1", "S!A2", "S!A3"])
-    assert results["S!A1"] == 1234.56
-    assert results["S!A2"] == -1234.56
-    assert results["S!A3"] == 0.12

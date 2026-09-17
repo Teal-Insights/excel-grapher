@@ -14,25 +14,18 @@ from tests.utils._helpers import is_wsl, parse_cell_ref, wsl_path_to_windows_unc
 class TestIsWsl:
     """Tests for is_wsl() function."""
 
-    def test_detects_wsl_from_release(self) -> None:
-        """Test that WSL is detected from 'microsoft' in platform release."""
-        with patch("platform.release", return_value="5.15.0-1-Microsoft"):
-            assert is_wsl() is True
-
-    def test_detects_wsl_lowercase(self) -> None:
-        """Test case-insensitive WSL detection."""
-        with patch("platform.release", return_value="5.15.0-1-microsoft-standard-WSL2"):
-            assert is_wsl() is True
-
-    def test_non_wsl_linux(self) -> None:
-        """Test that regular Linux is not detected as WSL."""
-        with patch("platform.release", return_value="6.8.0-90-generic"):
-            assert is_wsl() is False
-
-    def test_non_wsl_macos(self) -> None:
-        """Test that macOS is not detected as WSL."""
-        with patch("platform.release", return_value="23.5.0"):
-            assert is_wsl() is False
+    @pytest.mark.parametrize(
+        ("release", "expected"),
+        [
+            ("5.15.0-1-Microsoft", True),
+            ("5.15.0-1-microsoft-standard-WSL2", True),
+            ("6.8.0-90-generic", False),
+            ("23.5.0", False),
+        ],
+    )
+    def test_detects_wsl_from_release(self, release: str, expected: bool) -> None:
+        with patch("platform.release", return_value=release):
+            assert is_wsl() is expected
 
 
 class TestWslPathToWindowsUnc:
@@ -71,17 +64,17 @@ class TestParseCellRef:
         assert sheet == "Data"
         assert cell == "B10"
 
-    def test_quoted_sheet_name(self) -> None:
-        """Test parsing a cell reference with quoted sheet name."""
-        sheet, cell = parse_cell_ref("'Sheet Name'!$C$5")
-        assert sheet == "Sheet Name"
-        assert cell == "C5"
-
-    def test_quoted_sheet_with_spaces(self) -> None:
-        """Test parsing a cell reference with spaces in sheet name."""
-        sheet, cell = parse_cell_ref("'My Data Sheet'!D14")
-        assert sheet == "My Data Sheet"
-        assert cell == "D14"
+    @pytest.mark.parametrize(
+        ("ref", "sheet_name", "cell"),
+        [
+            ("'Sheet Name'!$C$5", "Sheet Name", "C5"),
+            ("'My Data Sheet'!D14", "My Data Sheet", "D14"),
+        ],
+    )
+    def test_quoted_sheet_name(self, ref: str, sheet_name: str, cell: str) -> None:
+        parsed_sheet, parsed_cell = parse_cell_ref(ref)
+        assert parsed_sheet == sheet_name
+        assert parsed_cell == cell
 
     def test_mixed_absolute_reference(self) -> None:
         """Test parsing a mixed absolute/relative reference."""
