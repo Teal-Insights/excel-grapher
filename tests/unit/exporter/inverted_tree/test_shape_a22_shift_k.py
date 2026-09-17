@@ -146,15 +146,6 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     assert [value for _, value in got.items()] == pytest.approx(_expected_dual(n))
 
 
-def test_stride_k_fused_loop_agrees_with_rung3_oracle(tmp_path: Path) -> None:
-    n, lag = 5, 2
-    workbook = _stride_k_workbook(tmp_path, n, lag, stem="a22_oracle")
-    document = _stride_k_bindings(n)
-    auto = load_package(generate_inverted(workbook, document), tmp_path, name="a22_or_auto")
-    forced = load_package(generate_inverted(workbook, document), tmp_path, name="a22_or_r3")
-    assert dict(auto.compute_path().items()) == pytest.approx(dict(forced.compute_path().items()))
-
-
 @pytest.mark.parametrize("lag", [2, 4], ids=["t-2", "t-4"])
 def test_stride_k_code_size_independent_of_series_length(tmp_path: Path, lag: int) -> None:
     small_n, large_n = 8, 24

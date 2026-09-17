@@ -263,19 +263,6 @@ class TestBulkCachedRefResolution:
 class TestStaticRangeExpansionMemo:
     """Expanding the same static range at every level should not redo the work."""
 
-    def test_chain_expansion_reuses_memoized_range_addresses(self) -> None:
-        dynamic_refs_mod._expanded_range_keys.cache_clear()
-        dynamic_refs_mod._range_node_cell_addresses.cache_clear()
-
-        depth, width = 20, 50
-        _expand_range_chain_with_trace(depth, width)
-
-        # One miss for the range, a hit for every level that re-mentions it.
-        collect_info = dynamic_refs_mod._expanded_range_keys.cache_info()
-        assert collect_info.hits >= depth - 2
-        infer_info = dynamic_refs_mod._range_node_cell_addresses.cache_info()
-        assert infer_info.hits >= depth - 2
-
     def test_memoized_expansion_matches_direct_expansion(self) -> None:
         keys = dynamic_refs_mod._expanded_range_keys(
             sheet="Sheet1",

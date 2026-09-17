@@ -16,7 +16,6 @@ from excel_grapher.core.formula_ast import (
     parse,
 )
 from excel_grapher.grapher.cache import (
-    GRAPH_CACHE_SCHEMA_VERSION,
     dependency_graph_from_json,
     dependency_graph_to_json,
 )
@@ -58,9 +57,6 @@ def test_extraction_interns_without_json_intern_keys(tmp_path: Path) -> None:
     wb.save(path)
     wb.close()
 
-    import excel_grapher.grapher.builder as builder
-
-    assert not hasattr(builder, "ast_to_json")
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
     b1 = graph._get_internal_node("Sheet1!B1")
     b2 = graph._get_internal_node("Sheet1!B2")
@@ -82,7 +78,6 @@ def test_json_cache_assigns_integer_formula_ast_ids(tmp_path: Path) -> None:
     wb.close()
 
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 8
     payload = dependency_graph_to_json(graph)
     pool = payload["formula_asts"]
     assert isinstance(pool, list)

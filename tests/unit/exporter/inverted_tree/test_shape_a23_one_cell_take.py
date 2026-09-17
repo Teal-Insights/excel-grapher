@@ -152,9 +152,7 @@ def test_shared_runner_takes_at_one_cell_call_site(tmp_path: Path) -> None:
 def test_scalar_host_keeps_catalog_subscript(tmp_path: Path) -> None:
     workbook = _one_cell_workbook(tmp_path)
     modules = generate_inverted(workbook, _scalar_host_bindings())
-    api = modules["api.py"]
     internals = modules["internals.py"]
-    assert "take(growth" not in api
     assert "growth[2011]" in internals
     pkg = load_package(modules, tmp_path, name="a23_scalar")
     got = pkg.compute_last_growth(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))

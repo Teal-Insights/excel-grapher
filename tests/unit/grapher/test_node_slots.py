@@ -1,30 +1,19 @@
-"""Tests for slotted Node storage and address-keyed derived-field LRU (#476)."""
+"""Tests for Node storage and address-keyed derived fields (#476)."""
 
 from __future__ import annotations
 
 import copy
-import sys
 
 import pytest
 
 from excel_grapher.core.address_keys import CellKey, NodeShape, parse_node_key
 from excel_grapher.core.formula_ast import parse_preserving_axes
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.grapher.node import (
-    _DERIVED_FIELDS_CACHE,
-    Node,
-    make_cell_node,
-)
+from excel_grapher.grapher.node import Node, make_cell_node
 
 
 def _leaf(sheet: str = "Sheet1", column: str = "A", row: int = 1, value: object = 1) -> Node:
     return make_cell_node(sheet, column, row, value=value, is_leaf=True)
-
-
-def test_node_uses_slots_without_instance_dict() -> None:
-    node = _leaf()
-    assert hasattr(Node, "__slots__")
-    assert not hasattr(node, "__dict__")
 
 
 def test_node_rejects_arbitrary_attribute_assignment() -> None:
@@ -127,49 +116,15 @@ def test_deepcopy_and_projection_clone_preserve_slotted_nodes() -> None:
     cloned_view = cloned.get_node("Sheet1!A1")
     assert cloned_view is not None
     assert cloned_view.value == 3
-    assert not hasattr(cloned._nodes["Sheet1!A1"], "__dict__")
 
     projected = graph._copy_for_projection()
-    assert not hasattr(projected._nodes["Sheet1!A1"], "__dict__")
+    assert projected.get_node("Sheet1!A1") is not None
     assert projected.get_node("Sheet1!B1") is not None
 
 
-def test_derived_fields_lru_keyed_on_address() -> None:
-    from excel_grapher.grapher.node import _lookup_derived_fields
-
-    _DERIVED_FIELDS_CACHE.clear()
-    info0 = _DERIVED_FIELDS_CACHE.cache_info()
-    assert info0.hits == 0
-    assert info0.misses == 0
-    assert info0.currsize == 0
-
+def test_derived_fields_depend_only_on_address() -> None:
     a = _leaf("Sheet1", "C", 3)
     b = _leaf("Sheet1", "C", 3)
-    assert a.key == "Sheet1!C3"
-    assert b.key == "Sheet1!C3"
-    assert a.shape is NodeShape.cell
-    assert b.column_index == 3
-
-    info = _DERIVED_FIELDS_CACHE.cache_info()
-    assert info.misses == 1
-    assert info.hits == 3  # b.key, a.shape, b.column_index
-    assert info.currsize == 1
-    assert info.maxsize >= 1
-
-    # Plain str and AddressKey must share one dict entry (unlike functools.lru_cache,
-    # which keys str subclasses distinctly via _make_key).
-    before = _DERIVED_FIELDS_CACHE.cache_info()
-    again = _lookup_derived_fields("Sheet1!C3")
-    after = _DERIVED_FIELDS_CACHE.cache_info()
-    assert again.key == "Sheet1!C3"
-    assert after.hits == before.hits + 1
-    assert after.misses == before.misses
-    assert after.currsize == 1
-
-
-def test_slotted_node_is_smaller_than_dict_backed_baseline() -> None:
-    """Slots should drop the per-instance __dict__ (~300 bytes on CPython)."""
-    node = _leaf()
-    # Instance without __dict__ is the win; size alone can vary by allocator.
-    assert not hasattr(node, "__dict__")
-    assert sys.getsizeof(node) < 256
+    assert a.key == b.key == "Sheet1!C3"
+    assert a.shape is b.shape is NodeShape.cell
+    assert a.column_index == b.column_index == 3

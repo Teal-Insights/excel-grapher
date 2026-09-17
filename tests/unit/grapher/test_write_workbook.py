@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import typing
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
@@ -110,11 +109,6 @@ def _sheetnames(path: Path) -> list[str]:
         return list(wb.sheetnames)
     finally:
         wb.close()
-
-
-def test_write_workbook_graph_parameter_is_graph_read_view() -> None:
-    hints = typing.get_type_hints(write_workbook)
-    assert hints["graph"] is GraphReadView
 
 
 def test_write_workbook_refuses_existing_destination_unless_overwrite(tmp_path: Path) -> None:

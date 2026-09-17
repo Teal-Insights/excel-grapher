@@ -1,4 +1,4 @@
-"""Load the local inverted-tree workbook pool and compare export rungs.
+"""Load the local inverted-tree workbook pool and compare export to `FormulaEvaluator`.
 
 See `plans/inverted-tree-scheduling.md` §12 and `tests/fixtures/local/corpus.toml`.
 """

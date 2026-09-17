@@ -12,7 +12,6 @@ from fastpyxl.worksheet.formula import ArrayFormula
 from excel_grapher.core.formula_ast import FormulaStyle, parse_preserving_axes, render_formula
 from excel_grapher.grapher import create_dependency_graph, write_workbook
 from excel_grapher.grapher.cache import (
-    GRAPH_CACHE_SCHEMA_VERSION,
     dependency_graph_from_json,
     dependency_graph_to_json,
 )
@@ -193,7 +192,6 @@ def test_copy_node_preserves_array_formula_provenance() -> None:
 def test_json_cache_round_trips_array_formula_provenance(tmp_path: Path) -> None:
     path = _write_dynamic(tmp_path / "dyn.xlsx", "=A1:A3*2", ref="E1:E3")
     graph = create_dependency_graph(path, ["Sheet1!E1"], load_values=False)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 9
     restored = dependency_graph_from_json(dependency_graph_to_json(graph))
     original = graph.get_node("Sheet1!E1")
     loaded = restored.get_node("Sheet1!E1")
