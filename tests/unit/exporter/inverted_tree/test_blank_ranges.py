@@ -174,7 +174,7 @@ def test_generate_inverted_tree_modules_accepts_blank_vlookup_table(tmp_path: Pa
     workbook = _mcve_workbook(tmp_path)
     modules = generate_inverted(workbook, _mcve_bindings(), blank_ranges=_BLANK)
     assert "xl_vlookup(" in modules["internals.py"]
-    assert "None" in modules["internals.py"]
+    assert "lambda: None" in modules["internals.py"]
 
 
 def test_generate_modules_forwards_blank_ranges_to_inverted_tree(tmp_path: Path) -> None:
@@ -428,7 +428,6 @@ def test_generate_inverted_tree_modules_accepts_blank_cellref(tmp_path: Path) ->
     modules = generate_inverted(workbook, _cellref_bindings(), blank_ranges=_BLANK_CELL)
     internals = modules["internals.py"]
     assert "Lookup!A1" not in internals
-    assert "None" in internals
     assert "xl_isnumber(lambda: None)" in internals
 
 
@@ -447,7 +446,7 @@ def test_generate_modules_forwards_blank_ranges_for_cellref(tmp_path: Path) -> N
             bindings_workbook=workbook,
             blank_ranges=_BLANK_CELL,
         )
-    assert "None" in modules["internals.py"]
+    assert "xl_isnumber(lambda: None)" in modules["internals.py"]
 
 
 def test_blank_cellref_package_matches_evaluator(tmp_path: Path) -> None:

@@ -229,7 +229,7 @@ def test_export_matches_evaluator_across_binding_boundaries(tmp_path: Path) -> N
     assert got == pytest.approx(want)
     assert got == pytest.approx((20.0, 21.0))
     internals = modules["internals.py"]
-    assert "None" in internals
+    assert "lambda: None" in internals
     assert "xl_match(" in internals
 
 

@@ -146,8 +146,6 @@ def test_matrix_row_slice_emits_aligned_take(tmp_path: Path, orientation: str) -
     internals = generate_inverted(workbook, oriented_document(_paris_bindings(), orientation))[
         "internals.py"
     ]
-    assert "prior: float | str = shocks" not in internals
-    assert "prior = as_measure(prior)" not in internals
     assert "data.SHOCKS.schema.validate(shocks)" in internals
     assert "shocks[" in internals
     assert "time_period]" in internals

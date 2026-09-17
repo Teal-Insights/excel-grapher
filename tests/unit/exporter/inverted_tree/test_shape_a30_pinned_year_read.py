@@ -194,8 +194,7 @@ def test_pinned_year_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> No
         (10.0, 11.0 - 10.0 / 6.0, 12.0 - 8.0 / 6.0, 12.0)
     )
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "baseline[i + 1]" not in internals
-    assert "baseline[i - 1]" not in internals
+    assert "baseline[2026]" in internals
 
 
 def test_adjacent_pinned_year_is_not_a_lag(tmp_path: Path) -> None:
@@ -219,7 +218,7 @@ def test_adjacent_pinned_year_is_not_a_lag(tmp_path: Path) -> None:
     assert tuple(value for _, value in got.items()) == pytest.approx((expected["Results!E19"],))
     assert tuple(value for _, value in got.items()) == pytest.approx((12.0 - 8.0 / 6.0,))
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "baseline[i + 1]" not in internals
+    assert "baseline[2026]" in internals
 
 
 def _scenario_dim() -> dict[str, Any]:
@@ -300,7 +299,7 @@ def test_aligned_scenario_plus_pinned_year_is_keyed(tmp_path: Path) -> None:
     )
     assert tuple(value for _, value in got.items()) == pytest.approx((50.0 / 220.0, 55.0 / 220.0))
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "gdp[i + 1]" not in internals
+    assert "gdp['Baseline', 2026]" in internals
     assert catalog.get("gdp").cells == (
         "Stress!E46",
         "Stress!F46",

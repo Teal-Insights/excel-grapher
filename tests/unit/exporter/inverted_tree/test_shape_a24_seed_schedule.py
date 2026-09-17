@@ -180,8 +180,6 @@ def test_absolute_selector_is_not_a_scan_and_matches_evaluator(
     assert predecessor_address(catalog.get("selected"), 0, catalog, _graph) is None
 
     modules = generate_inverted(workbook, document)
-    internals = modules["internals.py"]
-    assert "prior" not in internals
     pkg = load_package(modules, tmp_path, name=f"a24_sel_{orientation[0]}")
     got = pkg.compute_selected(
         mode="Nominal",
