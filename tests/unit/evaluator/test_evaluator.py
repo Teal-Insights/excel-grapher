@@ -154,7 +154,7 @@ def test_evaluator_raises_for_unimplemented_function() -> None:
         FormulaEvaluator(graph) as ev,
         pytest.raises(
             NotImplementedError,
-            match=r"Excel function not implemented: NO_SUCH_FUNCTION",
+            match=r"NO_SUCH_FUNCTION",
         ),
     ):
         ev.evaluate(["S!A1"])

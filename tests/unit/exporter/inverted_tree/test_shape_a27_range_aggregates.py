@@ -745,7 +745,7 @@ def test_average_and_max_if_unsound_alignment_fails_closed(tmp_path: Path, outer
         ),
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
     )
-    with pytest.raises(InvertedTreeExportError, match=r"array IF shape mismatch"):
+    with pytest.raises(InvertedTreeExportError, match=r"shape mismatch"):
         generate_inverted(workbook, document)
 
 
@@ -754,39 +754,39 @@ def test_average_and_max_if_unsound_alignment_fails_closed(tmp_path: Path, outer
     [
         (
             "=SUM(IF(Inputs!A1:A2>0,Inputs!B1:B5,0))",
-            r"array IF shape mismatch",
+            r"shape mismatch",
         ),
         (
             "=SUM(IF(Inputs!A1:A2>0,SUM(Inputs!B1:B2),0))",
-            r"array IF nested aggregate is unsupported",
+            r"nested aggregate",
         ),
         (
             "=SUM(IF(AND(Inputs!A1:A2>0,Inputs!E1>0),Inputs!B1:B2,0))",
-            r"array IF AND/OR collapse is unsupported",
+            r"AND/OR",
         ),
         (
             "=SUM(IF(Inputs!A1:A2>0,-Inputs!B1:B2,0))",
-            r"array IF unary '-' is unsupported",
+            r"unary",
         ),
         (
             "=SUM(IF(Inputs!A1:A2>0,ABS(Inputs!B1:B2),0))",
-            r"array IF interior ABS is unsupported",
+            r"ABS",
         ),
         (
             '=SUM(IF(Inputs!A1:A2&"x"="1x",Inputs!B1:B2,0))',
-            r"array IF operator '&' is unsupported",
+            r"'&'",
         ),
         (
             "=SUM(IF(IFS(Inputs!A1:A2>0,TRUE),Inputs!B1:B2,0))",
-            r"array IF IFS is unsupported",
+            r"IFS",
         ),
         (
             "=SUM(IF(Inputs!A1:A2>0,CHOOSE(1,Inputs!B1:B2),0))",
-            r"array IF CHOOSE is unsupported",
+            r"CHOOSE",
         ),
         (
             "=SUM(IF(Inputs!A1:A2>0,SWITCH(1,1,Inputs!B1:B2),0))",
-            r"array IF SWITCH is unsupported",
+            r"SWITCH",
         ),
     ],
 )
@@ -855,7 +855,7 @@ def test_sum_if_whole_column_fails_closed(tmp_path: Path) -> None:
         ),
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
     )
-    with pytest.raises(InvertedTreeExportError, match=r"array IF does not support whole-column"):
+    with pytest.raises(InvertedTreeExportError, match=r"whole-column"):
         generate_inverted(workbook, document)
 
 

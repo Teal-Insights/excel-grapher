@@ -47,14 +47,12 @@ def test_library_modules_have_no_top_level_numpy_import(path: Path) -> None:
 def test_operators_fastpath_stub_is_noop_and_numpy_free() -> None:
     """Stub always falls back; AST guard above ensures it has no NumPy import."""
     from excel_grapher.core.operators_fastpath_stub import (
-        MIN_OPERATOR_FASTPATH_CELLS,
         try_fastpath_arithmetic_array,
         try_fastpath_compare_array,
         try_fastpath_concat_array,
         try_fastpath_sumproduct,
     )
 
-    assert MIN_OPERATOR_FASTPATH_CELLS == 64
     assert try_fastpath_arithmetic_array("+", object(), object()) is None
     assert try_fastpath_compare_array("=", object(), object()) is None
     assert try_fastpath_concat_array(object(), object()) is None

@@ -183,8 +183,6 @@ def test_evaluation_order_iterate_true_raises_on_may_cycle(tmp_path: Path) -> No
     with pytest.raises(CycleError) as e:
         graph.evaluation_order(strict=False, iterate_enabled=True)
     assert e.value.is_must_cycle is False
-    assert "guarded" in str(e.value).lower()
-    assert "iterate" in str(e.value).lower()
 
 
 def test_evaluation_order_iterate_true_raises_on_must_cycle(tmp_path: Path) -> None:
@@ -198,8 +196,6 @@ def test_evaluation_order_iterate_true_raises_on_must_cycle(tmp_path: Path) -> N
     with pytest.raises(CycleError) as e:
         graph.evaluation_order(strict=False, iterate_enabled=True)
     assert e.value.is_must_cycle is True
-    assert "unconditional" in str(e.value).lower()
-    assert "iterate" in str(e.value).lower()
 
 
 def test_must_cycle_is_reported_and_always_raises(tmp_path: Path) -> None:

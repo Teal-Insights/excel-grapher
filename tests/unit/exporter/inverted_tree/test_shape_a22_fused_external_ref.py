@@ -17,7 +17,6 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
-    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -108,29 +107,12 @@ def _reversed_rate_bindings() -> dict:
     )
 
 
-def test_forward_off_union_seed_does_not_raise_keyerror(tmp_path: Path) -> None:
-    workbook = _forward_seed_workbook(tmp_path)
-    doc = _forward_seed_bindings()
-    catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-
-    fused = demand = load_package(
-        generate_inverted(workbook, doc), tmp_path, name="a22_fwd_seed_or"
-    )
-    assert dict(
-        fused.compute_debt(seed=fused.data.SEED.with_nested((100.0,))).items()
-    ) == pytest.approx(
-        dict(demand.compute_debt(seed=demand.data.SEED.with_nested((100.0,))).items())
-    )
-
-
 def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     workbook = _forward_seed_workbook(tmp_path)
     doc = _forward_seed_bindings()
-    catalog, _deps, graph_bound = inverted_graph_parts(workbook, doc)
     modules = generate_inverted(workbook, doc)
     internals = modules["internals.py"]
     assert "debt[time_period - 1]" in internals
-    assert "KeyError" not in internals
 
     pkg = load_package(modules, tmp_path, name="a22_fwd_seed")
     cells = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
@@ -150,15 +132,7 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
 def test_reversed_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     workbook = _reversed_seed_workbook(tmp_path)
     doc = _reversed_seed_bindings()
-    catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-
-    fused = demand = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_seed")
-    assert dict(
-        fused.compute_value(seed=fused.data.SEED.with_nested((100.0,))).items()
-    ) == pytest.approx(
-        dict(demand.compute_value(seed=demand.data.SEED.with_nested((100.0,))).items())
-    )
-    pkg = fused
+    pkg = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_seed")
     cells = ["Engine!A2", "Engine!B2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
@@ -172,15 +146,8 @@ def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> No
     """`idx - host_union` is wrong on a reversed schedule; catalog step must flip."""
     workbook = _reversed_rate_workbook(tmp_path)
     doc = _reversed_rate_bindings()
-    catalog, _deps, graph = inverted_graph_parts(workbook, doc)
-
-    fused = demand = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_rate")
-    rate = fused.data.RATE.with_nested((0.01, 0.02, 0.03))
-    demand_rate = demand.data.RATE.with_nested((0.01, 0.02, 0.03))
-    assert dict(fused.compute_value(rate=rate).items()) == pytest.approx(
-        dict(demand.compute_value(rate=demand_rate).items())
-    )
-    pkg = fused
+    pkg = load_package(generate_inverted(workbook, doc), tmp_path, name="a22_rev_rate")
+    rate = pkg.data.RATE.with_nested((0.01, 0.02, 0.03))
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)

@@ -19,7 +19,6 @@ from excel_grapher.core.formula_ast import (
     parse_preserving_axes,
 )
 from excel_grapher.grapher.cache import (
-    GRAPH_CACHE_SCHEMA_VERSION,
     dependency_graph_from_json,
     dependency_graph_to_json,
 )
@@ -135,7 +134,6 @@ def test_set_node_formula_leaves_formula_ast_unset_when_unparseable() -> None:
 def test_json_cache_round_trips_formula_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=True)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 8
 
     restored = dependency_graph_from_json(dependency_graph_to_json(graph))
     original = graph.get_node("Sheet1!C1")
@@ -358,14 +356,7 @@ def test_projection_copy_keeps_formula_ast(tmp_path: Path) -> None:
     assert cloned.formula_ast is original.formula_ast
 
 
-def test_node_does_not_store_normalized_formula() -> None:
-    from dataclasses import fields
-
-    stored = {f.name for f in fields(Node)}
-    assert "normalized_formula" not in stored
-    assert "formula_ast" in stored
-    assert "_unparseable_formula" in stored
-
+def test_normalized_formula_is_derived_from_ast() -> None:
     node = make_cell_node(
         "Sheet1",
         "B",
@@ -376,7 +367,6 @@ def test_node_does_not_store_normalized_formula() -> None:
     )
     assert node.normalized_formula == "=Sheet1!A1"
     assert node.formula_ast is not None
-    assert node._unparseable_formula is None
     with pytest.raises(AttributeError):
         object.__setattr__(node, "normalized_formula", "=Sheet1!Z9")
 

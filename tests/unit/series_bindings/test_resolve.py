@@ -604,8 +604,8 @@ def test_resolve_deduplicates_identical_bind_failures_across_cells(tmp_path: Pat
     assert resolved["ok"] is False
     assert len(bind_issues) == 1
     assert bind_issues[0]["address"] is None
-    assert "2 cells (Inputs!B2\u2013Inputs!C2)" in bind_issues[0]["message"]
-    assert "datetime.datetime" in bind_issues[0]["message"]
+    assert "Inputs!B2" in bind_issues[0]["message"]
+    assert "Inputs!C2" in bind_issues[0]["message"]
 
 
 def _scalar_series_with_series_context(

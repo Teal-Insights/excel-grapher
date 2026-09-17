@@ -337,7 +337,7 @@ def test_two_year_host_same_pins_is_keyed(tmp_path: Path) -> None:
         tuple(expected[cell] for cell in cells)
     )
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "stats[i + 1]" not in internals
+    assert "stats[scenario," in internals
     assert catalog.get("stats").cells == (
         "Stress!D2",
         "Stress!F2",

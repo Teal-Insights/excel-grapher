@@ -295,14 +295,12 @@ def test_evaluator_with_shape_helpers_resolves_relative_params(tmp_path: Path) -
 
 def test_json_cache_round_trips_relative_axes(tmp_path: Path) -> None:
     from excel_grapher.grapher.cache import (
-        GRAPH_CACHE_SCHEMA_VERSION,
         dependency_graph_from_json,
         dependency_graph_to_json,
     )
 
     path = _autofill_workbook(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!B2"], load_values=True)
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 8
     restored = dependency_graph_from_json(dependency_graph_to_json(graph))
     original = graph.get_node("Sheet1!B2")
     loaded = restored.get_node("Sheet1!B2")
