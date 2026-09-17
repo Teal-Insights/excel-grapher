@@ -509,7 +509,7 @@ def _eval_key_expr(
         key = _eval_key_expr(node.slice, env, remaps)
         if isinstance(mapping, Mapping) and key is not None:
             try:
-                return mapping[key]
+                return cast(Mapping[Any, object], mapping)[key]
             except KeyError:
                 return None
         return None
