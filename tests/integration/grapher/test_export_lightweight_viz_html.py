@@ -84,16 +84,6 @@ def test_build_core_uses_graph_sheet_order_for_sheet_indices() -> None:
     assert core.sheets == ("Z", "A")
 
 
-def test_write_html_creates_file(tmp_path: Path) -> None:
-    p = _payload()
-    out = tmp_path / "v.html"
-    write_web_viz_html(p, out, title="T", data_mode="inline")
-    assert out.is_file()
-    text = out.read_text(encoding="utf-8")
-    assert "T" in text
-    assert "canvas" in text
-
-
 def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"
@@ -146,4 +136,6 @@ def test_overview_viewer_embeds_module_edges(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"
     write_web_viz_html(p, out, data_mode="inline")
-    assert "module_edges" in out.read_text(encoding="utf-8")
+    text = out.read_text(encoding="utf-8")
+    assert "module_edges" in text
+    assert "canvas" in text

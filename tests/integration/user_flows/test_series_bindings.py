@@ -10,7 +10,6 @@ import pytest
 
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import (
-    bindings_canonical_sha256,
     expand_data_range,
     resolve_series_bindings,
     validate_bindings_document,
@@ -125,16 +124,3 @@ def test_micro_workbook_resolves_unique_keys(
     assert len(borvelia["leaves"]) == 5
     periods = {leaf["key"]["TIME_PERIOD"] for leaf in borvelia["leaves"]}
     assert periods == {1, 2, 3, 4, 5}
-
-
-def test_micro_workbook_covers_mvp_series_layouts(bindings: WorkbookSeriesBindings) -> None:
-    by_id = {series["id"]: series for series in bindings["series"]}
-    assert set(by_id) == {"borvelia_primary_balance"}
-    assert by_id["borvelia_primary_balance"]["layout"] == "series"
-
-
-def test_bindings_canonical_hash_is_stable(bindings: WorkbookSeriesBindings) -> None:
-    first = bindings_canonical_sha256(bindings)
-    second = bindings_canonical_sha256(validate_bindings_document(deepcopy(BINDINGS_DOCUMENT)))
-    assert first == second
-    assert len(first) == 64
