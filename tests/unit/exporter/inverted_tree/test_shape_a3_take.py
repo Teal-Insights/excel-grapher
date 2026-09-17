@@ -18,42 +18,34 @@ from tests.unit.exporter.inverted_tree.helpers import (
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import _a1_bindings, _a1_workbook
 
 
-def test_engine_path_requires_complete_declared_result_inputs(tmp_path: Path) -> None:
-    workbook = _a1_workbook(tmp_path)
-    pkg = load_package(generate_inverted(workbook, _a1_bindings()), tmp_path, name="a3_buf")
-    year0 = pkg.internals.engine_year0(initial_debt=60.0)
-    partial = pkg.Tensor.from_records(
-        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (1,), int)), records=(((1,), 3.5),)
-    )
-    with pytest.raises(pkg.tensor.SchemaError, match="growth.*required coordinate.*2"):
-        pkg.internals.engine_path(
-            engine_year0=year0, growth=partial, interest=pkg.data.INTEREST_DEFAULT
-        )
-
-
-def test_misaligned_growth_interest_raise(tmp_path: Path) -> None:
-    workbook = _a1_workbook(tmp_path)
-    pkg = load_package(generate_inverted(workbook, _a1_bindings()), tmp_path, name="a3_align")
-    wrong = pkg.Tensor.from_records(
-        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2, 3), int)),
-        records=(((2,), 4.0), ((3,), 4.0)),
-    )
-    with pytest.raises(pkg.tensor.SchemaError, match="interest.*unknown labels"):
-        pkg.internals.engine_path(engine_year0=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=wrong)
-
-
-def test_scan_does_not_implicitly_rebase_a_later_year(tmp_path: Path) -> None:
+def test_engine_path_schema_rejects_incomplete_or_misaligned_inputs(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     modules = generate_inverted(workbook, _a1_bindings())
     assert "CoordinateReader" in modules["internals.py"]
     assert "engine_path[time_period - 1]" in modules["internals.py"]
-    pkg = load_package(modules, tmp_path, name="a3_restart")
+    pkg = load_package(modules, tmp_path, name="a3_schema")
+    year0 = pkg.internals.engine_year0(initial_debt=60.0)
     full = pkg.internals.engine_path(
-        engine_year0=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+        engine_year0=year0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    )
+    incomplete = pkg.Tensor.from_records(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (1,), int)), records=(((1,), 3.5),)
+    )
+    misaligned = pkg.Tensor.from_records(
+        domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2, 3), int)),
+        records=(((2,), 4.0), ((3,), 4.0)),
     )
     later = pkg.Tensor.from_records(
         domain=pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2,), int)), records=(((2,), 3.5),)
     )
+    with pytest.raises(pkg.tensor.SchemaError, match="growth.*required coordinate.*2"):
+        pkg.internals.engine_path(
+            engine_year0=year0, growth=incomplete, interest=pkg.data.INTEREST_DEFAULT
+        )
+    with pytest.raises(pkg.tensor.SchemaError, match="interest.*unknown labels"):
+        pkg.internals.engine_path(
+            engine_year0=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=misaligned
+        )
     with pytest.raises(pkg.tensor.SchemaError, match="growth.*required coordinate.*1"):
         pkg.internals.engine_path(
             engine_year0=full[1], growth=later, interest=pkg.data.INTEREST_DEFAULT

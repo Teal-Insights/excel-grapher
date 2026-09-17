@@ -34,20 +34,16 @@ def _exp_bindings() -> dict:
 
 
 def test_exp_emits_runtime_helper_and_imports(tmp_path: Path) -> None:
-    workbook = _exp_workbook(tmp_path, "=EXP(A1)")
+    workbook = _exp_workbook(tmp_path, "=EXP(A1)", x=1)
     modules = generate_inverted(workbook, _exp_bindings())
     assert "xl_exp(" in modules["internals.py"]
     assert "def xl_exp" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a16_exp")
     assert pkg.compute_exp_x(x=0) == pytest.approx(1.0)
     assert pkg.compute_exp_x(x=1) == pytest.approx(math.e)
-
-
-def test_exp_matches_formula_evaluator(tmp_path: Path) -> None:
-    workbook = _exp_workbook(tmp_path, "=EXP(A1)", x=1)
-    pkg = load_package(generate_inverted(workbook, _exp_bindings()), tmp_path, name="a16_exp_eval")
-    graph = create_dependency_graph(workbook, ["Engine!B1"], load_values=True)
-    expected = FormulaEvaluator(graph).evaluate(["Engine!B1"])
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, ["Engine!B1"], load_values=True)
+    ).evaluate(["Engine!B1"])
     assert pkg.compute_exp_x(x=1) == pytest.approx(expected["Engine!B1"])
 
 

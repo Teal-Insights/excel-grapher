@@ -71,10 +71,12 @@ from tests.unit.exporter.inverted_tree.test_shape_a17_overlap_take import (
     _overlap_workbook,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a19_demand_floor import (
-    _horizontal_terminal_bindings,
-    _horizontal_terminal_workbook,
     _stride2_terminal_bindings,
     _stride2_terminal_workbook,
+)
+from tests.unit.exporter.inverted_tree.test_shape_a21_reversed_direction import (
+    _horizontal_terminal_bindings,
+    _horizontal_terminal_workbook,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a26_index_block import (
     _country_table_bindings,

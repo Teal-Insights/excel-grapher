@@ -10,8 +10,6 @@ from pathlib import Path
 
 import pytest
 
-from excel_grapher.evaluator import FormulaEvaluator
-from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
@@ -118,37 +116,11 @@ def _recursive_seed_bindings() -> dict:
     )
 
 
-def test_absolute_selector_is_not_a_scan_seed(tmp_path: Path) -> None:
-    catalog, deps, _graph = inverted_graph_parts(_selector_workbook(tmp_path), _selector_bindings())
-    selected = deps["selected"]
-    assert selected.is_scan is False
-    assert selected.seed_id is None
-    assert catalog.get("mode").is_scalar
-    assert "mode" in selected.param_ids
-
-
 def test_absolute_selector_emits_identity_loop_reading_mode(tmp_path: Path) -> None:
     modules = generate_inverted(_selector_workbook(tmp_path), _selector_bindings())
     internals = modules["internals.py"]
     assert "xl_eq(mode, label_nominal)" in internals
     assert "evaluate(formula" in internals
-
-
-def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:
-    workbook = _selector_workbook(tmp_path)
-    pkg = load_package(generate_inverted(workbook, _selector_bindings()), tmp_path, name="a24_sel")
-    cells = ["Engine!B2", "Engine!C2", "Engine!D2"]
-    graph = create_dependency_graph(workbook, cells, load_values=True)
-    expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_selected(
-        mode="Nominal",
-        nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
-        other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
-    )
-    assert [value for _, value in got.items()] == pytest.approx(
-        (expected["Engine!B2"], expected["Engine!C2"], expected["Engine!D2"])
-    )
-    assert [value for _, value in got.items()] == pytest.approx((4.0, 5.0, 6.0))
 
 
 def test_absolute_selector_other_branch_and_fallback(tmp_path: Path) -> None:

@@ -93,11 +93,9 @@ def test_sum_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     assert "def xl_sum" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="a27_sum_emit")
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.5, 2.5))) == pytest.approx(4.0)
-
-
-def test_sum_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
-    workbook = range_sum_workbook(tmp_path)
-    _package_matches_output(tmp_path, workbook, range_sum_bindings(), "a27_sum_eval", "Outputs!Z1")
+    _package_matches_output(
+        tmp_path, workbook, range_sum_bindings(), "a27_sum_emit", "Outputs!Z1", pkg=pkg
+    )
 
 
 def test_sum_of_series_window_takes_only_the_range(tmp_path: Path) -> None:
@@ -286,12 +284,8 @@ def test_sum_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_sum_if_emit")
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(3.0)
-
-
-def test_sum_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
-    workbook = range_sum_if_workbook(tmp_path)
     _package_matches_output(
-        tmp_path, workbook, range_sum_if_bindings(), "a27_sum_if_eval", "Outputs!Z1"
+        tmp_path, workbook, range_sum_if_bindings(), "a27_sum_if_emit", "Outputs!Z1", pkg=pkg
     )
 
 
@@ -520,16 +514,13 @@ def test_sumproduct_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> N
     pkg = load_package(modules, tmp_path, name="a27_sumproduct_if_emit")
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(3.0)
-
-
-def test_sumproduct_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
-    workbook = range_sumproduct_if_workbook(tmp_path)
     _package_matches_output(
         tmp_path,
         workbook,
         range_sumproduct_if_bindings(),
-        "a27_sumproduct_if_eval",
+        "a27_sumproduct_if_emit",
         "Outputs!Z1",
+        pkg=pkg,
     )
 
 
@@ -579,12 +570,13 @@ def test_average_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None
     # Omitted else is FALSE; AVERAGE skips logicals, so only the matching 2.0.
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 2.0))) == pytest.approx(1.5)
-
-
-def test_average_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
-    workbook = range_average_if_workbook(tmp_path)
     _package_matches_output(
-        tmp_path, workbook, range_average_if_bindings(), "a27_average_if_eval", "Outputs!Z1"
+        tmp_path,
+        workbook,
+        range_average_if_bindings(),
+        "a27_average_if_emit",
+        "Outputs!Z1",
+        pkg=pkg,
     )
 
 
@@ -597,12 +589,8 @@ def test_max_if_of_bound_series_emits_runtime_helper(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_max_if_emit")
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((-1.0, 2.0))) == pytest.approx(2.0)
     assert pkg.compute_out(src=pkg.data.SRC.with_nested((1.0, 4.0))) == pytest.approx(4.0)
-
-
-def test_max_if_of_bound_series_matches_evaluator(tmp_path: Path) -> None:
-    workbook = range_max_if_workbook(tmp_path)
     _package_matches_output(
-        tmp_path, workbook, range_max_if_bindings(), "a27_max_if_eval", "Outputs!Z1"
+        tmp_path, workbook, range_max_if_bindings(), "a27_max_if_emit", "Outputs!Z1", pkg=pkg
     )
 
 

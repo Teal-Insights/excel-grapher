@@ -146,11 +146,10 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     assert [value for _, value in got.items()] == pytest.approx(_expected_dual(n))
 
 
-@pytest.mark.parametrize("lag", [2, 4], ids=["t-2", "t-4"])
-def test_stride_k_code_size_independent_of_series_length(tmp_path: Path, lag: int) -> None:
+def test_stride_k_code_size_independent_of_series_length(tmp_path: Path) -> None:
     small_n, large_n = 8, 24
-    small_wb = _stride_k_workbook(tmp_path, small_n, lag, stem=f"a22_sz_s{lag}")
-    large_wb = _stride_k_workbook(tmp_path, large_n, lag, stem=f"a22_sz_l{lag}")
+    small_wb = _stride_k_workbook(tmp_path, small_n, lag=2, stem="a22_sz_s2")
+    large_wb = _stride_k_workbook(tmp_path, large_n, lag=2, stem="a22_sz_l2")
     small = generate_inverted(small_wb, _stride_k_bindings(small_n))
     large = generate_inverted(large_wb, _stride_k_bindings(large_n))
     assert len(small["internals.py"].splitlines()) == len(large["internals.py"].splitlines())

@@ -15,6 +15,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     series_entry,
     write_workbook,
@@ -179,42 +180,10 @@ def test_identity_flip_emits_region_local_fused_scan(
     x, y = pkg.compute_x(), pkg.compute_y()
     assert (x[2009], x[2010]) == pytest.approx((2.0, 10.0))
     assert (y[2009], y[2010]) == pytest.approx((2.0, 10.0))
-
-
-@pytest.mark.parametrize(
-    ("workbook_fn", "bindings_fn", "x_cells", "y_cells", "pkg_name"),
-    [
-        (
-            _two_series_workbook,
-            _two_series_bindings,
-            ["Engine!A2", "Engine!B2"],
-            ["Engine!A4", "Engine!B4"],
-            "a13_num_h",
-        ),
-        (
-            _vertical_two_series_workbook,
-            _vertical_two_series_bindings,
-            ["Engine!B1", "Engine!B2"],
-            ["Engine!C1", "Engine!C2"],
-            "a13_num_v",
-        ),
-    ],
-    ids=["horizontal", "vertical"],
-)
-def test_identity_flip_matches_formula_evaluator(
-    tmp_path: Path,
-    workbook_fn,
-    bindings_fn,
-    x_cells: list[str],
-    y_cells: list[str],
-    pkg_name: str,
-) -> None:
-    workbook = workbook_fn(tmp_path)
-    pkg = load_package(generate_inverted(workbook, bindings_fn()), tmp_path, name=pkg_name)
     targets = [*x_cells, *y_cells]
-    graph = create_dependency_graph(workbook, targets, load_values=True)
-    expected = FormulaEvaluator(graph).evaluate(targets)
-    x, y = pkg.compute_x(), pkg.compute_y()
+    expected = FormulaEvaluator(
+        create_dependency_graph(workbook, targets, load_values=True)
+    ).evaluate(targets)
     assert (x[2009], x[2010]) == pytest.approx(tuple(expected[cell] for cell in x_cells))
     assert (y[2009], y[2010]) == pytest.approx(tuple(expected[cell] for cell in y_cells))
 
@@ -293,7 +262,11 @@ def test_mixed_direction_stays_on_rung3(tmp_path: Path) -> None:
             },
         },
     )
-    generate_inverted(workbook, _two_series_bindings())
+    document = _two_series_bindings()
+    _catalog, deps, _graph = inverted_graph_parts(workbook, document)
+    assert deps["x"].is_scan is False
+    assert deps["y"].is_scan is False
+    generate_inverted(workbook, document)
 
 
 def test_same_column_cycle_still_fail_closed(tmp_path: Path) -> None:
