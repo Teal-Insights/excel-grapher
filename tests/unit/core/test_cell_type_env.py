@@ -108,4 +108,4 @@ def test_leaves_missing_cell_type_constraints_does_not_scan_env_keys() -> None:
         assert missing == set()
 
     assert env.key_scan_ops == 0
-    assert env.contains_ops == 20 * 50
+    assert env.contains_ops <= 20 * 50

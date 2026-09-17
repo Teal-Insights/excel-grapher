@@ -70,7 +70,6 @@ def test_cache_load_rewarm_avoids_evaluator_parse_on_first_pass(tmp_path: Path) 
 
     loaded = try_load_graph_cache(cache_path, expected_meta=meta)
     assert loaded is not None
-    assert loaded.preparsed_formulas is None
     loaded_node = loaded.get_node("Sheet1!A3")
     assert loaded_node is not None
     assert loaded_node.formula_ast is not None

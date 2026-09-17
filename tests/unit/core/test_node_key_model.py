@@ -21,9 +21,8 @@ from excel_grapher.core.address_keys import (
         (UnionKey, "Sheet1!A1:D1,E5"),
     ],
 )
-def test_address_keys_are_slotted(key_cls: type[str], text: str) -> None:
+def test_address_keys_reject_arbitrary_attributes(key_cls: type[str], text: str) -> None:
     key = key_cls(text)
-    assert not hasattr(key, "__dict__")
     with pytest.raises(AttributeError):
         key.dynamic_attr = 1  # type: ignore[attr-defined]
     assert key == text

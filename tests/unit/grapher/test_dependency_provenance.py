@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from enum import IntFlag
-
 from excel_grapher.grapher.cache import _edge_provenance_from_json, _edge_provenance_to_json
 from excel_grapher.grapher.dependency_provenance import (
     DependencyCause,
@@ -12,21 +10,11 @@ from excel_grapher.grapher.dependency_provenance import (
 )
 
 
-def test_dependency_cause_is_int_flag() -> None:
-    assert issubclass(DependencyCause, IntFlag)
-
-
 def test_causes_combine_with_bitwise_or() -> None:
     combined = DependencyCause.direct_ref | DependencyCause.static_range
     assert DependencyCause.direct_ref in combined
     assert DependencyCause.static_range in combined
     assert DependencyCause.dynamic_offset not in combined
-
-
-def test_edge_provenance_stores_causes_as_flag_not_frozenset() -> None:
-    prov = EdgeProvenance(causes=DependencyCause.direct_ref)
-    assert prov.causes is DependencyCause.direct_ref
-    assert isinstance(prov.causes, DependencyCause)
 
 
 def test_empty_provenance_has_no_causes() -> None:

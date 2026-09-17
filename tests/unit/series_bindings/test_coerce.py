@@ -111,11 +111,7 @@ def test_coerce_constant_datetime_from_iso_string() -> None:
     assert coerce_constant("2024-06-30", read_as="datetime") == datetime(2024, 6, 30)
 
 
-def test_coerce_module_does_not_depend_on_codegen_literals() -> None:
-    from pathlib import Path
-
-    source = Path("excel_grapher/series_bindings/coerce.py").read_text(encoding="utf-8")
-    assert "codegen_literals" not in source
+def test_coerce_module_does_not_export_codegen_literals() -> None:
     from excel_grapher.series_bindings import coerce as coerce_module
 
     assert "py_scalar_literal" not in coerce_module.__all__

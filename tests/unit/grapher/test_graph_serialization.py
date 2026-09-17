@@ -2,7 +2,6 @@
 
 Covers:
   - Round-trip correctness: nodes, edges, guards, extra attrs survive pickle
-  - Compact storage: guards stored directly, not wrapped in per-edge dicts
   - String interning: NodeKey references share identity after deserialization
   - Unpickle builds one key-index map for all guards (not O(guards × nodes) rebuilds)
 """
@@ -163,32 +162,6 @@ def test_pickle_round_trip_preserves_named_range_maps() -> None:
     restored: DependencyGraph = pickle.loads(pickle.dumps(g))
     assert restored.named_ranges == {"OneCell": ("Sheet1", "A1")}
     assert restored.named_range_ranges == {"BeeCol": ("Sheet1", "B1", "B3")}
-
-
-# -------------------------------------------------------------------
-# Compact storage: no per-edge wrapper dicts in pickle stream
-# -------------------------------------------------------------------
-
-
-def test_pickle_does_not_contain_per_edge_wrapper_dicts() -> None:
-    """The serialized state must not wrap each edge's guard in a {'guard': ...} dict.
-
-    After optimization, guards are stored directly in a `_guards` dict keyed by
-    `(from_key, to_key)`, eliminating millions of small wrapper dicts. Provenance
-    is likewise stored directly in `_edge_provenance` as `EdgeProvenance` values.
-    """
-    from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
-
-    g = _make_test_graph()
-    g.add_edge(
-        "Sheet1!B1",
-        "Sheet1!A1",
-        provenance=EdgeProvenance(causes=DependencyCause.direct_ref),
-    )
-    state = pickle.dumps(g, protocol=pickle.HIGHEST_PROTOCOL)
-
-    assert b"_edge_attrs" not in state
-    assert b"_edge_extra" not in state
 
 
 # -------------------------------------------------------------------

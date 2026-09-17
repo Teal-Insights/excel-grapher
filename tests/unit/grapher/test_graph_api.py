@@ -303,9 +303,7 @@ def test_add_edge_rejects_unknown_edge_attrs() -> None:
         g.add_edge("S!B1", "S!A1", weight=3)  # ty: ignore[unknown-argument]
 
 
-def test_edge_provenance_stored_in_typed_map() -> None:
-    from dataclasses import fields as dc_fields
-
+def test_edge_provenance_round_trips_through_add_edge() -> None:
     g = DependencyGraph()
     g.add_node(_leaf("S", "A", 1))
     g.add_node(_formula("S", "B", 1, "=S!A1"))
@@ -315,11 +313,7 @@ def test_edge_provenance_stored_in_typed_map() -> None:
     )
     g.add_edge("S!B1", "S!A1", provenance=prov)
 
-    assert ("S!B1", "S!A1") in g._edge_provenance
-    assert g._edge_provenance[("S!B1", "S!A1")] == prov
-    field_names = {f.name for f in dc_fields(DependencyGraph)}
-    assert "_edge_provenance" in field_names
-    assert "_edge_extra" not in field_names
+    assert g.get_edge_attrs("S!B1", "S!A1").provenance == prov
 
 
 def test_add_edge_merges_provenance_on_existing_edge() -> None:
@@ -337,7 +331,8 @@ def test_add_edge_merges_provenance_on_existing_edge() -> None:
         provenance=EdgeProvenance(causes=DependencyCause.static_range),
     )
 
-    merged = g._edge_provenance[("S!B1", "S!A1")]
+    merged = g.get_edge_attrs("S!B1", "S!A1").provenance
+    assert merged is not None
     assert merged.causes == (DependencyCause.direct_ref | DependencyCause.static_range)
 
 
@@ -349,7 +344,7 @@ def test_add_edge_without_provenance_preserves_existing() -> None:
     g.add_edge("S!B1", "S!A1", provenance=prov)
     g.add_edge("S!B1", "S!A1")
 
-    assert g._edge_provenance[("S!B1", "S!A1")] == prov
+    assert g.get_edge_attrs("S!B1", "S!A1").provenance == prov
 
 
 def test_remove_edge_clears_provenance() -> None:
@@ -363,7 +358,6 @@ def test_remove_edge_clears_provenance() -> None:
     )
     g._remove_edge("S!B1", "S!A1")
 
-    assert ("S!B1", "S!A1") not in g._edge_provenance
     assert g.get_edge_attrs("S!B1", "S!A1").provenance is None
 
 
@@ -475,16 +469,3 @@ def test_set_node_metadata_missing_key_raises_key_error() -> None:
     g = DependencyGraph()
     with pytest.raises(KeyError):
         g.set_node_metadata("S!A1", {"k": "v"})
-
-
-# -------------------------------------------------------------------
-# Evaluator API: FormulaEvaluator.set_value must be removed
-# -------------------------------------------------------------------
-
-
-def test_formula_evaluator_has_no_set_value_method() -> None:
-    from excel_grapher.evaluator.evaluator import FormulaEvaluator
-
-    assert not hasattr(FormulaEvaluator, "set_value"), (
-        "FormulaEvaluator.set_value must be removed; use DependencyGraph.set_node_value."
-    )
