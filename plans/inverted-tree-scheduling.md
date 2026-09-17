@@ -3,7 +3,7 @@ status: living
 tracking: https://github.com/Teal-Insights/excel-grapher/issues/603
 branch: main (merged from cursor/inverted-tree-codegen-a356 in #598)
 pin: 49ec069071fe55f07fc430b911f6e953f7137b41 (findings in §1); §11–§12 written against e92185c
-updated: 2026-09-03
+updated: 2026-09-17
 ---
 
 # Scheduling the inverted tree
@@ -531,8 +531,8 @@ not reasoned to.
 Two tiers:
 
 **Tier 1 — distilled shapes (committed).** One toy per shape, fast, in
-`_CORPUS`, run in every orientation and forced rung. This is the unit layer
-and it stays.
+`_CORPUS`, run in every orientation against `FormulaEvaluator`. This is the
+unit layer and it stays.
 
 **Tier 2 — the local pool (not committed).** Real workbooks with their
 bindings and constraint modules, under `tests/fixtures/local/`, gitignored:
@@ -557,9 +557,8 @@ gains `LOCAL_CORPUS = FIXTURES_ROOT / "local"`.
 
 **The gate.** For every workbook in the pool, for every bound formula series:
 
-1. rung 3 equals `FormulaEvaluator` on every cell at the canonical inputs;
-2. the auto rung equals rung 3;
-3. package size in bytes is independent of period count and partition count.
+1. export equals `FormulaEvaluator` on every cell at the canonical inputs;
+2. package size in bytes is independent of period count and partition count.
 
 Report divergences **in topological order of the statement graph**, so the
 first line names the root series, not a compounded output. The Q-CRAFT report
