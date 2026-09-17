@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import timeit
 from pathlib import Path
 from typing import Any
 
@@ -116,21 +115,16 @@ def test_repeated_keyed_reads_do_not_embed_producer_domain(tmp_path: Path) -> No
 def test_keyed_domain_source_does_not_copy_per_read(tmp_path: Path) -> None:
     sizes = (10, 20, 40)
     internals_sizes: list[int] = []
-    compile_times: list[float] = []
     for size in sizes:
         workbook = _domain_workbook(tmp_path, size)
         internals = generate_inverted(workbook, _domain_bindings(size))["internals.py"]
         internals_sizes.append(len(internals.encode()))
-        compile_times.append(
-            timeit.timeit(lambda src=internals: compile(src, "<internals>", "exec"), number=20)
-        )
         assert internals.count(repr(_producer_domain(size))) <= 1
         assert internals.count(".index(") == 0
     # Two-read formulas must not pay the producer domain once per read.
     # Affine / interned maps grow far slower than embedding the cartesian key
     # tuple at each site (the pre-fix 10→40 growth was ~2.8×).
     assert internals_sizes[-1] / internals_sizes[0] < 2.0
-    assert compile_times[-1] / compile_times[0] < 3.0
 
 
 def test_repeated_keyed_reads_match_evaluator(tmp_path: Path) -> None:

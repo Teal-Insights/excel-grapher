@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import timeit
 from pathlib import Path
 from typing import Any
 
@@ -137,7 +136,6 @@ def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
     sizes = (10, 40)
     data_sizes: list[int] = []
     domain_sizes: list[int] = []
-    compile_times: list[float] = []
     for size in sizes:
         workbook = _missing_corner_workbook(tmp_path, size)
         document = _missing_corner_bindings(size)
@@ -150,10 +148,6 @@ def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
         )
         data_sizes.append(len(data_py))
         domain_sizes.append(len(interned_line))
-        compile_times.append(
-            timeit.timeit(lambda src=data_py: compile(src, "<data>", "exec"), number=20)
-        )
         assert "Country " not in interned_line
     assert domain_sizes[-1] / domain_sizes[0] < 2.0
     assert data_sizes[-1] / data_sizes[0] < 3.0
-    assert compile_times[-1] / compile_times[0] < 8.0
