@@ -13,7 +13,7 @@ import fastpyxl
 import pytest
 from fastpyxl.workbook.defined_name import DefinedName
 
-from excel_grapher import create_dependency_graph
+from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.grapher.resolver import build_named_range_map
 
 
@@ -267,6 +267,119 @@ def test_named_range_map_omits_offset_with_non_arithmetic_binary_extent(
     )
     assert "BadConcat" not in maps.range_map
     assert "BadConcat" not in maps.cell_map
+
+
+def test_named_range_map_resolves_whole_row_defined_names(tmp_path: Path) -> None:
+    """Whole-row names expand the implicit columns against the sheet used range."""
+    excel_path = tmp_path / "whole_row_names.xlsx"
+    wb = _new_workbook()
+    ws = wb.active
+    ws.title = "Macrofw"
+    ws["A5"] = "code"
+    ws["B5"] = -1
+    ws["A6"] = "FASAOS"
+    ws["B6"] = 42
+    wb.defined_names.add(DefinedName("MacrofwData", attr_text="Macrofw!$5:$10"))
+    wb.defined_names.add(DefinedName("MacrofwDates", attr_text="Macrofw!$5:$5"))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.range_map["MacrofwData"] == ("Macrofw", "A5", "B10")
+    assert maps.range_map["MacrofwDates"] == ("Macrofw", "A5", "B5")
+
+
+def test_named_range_map_resolves_whole_column_defined_names(tmp_path: Path) -> None:
+    """Whole-column names expand the implicit rows against the sheet used range."""
+    excel_path = tmp_path / "whole_column_names.xlsx"
+    wb = _new_workbook()
+    ws = wb["Sheet1"]
+    ws["A1"] = "hdr"
+    ws["B2"] = 1
+    ws["C3"] = 2
+    wb.defined_names.add(DefinedName("Cols", attr_text="Sheet1!$B:$C"))
+    wb.defined_names.add(DefinedName("OneCol", attr_text="Sheet1!$A:$A"))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.range_map["Cols"] == ("Sheet1", "B1", "C3")
+    assert maps.range_map["OneCol"] == ("Sheet1", "A1", "A3")
+
+
+def test_named_range_map_resolves_quoted_and_reversed_whole_axis_names(
+    tmp_path: Path,
+) -> None:
+    """Quoted sheets and reversed endpoints still become a used-range rectangle."""
+    excel_path = tmp_path / "quoted_whole_axis.xlsx"
+    wb = _new_workbook()
+    ws = wb.active
+    ws.title = "My Sheet"
+    ws["A5"] = "a"
+    ws["B6"] = "b"
+    wb.defined_names.add(DefinedName("Rows", attr_text="'My Sheet'!$6:$5"))
+    wb.defined_names.add(DefinedName("Cols", attr_text="'My Sheet'!$C:$A"))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.range_map["Rows"] == ("My Sheet", "A5", "B6")
+    assert maps.range_map["Cols"] == ("My Sheet", "A1", "C6")
+
+
+def test_named_range_map_omits_whole_axis_name_on_missing_sheet(tmp_path: Path) -> None:
+    """Unknown-sheet whole-row/column names stay omitted instead of expanding to XFD."""
+    excel_path = tmp_path / "missing_sheet_whole_row.xlsx"
+    wb = _new_workbook()
+    wb["Sheet1"]["A1"] = 1
+    wb.defined_names.add(DefinedName("GhostRows", attr_text="Missing!$5:$10"))
+    wb.defined_names.add(DefinedName("GhostCols", attr_text="Missing!$A:$C"))
+    wb.save(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert "GhostRows" not in maps.range_map
+    assert "GhostCols" not in maps.range_map
+
+
+def test_create_dependency_graph_resolves_whole_row_vlookup(tmp_path: Path) -> None:
+    """VLOOKUP/MATCH over whole-row names extract and evaluate like rectangular names."""
+    excel_path = tmp_path / "mcve-whole-row-defined-name.xlsx"
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Macrofw"
+    ws["A5"] = "code"
+    ws["B5"] = -1
+    ws["A6"] = "FASAOS"
+    ws["B6"] = 42
+    qs = wb.create_sheet("Questions")
+    qs["C90"] = '=VLOOKUP("FASAOS",MacrofwData,MATCH(-1,MacrofwDates,0),FALSE)'
+    wb.defined_names.add(DefinedName("MacrofwData", attr_text="Macrofw!$5:$10"))
+    wb.defined_names.add(DefinedName("MacrofwDates", attr_text="Macrofw!$5:$5"))
+    wb.save(excel_path)
+    wb.close()
+
+    graph = create_dependency_graph(
+        excel_path,
+        targets=["Questions!C90"],
+        max_depth=10,
+        load_values=True,
+        use_cached_dynamic_refs=True,
+    )
+    node = graph.get_node("Questions!C90")
+    assert node is not None
+    assert node.normalized_formula is not None
+    assert "Macrofw!A5:B10" in node.normalized_formula
+    assert "Macrofw!A5:B5" in node.normalized_formula
+    deps = graph.get_dependencies("Questions!C90")
+    assert "Macrofw!A6" in deps
+    assert "Macrofw!B5" in deps
+    with FormulaEvaluator(graph) as ev:
+        assert ev.evaluate("Questions!C90") == 42
 
 
 def test_dependency_graph_expands_offset_counta_plus_named_range(tmp_path: Path) -> None:

@@ -17,7 +17,9 @@ from excel_grapher.core.range_shorthand import (
     EXCEL_MAX_ROW,
     expand_whole_column_deps,
     resolve_whole_column,
+    resolve_whole_column_span,
     resolve_whole_row,
+    resolve_whole_row_span,
 )
 from excel_grapher.core.types import ExcelRange
 from excel_grapher.grapher.parser import parse_range_refs_with_spans
@@ -83,6 +85,30 @@ def test_resolve_whole_row_uses_workbook_bounds() -> None:
 def test_resolve_whole_column_defaults_to_excel_max_without_bounds() -> None:
     rng = resolve_whole_column("Missing", "A", {})
     assert rng.end_row == EXCEL_MAX_ROW
+
+
+def test_resolve_whole_row_span_uses_used_columns() -> None:
+    bounds = {"Macrofw": (6, 2)}
+    rng = resolve_whole_row_span("Macrofw", 5, 10, bounds)
+    assert rng == ExcelRange("Macrofw", 5, 1, 10, 2)
+
+
+def test_resolve_whole_row_span_normalizes_reversed_rows() -> None:
+    bounds = {"Data": (20, 4)}
+    rng = resolve_whole_row_span("Data", 10, 5, bounds)
+    assert rng == ExcelRange("Data", 5, 1, 10, 4)
+
+
+def test_resolve_whole_column_span_uses_used_rows() -> None:
+    bounds = {"Data": (20, 8)}
+    rng = resolve_whole_column_span("Data", "B", "D", bounds)
+    assert rng == ExcelRange("Data", 1, 2, 20, 4)
+
+
+def test_resolve_whole_column_span_normalizes_reversed_cols() -> None:
+    bounds = {"Data": (10, 5)}
+    rng = resolve_whole_column_span("Data", "D", "B", bounds)
+    assert rng == ExcelRange("Data", 1, 2, 10, 4)
 
 
 def test_expand_whole_column_deps_enumerates_used_range() -> None:
