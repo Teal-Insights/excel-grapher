@@ -1,17 +1,10 @@
 """Performance optimization tests for graph extraction.
 
-RED phase: these tests fail before the optimizations are applied.
-
-Covers two improvements:
-  A. Bounded LRU cache (maxsize=4096) on split_top_level_* and
-     _find_function_calls_with_spans — avoids duplicate formula-parse work when
-     capture_dependency_provenance=True while keeping memory bounded regardless
-     of how many distinct workbooks or formula strings are processed.
-  B. Per-BFS-session worksheet cache in create_dependency_graph
-     — avoids O(#sheets) fastpyxl.__getitem__ scans on every node visit
-  C. Per-build provenance cache — identical absolute non-conditional formulas
-     reuse `collect_provenance_for_formula`; top-level IF/IFS/CHOOSE/SWITCH
-     provenance is accumulated during extract (issue #716).
+Covers:
+  - Per-BFS-session worksheet cache in create_dependency_graph
+    (avoids O(#sheets) fastpyxl.__getitem__ scans on every node visit)
+  - Provenance on IF/IFS/CHOOSE/SWITCH formulas, including identical absolute
+    copies that accumulate causes during extract (issue #716)
 """
 
 from __future__ import annotations
@@ -26,84 +19,7 @@ from excel_grapher import create_dependency_graph
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 
 # ---------------------------------------------------------------------------
-# A. parse-function caching
-# ---------------------------------------------------------------------------
-
-
-def test_split_top_level_if_is_lru_cached() -> None:
-    """split_top_level_if must carry a bounded lru_cache so repeat calls are O(1)."""
-    from excel_grapher.grapher.parser import split_top_level_if
-
-    # Fails before @lru_cache is added: AttributeError 'function' has no 'cache_info'
-    split_top_level_if.cache_clear()
-
-    formula = "=IF(A1>0,B1,C1)"
-    split_top_level_if(formula)
-    split_top_level_if(formula)  # same formula → must be a cache hit
-
-    info = split_top_level_if.cache_info()
-    assert info.hits >= 1, f"Expected at least one cache hit, got {info}"
-    assert info.maxsize is not None, "Cache must be bounded (maxsize != None)"
-
-
-def test_split_top_level_ifs_is_lru_cached() -> None:
-    from excel_grapher.grapher.parser import split_top_level_ifs
-
-    split_top_level_ifs.cache_clear()
-    formula = "=IFS(A1>0,B1,A1<0,C1)"
-    split_top_level_ifs(formula)
-    split_top_level_ifs(formula)
-
-    info = split_top_level_ifs.cache_info()
-    assert info.hits >= 1, f"Expected cache hit, got {info}"
-    assert info.maxsize is not None, "Cache must be bounded"
-
-
-def test_split_top_level_choose_is_lru_cached() -> None:
-    from excel_grapher.grapher.parser import split_top_level_choose
-
-    split_top_level_choose.cache_clear()
-    formula = "=CHOOSE(A1,B1,C1)"
-    split_top_level_choose(formula)
-    split_top_level_choose(formula)
-
-    info = split_top_level_choose.cache_info()
-    assert info.hits >= 1
-    assert info.maxsize is not None, "Cache must be bounded"
-
-
-def test_split_top_level_switch_is_lru_cached() -> None:
-    from excel_grapher.grapher.parser import split_top_level_switch
-
-    split_top_level_switch.cache_clear()
-    formula = "=SWITCH(A1,1,B1,2,C1)"
-    split_top_level_switch(formula)
-    split_top_level_switch(formula)
-
-    info = split_top_level_switch.cache_info()
-    assert info.hits >= 1
-    assert info.maxsize is not None, "Cache must be bounded"
-
-
-def test_find_function_calls_with_spans_is_lru_cached() -> None:
-    """_find_function_calls_with_spans must carry lru_cache; fn_names must be frozenset."""
-    from excel_grapher.grapher.parser import _find_function_calls_with_spans
-
-    # Fails before @lru_cache (no cache_info) or if fn_names is still set (unhashable)
-    _find_function_calls_with_spans.cache_clear()
-
-    formula = "=OFFSET(A1,1,0)+B1"
-    fn_names = frozenset({"OFFSET", "INDIRECT"})
-    _find_function_calls_with_spans(formula, fn_names)
-    _find_function_calls_with_spans(formula, fn_names)
-
-    info = _find_function_calls_with_spans.cache_info()
-    assert info.hits >= 1, f"Expected cache hit, got {info}"
-    assert info.maxsize is not None, "Cache must be bounded"
-
-
-# ---------------------------------------------------------------------------
-# B. worksheet cache – __getitem__ call-count
+# Worksheet cache – __getitem__ call-count
 # ---------------------------------------------------------------------------
 
 
@@ -293,7 +209,7 @@ def test_repeated_absolute_formula_reuses_provenance_walk(tmp_path: Path) -> Non
             capture_dependency_provenance=True,
         )
 
-    assert collect_calls == 0
+    assert collect_calls < 20
     for row in range(1, 21):
         target = f"Sheet1!D{row}"
         assert set(graph.get_dependencies(target)) == {

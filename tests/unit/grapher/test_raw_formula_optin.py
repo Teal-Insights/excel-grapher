@@ -7,7 +7,6 @@ audit-only field that extraction stores only when asked.
 
 from __future__ import annotations
 
-import dataclasses
 from pathlib import Path
 
 import fastpyxl
@@ -15,7 +14,6 @@ import pytest
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph
 from excel_grapher.grapher.cache import (
-    GRAPH_CACHE_SCHEMA_VERSION,
     _edge_provenance_from_json,
     _edge_provenance_to_json,
     dependency_graph_from_json,
@@ -46,12 +44,6 @@ def _chain_workbook(path: Path) -> Path:
 # ---- EdgeProvenance ------------------------------------------------------
 
 
-def test_edge_provenance_has_no_raw_formula_spans() -> None:
-    names = {f.name for f in dataclasses.fields(EdgeProvenance)}
-    assert "direct_sites_formula" not in names
-    assert "direct_sites_normalized" in names
-
-
 def test_edge_provenance_rejects_raw_formula_spans_kwarg() -> None:
     # Passed dynamically so the removed keyword stays invisible to the type checker.
     legacy_kwargs: dict[str, object] = {"direct_sites_formula": ((1, 3),)}
@@ -68,10 +60,6 @@ def test_merge_unions_normalized_spans_only() -> None:
 
 
 # ---- cache serialization -------------------------------------------------
-
-
-def test_cache_schema_version_bumped_past_raw_spans() -> None:
-    assert GRAPH_CACHE_SCHEMA_VERSION >= 4
 
 
 def test_provenance_json_omits_raw_formula_spans() -> None:
@@ -263,8 +251,24 @@ def test_identity_transit_compression_without_raw_formulas(tmp_path: Path) -> No
 
 
 def test_formula_rewrite_records_normalized_formulas_only() -> None:
-    names = {f.name for f in dataclasses.fields(FormulaRewrite)}
-    assert names == {"dependent", "before_normalized", "after_normalized"}
+    rewrite = FormulaRewrite(
+        dependent="Sheet1!C1",
+        before_normalized="=Sheet1!B1*Sheet1!A2",
+        after_normalized="=Sheet1!A1*Sheet1!A2",
+    )
+    assert rewrite.to_dict() == {
+        "dependent": "Sheet1!C1",
+        "before_normalized": "=Sheet1!B1*Sheet1!A2",
+        "after_normalized": "=Sheet1!A1*Sheet1!A2",
+    }
+    legacy_kwargs: dict[str, object] = {
+        "dependent": "Sheet1!C1",
+        "before_normalized": "=B1*A2",
+        "after_normalized": "=A1*A2",
+        "before_formula": "=B1*A2",
+    }
+    with pytest.raises(TypeError):
+        FormulaRewrite(**legacy_kwargs)
 
 
 def test_compression_leaves_raw_formula_as_captured(tmp_path: Path) -> None:

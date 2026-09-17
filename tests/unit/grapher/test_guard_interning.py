@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import gc
 
+import pytest
+
 from excel_grapher.grapher.guard import (
     And,
     CellRef,
@@ -41,21 +43,19 @@ def test_intern_guard_shares_subexpressions() -> None:
     assert wrapped.operand is shared
 
 
-def test_guard_ast_nodes_are_slotted() -> None:
-    for cls in (CellRef, RangeRef, Literal, Compare, Not, And, Or):
-        assert hasattr(cls, "__slots__")
-        instance = intern_guard(
-            {
-                CellRef: CellRef("Sheet1!A1"),
-                RangeRef: RangeRef("Sheet1!A1:A2"),
-                Literal: Literal(0),
-                Compare: Compare(CellRef("Sheet1!A1"), ">", Literal(0)),
-                Not: Not(Literal(True)),
-                And: And((Literal(True), Literal(False))),
-                Or: Or((Literal(True), Literal(False))),
-            }[cls]
-        )
-        assert not hasattr(instance, "__dict__")
+def test_guard_ast_nodes_reject_unknown_attributes() -> None:
+    instances = (
+        intern_guard(CellRef("Sheet1!A1")),
+        intern_guard(RangeRef("Sheet1!A1:A2")),
+        intern_guard(Literal(0)),
+        intern_guard(Compare(CellRef("Sheet1!A1"), ">", Literal(0))),
+        intern_guard(Not(Literal(True))),
+        intern_guard(And((Literal(True), Literal(False)))),
+        intern_guard(Or((Literal(True), Literal(False)))),
+    )
+    for instance in instances:
+        with pytest.raises(AttributeError):
+            object.__setattr__(instance, "not_a_field", 123)
 
 
 def test_and_or_combinators_return_interned_results() -> None:
