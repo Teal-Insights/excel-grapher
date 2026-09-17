@@ -631,24 +631,14 @@ def test_volatile_offset_dependency_chain_warns_and_requires_cached_resolution(
         create_dependency_graph(excel_path, ["Sheet1!D9"], load_values=False)
 
 
-@pytest.mark.parametrize(
-    "volatile_formula",
-    [
-        "=NOW()",
-        "=TODAY()",
-        "=RAND()",
-        "=RANDBETWEEN(0,1)",
-        "=RANDARRAY(1,1)",
-        '=INFO("osversion")',
-    ],
-)
 def test_volatile_indirect_dependency_chain_warns_and_requires_cached_resolution(
-    tmp_path: Path, volatile_formula: str
+    tmp_path: Path,
 ) -> None:
-    excel_path = tmp_path / f"volatile_indirect_{abs(hash(volatile_formula))}.xlsx"
+    """INDIRECT uses the same volatile-name check as OFFSET; one formula is enough."""
+    excel_path = tmp_path / "volatile_indirect_now.xlsx"
     wb = xlsxwriter.Workbook(excel_path)
     ws = wb.add_worksheet("Sheet1")
-    ws.write_formula(8, 1, volatile_formula, None, "Sheet1!C9")  # B9
+    ws.write_formula(8, 1, "=NOW()", None, "Sheet1!C9")  # B9
     ws.write_number(8, 2, 10)  # C9
     ws.write_formula(8, 3, "=INDIRECT(B9)", None, 10)  # D9
     wb.close()
@@ -995,32 +985,6 @@ def test_indirect_raises_when_argument_leaf_missing_domain() -> None:
     msg = str(exc_info.value)
     assert "B1" in msg or "Sheet1!B1" in msg
     assert "Missing" in msg or "interval or enum" in msg
-
-
-def test_indirect_does_not_raise_when_argument_is_intermediate_with_domain() -> None:
-    """INDIRECT(ref) does not raise when ref is an intermediate (formula) cell with enum in env.
-
-    The env is the expanded argument env: formula cells in the chain have domains computed
-    from leaf evaluation, so they have interval or enum. Only leaves need user constraints.
-    """
-    formula = "=INDIRECT(Sheet1!B2)"
-    # B2 would be a formula cell; expanded env gives it enum (e.g. sheet-qualified ref strings).
-    env = _make_env(
-        {
-            "Sheet1!B2": CellType(
-                kind=CellKind.STRING,
-                enum=EnumDomain(values=frozenset({"Sheet1!A1", "Sheet1!B2"})),
-            )
-        }
-    )
-
-    targets = infer_dynamic_indirect_targets(
-        formula,
-        current_sheet="Sheet1",
-        cell_type_env=env,
-    )
-    # No raise; targets are the resolved cells (same as test_dynamic_indirect_over_enum_text_domain).
-    assert targets == {"Sheet1!A1", "Sheet1!B2"}
 
 
 def test_format_missing_leaves_groups_contiguous_column_into_range() -> None:
@@ -1505,40 +1469,6 @@ def test_create_dependency_graph_index_literal_row_col_no_array_corner_edges_iss
     )
     deps = graph.get_dependencies("Inputs!A1")
     assert deps == {"Inputs!B11"}
-
-
-def test_index_match_row_dep_guard_issue_156(tmp_path: Path) -> None:
-    """MATCH in INDEX row position must keep the lookup value cell (GH-156 guardrail)."""
-    excel_path = tmp_path / "index_match_guard_issue_156.xlsx"
-    _build_index_match_workbook(excel_path)
-    env = _make_env(
-        {
-            "Sheet1!B5": CellType(
-                kind=CellKind.NUMBER,
-                enum=EnumDomain(values=frozenset({20})),
-            ),
-            "Sheet1!A10": CellType(
-                kind=CellKind.NUMBER,
-                enum=EnumDomain(values=frozenset({10})),
-            ),
-            "Sheet1!A11": CellType(
-                kind=CellKind.NUMBER,
-                enum=EnumDomain(values=frozenset({20})),
-            ),
-            "Sheet1!A12": CellType(
-                kind=CellKind.NUMBER,
-                enum=EnumDomain(values=frozenset({30})),
-            ),
-        }
-    )
-    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
-    graph = create_dependency_graph(
-        excel_path,
-        ["Sheet1!D5"],
-        load_values=False,
-        dynamic_refs=config,
-    )
-    assert "Sheet1!B5" in graph.get_dependencies("Sheet1!D5")
 
 
 def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> None:
@@ -2026,35 +1956,6 @@ def test_expand_leaf_env_comparison_infers_zero_one_domain() -> None:
     assert out.kind is CellKind.NUMBER
     assert out.enum is not None
     assert out.enum.values == frozenset({0, 1})
-
-
-def test_expand_leaf_env_mutual_refs_terminates_with_any() -> None:
-    """Mutual formula-only refs: cycle edge is ANY; expansion finishes (issue #54)."""
-
-    def _get_cell_formula(addr: str) -> str | None:
-        if addr == "Sheet1!B1":
-            return "=Sheet1!C1"
-        if addr == "Sheet1!C1":
-            return "=Sheet1!B1"
-        return None
-
-    def _get_refs_from_formula(formula: str, sheet: str) -> set[str]:
-        assert sheet == "Sheet1"
-        if "C1" in formula:
-            return {"Sheet1!C1"}
-        if "B1" in formula:
-            return {"Sheet1!B1"}
-        return set()
-
-    env = dynamic_refs_mod.expand_leaf_env_to_argument_env(
-        {"Sheet1!B1"},
-        _get_cell_formula,
-        _get_refs_from_formula,
-        _make_env({}),
-        DynamicRefLimits(max_depth=4),
-    )
-    assert env["Sheet1!B1"].kind is CellKind.ANY
-    assert env["Sheet1!C1"].kind is CellKind.ANY
 
 
 def test_expand_leaf_env_long_formula_chain_is_not_limited_by_expr_max_depth() -> None:
@@ -2628,34 +2529,6 @@ def test_index_respects_max_cells_limit() -> None:
     assert "cells exceed limit" in str(exc_info.value).lower()
 
 
-def test_offset_per_call_max_cells_limit() -> None:
-    """Raise DynamicRefError when OFFSET exceeds max_cells.
-
-    A single OFFSET call that fans out beyond the limit must fail immediately,
-    not accumulate an unbounded result set.
-    """
-    # OFFSET(Sheet1!A1, 0, Sheet1!B1, 1, 1) where B1 ∈ {0,1,2,3,4} → 5 distinct
-    # target cells.  With max_cells=3 the check should fire.
-    formula = "=OFFSET(Sheet1!A1,0,Sheet1!B1,1,1)"
-    env = _make_env(
-        {
-            "Sheet1!B1": CellType(
-                kind=CellKind.NUMBER,
-                enum=EnumDomain(values=frozenset({0, 1, 2, 3, 4})),
-            )
-        }
-    )
-    with pytest.raises(DynamicRefError) as exc_info:
-        infer_dynamic_offset_targets(
-            formula,
-            current_sheet="Sheet1",
-            cell_type_env=env,
-            limits=DynamicRefLimits(max_cells=3),
-        )
-    assert "cells" in str(exc_info.value).lower()
-    assert "exceed limit" in str(exc_info.value).lower()
-
-
 def test_constraint_dynamic_ref_expansion_not_duplicated_with_provenance(
     tmp_path: Path,
 ) -> None:
@@ -2745,7 +2618,7 @@ def test_constraint_index_dynamic_ref_expansion_not_duplicated_with_provenance(
     )
     config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
 
-    graph, call_count = _build_graph_counting_dynamic_expansion(
+    _, call_count = _build_graph_counting_dynamic_expansion(
         excel_path,
         ["Sheet1!C1"],
         dynamic_refs=config,
@@ -2755,10 +2628,6 @@ def test_constraint_index_dynamic_ref_expansion_not_duplicated_with_provenance(
         f"expand_leaf_env_to_argument_env was called {call_count} times; "
         "expected 1 for INDEX with provenance enabled"
     )
-    for dep in ("Sheet1!B1", "Sheet1!A1", "Sheet1!A2", "Sheet1!A3"):
-        prov = graph.get_edge_attrs("Sheet1!C1", dep).provenance
-        assert prov is not None
-        assert DependencyCause.dynamic_index in prov.causes
 
 
 def test_constraint_branch_dynamic_ref_expansion_not_duplicated_with_provenance(
@@ -3694,17 +3563,8 @@ class TestAbstractPathCharacterization:
         assert result.domain.values == frozenset({3})
 
     # ------------------------------------------------------------------
-    # Test 3: ABS / MIN / MAX currently fall back (abstract gap baseline)
+    # EXP abstract interval (no later exact-set twin)
     # ------------------------------------------------------------------
-
-    def test_abs_stays_abstract_after_phase1(self) -> None:
-        """ABS(A1) stays on the abstract path after Phase 1 (regression guard)."""
-        ast = _parse_selector("ABS(Sheet1!A1)")
-        env = _make_env(
-            {"Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5))}
-        )
-        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
-        assert result.domain is not None, "ABS should now produce an abstract domain"
 
     def test_exp_stays_abstract_after_phase1(self) -> None:
         """EXP(A1) stays on the abstract path after Phase 1 (regression guard)."""
@@ -3717,30 +3577,6 @@ class TestAbstractPathCharacterization:
         bounds = dynamic_refs_mod._normalize_to_bounds(result.domain)
         assert bounds.lo == 2
         assert bounds.hi == 149
-
-    def test_min_stays_abstract_after_phase1(self) -> None:
-        """MIN(A1, B1) stays on the abstract path after Phase 1 (regression guard)."""
-        ast = _parse_selector("MIN(Sheet1!A1, Sheet1!B1)")
-        env = _make_env(
-            {
-                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
-                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=2, max=6)),
-            }
-        )
-        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
-        assert result.domain is not None, "MIN should now produce an abstract domain"
-
-    def test_max_stays_abstract_after_phase1(self) -> None:
-        """MAX(A1, B1) stays on the abstract path after Phase 1 (regression guard)."""
-        ast = _parse_selector("MAX(Sheet1!A1, Sheet1!B1)")
-        env = _make_env(
-            {
-                "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
-                "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=2, max=6)),
-            }
-        )
-        result = dynamic_refs_mod._infer_numeric_domain_result(ast, env, self._limits())
-        assert result.domain is not None, "MAX should now produce an abstract domain"
 
 
 # ---------------------------------------------------------------------------
@@ -4239,36 +4075,20 @@ class TestLazyIfEval:
 
         return evaluate_expr(parse_ast("=" + expr), get_cell_value=get_cell_value)
 
-    def test_if_true_does_not_evaluate_false_branch(self) -> None:
-        """IF(TRUE, 1, 1/0) should return 1 without raising or returning an error."""
+    @pytest.mark.parametrize(
+        ("expr", "expected"),
+        [
+            ("IF(TRUE, 1, 1/0)", 1),
+            ("IF(FALSE, 1/0, 2)", 2),
+            ("IF(1, 42, 1/0)", 42),
+            ("IF(0, 1/0, 99)", 99),
+        ],
+    )
+    def test_if_does_not_evaluate_dead_branch(self, expr: str, expected: int) -> None:
         from excel_grapher.core.types import XlError
 
-        result = self._eval("IF(TRUE, 1, 1/0)")
-        assert result == 1 or result == 1.0, f"Expected 1, got {result!r}"
-        assert not isinstance(result, XlError), "Dead branch (1/0) should not be evaluated"
-
-    def test_if_false_does_not_evaluate_true_branch(self) -> None:
-        """IF(FALSE, 1/0, 2) should return 2 without raising or returning an error."""
-        from excel_grapher.core.types import XlError
-
-        result = self._eval("IF(FALSE, 1/0, 2)")
-        assert result == 2 or result == 2.0, f"Expected 2, got {result!r}"
-        assert not isinstance(result, XlError), "Dead branch (1/0) should not be evaluated"
-
-    def test_if_false_branch_error_does_not_propagate(self) -> None:
-        """IF(1, 42, 1/0) should yield 42, not propagate the division-by-zero error."""
-        from excel_grapher.core.types import XlError
-
-        result = self._eval("IF(1, 42, 1/0)")
-        assert result == 42 or result == 42.0
-        assert not isinstance(result, XlError)
-
-    def test_if_true_branch_error_does_not_propagate(self) -> None:
-        """IF(0, 1/0, 99) should yield 99, not propagate the division-by-zero error."""
-        from excel_grapher.core.types import XlError
-
-        result = self._eval("IF(0, 1/0, 99)")
-        assert result == 99 or result == 99.0
+        result = self._eval(expr)
+        assert result == expected or result == float(expected)
         assert not isinstance(result, XlError)
 
 

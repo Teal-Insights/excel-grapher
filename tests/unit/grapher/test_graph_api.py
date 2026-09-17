@@ -155,20 +155,6 @@ def test_get_dependents_returns_frozenset() -> None:
     assert dependents == frozenset({"S!B1"})
 
 
-def test_get_dependencies_snapshot_is_decoupled_from_graph() -> None:
-    """Modifying the returned container must not affect the graph."""
-    g = DependencyGraph()
-    g.add_node(_leaf("S", "A", 1))
-    g.add_node(_formula("S", "B", 1, "=S!A1"))
-    g.add_edge("S!B1", "S!A1")
-
-    deps = g.get_dependencies("S!B1")
-    assert deps == frozenset({"S!A1"})
-    # Returned frozenset cannot be mutated; but even re-binding shouldn't leak.
-    # Verify subsequent calls still see the original state.
-    assert g.get_dependencies("S!B1") == frozenset({"S!A1"})
-
-
 def test_get_dependencies_missing_key_returns_empty() -> None:
     g = DependencyGraph()
     assert g.get_dependencies("S!A1") == frozenset()

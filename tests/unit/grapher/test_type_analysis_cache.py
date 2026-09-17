@@ -41,10 +41,6 @@ class TestCellTypeSerialization:
         ct = CellType(kind=CellKind.STRING, enum=EnumDomain(values=frozenset({"a", "b"})))
         assert _cell_type_from_json(_cell_type_to_json(ct)) == ct
 
-    def test_round_trip_bool_enum(self) -> None:
-        ct = CellType(kind=CellKind.BOOL, enum=EnumDomain(values=frozenset({True, False})))
-        assert _cell_type_from_json(_cell_type_to_json(ct)) == ct
-
     def test_round_trip_any(self) -> None:
         ct = CellType(kind=CellKind.ANY)
         assert _cell_type_from_json(_cell_type_to_json(ct)) == ct

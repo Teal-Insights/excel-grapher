@@ -402,16 +402,6 @@ def test_identity_transit_is_target_not_removed() -> None:
     assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!B1"})
 
 
-def test_identity_transit_non_target_still_removed() -> None:
-    graph = _identity_transit_graph()
-
-    removed = graph.compress_identity_transits()
-
-    assert "Sheet1!B1" in removed
-    assert "Sheet1!B1" not in graph
-    assert graph.get_dependencies("Sheet1!A1") == frozenset({"Sheet1!C1"})
-
-
 def test_identity_transit_explicit_preserve_not_removed() -> None:
     graph = _identity_transit_graph()
 

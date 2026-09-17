@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import xlsxwriter
 
 from excel_grapher import create_dependency_graph
@@ -63,11 +62,6 @@ def test_non_autofill_row_span_not_one_rr_group(tmp_path: Path) -> None:
     index = build_taco_index(graph)
     assert not any(e.meta.kind == PatternKind.rr for e in index.compressed_edges)
     assert_taco_parity(graph, index)
-
-
-@pytest.mark.skip(reason="dynamic OFFSET workbooks require constraint config in CI")
-def test_dynamic_offset_not_compressed(_tmp_path: Path) -> None:
-    pytest.skip("dynamic OFFSET workbooks require constraint config in CI")
 
 
 def test_static_range_one_off_sum_not_compressed() -> None:

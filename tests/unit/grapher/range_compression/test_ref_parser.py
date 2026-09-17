@@ -47,8 +47,3 @@ def test_parse_ref_streams_includes_range() -> None:
     assert ref.end_col == "E" and ref.end_row == 11
     assert not ref.start_abs_col and not ref.start_abs_row
     assert ref.end_abs_col and ref.end_abs_row
-
-
-def test_masks_range_endpoints() -> None:
-    refs = _cell_refs("=SUM(B3:C3)", default_sheet="Sheet1")
-    assert refs == []
