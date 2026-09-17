@@ -4,7 +4,8 @@ Uniform formula families replay `_emit_range_table` once per statement, not
 once per catalog member. Range-vs-blank tests are geometric, so unrelated
 blank rectangles stay off the per-cell hot path. Lockstep producer slots
 are cached per `(host, producer)`. A mixed identity/remap whose outlier is
-not a first/interior/last sample still lowers through the lockstep dict.
+not a first/interior/last sample still lowers through the lockstep dict,
+including when the producer is a 2D matrix column (#873).
 """
 
 from __future__ import annotations
@@ -269,6 +270,126 @@ def test_off_sample_lockstep_remap_still_uses_the_dict(tmp_path: Path) -> None:
     assert got["COM7"] == 7.0
 
 
+def _aliased_terms_matrix_document() -> dict[str, Any]:
+    """Host copies one matrix column; one interior instrument label is aliased (#873)."""
+    instruments = {
+        "Alpha": 2,
+        "Beta": 3,
+        "Gamma": 4,
+        "Delta": 5,
+        "Epsilon": 6,
+        "Zeta": 7,
+    }
+    host_instruments = {
+        "Alpha": 2,
+        "Beta": 3,
+        "Gamma": 4,
+        "Delta": 5,
+        "Epsilon alias": 6,
+        "Zeta": 7,
+    }
+    document = bindings_document(
+        {
+            "id": "terms",
+            "sheet": "Terms",
+            "data_range": "Terms!B2:C7",
+            "layout": "matrix",
+            "input": {},
+            "structure": {
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "float",
+                    "bind": {"kind": "data_cell", "read": "float"},
+                },
+                "dimensions": [
+                    {
+                        "id": "INSTRUMENT",
+                        "concept": "INSTRUMENT",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {"kind": "value_map", "values": instruments},
+                    },
+                    {
+                        "id": "INDICATOR",
+                        "concept": "INDICATOR",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {"kind": "column_header", "header_row": 1, "read": "string"},
+                    },
+                ],
+            },
+            "key": ["INSTRUMENT", "INDICATOR"],
+        },
+        {
+            "id": "pv_interest",
+            "sheet": "PV",
+            "data_range": "PV!B2:B7",
+            "layout": "series",
+            "output": {"compute": {"name": "compute_pv_interest"}},
+            "structure": {
+                "measure": {
+                    "concept": "OBS_VALUE",
+                    "dtype": "float",
+                    "bind": {"kind": "data_cell", "read": "float"},
+                },
+                "dimensions": [
+                    {
+                        "id": "INSTRUMENT",
+                        "concept": "INSTRUMENT",
+                        "role": "key",
+                        "scope": "cell",
+                        "bind": {"kind": "value_map", "values": host_instruments},
+                    }
+                ],
+            },
+            "key": ["INSTRUMENT"],
+        },
+        schema_version="1.16.0",
+    )
+    document["concept_scheme"]["concepts"].extend(
+        [
+            {"id": "INSTRUMENT", "dtype": "string"},
+            {"id": "INDICATOR", "dtype": "string"},
+        ]
+    )
+    return document
+
+
+def test_off_sample_2d_lockstep_remap_uses_producer_keys(tmp_path: Path) -> None:
+    """A 2D producer column copy must remap an unsampled aliased host key (#873).
+
+    Six host members sample indices 0, 3, and 5. Those three names match the
+    terms matrix. The alias at index 4 is not a sample; replicating
+    `terms[instrument, 'Interest rate']` looks up a key the producer does not
+    own. Lockstep remaps must key on the shared `INSTRUMENT` axis, not require
+    slope 1 on the flattened (instrument × indicator) catalog index.
+    """
+    instruments = ("Alpha", "Beta", "Gamma", "Delta", "Epsilon", "Zeta")
+    host_keys = ("Alpha", "Beta", "Gamma", "Delta", "Epsilon alias", "Zeta")
+    terms: dict[str, object] = {"B1": "Interest rate", "C1": "Grace period"}
+    pv: dict[str, object] = {}
+    for row, (producer_name, host_name) in enumerate(
+        zip(instruments, host_keys, strict=True), start=2
+    ):
+        terms[f"A{row}"] = producer_name
+        terms[f"B{row}"] = row / 100.0
+        terms[f"C{row}"] = float(row)
+        pv[f"A{row}"] = host_name
+        pv[f"B{row}"] = f"=Terms!B{row}"
+    workbook = write_workbook(tmp_path / "aliased_terms.xlsx", {"Terms": terms, "PV": pv})
+    document = _aliased_terms_matrix_document()
+    internals = generate_inverted(workbook, document)["internals.py"]
+    assert "INSTRUMENT_TO_TERMS[instrument]" in internals
+    assert "terms[INSTRUMENT_TO_TERMS[instrument], 'Interest rate']" in internals
+    assert "'Epsilon alias': 'Epsilon'" in internals
+    assert "terms[instrument, 'Interest rate']" not in internals
+    assert "terms['Epsilon alias'" not in internals
+    pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "aliased_terms")
+    got = pkg.compute_pv_interest(terms=pkg.data.TERMS_DEFAULT)
+    assert got["Epsilon alias"] == pytest.approx(0.06)
+    assert got["Zeta"] == pytest.approx(0.07)
+
+
 class _CountingEdges:
     def __init__(self, items: Sequence[DependenceEdge]) -> None:
         self._items = tuple(items)
@@ -348,6 +469,99 @@ def _lockstep_pair(n: int) -> tuple[EmitContext, BoundSeries]:
     return ctx, producer
 
 
+def _lockstep_column_pair(
+    n: int, *, indicators: int = 2, rotate: bool = False
+) -> tuple[EmitContext, BoundSeries]:
+    """Host copies one column of an `n × indicators` producer matrix."""
+    instruments = tuple(f"COM{i}" for i in range(1, n + 1))
+    indicator_names = tuple(f"IND{i}" for i in range(indicators))
+    host_cells = tuple(f"Out!B{row}" for row in range(2, n + 2))
+    host_domain = tuple(KeyPoint((("INSTRUMENT", name),)) for name in instruments)
+    producer_cells: list[str] = []
+    producer_domain: list[KeyPoint] = []
+    for row, name in enumerate(instruments, start=2):
+        for offset, indicator in enumerate(indicator_names):
+            producer_cells.append(f"In!{get_column_letter(2 + offset)}{row}")
+            producer_domain.append(
+                KeyPoint((("INSTRUMENT", name), ("INDICATOR", indicator))),
+            )
+    producer_cells_t = tuple(producer_cells)
+    producer_domain_t = tuple(producer_domain)
+    host = BoundSeries(
+        series_id="result",
+        layout="series",
+        direction="output",
+        cells=host_cells,
+        key_fields=("INSTRUMENT",),
+        dtype="float",
+        compute_name="compute_result",
+        raw={},
+        domain=host_domain,
+        statements=(Statement("result", "result", None, 0, n, host_cells, host_domain),),
+    )
+    producer = BoundSeries(
+        series_id="terms",
+        layout="matrix",
+        direction="input",
+        cells=producer_cells_t,
+        key_fields=("INSTRUMENT", "INDICATOR"),
+        dtype="float",
+        compute_name=None,
+        raw={},
+        domain=producer_domain_t,
+        statements=(
+            Statement(
+                "terms",
+                "terms",
+                None,
+                0,
+                len(producer_cells_t),
+                producer_cells_t,
+                producer_domain_t,
+            ),
+        ),
+    )
+    catalog = make_catalog(
+        series={"result": host, "terms": producer},
+        order=("terms", "result"),
+        address_to_id={
+            **{cell: "result" for cell in host_cells},
+            **{cell: "terms" for cell in producer_cells_t},
+        },
+    )
+    edges = _CountingEdges(
+        DependenceEdge(
+            consumer_id="result",
+            producer_id="terms",
+            consumer_cell=host_cells[index],
+            producer_cell=producer_cells_t[((index + 1) % n if rotate else index) * indicators],
+            distance=0,
+            access="identity",
+        )
+        for index in range(n)
+    )
+    deps = SeriesDeps(
+        host_id="result",
+        param_ids=("terms",),
+        is_scan=False,
+        seed_id=None,
+        aligned_ids=frozenset(),
+        lookup_ids=frozenset(),
+        index_maps={},
+        affine_maps={},
+        edges=edges,  # type: ignore[arg-type]
+    )
+    ctx = EmitContext(
+        host=host,
+        catalog=catalog,
+        deps=deps,
+        host_index=0,
+        host_cell=host_cells[0],
+        coordinate_vars={"INSTRUMENT": "instrument"},
+    )
+    return ctx, producer
+
+
 def test_lockstep_producer_slots_scans_edges_once() -> None:
     ctx, producer = _lockstep_pair(40)
     first = _lockstep_producer_slots(ctx, producer)
@@ -357,3 +571,17 @@ def test_lockstep_producer_slots_scans_edges_once() -> None:
     edges = ctx.deps.edges
     assert isinstance(edges, _CountingEdges)
     assert edges.scans == 1
+
+
+@pytest.mark.parametrize("indicators", [2, 3])
+def test_lockstep_producer_slots_accepts_shared_axis_column_stride(indicators: int) -> None:
+    """A copied matrix column is lockstep on `INSTRUMENT`, not flat slope 1."""
+    ctx, producer = _lockstep_column_pair(6, indicators=indicators)
+    slots = _lockstep_producer_slots(ctx, producer)
+    assert slots == {index: index * indicators for index in range(6)}
+
+
+def test_lockstep_producer_slots_rejects_shared_axis_permutation() -> None:
+    """A rotated column walk is not lockstep even when each host reads one slot."""
+    ctx, producer = _lockstep_column_pair(4, indicators=2, rotate=True)
+    assert _lockstep_producer_slots(ctx, producer) is None
