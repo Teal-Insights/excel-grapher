@@ -240,9 +240,9 @@ def _autofill_workbook(tmp_path: Path) -> Path:
 def test_extraction_stores_relative_ast_and_absolute_normalized_formula(tmp_path: Path) -> None:
     path = _autofill_workbook(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2", "Sheet1!C1"], load_values=True)
-    b1 = graph._get_internal_node("Sheet1!B1")
-    b2 = graph._get_internal_node("Sheet1!B2")
-    c1 = graph._get_internal_node("Sheet1!C1")
+    b1 = graph.get_node("Sheet1!B1")
+    b2 = graph.get_node("Sheet1!B2")
+    c1 = graph.get_node("Sheet1!C1")
     assert b1 is not None and b2 is not None and c1 is not None
     assert b1.normalized_formula == "=Sheet1!A1*2"
     assert b2.normalized_formula == "=Sheet1!A2*2"

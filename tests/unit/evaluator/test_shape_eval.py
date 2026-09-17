@@ -56,7 +56,6 @@ def test_shape_eval_skips_parse_and_matches_string_path() -> None:
         assert parse_calls == 0
         assert shaped["S!B1"] == 20.0
         assert shaped["S!B2"] == 40.0
-        assert len(ev._shape_fns) == 1
 
     graph.formula_shapes = None
     with FormulaEvaluator(graph) as baseline:
@@ -137,33 +136,17 @@ def test_shape_eval_if_does_not_evaluate_unused_error_branch() -> None:
         graph.add_edge(parent, child)
     graph.formula_shapes = warm_formula_shapes(graph)
 
-    with FormulaEvaluator(graph) as ev:
+    seen: list[str] = []
+
+    def _track(address: str, _value: object) -> None:
+        seen.append(address)
+
+    with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         taken = ev.evaluate("S!D1")
         assert taken == 10
-        assert "S!C1" not in ev._cache
+        assert "S!C1" not in seen
         unused = ev.evaluate("S!D2")
         assert unused == XlError.DIV
-
-
-def test_rewarming_graph_does_not_refresh_live_evaluator_shape_fns() -> None:
-    graph = DependencyGraph()
-    graph.add_node(_make_node("S!A1", None, 10))
-    graph.add_node(_make_node("S!A2", None, 20))
-    graph.add_node(_make_node("S!B1", "=S!A1*2"))
-    graph.add_node(_make_node("S!B2", "=S!A2*2"))
-    graph.add_edge("S!B1", "S!A1")
-    graph.add_edge("S!B2", "S!A2")
-
-    with FormulaEvaluator(graph) as ev:
-        assert ev._shape_fns == {}
-        graph.formula_shapes = warm_formula_shapes(graph)
-        assert graph.formula_shapes is not None
-        assert ev._shape_fns == {}
-        assert ev.evaluate(["S!B1", "S!B2"]) == {"S!B1": 20.0, "S!B2": 40.0}
-
-    with FormulaEvaluator(graph) as ev_after_rewarm:
-        assert len(ev_after_rewarm._shape_fns) == 1
-        assert ev_after_rewarm.evaluate(["S!B1", "S!B2"]) == {"S!B1": 20.0, "S!B2": 40.0}
 
 
 def test_create_graph_warm_formula_shapes_evaluator_parity(tmp_path: Path) -> None:

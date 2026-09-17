@@ -110,5 +110,5 @@ def test_lic_dsf_ci_index_formulas_not_substituted_as_a1_a1() -> None:
 
     with FormulaEvaluator(graph) as ev:
         for addr in ("Imported data!L75", "Imported data!L76"):
-            result = ev._evaluate_cell(addr)
+            result = ev.evaluate(addr)
             assert not isinstance(result, XlError), f"{addr} returned {result}"

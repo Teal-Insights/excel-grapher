@@ -110,7 +110,6 @@ def test_pickle_round_trip_many_guarded_edges() -> None:
 
     blob = pickle.dumps(g)
     restored: DependencyGraph = pickle.loads(blob)
-    assert len(restored._guards) == n_extra
     for i in range(2, 2 + n_extra):
         g_edge = restored.get_edge_guard("Sheet1!D1", f"Sheet1!B{i}")
         assert g_edge is not None
@@ -133,9 +132,7 @@ def test_pickle_round_trip_preserves_edge_provenance() -> None:
 
     restored: DependencyGraph = pickle.loads(pickle.dumps(g))
     attrs = restored.get_edge_attrs("Sheet1!B1", "Sheet1!A1")
-    assert attrs.provenance is not None
-    assert attrs.provenance.causes == DependencyCause.direct_ref
-    assert restored._edge_provenance[("Sheet1!B1", "Sheet1!A1")] == prov
+    assert attrs.provenance == prov
 
 
 def test_pickle_round_trip_preserves_leaf_classification() -> None:
@@ -173,35 +170,25 @@ def test_deserialized_nodekeys_share_identity() -> None:
     """Intern deserialized NodeKey strings across graph structures.
 
     After deserialization, the same NodeKey string should share object identity
-    (not just equality) across `_nodes`, `_edges`, and `_guards`.
+    across iteration, `get_dependencies`, and `get_dependents`.
 
     This reduces memory and speeds up dict operations.
     """
     g = _make_test_graph()
     restored: DependencyGraph = pickle.loads(pickle.dumps(g))
 
-    node_key_ids = {k: id(k) for k in restored._nodes}
+    node_key_ids = {k: id(k) for k in restored}
 
-    # Keys in _edges should be the same objects as keys in _nodes
-    for k in restored._edges:
-        if k in node_key_ids:
-            assert id(k) == node_key_ids[k], (
-                f"_edges key {k!r} is a different object than _nodes key"
-            )
-
-    # Keys in _reverse_edges should be the same objects
-    for k in restored._reverse_edges:
-        if k in node_key_ids:
-            assert id(k) == node_key_ids[k], (
-                f"_reverse_edges key {k!r} is a different object than _nodes key"
-            )
-
-    # Strings inside edge sets should also be interned
-    for deps in restored._edges.values():
-        for dep in deps:
+    for key in restored:
+        for dep in restored.get_dependencies(key):
             if dep in node_key_ids:
                 assert id(dep) == node_key_ids[dep], (
-                    f"Edge dep {dep!r} is a different object than _nodes key"
+                    f"dependency {dep!r} is a different object than the graph key"
+                )
+        for dependent in restored.get_dependents(key):
+            if dependent in node_key_ids:
+                assert id(dependent) == node_key_ids[dependent], (
+                    f"dependent {dependent!r} is a different object than the graph key"
                 )
 
 

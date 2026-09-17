@@ -77,8 +77,8 @@ def test_extraction_stores_formula_ast(tmp_path: Path) -> None:
 def test_extraction_interns_identical_formula_asts(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
-    b1 = graph._get_internal_node("Sheet1!B1")
-    b2 = graph._get_internal_node("Sheet1!B2")
+    b1 = graph.get_node("Sheet1!B1")
+    b2 = graph.get_node("Sheet1!B2")
     assert b1 is not None and b2 is not None
     assert b1.formula_ast is not None
     # Same raw `=A1*2` at B1 vs B2 is a different relative offset, so ASTs differ.
@@ -170,8 +170,8 @@ def test_json_cache_interns_formula_asts_by_canonical_ast(tmp_path: Path) -> Non
         assert "normalized_formula" not in node_payload
 
     restored = dependency_graph_from_json(payload)
-    loaded_b1 = restored._get_internal_node("Sheet1!B1")
-    loaded_b2 = restored._get_internal_node("Sheet1!B2")
+    loaded_b1 = restored.get_node("Sheet1!B1")
+    loaded_b2 = restored.get_node("Sheet1!B2")
     assert loaded_b1 is not None and loaded_b2 is not None
     assert loaded_b1.formula_ast is not None
     assert loaded_b1.formula_ast != loaded_b2.formula_ast
@@ -350,8 +350,8 @@ def test_projection_copy_keeps_formula_ast(tmp_path: Path) -> None:
     path = _workbook_with_shared_formula(tmp_path)
     graph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
     projected = graph._copy_for_projection()
-    original = graph._get_internal_node("Sheet1!C1")
-    cloned = projected._get_internal_node("Sheet1!C1")
+    original = graph.get_node("Sheet1!C1")
+    cloned = projected.get_node("Sheet1!C1")
     assert original is not None and cloned is not None
     assert cloned.formula_ast is original.formula_ast
 

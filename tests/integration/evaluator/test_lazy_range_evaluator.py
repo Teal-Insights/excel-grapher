@@ -1,7 +1,7 @@
 """Lazy-range selective access on FormulaEvaluator (#336 / #314).
 
 Mirrors export lazy-range scenarios against the evaluator directly, asserting
-unused sibling cells are never evaluated (via `on_cell_evaluated` / `_cache`).
+unused sibling cells are never evaluated (via `on_cell_evaluated`).
 """
 
 from __future__ import annotations
@@ -65,7 +65,6 @@ def test_index_does_not_evaluate_unused_formula_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
-        assert "S!A3" not in ev._cache
     assert "S!A3" not in seen
 
 
@@ -97,7 +96,6 @@ def test_match_does_not_evaluate_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
-        assert "S!A3" not in ev._cache
     assert "S!A3" not in seen
 
 
@@ -119,8 +117,6 @@ def test_vlookup_stops_before_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!C1"]) == {"S!C1": 100}
-        assert "S!A3" not in ev._cache
-        assert "S!B3" not in ev._cache
     assert "S!A3" not in seen
     assert "S!B3" not in seen
 
@@ -143,8 +139,6 @@ def test_hlookup_stops_before_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!D1"]) == {"S!D1": 100}
-        assert "S!C1" not in ev._cache
-        assert "S!C2" not in ev._cache
     assert "S!C1" not in seen
     assert "S!C2" not in seen
 
@@ -167,8 +161,6 @@ def test_lookup_stops_before_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!C1"]) == {"S!C1": "ten"}
-        assert "S!A3" not in ev._cache
-        assert "S!B3" not in ev._cache
     assert "S!A3" not in seen
     assert "S!B3" not in seen
 
@@ -191,8 +183,6 @@ def test_xlookup_stops_before_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!C1"]) == {"S!C1": 100}
-        assert "S!A3" not in ev._cache
-        assert "S!B3" not in ev._cache
     assert "S!A3" not in seen
     assert "S!B3" not in seen
 
@@ -265,7 +255,6 @@ def test_sum_fail_fast_does_not_evaluate_trailing_formula_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.DIV}
-        assert "S!A3" not in ev._cache
     assert "S!A3" not in seen
 
 
@@ -367,7 +356,6 @@ def test_match_over_offset_does_not_evaluate_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 2}
-        assert "S!A3" not in ev._cache
     assert "S!A3" not in seen
 
 
@@ -393,8 +381,6 @@ def test_vlookup_over_offset_stops_before_trailing_unused_cells() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!C1"]) == {"S!C1": 100}
-        assert "S!A3" not in ev._cache
-        assert "S!B3" not in ev._cache
     assert "S!A3" not in seen
     assert "S!B3" not in seen
 
@@ -461,16 +447,14 @@ def test_binary_op_preserves_embedded_errors_and_evaluates_full_array() -> None:
         _make_node("S!B3", "=S!B1+99", None),
         _make_node("S!C1", "=S!A1:S!A3*S!B1:S!B3", None),
     )
-    seen: list[str] = []
+    seen: dict[str, object] = {}
 
-    def _track(address: str, _value: object) -> None:
-        seen.append(address)
+    def _track(address: str, value: object) -> None:
+        seen[address] = value
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!C1"]) == {
             "S!C1": [[2.0], [XlError.DIV], [10100.0]],
         }
-        assert ev._cache["S!A3"] == 100.0
-        assert ev._cache["S!B3"] == 101.0
-    assert "S!A3" in seen
-    assert "S!B3" in seen
+    assert seen["S!A3"] == 100.0
+    assert seen["S!B3"] == 101.0
