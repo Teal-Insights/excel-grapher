@@ -27,6 +27,11 @@ from excel_grapher.exporter.inverted_tree.ast_emit import (
     emit_expr,
     python_measure_type,
 )
+from excel_grapher.exporter.inverted_tree.catalog import (
+    BoundSeries,
+    SeriesCatalog,
+    _cell_refs_support_series_index,
+)
 from excel_grapher.exporter.inverted_tree.deps import (
     leaf_closure,
     node_formula_ast,
@@ -47,10 +52,22 @@ from excel_grapher.series_bindings.resolve import _WorkbookValues
 
 if TYPE_CHECKING:
     from excel_grapher.core.address_keys import CanonicalAddress
-    from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
     from excel_grapher.exporter.inverted_tree.deps import SeriesDeps
     from excel_grapher.grapher.graph import DependencyGraph
 
+_SKIP_INDEX_CALLS = frozenset(
+    {
+        "lazy_table",
+        "view",
+        "span",
+        "xl_vlookup",
+        "xl_hlookup",
+        "xl_lookup",
+        "xl_xlookup",
+        "xl_match",
+        "xl_index",
+    }
+)
 _RESERVED_NAMES = frozenset(
     {
         "data",
@@ -438,19 +455,117 @@ def _sample_member_indices(members: Sequence[int]) -> list[int]:
     return list(dict.fromkeys((members[0], middle, members[-1])))
 
 
-def _is_series_index_measure(expression: str) -> bool:
-    """True when `expression` is `as_measure` of a single series subscript."""
+def _direct_series_subscripts(expression: str, catalog: SeriesCatalog) -> tuple[ast.Subscript, ...]:
+    """Catalog-series indexes that are not lookup or table arguments."""
     try:
-        parsed = ast.parse(expression, mode="eval").body
+        parsed = ast.parse(expression, mode="eval")
     except SyntaxError:
-        return False
-    return (
-        isinstance(parsed, ast.Call)
-        and isinstance(parsed.func, ast.Name)
-        and parsed.func.id == "as_measure"
-        and len(parsed.args) > 0
-        and isinstance(parsed.args[0], ast.Subscript)
-    )
+        return ()
+    skip: set[int] = set()
+    for node in ast.walk(parsed):
+        if (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id in _SKIP_INDEX_CALLS
+        ):
+            for child in ast.walk(node):
+                if child is not node:
+                    skip.add(id(child))
+    found: list[ast.Subscript] = []
+    for node in ast.walk(parsed):
+        if id(node) in skip or not isinstance(node, ast.Subscript):
+            continue
+        if isinstance(node.value, ast.Name) and node.value.id in catalog.series:
+            found.append(node)
+    return tuple(found)
+
+
+def _eval_key_expr(
+    node: ast.AST,
+    env: Mapping[str, object],
+    remaps: Mapping[str, Mapping[object, object]],
+) -> object | None:
+    """Evaluate a subscript key to a constant, or `None` if it is not static."""
+    if isinstance(node, ast.Constant):
+        return node.value
+    if isinstance(node, ast.Name):
+        if node.id in env:
+            return env[node.id]
+        mapping = remaps.get(node.id)
+        return mapping
+    if isinstance(node, ast.UnaryOp) and isinstance(node.op, (ast.UAdd, ast.USub)):
+        value = _eval_key_expr(node.operand, env, remaps)
+        if type(value) is not int:
+            return None
+        return value if isinstance(node.op, ast.UAdd) else -value
+    if isinstance(node, ast.BinOp) and isinstance(node.op, (ast.Add, ast.Sub)):
+        left = _eval_key_expr(node.left, env, remaps)
+        right = _eval_key_expr(node.right, env, remaps)
+        if type(left) is not int or type(right) is not int:
+            return None
+        return left + right if isinstance(node.op, ast.Add) else left - right
+    if isinstance(node, ast.Subscript):
+        mapping = _eval_key_expr(node.value, env, remaps)
+        key = _eval_key_expr(node.slice, env, remaps)
+        if isinstance(mapping, Mapping) and key is not None:
+            try:
+                return mapping[key]
+            except KeyError:
+                return None
+        return None
+    return None
+
+
+def _index_image_on_producer_axes(
+    subscript: ast.Subscript,
+    catalog: SeriesCatalog,
+    env: Mapping[str, object],
+    remaps: Mapping[str, Mapping[object, object]],
+) -> bool | None:
+    """True when evaluated keys sit on the producer axes; `None` if unknown."""
+    if not isinstance(subscript.value, ast.Name):
+        return None
+    owner = catalog.series.get(subscript.value.id)
+    if owner is None:
+        return None
+    slice_node = subscript.slice
+    key_nodes = slice_node.elts if isinstance(slice_node, ast.Tuple) else (slice_node,)
+    axes = owner.tensor_domain.axes
+    if len(key_nodes) != len(axes):
+        return None
+    for axis, key_node in zip(axes, key_nodes, strict=True):
+        key = _eval_key_expr(key_node, env, remaps)
+        if key is None:
+            return None
+        if key not in axis:
+            return False
+    return True
+
+
+def _sampled_index_supported(
+    subscripts: Sequence[ast.Subscript],
+    *,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    series: BoundSeries,
+    index: int,
+    cell: CanonicalAddress,
+    names: Mapping[str, str],
+    remaps: Mapping[str, Mapping[object, object]],
+) -> bool:
+    """True when `index` may reuse a sampled series-index expression."""
+    env = {names[field]: series.domain[index][field] for field in series.key_fields}
+    unevaluable = False
+    for subscript in subscripts:
+        image = _index_image_on_producer_axes(subscript, catalog, env, remaps)
+        if image is None:
+            unevaluable = True
+            break
+        if not image:
+            return False
+    if unevaluable:
+        return _cell_refs_support_series_index(catalog, graph, cell)
+    return True
 
 
 def _semantic_body(
@@ -471,9 +586,9 @@ def _semantic_body(
     instead of returning, so recurrence groups can share one evaluation.
     Uniform statements lower first/interior/last samples and, when those
     expressions match, replicate the grouped body; mixed statements still
-    emit one body per distinct expression. A sampled `as_measure` series
-    index is not copied onto a member whose producer cell is unbound or
-    whose catalog point is missing from the producer axis.
+    emit one body per distinct expression. A sampled series index is not
+    copied onto a member whose affine image is missing from the producer
+    axis or whose producer cell is unbound.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
@@ -547,14 +662,20 @@ def _semantic_body(
         unique = set(sample_exprs.values())
         if len(unique) == 1:
             expression = alias_expression(next(iter(unique)))
-            if _is_series_index_measure(expression):
-                from excel_grapher.exporter.inverted_tree.catalog import (
-                    _cell_refs_support_series_index,
-                )
-
+            subscripts = _direct_series_subscripts(expression, catalog)
+            if subscripts:
                 none_expression = _as_measure_call("None", series)
                 for index in members:
-                    if _cell_refs_support_series_index(catalog, graph, cells[index]):
+                    if _sampled_index_supported(
+                        subscripts,
+                        catalog=catalog,
+                        graph=graph,
+                        series=series,
+                        index=index,
+                        cell=cells[index],
+                        names=names,
+                        remaps=key_remaps,
+                    ):
                         record(index, expression)
                     else:
                         record(index, none_expression)

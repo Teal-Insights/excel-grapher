@@ -40,27 +40,37 @@ def _letter(life: int) -> str:
     return get_column_letter(_col(life))
 
 
-def _matrix_copy_workbook(tmp_path: Path) -> Path:
+def _matrix_copy_workbook(
+    tmp_path: Path,
+    *,
+    n_host: int = _N_HOST,
+    matrix_life: int = _MATRIX_LIFE,
+    wrap_add_zero: bool = False,
+    name: str = "off_axis_matrix.xlsx",
+) -> Path:
     """Host years copy Input life columns; the matrix stops before the host tail."""
-    inp: dict[str, object] = {_letter(life) + "1": life for life in range(_N_HOST)}
+    inp: dict[str, object] = {_letter(life) + "1": life for life in range(n_host)}
     inp["A2"] = _ALPHA
     inp["A3"] = _BETA
-    for life in range(_MATRIX_LIFE):
+    for life in range(matrix_life):
         inp[f"{_letter(life)}2"] = 0.1 * (life + 1)
         inp[f"{_letter(life)}3"] = 0.2 * (life + 1)
-    host: dict[str, object] = {_letter(life) + "1": _ORIGIN + life for life in range(_N_HOST)}
+    host: dict[str, object] = {_letter(life) + "1": _ORIGIN + life for life in range(n_host)}
     host["A2"] = _ALPHA
     host["A3"] = _BETA
-    for life in range(_N_HOST):
+    wrap = "+0" if wrap_add_zero else ""
+    for life in range(n_host):
         src = _letter(life)
-        host[f"{src}2"] = f"=Input!{src}2"
-        host[f"{src}3"] = f"=Input!{src}3"
-    return write_workbook(tmp_path / "off_axis_matrix.xlsx", {"Input": inp, "Host": host})
+        host[f"{src}2"] = f"=Input!{src}2{wrap}"
+        host[f"{src}3"] = f"=Input!{src}3{wrap}"
+    return write_workbook(tmp_path / name, {"Input": inp, "Host": host})
 
 
-def _matrix_copy_bindings() -> dict[str, Any]:
-    last_matrix = _letter(_MATRIX_LIFE - 1)
-    last_host = _letter(_N_HOST - 1)
+def _matrix_copy_bindings(
+    *, n_host: int = _N_HOST, matrix_life: int = _MATRIX_LIFE
+) -> dict[str, Any]:
+    last_matrix = _letter(matrix_life - 1)
+    last_host = _letter(n_host - 1)
     instruments = {_ALPHA: 2, _BETA: 3}
     document = bindings_document(
         {
@@ -225,7 +235,11 @@ def _series_blank_ranges(
 
 
 def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
-    """LIC-DSF MCVE: Alpha year whose life image is 4 must not look up principal."""
+    """LIC-DSF MCVE: Alpha year whose life image is 4 must not look up principal.
+
+    Excel caches 0 for a ref into an omitted structural cell. Export returns
+    `None` for that blank rather than raising `CoordinateError`.
+    """
     workbook = _matrix_copy_workbook(tmp_path)
     document = _matrix_copy_bindings()
     blanks = _mcve_blank_ranges()
@@ -276,9 +290,6 @@ def test_largest_lookup_family_does_not_cover_off_axis_tail(tmp_path: Path) -> N
     document = _series_copy_bindings(n_host=n_host, matrix_life=matrix_life)
     blanks = _series_blank_ranges(n_host=n_host, valued_life=valued_life)
     modules = generate_inverted(workbook, document, blank_ranges=blanks)
-    internals = modules["internals.py"]
-    assert "return as_measure(steps[time_period - 100])" in internals
-    assert "as_measure(None)" in internals
     pkg = load_package(modules, tmp_path, name="off_axis_lookup_default")
     got = pkg.compute_copied(steps=pkg.data.STEPS_DEFAULT)
     for life in range(n_host):
@@ -287,3 +298,53 @@ def test_largest_lookup_family_does_not_cover_off_axis_tail(tmp_path: Path) -> N
             assert got[bucket] == pytest.approx(float(life + 1))
         else:
             assert got[bucket] is None
+
+
+def test_wrapped_affine_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
+    """`=Input!X+0` first/middle/last samples must not cover an unsampled off-axis year.
+
+    Four consecutive structural blanks cross the instrument boundary: Alpha's last
+    on-axis hole, Alpha's unbound tail, then Beta's on-axis head. Samples are the
+    on-axis wrapped lookups; the unsampled Alpha year maps to life 4, which the
+    producer axis does not own.
+    """
+    n_host, matrix_life, alpha_blank_from = 5, 4, 3
+    workbook = _matrix_copy_workbook(
+        tmp_path,
+        n_host=n_host,
+        matrix_life=matrix_life,
+        wrap_add_zero=True,
+        name="off_axis_matrix_wrapped.xlsx",
+    )
+    document = _matrix_copy_bindings(n_host=n_host, matrix_life=matrix_life)
+    blanks = (
+        f"Input!{_letter(alpha_blank_from)}2:{_letter(n_host - 1)}2",
+        f"Input!{_letter(0)}3:{_letter(1)}3",
+        f"Input!{_letter(matrix_life)}3:{_letter(n_host - 1)}3",
+    )
+    modules = generate_inverted(workbook, document, blank_ranges=blanks)
+    pkg = load_package(modules, tmp_path, name="off_axis_matrix_wrapped")
+    owned_life = {coord[1] for coord in pkg.data.PRINCIPAL.domain}
+    assert 4 not in owned_life
+    got = pkg.compute_schedule(principal=pkg.data.PRINCIPAL_DEFAULT)
+    for life in range(alpha_blank_from):
+        year = _ORIGIN + life
+        assert got[_ALPHA, year] == pytest.approx(0.1 * (life + 1))
+    assert got[_ALPHA, _ORIGIN + alpha_blank_from] == pytest.approx(0.0)
+    assert got[_ALPHA, _ORIGIN + n_host - 1] is None
+    for life in range(n_host):
+        year = _ORIGIN + life
+        if 2 <= life < matrix_life:
+            assert got[_BETA, year] == pytest.approx(0.2 * (life + 1))
+        else:
+            assert got[_BETA, year] == pytest.approx(0.0)
+
+
+def test_missing_formula_ast_does_not_support_series_index() -> None:
+    """A cell without a formula tree must not reuse a sampled producer index."""
+    from types import SimpleNamespace
+
+    from excel_grapher.exporter.inverted_tree.catalog import _cell_refs_support_series_index
+
+    graph = SimpleNamespace(get_node=lambda _address: SimpleNamespace(formula_ast=None))
+    assert _cell_refs_support_series_index(SimpleNamespace(), graph, "Sheet!A1") is False

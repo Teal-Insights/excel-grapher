@@ -58,9 +58,13 @@ class Axis:
         object.__setattr__(self, "keys", keys)
         object.__setattr__(self, "_index", MappingProxyType({key: i for i, key in enumerate(keys)}))
 
+    def __contains__(self, key: object) -> bool:
+        """True when `key` is a typed member of this axis."""
+        return type(key) is self.key_type and key in self._index
+
     def position(self, key: str | int) -> int:
         """Return the 0-based index of `key` on this axis."""
-        if type(key) is not self.key_type or key not in self._index:
+        if key not in self:
             raise CoordinateError(f"axis {self.name!r}: invalid key {key!r}")
         return self._index[key]
 

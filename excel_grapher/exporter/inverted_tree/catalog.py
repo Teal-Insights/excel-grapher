@@ -317,7 +317,7 @@ class BoundSeries:
                 key = point[key_field]
             except KeyError:
                 return False
-            if type(key) is not axis.key_type or key not in axis.keys:
+            if key not in axis:
                 return False
         return True
 
@@ -951,11 +951,12 @@ def _cell_refs_support_series_index(
     that series' axis keys. Unbound `blank_ranges` and catalog points whose
     keys were dropped from the tensor axis cannot reuse a sampled lookup.
     Range formulas, VLOOKUP tables, and other mixed reads are not gated here.
+    A cell with no formula tree fails closed.
     """
     node = graph.get_node(address)
     formula = getattr(node, "formula_ast", None) if node is not None else None
     if formula is None:
-        return True
+        return False
     for ref in _iter_cell_refs(formula):
         resolved = as_canonical(resolve_cell_ref(ref, address))
         owner = catalog.series_for(resolved)
