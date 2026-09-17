@@ -75,28 +75,17 @@ def test_coerce_scalar_datetime_from_iso_string() -> None:
     assert coerce_scalar("2024-01-15T12:30:00", "datetime") == datetime(2024, 1, 15, 12, 30)
 
 
-def test_coerce_scalar_datetime_from_excel_serial() -> None:
-    expected = datetime(2024, 1, 1)
-    serial = _excel_serial_for(expected)
-    assert coerce_scalar(serial, "datetime") == expected
-
-
-def test_coerce_scalar_datetime_from_excel_serial_noon() -> None:
-    expected = datetime(2024, 1, 15, 12, 0, 0)
-    serial = _excel_serial_for(expected)
-    assert coerce_scalar(serial, "datetime") == expected
-
-
-def test_coerce_scalar_datetime_from_excel_serial_preserves_milliseconds() -> None:
-    expected = datetime(2024, 1, 15, 12, 30, 45, 500000)
-    serial = _excel_serial_for(expected)
-    assert coerce_scalar(serial, "datetime") == expected
-
-
-def test_coerce_scalar_datetime_from_excel_serial_near_midnight() -> None:
-    expected = datetime(2024, 1, 15, 23, 59, 59, 900000)
-    serial = _excel_serial_for(expected)
-    assert coerce_scalar(serial, "datetime") == expected
+@pytest.mark.parametrize(
+    "expected",
+    [
+        datetime(2024, 1, 1),
+        datetime(2024, 1, 15, 12, 0, 0),
+        datetime(2024, 1, 15, 12, 30, 45, 500000),
+        datetime(2024, 1, 15, 23, 59, 59, 900000),
+    ],
+)
+def test_coerce_scalar_datetime_from_excel_serial(expected: datetime) -> None:
+    assert coerce_scalar(_excel_serial_for(expected), "datetime") == expected
 
 
 def test_coerce_scalar_datetime_rejects_timezone_aware() -> None:

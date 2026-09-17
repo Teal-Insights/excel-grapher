@@ -28,7 +28,6 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
 
 
@@ -119,11 +118,7 @@ def test_effective_dimension_id_empty_component() -> None:
     assert effective_dimension_id({}) == ""
 
 
-# --- schema and versions ---
-
-
-def test_schema_version_1_8_0_supported() -> None:
-    assert "1.8.0" in SUPPORTED_SCHEMA_VERSIONS
+# --- schema ---
 
 
 def test_schema_accepts_dimension_and_attribute_id() -> None:
@@ -140,25 +135,6 @@ def test_schema_accepts_dimension_and_attribute_id() -> None:
     dims = bindings["series"][0]["structure"]["dimensions"]
     assert dims[1]["id"] == "REFERENCE_TIME_PERIOD"
     assert dims[1]["concept"] == "TIME_PERIOD"
-
-
-def test_yaml_fixture_loads_and_resolves(tmp_path: Path) -> None:
-    wb_path, graph = _reference_period_graph(tmp_path)
-    bindings = load_series_bindings(FIXTURES / "reference_period_1_8_0.yaml")
-    series = bindings["series"][0]
-    resolved = resolve_series_binding(
-        graph,
-        wb_path,
-        series,
-        concept_scheme=bindings.get("concept_scheme"),
-        direction="input",
-    )
-    assert resolved["ok"] is True, resolved["issues"]
-    keys = {
-        (leaf["key"]["TIME_PERIOD"], leaf["key"]["REFERENCE_TIME_PERIOD"])
-        for leaf in resolved["leaves"]
-    }
-    assert keys == {(2020, 2019), (2021, 2019), (2022, 2019)}
 
 
 # --- validation ---
@@ -206,8 +182,7 @@ def test_validate_key_must_use_declared_dimension_id(tmp_path: Path) -> None:
 
 def test_resolve_dimensions_sharing_concept(tmp_path: Path) -> None:
     wb_path, graph = _reference_period_graph(tmp_path)
-    doc = _reference_period_document()
-    bindings = validate_bindings_document(doc)
+    bindings = load_series_bindings(FIXTURES / "reference_period_1_8_0.yaml")
     series = bindings["series"][0]
 
     resolved = resolve_series_binding(

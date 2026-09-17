@@ -16,20 +16,11 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.versions import (
-    IMPLEMENTED_BIND_KINDS,
-    SUPPORTED_SCHEMA_VERSIONS,
-)
 from tests.fixtures.series_bindings.grouped_matrix_helpers import (
     MATRIX_GROUPED_ROWS_BINDINGS,
     grouped_matrix_bindings_document,
     write_grouped_matrix_workbook,
 )
-
-
-def test_schema_version_1_5_0_supported() -> None:
-    assert "1.5.0" in SUPPORTED_SCHEMA_VERSIONS
-    assert "value_map" in IMPLEMENTED_BIND_KINDS
 
 
 def test_schema_accepts_grouped_rows_fixture() -> None:

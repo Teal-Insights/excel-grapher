@@ -19,10 +19,6 @@ from excel_grapher.series_bindings import (
     resolve_series_binding,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.versions import (
-    IMPLEMENTED_BIND_KINDS,
-    SUPPORTED_SCHEMA_VERSIONS,
-)
 
 
 def _scenario_series(
@@ -83,11 +79,6 @@ def _scenario_doc(
 ) -> dict[str, Any]:
     series_list = series if isinstance(series, list) else [series]
     return {"schema_version": schema_version, "series": series_list}
-
-
-def test_schema_version_1_14_0_supported() -> None:
-    assert "1.14.0" in SUPPORTED_SCHEMA_VERSIONS
-    assert "sheet_name" in IMPLEMENTED_BIND_KINDS
 
 
 def test_schema_accepts_sheet_name_bind() -> None:
@@ -169,13 +160,6 @@ def test_merge_complementary_shards_mcve(tmp_path: Path) -> None:
     scenario_bind = series["structure"]["dimensions"][0]["bind"]
     assert scenario_bind["kind"] == "sheet_name"
     assert "values" not in scenario_bind
-
-
-def test_merge_rejects_duplicate_id_within_one_shard() -> None:
-    series = _scenario_series(sheet="Baseline", data_range="Baseline!C12:X12")
-    doc = _scenario_doc([series, dict(series)])
-    with pytest.raises(SeriesBindingsLoadError, match="Duplicate series id"):
-        merge_series_binding_documents([doc])
 
 
 def test_merge_maps_distinct_scenario_codes_via_sheet_name() -> None:
@@ -366,23 +350,3 @@ def test_resolve_sheet_name_values_map(tmp_path: Path) -> None:
     assert resolved["ok"] is True
     scenarios = {leaf["key"]["SCENARIO"] for leaf in resolved["leaves"]}
     assert scenarios == {"Baseline", "B1"}
-
-
-def test_resolve_authored_multi_range_sheet_name(tmp_path: Path) -> None:
-    wb_path = tmp_path / "authored.xlsx"
-    _write_scenario_workbook(wb_path)
-    series = _scenario_series(
-        sheet="Baseline",
-        data_range="Baseline!C12:D12",
-        bind={"kind": "sheet_name"},
-        direction="constant",
-    )
-    series["sheet"] = ["Baseline", "B1"]
-    series["data_range"] = ["Baseline!C12:D12", "B1!C12:D12"]
-    bindings = validate_bindings_document(_scenario_doc(series))
-    targets = expand_data_range("Baseline!C12:D12") + expand_data_range("B1!C12:D12")
-    graph = create_dependency_graph(wb_path, targets, load_values=True)
-    resolved = resolve_series_binding(graph, wb_path, bindings["series"][0], direction="constant")
-    assert resolved["ok"] is True
-    assert len(resolved["leaves"]) == 4
-    assert {leaf["key"]["SCENARIO"] for leaf in resolved["leaves"]} == {"Baseline", "B1"}

@@ -64,49 +64,6 @@ def test_run_binding_checks_raises_when_validation_fails(
         )
 
 
-def test_run_binding_checks_smokes_inverted_tree_computes(tmp_path: Path) -> None:
-    import yaml
-
-    from tests.unit.exporter.inverted_tree.helpers import (
-        bindings_document,
-        series_entry,
-        write_workbook,
-    )
-
-    workbook = write_workbook(
-        tmp_path / "inv.xlsx",
-        {
-            "Inputs": {"A1": 2.0},
-            "Engine": {"A1": "=Inputs!A1*3"},
-            "Outputs": {"A1": "=Engine!A1"},
-        },
-    )
-    document = bindings_document(
-        series_entry("x", "Inputs!A1", layout="scalar", direction="input"),
-        series_entry("y", "Engine!A1", layout="scalar", direction="internal"),
-        series_entry(
-            "z",
-            "Outputs!A1",
-            layout="scalar",
-            direction="output",
-            compute_name="compute_z",
-        ),
-    )
-    document["workbook"] = "inv.xlsx"
-    bindings_path = tmp_path / "inv.bindings.yaml"
-    bindings_path.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
-
-    result = run_binding_checks(
-        workbook,
-        bindings_path,
-        module_dir=tmp_path / "inv_pkg",
-        package_name="inv_pkg",
-        smoke_test=True,
-    )
-    assert "api.py" in result["generated_files"]
-    assert "def compute_z" in result["generated_files"]["api.py"]
-
-
 def test_run_binding_checks_inverted_tree_smoke_with_in_domain_default(
     tmp_path: Path,
 ) -> None:

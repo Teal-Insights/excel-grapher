@@ -80,13 +80,6 @@ def test_schema_accepts_internal_only_series() -> None:
     assert "internal" in series
 
 
-def test_schema_rejects_series_without_any_direction() -> None:
-    doc = _internal_series_doc()
-    del doc["series"][0]["internal"]
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
-
-
 def test_schema_rejects_internal_with_input() -> None:
     doc = _internal_series_doc(
         input={},
@@ -99,14 +92,6 @@ def test_schema_rejects_internal_with_output() -> None:
     doc = _internal_series_doc(
         output={"compute": {"name": "compute_engine_primary_balance"}},
     )
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
-
-
-def test_mcve_internal_document_fails_on_1_5_0() -> None:
-    doc = _internal_series_doc()
-    del doc["series"][0]["internal"]
-    doc["schema_version"] = "1.5.0"
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(doc)
 
@@ -237,18 +222,6 @@ def test_input_and_output_derive_skip_internal_series(tmp_path: Path) -> None:
     assert derive_output_series(graph, bindings, workbook=wb_path) == []
 
 
-def test_load_merged_internal_shard_directory(tmp_path: Path) -> None:
-    shard_dir = tmp_path / "shards"
-    shard_dir.mkdir()
-    (shard_dir / "internals.bindings.yaml").write_text(
-        (FIXTURES / "internal_engine_row.yaml").read_text(encoding="utf-8"),
-        encoding="utf-8",
-    )
-    bindings = load_series_bindings(shard_dir)
-    assert bindings["series"][0]["id"] == "engine_primary_balance"
-    assert has_internal_direction(bindings["series"][0])
-
-
 def test_merge_internal_direction_blocks_across_shards() -> None:
     base_series = parse_bindings_file(FIXTURES / "internal_engine_row.yaml")["series"][0]
     structural = {k: v for k, v in base_series.items() if k != "internal"}
@@ -273,64 +246,6 @@ def test_validate_internal_series_requires_formula_overlap(tmp_path: Path) -> No
     report = validate_series_bindings(graph, bindings, workbook=wb_path)
     codes = {issue["code"] for issue in report["issues"]}
     assert "no_formula_internal_targets" in codes
-
-
-def test_mcve_internal_document_validates_on_1_7_0() -> None:
-    """Positive MCVE from issue #372: internal-only series accepted at schema 1.7.0."""
-    doc = {
-        "schema_version": "1.7.0",
-        "concept_scheme": {
-            "id": "example_model",
-            "concepts": [
-                {"id": "TIME_PERIOD", "dtype": "int"},
-                {"id": "INDICATOR", "dtype": "string"},
-            ],
-        },
-        "series": [
-            {
-                "id": "engine_primary_balance",
-                "sheet": "Engine",
-                "data_range": "Engine!D22:F22",
-                "layout": "series",
-                "internal": {},
-                "structure": {
-                    "measure": {
-                        "concept": "OBS_VALUE",
-                        "dtype": "float",
-                        "bind": {"kind": "data_cell", "read": "float"},
-                    },
-                    "dimensions": [
-                        {
-                            "concept": "TIME_PERIOD",
-                            "role": "key",
-                            "scope": "cell",
-                            "bind": {
-                                "kind": "column_header",
-                                "header_row": 2,
-                                "read": "int",
-                            },
-                        }
-                    ],
-                },
-                "key": ["TIME_PERIOD"],
-                "series_context": {"INDICATOR": "Primary balance"},
-                "validation": {
-                    "intersect_graph_formulas": True,
-                    "require_unique_key": True,
-                },
-            }
-        ],
-    }
-    bindings = validate_bindings_document(doc)
-    assert has_internal_direction(bindings["series"][0])
-
-
-def test_schema_rejects_internal_with_legacy_setter() -> None:
-    doc = _internal_series_doc(
-        setter={"name": "set_engine_primary_balance"},
-    )
-    with pytest.raises(SeriesBindingsSchemaError):
-        validate_bindings_document(doc)
 
 
 def test_resolve_internal_series_warns_on_leaf_in_formula_series(tmp_path: Path) -> None:

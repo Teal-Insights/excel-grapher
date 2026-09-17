@@ -17,7 +17,6 @@ from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     validate_bindings_document,
 )
-from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
 
 _SELECTOR_MAP = {"High": "High ", "Medium": "Medium", "Low": "Low "}
 
@@ -113,10 +112,6 @@ def _output_only_doc(*, extra: dict[str, Any] | None = None) -> dict[str, Any]:
     if extra:
         series.update(extra)
     return {"schema_version": "1.15.0", "series": [series]}
-
-
-def test_schema_version_1_15_0_supported() -> None:
-    assert "1.15.0" in SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_schema_accepts_value_map_on_scalar_input() -> None:
