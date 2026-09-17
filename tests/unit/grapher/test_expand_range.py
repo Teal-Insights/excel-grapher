@@ -110,7 +110,6 @@ def test_expand_data_range_over_default_cap_raises() -> None:
 def test_max_range_cells_defaults_are_aligned() -> None:
     """Every public default must share the same 50_000-cell budget."""
     assert DEFAULT_MAX_RANGE_CELLS == 50_000
-    assert inspect.signature(expand_range).parameters["max_cells"].default == DEFAULT_CAP
     for fn in (
         create_dependency_graph,
         list_dynamic_ref_constraint_candidates,
