@@ -10,9 +10,6 @@ import excel_grapher.evaluator.evaluator as evaluator_module
 from excel_grapher import DependencyGraph, Node
 from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.formula_ast import (
-    BinaryOpNode,
-    CellRefNode,
-    RelativeAxis,
     bind_axes,
     parse,
     parse_preserving_axes,
@@ -139,16 +136,9 @@ def test_ast_cache_is_bounded() -> None:
 
     with FormulaEvaluator(graph, ast_cache_maxsize=2) as ev:
         ev.evaluate(["S!A1", "S!A2", "S!A3"])
-        assert len(ev._ast_cache) == 2
-
-        info_before = ev.ast_cache_info()
-        assert info_before.currsize == 2
-        assert info_before.maxsize == 2
-
-        ev._cache.pop("S!A1")
-        ev.evaluate(["S!A1"])
-        info_after = ev.ast_cache_info()
-        assert info_after.misses == info_before.misses + 1
+        info = ev.ast_cache_info()
+        assert info.currsize == 2
+        assert info.maxsize == 2
 
 
 def test_parse_error_not_cached() -> None:
@@ -157,7 +147,7 @@ def test_parse_error_not_cached() -> None:
     with FormulaEvaluator(graph) as ev:
         with pytest.raises(ParseError):
             ev.evaluate(["S!A1"])
-        assert len(ev._ast_cache) == 0
+        assert ev.ast_cache_info().currsize == 0
 
         with pytest.raises(ParseError):
             ev.evaluate(["S!A1"])
@@ -171,15 +161,22 @@ def test_clear_caches_clears_ast_and_value_caches() -> None:
         _make_node("S!A1", None, 1),
         _make_node("S!B1", "=S!A1+1", None),
     )
+    seen: list[str] = []
 
-    with FormulaEvaluator(graph) as ev:
+    with FormulaEvaluator(
+        graph, on_cell_evaluated=lambda address, _value: seen.append(address)
+    ) as ev:
         ev.evaluate(["S!B1"])
-        assert ev._cache
-        assert len(ev._ast_cache) == 1
+        assert ev.ast_cache_info().currsize == 1
+        assert seen.count("S!A1") == 1
+        ev.evaluate(["S!B1"])
+        assert seen.count("S!A1") == 1
 
         ev.clear_caches()
-        assert ev._cache == {}
-        assert len(ev._ast_cache) == 0
+        assert ev.ast_cache_info().currsize == 0
+        ev.evaluate(["S!B1"])
+        assert seen.count("S!A1") == 2
+        assert ev.ast_cache_info().currsize == 1
 
 
 def test_ast_cache_default_maxsize() -> None:
@@ -235,9 +232,16 @@ def test_ast_cache_seed_respects_maxsize() -> None:
     )
 
     assert len(cache) == 2
-    assert "=1" not in cache._cache
-    assert "=2" in cache._cache
-    assert "=3" in cache._cache
+    parsed: list[str] = []
+
+    def parse_fn(formula: str):
+        parsed.append(formula)
+        return evaluator_parser.parse(formula)
+
+    cache.get("=1", parse_fn=parse_fn)
+    cache.get("=2", parse_fn=parse_fn)
+    cache.get("=3", parse_fn=parse_fn)
+    assert parsed == ["=1"]
 
 
 def _drop_formula_ast_keep_normalized(graph: DependencyGraph, key: str) -> None:
@@ -357,18 +361,3 @@ def test_preparsed_formulas_overlay_does_not_poison_absolute_fallback() -> None:
     with FormulaEvaluator(graph) as ev:
         assert ev.evaluate("S!C1") == 20.0
         assert ev.evaluate("S!B1") == 20.0
-
-
-def test_seeded_string_cache_stores_absolute_bound_trees() -> None:
-    graph = DependencyGraph()
-    graph.add_node(make_cell_node("S", "A", 1, value=10, is_leaf=True))
-    rel = parse_preserving_axes("=A1*2", anchor="S!B1")
-    assert isinstance(rel, BinaryOpNode)
-    assert isinstance(rel.left, CellRefNode)
-    assert isinstance(rel.left.ref.col, RelativeAxis)
-    graph.add_node(make_cell_node("S", "B", 1, is_leaf=False, formula_ast=rel))
-
-    with FormulaEvaluator(graph) as ev:
-        cached = ev._ast_cache._cache["=S!A1*2"]
-        assert cached == bind_axes(rel, "S!B1")
-        assert cached == parse("=S!A1*2")

@@ -320,8 +320,8 @@ def test_copied_formulas_share_shape_keyed_parse(tmp_path: Path) -> None:
     assert misses == 1, f"expected one skeleton parse, got misses={misses} hits={hits}"
     assert hits >= n_rows - 1, f"copied IF formulas must hit the shape parse cache; hits={hits}"
     assert fallbacks == 0
-    b1 = graph._get_internal_node("Sheet1!B1")
-    b2 = graph._get_internal_node("Sheet1!B2")
+    b1 = graph.get_node("Sheet1!B1")
+    b2 = graph.get_node("Sheet1!B2")
     assert b1 is not None and b2 is not None
     assert b1.formula_ast is b2.formula_ast
 

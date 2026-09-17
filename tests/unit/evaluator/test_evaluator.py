@@ -110,10 +110,15 @@ def test_evaluator_memoizes_cell_computation() -> None:
         _make_node("S!A1", None, 2),
         _make_node("S!B1", "=SUM(S!A1, S!A1)", None),
     )
-    with FormulaEvaluator(graph) as ev:
+    seen: list[str] = []
+
+    with FormulaEvaluator(
+        graph, on_cell_evaluated=lambda address, _value: seen.append(address)
+    ) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": 4.0}
-        # A1 should be cached after evaluation
-        assert ev._cache["S!A1"] == 2
+        assert seen.count("S!A1") == 1
+        ev.evaluate(["S!B1"])
+        assert seen.count("S!A1") == 1
 
 
 def test_evaluator_detects_cycles() -> None:

@@ -97,8 +97,6 @@ def test_large_exact_match_early_hit_evaluates_only_first_lookup_cell() -> None:
     ) as ev:
         result = ev.evaluate(["S!Z1"])
         assert result == {"S!Z1": 1}
-        assert f"S!A{rows}" not in ev._cache
-        assert f"S!B{rows}" not in ev._cache
     assert evaluated == ["S!A1", "S!Z1"]
 
 
@@ -116,6 +114,4 @@ def test_large_exact_vlookup_early_hit_evaluates_only_first_lookup_row() -> None
     ) as ev:
         result = ev.evaluate(["S!Z1"])
         assert result == {"S!Z1": 1}
-        assert f"S!A{rows}" not in ev._cache
-        assert f"S!B{rows}" not in ev._cache
     assert evaluated == ["S!A1", "S!B1", "S!Z1"]

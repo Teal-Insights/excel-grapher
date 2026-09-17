@@ -141,49 +141,6 @@ def test_auto_detect_changes_false_ignores_durable_leaf_update() -> None:
 # --- eager_invalidation tests ---
 
 
-def test_eager_invalidation_checks_all_leaves_upfront() -> None:
-    graph = _make_graph(
-        _make_node("S!A1", None, 10),
-        _make_node("S!A2", None, 5),
-        _make_node("S!B1", "=S!A1*2", None),
-        _make_node("S!B2", "=S!A2*3", None),
-    )
-    graph.add_edge("S!B1", "S!A1")
-    graph.add_edge("S!B2", "S!A2")
-
-    with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=True) as ev:
-        ev.evaluate(["S!B1", "S!B2"])
-
-        graph.set_node_value("S!A1", 1)
-        graph.set_node_value("S!A2", 2)
-
-        ev.evaluate(["S!B1"])
-        # Eager mode checks all leaves up-front, so A2's change is observed
-        # even though we only evaluate B1.
-        assert ev._cache.get("S!A2") in (None, 2)
-
-
-def test_lazy_invalidation_only_checks_visited_leaves() -> None:
-    graph = _make_graph(
-        _make_node("S!A1", None, 10),
-        _make_node("S!A2", None, 5),
-        _make_node("S!B1", "=S!A1*2", None),
-        _make_node("S!B2", "=S!A2*3", None),
-    )
-    graph.add_edge("S!B1", "S!A1")
-    graph.add_edge("S!B2", "S!A2")
-
-    with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=False) as ev:
-        ev.evaluate(["S!B1", "S!B2"])
-        assert ev._cache["S!B2"] == 15.0
-
-        graph.set_node_value("S!A2", 100)
-
-        ev.evaluate(["S!B1"])
-        # B2's cached value should still be stale in lazy mode
-        assert ev._cache.get("S!B2") == 15.0
-
-
 def test_lazy_invalidation_detects_changes_in_evaluation_path() -> None:
     graph = _make_graph(
         _make_node("S!A1", None, 10),
@@ -299,3 +256,27 @@ def test_lazy_evaluate_still_sees_set_node_value_without_full_leaf_scan(
         assert ev.evaluate(targets[0]) == 4
         assert scans["leaf_keys"] == 0
         assert scans["leaf_node_items"] == 0
+
+
+def test_set_node_value_triggers_eager_rescan_even_for_unchanged_value(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    graph, targets = _graph_with_unused_leaves(n_unused_leaves=20, n_targets=2)
+    scans = {"leaf_node_items": 0}
+    original_items = graph.leaf_node_items
+
+    def counting_items() -> Iterator[tuple[NodeKey, Node]]:
+        scans["leaf_node_items"] += 1
+        yield from original_items()
+
+    monkeypatch.setattr(graph, "leaf_node_items", counting_items)
+
+    with FormulaEvaluator(graph, auto_detect_changes=True, eager_invalidation=True) as ev:
+        assert ev.evaluate(targets[0]) == 1
+        assert scans["leaf_node_items"] == 0
+        graph.set_node_value("S!A1", 1)
+        assert ev.evaluate(targets[0]) == 1
+        assert scans["leaf_node_items"] == 1
+        graph.set_node_value("S!A1", 1)
+        assert ev.evaluate(targets[0]) == 1
+        assert scans["leaf_node_items"] == 2

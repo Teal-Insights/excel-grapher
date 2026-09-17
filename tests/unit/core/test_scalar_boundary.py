@@ -128,9 +128,6 @@ def test_abs_over_multi_cell_range_is_value_without_sibling_eval() -> None:
 
     with FormulaEvaluator(graph, on_cell_evaluated=_track) as ev:
         assert ev.evaluate(["S!B1"]) == {"S!B1": XlError.VALUE}
-        assert "S!A1" not in ev._cache
-        assert "S!A2" not in ev._cache
-        assert "S!A3" not in ev._cache
     assert "S!A1" not in seen
     assert "S!A2" not in seen
     assert "S!A3" not in seen

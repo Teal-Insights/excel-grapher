@@ -62,8 +62,8 @@ def test_extraction_interns_without_json_intern_keys(tmp_path: Path) -> None:
 
     assert not hasattr(builder, "ast_to_json")
     graph = create_dependency_graph(path, ["Sheet1!B1", "Sheet1!B2"], load_values=False)
-    b1 = graph._get_internal_node("Sheet1!B1")
-    b2 = graph._get_internal_node("Sheet1!B2")
+    b1 = graph.get_node("Sheet1!B1")
+    b2 = graph.get_node("Sheet1!B2")
     assert b1 is not None and b2 is not None
     assert b1.formula_ast is not None
     assert b1.formula_ast is b2.formula_ast
@@ -99,8 +99,8 @@ def test_json_cache_assigns_integer_formula_ast_ids(tmp_path: Path) -> None:
         assert "formula_ast_key" not in node_payload
 
     restored = dependency_graph_from_json(payload)
-    loaded_b1 = restored._get_internal_node("Sheet1!B1")
-    loaded_b2 = restored._get_internal_node("Sheet1!B2")
+    loaded_b1 = restored.get_node("Sheet1!B1")
+    loaded_b2 = restored.get_node("Sheet1!B2")
     assert loaded_b1 is not None and loaded_b2 is not None
     assert loaded_b1.formula_ast is not loaded_b2.formula_ast
     original_b1 = graph.get_node("Sheet1!B1")

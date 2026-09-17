@@ -66,7 +66,8 @@ def test_row_column_rows_columns_address_only_refs_are_not_deps(tmp_path: Path) 
 
     for key in ["Sheet1!C1", "Sheet1!C2", "Sheet1!C3", "Sheet1!D1", "Sheet1!D2"]:
         assert graph.get_dependencies(key) == frozenset(), key
-        assert not any(src == key for src, _dst in graph._edge_provenance)
+        for dest in graph:
+            assert graph.get_edge_attrs(key, dest).provenance is None
 
 
 def test_ref_only_same_address_in_value_position_keeps_edge(tmp_path: Path) -> None:

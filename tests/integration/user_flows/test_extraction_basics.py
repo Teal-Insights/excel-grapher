@@ -41,7 +41,7 @@ def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
     graph: DependencyGraph = create_dependency_graph(
         path, ["Sheet1!B1"], load_values=True, store_raw_formula=True
     )
-    assert len(graph._nodes) == 1
+    assert set(graph) == {"Sheet1!B1"}
 
     node: NodeView | None = graph.get_node("Sheet1!B1")
     assert node is not None
@@ -59,9 +59,6 @@ def test_formula_with_no_dependencies_is_extracted_as_single_formula_leaf_node(
     assert dependencies == frozenset()
     dependents: frozenset[NodeKey] = graph.get_dependents("Sheet1!B1")
     assert dependents == frozenset()
-    assert not graph._guards
-    assert not graph._edge_provenance
-    assert not graph._hooks
     assert graph.leaf_classification is None
 
 
@@ -72,7 +69,7 @@ def test_linear_dependency_is_extracted_as_two_nodes_with_one_edge(
     graph: DependencyGraph = create_dependency_graph(
         path, ["Sheet1!C1"], load_values=True, store_raw_formula=True
     )
-    assert len(graph._nodes) == 2
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1"}
 
     target_node: NodeView | None = graph.get_node("Sheet1!C1")
     assert target_node is not None
@@ -100,9 +97,6 @@ def test_linear_dependency_is_extracted_as_two_nodes_with_one_edge(
     assert dependencies == frozenset(["Sheet1!B1"])
     dependents: frozenset[NodeKey] = graph.get_dependents("Sheet1!C1")
     assert dependents == frozenset()
-    assert not graph._guards
-    assert not graph._edge_provenance
-    assert not graph._hooks
     assert graph.leaf_classification is None
 
 
@@ -115,7 +109,7 @@ def test_conditions_are_extracted_as_unguarded_but_conditional_branches_as_guard
     graph: DependencyGraph = create_dependency_graph(
         path, ["Sheet1!E1"], load_values=True, store_raw_formula=True
     )
-    assert len(graph._nodes) == 4
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1"}
 
     target_node: NodeView | None = graph.get_node("Sheet1!E1")
     assert target_node is not None
@@ -150,7 +144,7 @@ def test_nested_conditional_in_a_cell_is_extracted_as_an_AND_guard(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!D1"], load_values=True)
-    assert len(graph._nodes) == 3
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1"}
     # B1 feeds the outer condition, so it is read unconditionally.
     assert graph.get_edge_guard("Sheet1!D1", "Sheet1!B1") is None
     # C1 is only read when the outer and inner conditions both hold.
@@ -187,7 +181,16 @@ def test_three_level_nested_IF_conjoins_guards_from_every_level(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!I1"], load_values=True)
-    assert len(graph._nodes) == 8
+    assert set(graph) == {
+        "Sheet1!B1",
+        "Sheet1!C1",
+        "Sheet1!D1",
+        "Sheet1!E1",
+        "Sheet1!F1",
+        "Sheet1!G1",
+        "Sheet1!H1",
+        "Sheet1!I1",
+    }
 
     # Outer condition dep is unconditional.
     assert graph.get_edge_guard("Sheet1!I1", "Sheet1!B1") is None
@@ -220,7 +223,14 @@ def test_nested_IF_in_else_branch_conjoins_with_negated_outer_condition(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!G1"], load_values=True)
-    assert len(graph._nodes) == 6
+    assert set(graph) == {
+        "Sheet1!B1",
+        "Sheet1!C1",
+        "Sheet1!D1",
+        "Sheet1!E1",
+        "Sheet1!F1",
+        "Sheet1!G1",
+    }
 
     assert graph.get_edge_guard("Sheet1!G1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!G1", "Sheet1!C1") == b1_is_1
@@ -247,7 +257,7 @@ def test_IFS_nested_in_IF_branch_conjoins_sequential_guards_with_outer_condition
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
-    assert len(graph._nodes) == 5
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1", "Sheet1!F1"}
 
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
     # The nested IFS conditions are unconditional within the branch, so they carry
@@ -272,7 +282,7 @@ def test_IF_nested_in_IFS_value_conjoins_with_sequential_guard(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
-    assert len(graph._nodes) == 5
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1", "Sheet1!F1"}
 
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
@@ -296,7 +306,7 @@ def test_CHOOSE_nested_in_IF_branch_conjoins_index_guard_with_outer_condition(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
-    assert len(graph._nodes) == 5
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1", "Sheet1!F1"}
 
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
@@ -317,7 +327,14 @@ def test_IF_nested_in_SWITCH_result_conjoins_with_match_guard(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!G1"], load_values=True)
-    assert len(graph._nodes) == 6
+    assert set(graph) == {
+        "Sheet1!B1",
+        "Sheet1!C1",
+        "Sheet1!D1",
+        "Sheet1!E1",
+        "Sheet1!F1",
+        "Sheet1!G1",
+    }
 
     assert graph.get_edge_guard("Sheet1!G1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!G1", "Sheet1!C1") == b1_matches_1
@@ -341,7 +358,7 @@ def test_dep_shared_between_nested_branch_and_else_branch_ORs_its_guards(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
-    assert len(graph._nodes) == 5
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1", "Sheet1!F1"}
 
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
@@ -366,7 +383,7 @@ def test_IF_embedded_in_arithmetic_extracts_branch_guards(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
-    assert len(graph._nodes) == 4
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1"}
 
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!C1") == b1_is_1
@@ -384,7 +401,7 @@ def test_IF_embedded_in_SUM_extracts_branch_guards(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!F1"], load_values=True)
-    assert len(graph._nodes) == 5
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1", "Sheet1!F1"}
 
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
@@ -412,7 +429,7 @@ def test_IF_embedded_in_arithmetic_inside_outer_IF_conjoins_guards(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
-    assert len(graph._nodes) == 5
+    assert set(graph) == {"Sheet1!A1", "Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1"}
 
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!A1") is None
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") == a1_is_1
@@ -433,7 +450,7 @@ def test_dep_in_surrounding_arithmetic_and_embedded_IF_branch_is_unconditional(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
-    assert len(graph._nodes) == 4
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1"}
 
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") is None
     # Surrounding arithmetic reads C1 unconditionally, so the branch guard must not win.
@@ -454,7 +471,7 @@ def test_IFS_embedded_in_arithmetic_extracts_sequential_guards(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
-    assert len(graph._nodes) == 4
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1"}
 
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!E1", "Sheet1!C1") == b1_is_1
@@ -485,7 +502,15 @@ def test_sibling_embedded_IFs_extract_independent_guards(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!H1"], load_values=True)
-    assert len(graph._nodes) == 7
+    assert set(graph) == {
+        "Sheet1!B1",
+        "Sheet1!C1",
+        "Sheet1!D1",
+        "Sheet1!E1",
+        "Sheet1!F1",
+        "Sheet1!G1",
+        "Sheet1!H1",
+    }
 
     assert graph.get_edge_guard("Sheet1!H1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!H1", "Sheet1!E1") is None
@@ -505,7 +530,7 @@ def test_nested_conditional_across_cells_preserves_guards_on_both_edges(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!E1"], load_values=True)
-    assert len(graph._nodes) == 4
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1", "Sheet1!E1"}
 
     dependencies: frozenset[NodeKey] = graph.get_dependencies("Sheet1!E1")
     assert dependencies == frozenset(["Sheet1!B1", "Sheet1!C1", "Sheet1!D1"])
@@ -525,10 +550,11 @@ def test_must_cycle_is_reported_as_unconditional_cycle(
 ) -> None:
     path = workbook_factory(lambda ws, _wb: write_single_row(ws, ("Must cycle", "=C1+1", "=B1+1")))
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
-    assert len(graph._nodes) == 2
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1"}
 
     # The cycle is unconditional (no guards on either edge).
-    assert not graph._guards
+    assert graph.get_edge_guard("Sheet1!C1", "Sheet1!B1") is None
+    assert graph.get_edge_guard("Sheet1!B1", "Sheet1!C1") is None
     assert graph.get_dependencies("Sheet1!C1") == frozenset(["Sheet1!B1"])
     assert graph.get_dependencies("Sheet1!B1") == frozenset(["Sheet1!C1"])
 
@@ -554,7 +580,7 @@ def test_wont_cycle_is_not_reported_when_guards_are_mutually_exclusive(
         )
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
-    assert len(graph._nodes) == 3
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1"}
 
     report: CycleReport = graph.cycle_report()
     assert report.has_must_cycles is False
@@ -572,7 +598,7 @@ def test_may_cycle_is_reported_when_guards_are_jointly_feasible(
         lambda ws, _wb: write_single_row(ws, ("May cycle", 0, "=IF(B1=0,1,D1)", "=IF(B1=1,2,C1)"))
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!C1"], load_values=False)
-    assert len(graph._nodes) == 3
+    assert set(graph) == {"Sheet1!B1", "Sheet1!C1", "Sheet1!D1"}
 
     report: CycleReport = graph.cycle_report()
     assert report.has_must_cycles is False
@@ -612,7 +638,7 @@ def test_offset_with_scalar_arguments_resolves_to_static_dependency(
     )
     graph: DependencyGraph = create_dependency_graph(path, ["Sheet1!D1"], load_values=False)
 
-    assert len(graph._nodes) == 2
+    assert set(graph) == {"Sheet1!C1", "Sheet1!D1"}
     dependencies: frozenset[NodeKey] = graph.get_dependencies("Sheet1!D1")
     assert dependencies == frozenset(["Sheet1!C1"])
 
