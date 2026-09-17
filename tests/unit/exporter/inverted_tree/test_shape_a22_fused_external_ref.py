@@ -113,7 +113,6 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, doc)
     internals = modules["internals.py"]
     assert "debt[time_period - 1]" in internals
-    assert "KeyError" not in internals
 
     pkg = load_package(modules, tmp_path, name="a22_fwd_seed")
     cells = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]

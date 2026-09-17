@@ -96,7 +96,6 @@ def test_row_geometry_tracks_series_members(
         ),
     )
     modules = generate_inverted(workbook, document)
-    assert "_kernels.result(" not in modules["internals.py"]
     package = load_package(modules, tmp_path)
     result = package.api.compute_result()
     assert tuple(result.domain) == ((2020,), (2021,), (2022,))

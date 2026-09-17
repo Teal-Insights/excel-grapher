@@ -248,7 +248,7 @@ def test_adjacent_scenario_pack_is_not_a_lag(tmp_path: Path) -> None:
     )
     assert tuple(value for _, value in got.items()) == pytest.approx((40.0, 44.0))
     internals = generate_inverted(workbook, document)["internals.py"]
-    assert "gdp[i + 1]" not in internals
+    assert "gdp['Baseline', time_period]" in internals
 
 
 def test_multi_scenario_host_keyed_dual_read_matches_evaluator(tmp_path: Path) -> None:

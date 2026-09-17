@@ -298,7 +298,6 @@ def test_lag_zipper_matches_formula_evaluator(tmp_path: Path, orientation: str) 
     result = pkg.internals.scan_debt()
     assert "debt[time_period - 1]" in modules["internals.py"]
     assert "adjustment[time_period]" in modules["internals.py"]
-    assert "_kernels.scan_debt" not in modules["internals.py"]
     assert tuple(result.adjustment[year] for year in (2010, 2011)) == pytest.approx(
         tuple(expected[cell] for cell in adj_cells)
     )

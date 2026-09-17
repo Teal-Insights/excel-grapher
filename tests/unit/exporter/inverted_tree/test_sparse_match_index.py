@@ -145,7 +145,7 @@ def test_mcve_exports_next_nonblank_without_blank_ranges(tmp_path: Path) -> None
     assert got == pytest.approx(want)
     assert got == pytest.approx(0.03)
     internals = modules["internals.py"]
-    assert "None" in internals
+    assert "lambda: None" in internals
     assert "xl_match(" in internals
     assert "xl_index(" in internals
     assert "xl_ne(" in internals
@@ -177,8 +177,7 @@ def test_shifted_holes_would_return_blank_not_next_quote(tmp_path: Path) -> None
     assert got == pytest.approx(want)
     assert got == pytest.approx(0.03)
     internals = modules["internals.py"]
-    none_before_quote = internals.find("None") < internals.find("quoted[")
-    assert none_before_quote
+    assert "((lambda: None,), (lambda: quoted[3],), (lambda: None,))" in internals
 
 
 def test_on_graph_unbound_formula_in_window_fails_closed(tmp_path: Path) -> None:
