@@ -2,11 +2,33 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from re import Match, Pattern
+
 import pytest
 
 from excel_grapher.core import formula_normalization as formula_normalization_mod
 from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.parser import FormulaNormalizer
+
+
+def _count_re_sub(monkeypatch: pytest.MonkeyPatch) -> dict[str, int]:
+    """Install a `re.sub` spy and return the call counter."""
+    calls = {"n": 0}
+    original = formula_normalization_mod.re.sub
+
+    def counting(
+        pattern: str | Pattern[str],
+        repl: str | Callable[[Match[str]], str],
+        string: str,
+        count: int = 0,
+        flags: int = 0,
+    ) -> str:
+        calls["n"] += 1
+        return original(pattern, repl, string, count=count, flags=flags)
+
+    monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+    return calls
 
 
 class TestFormulaNormalizerBasicNormalization:
@@ -133,20 +155,7 @@ class TestFormulaNormalizerCaching:
 
     def test_unique_formulas_use_one_name_regex_sub(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Name substitution must not call `re.sub` once per catalog name."""
-        calls = {"n": 0}
-        original = formula_normalization_mod.re.sub
-
-        def counting(
-            pattern: object,
-            repl: object,
-            string: str,
-            count: int = 0,
-            flags: int = 0,
-        ) -> str:
-            calls["n"] += 1
-            return original(pattern, repl, string, count=count, flags=flags)
-
-        monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+        calls = _count_re_sub(monkeypatch)
 
         def re_sub_ops(n_names: int, n_formulas: int) -> int:
             named_ranges = {f"Name{i}": ("Sheet1", f"A{i + 1}") for i in range(n_names)}
@@ -176,20 +185,7 @@ class TestFormulaNormalizerOutlierFormula:
         named_range_ranges = {
             f"RangeName{i}": ("DataSheet", f"C{i + 1}", f"D{i + 10}") for i in range(39)
         }
-        calls = {"n": 0}
-        original = formula_normalization_mod.re.sub
-
-        def counting(
-            pattern: object,
-            repl: object,
-            string: str,
-            count: int = 0,
-            flags: int = 0,
-        ) -> str:
-            calls["n"] += 1
-            return original(pattern, repl, string, count=count, flags=flags)
-
-        monkeypatch.setattr(formula_normalization_mod.re, "sub", counting)
+        calls = _count_re_sub(monkeypatch)
 
         def normalize_with(
             named_ranges: dict[str, tuple[str, str]],
