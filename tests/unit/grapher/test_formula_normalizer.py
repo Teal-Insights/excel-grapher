@@ -133,7 +133,6 @@ class TestFormulaNormalizerCaching:
 
     def test_unique_formulas_use_one_name_regex_sub(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """Name substitution must not call `re.sub` once per catalog name."""
-
         calls = {"n": 0}
         original = formula_normalization_mod.re.sub
 
