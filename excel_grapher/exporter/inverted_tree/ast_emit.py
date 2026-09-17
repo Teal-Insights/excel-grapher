@@ -254,6 +254,8 @@ def _emit_address(
     Unbound `blank_ranges` cells are the literal `None`. A hole that still
     belongs to a bound series is indexed by coordinate so formula families
     can fold; the reader returns a blank when that coordinate is absent.
+    A catalog point whose keys are not on the producer axis is `None`
+    rather than a `CoordinateError`.
     """
     if (
         address_in_blank_ranges(address, ctx.blank_rects)
@@ -275,7 +277,10 @@ def _emit_named_address(
     index = owner.index_of(address)
     if index is None:
         raise InvertedTreeExportError(f"series {owner.series_id!r}: no coordinate for {address}")
-    return f"{name}[{', '.join(_named_keys(owner, owner.domain[index], ctx, ref=ref))}]"
+    point = owner.domain[index]
+    if not owner.axis_owns_point(point):
+        return "None"
+    return f"{name}[{', '.join(_named_keys(owner, point, ctx, ref=ref))}]"
 
 
 def _iter_cell_refs(node: AstNode | None) -> Iterator[CellRef]:

@@ -438,6 +438,21 @@ def _sample_member_indices(members: Sequence[int]) -> list[int]:
     return list(dict.fromkeys((members[0], middle, members[-1])))
 
 
+def _is_series_index_measure(expression: str) -> bool:
+    """True when `expression` is `as_measure` of a single series subscript."""
+    try:
+        parsed = ast.parse(expression, mode="eval").body
+    except SyntaxError:
+        return False
+    return (
+        isinstance(parsed, ast.Call)
+        and isinstance(parsed.func, ast.Name)
+        and parsed.func.id == "as_measure"
+        and len(parsed.args) > 0
+        and isinstance(parsed.args[0], ast.Subscript)
+    )
+
+
 def _semantic_body(
     series: BoundSeries,
     catalog: SeriesCatalog,
@@ -456,7 +471,9 @@ def _semantic_body(
     instead of returning, so recurrence groups can share one evaluation.
     Uniform statements lower first/interior/last samples and, when those
     expressions match, replicate the grouped body; mixed statements still
-    emit one body per distinct expression.
+    emit one body per distinct expression. A sampled `as_measure` series
+    index is not copied onto a member whose producer cell is unbound or
+    whose catalog point is missing from the producer axis.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
@@ -530,6 +547,18 @@ def _semantic_body(
         unique = set(sample_exprs.values())
         if len(unique) == 1:
             expression = alias_expression(next(iter(unique)))
+            if _is_series_index_measure(expression):
+                from excel_grapher.exporter.inverted_tree.catalog import (
+                    _cell_refs_support_series_index,
+                )
+
+                none_expression = _as_measure_call("None", series)
+                for index in members:
+                    if _cell_refs_support_series_index(catalog, graph, cells[index]):
+                        record(index, expression)
+                    else:
+                        record(index, none_expression)
+                continue
             for index in members:
                 record(index, expression)
             continue
