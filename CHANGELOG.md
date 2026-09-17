@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.4 (2026-09-17)
+
+### Bug Fixes
+
+- Compute named-range sheet bounds only for whole-axis names
+  ([#872](https://github.com/Teal-Insights/excel-grapher/pull/872),
+  [`0c12982`](https://github.com/Teal-Insights/excel-grapher/commit/0c129828348a612ee116e368dd109a4bb4fc4d06))
+
+- Expand whole-row and whole-column defined names
+  ([#872](https://github.com/Teal-Insights/excel-grapher/pull/872),
+  [`0c12982`](https://github.com/Teal-Insights/excel-grapher/commit/0c129828348a612ee116e368dd109a4bb4fc4d06))
+
+
 ## v20.3.3 (2026-09-16)
 
 ### Bug Fixes
