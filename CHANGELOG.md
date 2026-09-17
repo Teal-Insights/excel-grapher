@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.5 (2026-09-17)
+
+### Bug Fixes
+
+- Emit host-key remaps for 2D lockstep producer walks
+  ([#874](https://github.com/Teal-Insights/excel-grapher/pull/874),
+  [`706d939`](https://github.com/Teal-Insights/excel-grapher/commit/706d939294d4872f939d179e0e5c1c6b3e70e812))
+
+
 ## v20.3.4 (2026-09-17)
 
 ### Bug Fixes
