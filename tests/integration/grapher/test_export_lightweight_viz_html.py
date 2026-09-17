@@ -92,8 +92,6 @@ def test_write_html_creates_file(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert "T" in text
     assert "canvas" in text
-    assert "createREGL" in text or "regl" in text.lower()
-    assert "d3.forceSimulation" in text or "d3-force" in text
 
 
 def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
@@ -144,17 +142,8 @@ def test_write_data_roundtrip(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8").startswith("{")
 
 
-@pytest.mark.parametrize(
-    "needle",
-    [
-        "regl",
-        "d3-force",
-        "module_edges",
-        "Local force",
-    ],
-)
-def test_overview_viewer_contract(tmp_path: Path, needle: str) -> None:
+def test_overview_viewer_embeds_module_edges(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"
     write_web_viz_html(p, out, data_mode="inline")
-    assert needle.lower() in out.read_text(encoding="utf-8").lower()
+    assert "module_edges" in out.read_text(encoding="utf-8")

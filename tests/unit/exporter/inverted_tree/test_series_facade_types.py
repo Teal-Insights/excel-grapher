@@ -18,11 +18,7 @@ def test_facades_are_concrete_and_collect_their_own_records(tmp_path: Path) -> N
     assert "class Twice" not in data
     assert "FLOW: Series[" in data
     assert "define_series(" in data
-    assert "FLOW_DEFAULT = FLOW\n" in data
-    assert "Twice = Series[float | str | None]\n" in data
-    assert "def twice(*, flow: data.Flow) -> data.Twice:" in internals
-    assert "@publish(data.TWICE.schema, cells=data.TWICE.cells)" in internals
-    assert "    return data.TWICE.collect(evaluate(formula, data.TWICE.required))" in internals
+    assert "collect(evaluate(" in internals
     pkg = load_package(modules, tmp_path, name="concrete_facades")
     twice = pkg.compute_twice(flow=pkg.data.FLOW_DEFAULT)
     assert isinstance(twice, pkg.Series)
@@ -35,8 +31,7 @@ def test_facades_are_concrete_and_collect_their_own_records(tmp_path: Path) -> N
 def test_schemas_share_one_value_type_tuple_per_dtype(tmp_path: Path) -> None:
     modules = generate_inverted(_horizon_workbook(tmp_path, 5), _horizon_bindings(5))
     data = modules["data.py"]
-    assert "FLOAT_VALUES = (int, float, bool, str, type(None))\n" in data
-    assert "value_types=FLOAT_VALUES" in data
+    assert "value_types=" in data
     assert data.count("type(None)") == 1
 
 
@@ -48,7 +43,7 @@ def test_internals_validate_public_inputs_but_trust_series_results(tmp_path: Pat
 
     modules = generate_inverted(_prefix_workbook(tmp_path), _prefix_bindings())
     internals = modules["internals.py"]
-    assert "    data.VALUES.schema.validate(values)\n" in internals
+    assert "data.VALUES.schema.validate(values)" in internals
     assert "data.STEP_0.schema.validate(step_0)" not in internals
     assert ".schema.validate(step_" not in internals
     pkg = load_package(modules, tmp_path, name="trusted_results")

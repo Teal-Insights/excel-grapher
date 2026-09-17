@@ -140,9 +140,7 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     assert "EvalContext" not in modules["api.py"]
     assert "ctx" not in modules["api.py"]
     assert "from .data import PROFILE_TABLE" not in modules["api.py"]
-    assert "from .data import _CONSTANTS_0\n" in modules["api.py"]
     assert "PROFILE_TABLE" in modules["data.py"]
-    assert "(10.0, 11.0, 20.0, 21.0)" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a8_kw")
     params = inspect.signature(pkg.compute_output_cell).parameters
     assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())

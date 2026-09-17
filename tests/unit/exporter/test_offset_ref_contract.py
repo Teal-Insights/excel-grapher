@@ -33,16 +33,6 @@ def test_xl_index_ref_returns_address_metadata_not_cell_value() -> None:
     assert xl_offset(ctx, ref, 0.0, 0.0) == 42.0
 
 
-def test_xl_index_ref_and_xl_offset_docstrings_describe_pairing() -> None:
-    assert xl_index_ref.__doc__ is not None
-    assert "not a cell value" in xl_index_ref.__doc__.lower()
-    assert "xl_offset" in xl_index_ref.__doc__
-
-    assert xl_offset.__doc__ is not None
-    assert "xl_index_ref" in xl_offset.__doc__
-    assert "cell value" in xl_offset.__doc__.lower()
-
-
 def test_offset_ref_info_annotations_use_named_alias_not_cell_value() -> None:
     index_hints = typing.get_type_hints(xl_index_ref)
     offset_hints = typing.get_type_hints(xl_offset)

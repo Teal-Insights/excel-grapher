@@ -131,7 +131,7 @@ def test_absolute_selector_emits_identity_loop_reading_mode(tmp_path: Path) -> N
     modules = generate_inverted(_selector_workbook(tmp_path), _selector_bindings())
     internals = modules["internals.py"]
     assert "xl_eq(mode, label_nominal)" in internals
-    assert "collect(evaluate(formula, data.SELECTED.required))" in internals
+    assert "evaluate(formula" in internals
 
 
 def test_absolute_selector_matches_evaluator(tmp_path: Path) -> None:

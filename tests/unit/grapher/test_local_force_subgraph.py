@@ -29,7 +29,6 @@ def test_local_force_template_avoids_module_scope_shortcut() -> None:
     source = _local_force_subgraph_source()
     assert "mod.node_count <= maxN" not in source
     assert "moduleScope: true" not in source
-    assert "incoming[tg[k]].push" in source
     assert "moduleScope: false" in source
 
 

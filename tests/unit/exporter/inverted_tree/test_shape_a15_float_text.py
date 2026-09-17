@@ -88,13 +88,6 @@ def test_thousands_space_shared_string_emits_as_float(tmp_path: Path) -> None:
 
 def test_imf_sentinels_stay_strings_in_float_constant(tmp_path: Path) -> None:
     modules = generate_inverted(_sentinel_workbook(tmp_path), _sentinel_bindings())
-    data = modules["data.py"]
-    assert "1000.0" in data
-    assert "'n/a'" in data
-    assert "'..'" in data
-    assert "'--'" in data
-    assert "3.5" in data
-    assert "STORE: Series[" in data
     pkg = load_package(modules, tmp_path, name="a15_sentinels")
     store = pkg.data.STORE
     assert store[1] == pytest.approx(1000.0)

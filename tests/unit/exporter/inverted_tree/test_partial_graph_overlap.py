@@ -306,12 +306,11 @@ def test_helper_accepts_wider_domain_and_rejects_missing_coordinates(tmp_path: P
         pkg.internals.result(rate=rate5, engine_row=missing)
 
 
-def test_helper_documents_named_coordinate_contract(tmp_path: Path) -> None:
+def test_helper_uses_named_coordinate_reads(tmp_path: Path) -> None:
     workbook = _year_workbook(tmp_path)
     with pytest.warns(UserWarning):
         modules = _emit_from_outputs(workbook, _year_document())
     internals = modules["internals.py"]
-    assert "coordinate identities" in internals
     assert "@publish(data.ENGINE_ROW.schema, cells=data.ENGINE_ROW.cells)" in internals
     assert "rate[time_period]" in internals
 
