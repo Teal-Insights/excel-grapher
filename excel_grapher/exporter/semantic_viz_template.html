@@ -239,25 +239,58 @@
         n._h = compact ? 6 : 28;
       });
     });
+    var extraClusterGap = (!compact && clusterBy && clusterBy !== 'none') ? 28 : 0;
     var packedW = 0;
     ranks.forEach(function (rank) {
       var rowNodes = byRank[rank];
       var inner = 0;
-      rowNodes.forEach(function (n) { inner += n._w; });
-      if (rowNodes.length > 1) inner += nodeGap * (rowNodes.length - 1);
+      rowNodes.forEach(function (n, i) {
+        inner += n._w;
+        if (i < rowNodes.length - 1) {
+          inner += nodeGap;
+          if (extraClusterGap && rowNodes[i]._cluster !== rowNodes[i + 1]._cluster) {
+            inner += extraClusterGap;
+          }
+        }
+      });
       packedW = Math.max(packedW, pad + inner + pad);
     });
     var maxW = Math.max(920, packedW);
     ranks.forEach(function (rank, row) {
       var rowNodes = byRank[rank];
       var y = pad + row * rankGap;
-      var centers = spreadRank(
-        rowNodes.map(function (n) { return n._w; }),
-        pad, nodeGap, CAMERA_MAX_W, packedW || maxW
-      );
-      rowNodes.forEach(function (n, i) {
-        n._x = centers[i];
-        n._y = y;
+      if (!extraClusterGap) {
+        var centers = spreadRank(
+          rowNodes.map(function (n) { return n._w; }),
+          pad, nodeGap, CAMERA_MAX_W, packedW || maxW
+        );
+        rowNodes.forEach(function (n, i) {
+          n._x = centers[i];
+          n._y = y;
+        });
+        return;
+      }
+      var n = rowNodes.length;
+      if (!n) return;
+      var innerNodes = 0;
+      var clusterBreaks = 0;
+      rowNodes.forEach(function (node, i) {
+        innerNodes += node._w;
+        if (i < n - 1 && rowNodes[i]._cluster !== rowNodes[i + 1]._cluster) clusterBreaks += 1;
+      });
+      var minPacked = innerNodes + nodeGap * Math.max(n - 1, 0) + extraClusterGap * clusterBreaks;
+      var inner = Math.max(minPacked, Math.min(CAMERA_MAX_W, packedW || maxW) - 2 * pad);
+      var stretch = n > 1 ? (inner - minPacked) / (n - 1) : 0;
+      if (stretch < 0) stretch = 0;
+      var x = pad;
+      rowNodes.forEach(function (node, i) {
+        node._x = x + node._w / 2;
+        node._y = y;
+        x += node._w;
+        if (i < n - 1) {
+          x += nodeGap + stretch;
+          if (rowNodes[i]._cluster !== rowNodes[i + 1]._cluster) x += extraClusterGap;
+        }
       });
     });
     var height = Math.max(640, pad + Math.max(ranks.length, 1) * rankGap + pad);
@@ -403,38 +436,50 @@
       nodes.forEach(function (n) {
         if (n._hidden) return;
         var key = clusterKey(n);
-        (groups[key] || (groups[key] = [])).push(n);
+        var rank = n.rank || 0;
+        var slot = groups[key] || (groups[key] = {});
+        (slot[rank] || (slot[rank] = [])).push(n);
       });
       Object.keys(groups).sort().forEach(function (key) {
-        var members = groups[key];
-        var pad = markStyle === 'dots' ? 10 : 12;
-        var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
-        members.forEach(function (n) {
-          var hw = (n._w || 6) / 2;
-          var hh = (n._h || 6) / 2;
-          x0 = Math.min(x0, n._x - hw);
-          y0 = Math.min(y0, n._y - hh);
-          x1 = Math.max(x1, n._x + hw);
-          y1 = Math.max(y1, n._y + hh);
+        var byRank = groups[key];
+        var ranks = Object.keys(byRank).map(Number).sort(function (a, b) { return a - b; });
+        ranks.forEach(function (rank, idx) {
+          var members = byRank[rank];
+          var pad = markStyle === 'dots' ? 8 : 10;
+          var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+          members.forEach(function (n) {
+            var hw = (n._w || 6) / 2;
+            var hh = (n._h || 6) / 2;
+            x0 = Math.min(x0, n._x - hw);
+            y0 = Math.min(y0, n._y - hh);
+            x1 = Math.max(x1, n._x + hw);
+            y1 = Math.max(y1, n._y + hh);
+          });
+          x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+          ctx.save();
+          ctx.fillStyle = 'rgba(31, 35, 40, 0.035)';
+          ctx.strokeStyle = '#656d76';
+          ctx.lineWidth = 1.2;
+          ctx.setLineDash([5, 4]);
+          ctx.beginPath();
+          if (ctx.roundRect) ctx.roundRect(x0, y0, x1 - x0, y1 - y0, 8);
+          else ctx.rect(x0, y0, x1 - x0, y1 - y0);
+          ctx.fill();
+          ctx.stroke();
+          if (idx === 0) {
+            ctx.setLineDash([]);
+            ctx.font = '11px system-ui, sans-serif';
+            ctx.textAlign = 'left';
+            ctx.textBaseline = 'bottom';
+            var label = key;
+            var tw = ctx.measureText(label).width;
+            ctx.fillStyle = 'rgba(255,255,255,0.92)';
+            ctx.fillRect(x0 + 4, y0 - 14, tw + 8, 14);
+            ctx.fillStyle = '#656d76';
+            ctx.fillText(label, x0 + 8, y0 - 2);
+          }
+          ctx.restore();
         });
-        x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
-        ctx.save();
-        ctx.fillStyle = 'rgba(31, 35, 40, 0.04)';
-        ctx.strokeStyle = '#656d76';
-        ctx.lineWidth = 1.2;
-        ctx.setLineDash([5, 4]);
-        ctx.beginPath();
-        if (ctx.roundRect) ctx.roundRect(x0, y0, x1 - x0, y1 - y0, 10);
-        else ctx.rect(x0, y0, x1 - x0, y1 - y0);
-        ctx.fill();
-        ctx.stroke();
-        ctx.setLineDash([]);
-        ctx.fillStyle = '#656d76';
-        ctx.font = '11px system-ui, sans-serif';
-        ctx.textAlign = 'left';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(key, x0 + 6, y0 - 2);
-        ctx.restore();
       });
     }
 
