@@ -7,6 +7,113 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.6 (2026-09-18)
+
+### Bug Fixes
+
+- Gate wrapped producer indexes by affine image
+  ([#890](https://github.com/Teal-Insights/excel-grapher/pull/890),
+  [`240d88d`](https://github.com/Teal-Insights/excel-grapher/commit/240d88dbbc53d0eabfa9b23aca3f9a8e173d1be6))
+
+- Satisfy ty on remap subscript key lookup
+  ([#890](https://github.com/Teal-Insights/excel-grapher/pull/890),
+  [`240d88d`](https://github.com/Teal-Insights/excel-grapher/commit/240d88dbbc53d0eabfa9b23aca3f9a8e173d1be6))
+
+- Skip off-axis sampled producer indexes in named emit
+  ([#890](https://github.com/Teal-Insights/excel-grapher/pull/890),
+  [`240d88d`](https://github.com/Teal-Insights/excel-grapher/commit/240d88dbbc53d0eabfa9b23aca3f9a8e173d1be6))
+
+### Testing
+
+- Assign unknown address-key attrs via object.__setattr__
+  ([#879](https://github.com/Teal-Insights/excel-grapher/pull/879),
+  [`ee153ce`](https://github.com/Teal-Insights/excel-grapher/commit/ee153ce3f1850d1721a5b8f6c3165e50e1e0e489))
+
+- Count name-regex subs without nested re.sub patches
+  ([#881](https://github.com/Teal-Insights/excel-grapher/pull/881),
+  [`a6efcc3`](https://github.com/Teal-Insights/excel-grapher/commit/a6efcc37253581b72e6a30d7d4cedcf49c7deaa1))
+
+- Drop blank line after FormulaNormalizer docstring
+  ([#881](https://github.com/Teal-Insights/excel-grapher/pull/881),
+  [`a6efcc3`](https://github.com/Teal-Insights/excel-grapher/commit/a6efcc37253581b72e6a30d7d4cedcf49c7deaa1))
+
+- Drop duplicate core/runtime/gaps coverage (#863 B6)
+  ([#885](https://github.com/Teal-Insights/excel-grapher/pull/885),
+  [`8b77b8e`](https://github.com/Teal-Insights/excel-grapher/commit/8b77b8e31ad0f353febf2018c416f8c83d904eed))
+
+- Drop duplicate evaluator coverage
+  ([#888](https://github.com/Teal-Insights/excel-grapher/pull/888),
+  [`cb0c9e6`](https://github.com/Teal-Insights/excel-grapher/commit/cb0c9e6de2684231b4a5a927d329cd130bc72da0))
+
+- Drop duplicate grapher and user-flow coverage (#863 B7)
+  ([#884](https://github.com/Teal-Insights/excel-grapher/pull/884),
+  [`0c99f74`](https://github.com/Teal-Insights/excel-grapher/commit/0c99f743c93299905d7f30b04e878ffa0b1b254e))
+
+- Drop duplicate inverted-tree and exporter coverage
+  ([#887](https://github.com/Teal-Insights/excel-grapher/pull/887),
+  [`e05abc4`](https://github.com/Teal-Insights/excel-grapher/commit/e05abc47fe4388c385533921c263fc3ca6a7ca46))
+
+- Drop duplicate inverted-tree shape coverage (#863 B1)
+  ([#886](https://github.com/Teal-Insights/excel-grapher/pull/886),
+  [`67772ea`](https://github.com/Teal-Insights/excel-grapher/commit/67772ea515ab3031a285db9c90aa6183e1077fec))
+
+- Drop duplicate series-bindings schema coverage
+  ([#883](https://github.com/Teal-Insights/excel-grapher/pull/883),
+  [`800c957`](https://github.com/Teal-Insights/excel-grapher/commit/800c9571b09f62c58f0cebf796449197bb365834))
+
+- Drop duplicate unit/grapher coverage (#863 B3)
+  ([#889](https://github.com/Teal-Insights/excel-grapher/pull/889),
+  [`b729950`](https://github.com/Teal-Insights/excel-grapher/commit/b729950e264b5f8bf383d3752632cf01dbae5927))
+
+- Drop invalid expand_range default pin
+  ([#889](https://github.com/Teal-Insights/excel-grapher/pull/889),
+  [`b729950`](https://github.com/Teal-Insights/excel-grapher/commit/b729950e264b5f8bf383d3752632cf01dbae5927))
+
+- Drop leftover auto/rung names and forced-rung docs
+  ([#875](https://github.com/Teal-Insights/excel-grapher/pull/875),
+  [`33468f3`](https://github.com/Teal-Insights/excel-grapher/commit/33468f35c6ac431758dab266433934658257823f))
+
+- Drop self-comparing auto vs forced rung oracles
+  ([#875](https://github.com/Teal-Insights/excel-grapher/pull/875),
+  [`33468f3`](https://github.com/Teal-Insights/excel-grapher/commit/33468f35c6ac431758dab266433934658257823f))
+
+- Look up a14 scan years instead of using membership
+  ([#878](https://github.com/Teal-Insights/excel-grapher/pull/878),
+  [`32bbc7c`](https://github.com/Teal-Insights/excel-grapher/commit/32bbc7c908e865e9138daca44ddfa1e7d5b11a74))
+
+- Probe surviving AST cache keys before the LRU miss
+  ([#880](https://github.com/Teal-Insights/excel-grapher/pull/880),
+  [`f74d438`](https://github.com/Teal-Insights/excel-grapher/commit/f74d4386dae1cf33016538c24f6bd82a278c8331))
+
+- Relax exact error-message wording (#863 A7)
+  ([#876](https://github.com/Teal-Insights/excel-grapher/pull/876),
+  [`1ece3d8`](https://github.com/Teal-Insights/excel-grapher/commit/1ece3d86f4a466b1924d6b3c5a80032a3feebd7f))
+
+- Relax verbatim generated-code snapshots
+  ([#878](https://github.com/Teal-Insights/excel-grapher/pull/878),
+  [`32bbc7c`](https://github.com/Teal-Insights/excel-grapher/commit/32bbc7c908e865e9138daca44ddfa1e7d5b11a74))
+
+- Replace mechanism pins with behavioral oracles (#863 A5)
+  ([#879](https://github.com/Teal-Insights/excel-grapher/pull/879),
+  [`ee153ce`](https://github.com/Teal-Insights/excel-grapher/commit/ee153ce3f1850d1721a5b8f6c3165e50e1e0e489))
+
+- Replace private-attribute assertions with public APIs
+  ([#880](https://github.com/Teal-Insights/excel-grapher/pull/880),
+  [`f74d438`](https://github.com/Teal-Insights/excel-grapher/commit/f74d4386dae1cf33016538c24f6bd82a278c8331))
+
+- Replace vacuous inverted-tree source-text asserts
+  ([#877](https://github.com/Teal-Insights/excel-grapher/pull/877),
+  [`f695a5f`](https://github.com/Teal-Insights/excel-grapher/commit/f695a5f544e1322f7cce52c9448fc48cd5eeb225))
+
+- Replace wall-clock perf thresholds with op-count oracles
+  ([#881](https://github.com/Teal-Insights/excel-grapher/pull/881),
+  [`a6efcc3`](https://github.com/Teal-Insights/excel-grapher/commit/a6efcc37253581b72e6a30d7d4cedcf49c7deaa1))
+
+- Type the FormulaNormalizer re.sub spy for ty overloads
+  ([#881](https://github.com/Teal-Insights/excel-grapher/pull/881),
+  [`a6efcc3`](https://github.com/Teal-Insights/excel-grapher/commit/a6efcc37253581b72e6a30d7d4cedcf49c7deaa1))
+
+
 ## Unreleased
 
 ### Bug Fixes
