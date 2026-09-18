@@ -7,6 +7,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.3.7 (2026-09-18)
+
+### Bug Fixes
+
+- Collect INDEX row-label columns and honor constant overrides
+  ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+- INDEX(named range,,1) MATCH uses the worksheet country-code column
+  ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+- Keep out-of-range INDEX columns as runtime #REF!
+  ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+- Lower INDEX(named range,,1) to the worksheet column
+  ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+- Restore INDEX lookup types from bound series
+  ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+- Return success from INDEX worksheet-column dep walk
+  ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+### Code Style
+
+- Format INDEX lookup helpers ([#896](https://github.com/Teal-Insights/excel-grapher/pull/896),
+  [`9a92f1e`](https://github.com/Teal-Insights/excel-grapher/commit/9a92f1ea5dc22358592cc35f0cdc2b37c3bafcac))
+
+
 ## v20.3.6 (2026-09-18)
 
 ### Bug Fixes
