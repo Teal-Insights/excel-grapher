@@ -431,6 +431,58 @@ def xl_choose_range(index: object, cells: Range) -> object:
     return cells.cell(selected // cols + 1, selected % cols + 1)
 
 
+def xl_lookup_cell(measure: object, workbook: object) -> object:
+    """Return `measure`, restoring `workbook`'s Excel type after dtype stringify.
+
+    INDEX/MATCH tables still read the bound series so `overrides` apply. A
+    string measure that is only `str(workbook)` is the series dtype hiding a
+    number or bool; Excel `INDEX` returns the worksheet type.
+    """
+    if measure == workbook:
+        return measure
+    if isinstance(measure, str) and measure == str(workbook):
+        return workbook
+    return measure
+
+
+def _as_native_grid(
+    natives: object, height: int, width: int
+) -> tuple[tuple[object, ...], ...]:
+    """Interpret `natives` as a `height` by `width` row-major grid."""
+    if isinstance(natives, str) or not isinstance(natives, Sequence):
+        raise TypeError("natives must be a nested sequence")
+    rows = list(natives)
+    if height == 1 and width == len(rows) and (not rows or not isinstance(rows[0], Sequence)):
+        return (tuple(rows),)
+    grid: list[tuple[object, ...]] = []
+    for row in rows:
+        if isinstance(row, str) or not isinstance(row, Sequence):
+            grid.append((row,))
+        else:
+            grid.append(tuple(row))
+    if len(grid) != height or any(len(row) != width for row in grid):
+        got = f"{len(grid)}x{len(grid[0]) if grid else 0}"
+        raise ValueError(f"natives shape {got} != {height}x{width}")
+    return tuple(grid)
+
+
+def xl_typed_range(values: Range, natives: object) -> Range:
+    """Apply `xl_lookup_cell` to each cell of `values` using `natives`.
+
+    `natives` is a row-major nested sequence matching `values.shape`.
+    """
+    height, width = values.shape
+    grid = _as_native_grid(natives, height, width)
+
+    def resolve(row: int, column: int) -> FormulaValue:
+        return cast(
+            FormulaValue,
+            xl_lookup_cell(values.cell(row, column), grid[row - 1][column - 1]),
+        )
+
+    return Range("", 1, 1, height, width, lambda address: None, _coord_resolver=resolve)
+
+
 def xl_index(array: object, row_num: object = None, col_num: object = None) -> object:
     """Excel `INDEX` via `core.lookup_funcs.index_cells`."""
     return _adapt_core(index_cells(array, row_num, col_num))

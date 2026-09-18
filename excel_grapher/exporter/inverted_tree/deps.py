@@ -123,12 +123,17 @@ def addresses_outside_blank_ranges(
 
 @dataclass(frozen=True, slots=True)
 class PositionalRangeCell:
-    """One worksheet cell in a MATCH/INDEX window, in sheet order."""
+    """One worksheet cell in a MATCH/INDEX window, in sheet order.
+
+    `label_value` holds a row-label or header used when the cell sits
+    outside the occupying series' `data_range`.
+    """
 
     address: CanonicalAddress
     series_id: str | None
     catalog_index: int | None
     blank: bool
+    label_value: object | None = None
 
 
 def _is_excel_blank_cell(

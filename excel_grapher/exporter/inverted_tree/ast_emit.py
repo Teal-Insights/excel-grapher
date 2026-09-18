@@ -27,7 +27,6 @@ from excel_grapher.core.formula_ast import (
     WholeRowNode,
     resolve_cell_ref,
 )
-from excel_grapher.core.types import FormulaValue
 from excel_grapher.exporter.inverted_tree import excel as inverted_excel
 from excel_grapher.exporter.inverted_tree.access import (
     indirect_argument_addresses,
@@ -71,6 +70,7 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     range_overlaps_blank_ranges,
 )
+from excel_grapher.series_bindings.resolve import _bind_source_addresses
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -138,6 +138,7 @@ class EmitContext:
     array_context: bool = False
     named_axes: NamedAxes | None = None
     key_remaps: dict[str, dict[object, object]] = field(default_factory=dict)
+    restore_lookup_types: bool = False
 
     def param(self, series_id: str) -> str:
         return series_id
@@ -1062,10 +1063,16 @@ def _emit_range_values(node: AstNode, ctx: EmitContext) -> str:
     return _python_tuple([_emit_address(address, ctx) for address in addresses])
 
 
+def _with_lookup_types(ctx: EmitContext) -> EmitContext:
+    """Return `ctx` with `restore_lookup_types` set for INDEX/MATCH/VLOOKUP."""
+    return ctx if ctx.restore_lookup_types else replace(ctx, restore_lookup_types=True)
+
+
 def _emit_lookup_arg(node: AstNode, ctx: EmitContext) -> str:
+    lookup_ctx = _with_lookup_types(ctx)
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
-        return _emit_range_table(node, ctx)
-    return emit_expr(node, ctx)
+        return _emit_range_table(node, lookup_ctx)
+    return emit_expr(node, lookup_ctx)
 
 
 def _python_tuple(items: Sequence[str]) -> str:
@@ -1205,67 +1212,130 @@ def _collapse_table_strips(
     return strips
 
 
-def _excel_equal(left: object, right: object) -> bool:
-    """True when Excel `=` treats `left` and `right` as the same value."""
-    from excel_grapher.core.operators_reference import compare_scalars
+def _scalar_literal(value: object) -> str:
+    """Python literal for a workbook scalar used beside a bound-series read."""
+    if value is None:
+        return "None"
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, int | float | str):
+        return repr(value)
+    raise InvertedTreeExportError(f"cannot emit lookup native {type(value).__name__}")
 
-    return compare_scalars("=", cast(FormulaValue, left), cast(FormulaValue, right)) is True
+
+def _natives_tuple(addresses: Sequence[CanonicalAddress], ctx: EmitContext) -> str:
+    """Row-major nested tuple of workbook values for `xl_typed_range`."""
+    rows: list[str] = []
+    current_row: int | None = None
+    current: list[str] = []
+    for address in addresses:
+        _sheet, row, _col = parse_cell_coords(address)
+        if current_row is not None and row != current_row:
+            rows.append(_python_tuple(current))
+            current = []
+        current_row = row
+        node = None if ctx.graph is None else ctx.graph.get_node(address)
+        current.append(_scalar_literal(None if node is None else node.value))
+    if current:
+        rows.append(_python_tuple(current))
+    return _python_tuple(rows)
 
 
 def _view_preserves_excel_types(
     owner: BoundSeries, addresses: Sequence[CanonicalAddress], ctx: EmitContext
 ) -> bool:
-    """False when a series view would change Excel `=` against workbook values.
-
-    A string-dtyped matrix still occupies numeric worksheet cells (country
-    codes, 0/1 flags). `view` of that tensor stringifies them, so
-    `INDEX(...) = 1` becomes `'1' = 1` and fails. Those windows fall back
-    to positional cells that keep the workbook types.
-    """
-    if owner.direction != "constant" or ctx.graph is None:
+    """False when a series view would stringify numeric workbook cells."""
+    if owner.direction not in {"constant", "input"} or ctx.graph is None:
         return True
-    from excel_grapher.exporter.inverted_tree.emit import _coerce_cached_value
-
+    string_dtype = owner.dtype in {"string", "str"}
+    int_dtype = owner.dtype in {"int", "integer"}
     for address in addresses:
         node = ctx.graph.get_node(address)
         if node is None or node.has_formula or node.value is None:
             continue
-        try:
-            coerced = _coerce_cached_value(node.value, owner.dtype, address)
-        except InvertedTreeExportError:
+        if string_dtype and not isinstance(node.value, str):
             return False
-        if not _excel_equal(node.value, coerced):
+        if int_dtype and isinstance(node.value, str):
             return False
     return True
 
 
-def _workbook_constant_literal(address: CanonicalAddress, ctx: EmitContext) -> str | None:
-    """Python literal of a constant leaf's Excel value, if it is on the graph."""
-    if ctx.graph is None:
-        return None
-    owner = ctx.catalog.series_for(address)
-    if owner is None or owner.direction != "constant":
-        return None
-    node = ctx.graph.get_node(address)
-    if node is None or node.has_formula:
-        return None
-    from excel_grapher.exporter.inverted_tree.emit import _py_literal
+def _label_values_for_window(
+    catalog: SeriesCatalog, parent_addresses: Sequence[CanonicalAddress]
+) -> dict[CanonicalAddress, object]:
+    """Map row_label/column_header cells inside `parent_addresses` to series keys."""
+    parent = set(parent_addresses)
+    values: dict[CanonicalAddress, object] = {}
+    for series in catalog.series.values():
+        data_cells = series.authored_cells or series.cells
+        occupies = [cell for cell in data_cells if cell in parent]
+        if not occupies:
+            continue
+        for field in series.key_fields:
+            bind = series.dimension_bind(field)
+            if not isinstance(bind, Mapping) or bind.get("kind") not in {
+                "row_label",
+                "column_header",
+            }:
+                continue
+            for data_cell in occupies:
+                point = series.key_point_for(data_cell)
+                if point is None:
+                    continue
+                for source in _bind_source_addresses(dict(bind), data_cell):
+                    values[as_canonical(source)] = point[field]
+    return values
 
-    return _py_literal(node.value)
+
+def _attach_index_label_cells(
+    selected: Sequence[CanonicalAddress],
+    parent_addresses: Sequence[CanonicalAddress],
+    cells: Sequence[PositionalRangeCell],
+    missing: Sequence[CanonicalAddress],
+    ctx: EmitContext,
+) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
+    """Fill INDEX column holes that are row-labels or non-formula header leaves."""
+    if not missing:
+        return tuple(cells), tuple(missing)
+    labels = _label_values_for_window(ctx.catalog, parent_addresses)
+    by_addr = {cell.address: cell for cell in cells}
+    filled: list[PositionalRangeCell] = []
+    still: list[CanonicalAddress] = []
+    for address in selected:
+        if address in by_addr:
+            filled.append(by_addr[address])
+            continue
+        if address in labels:
+            filled.append(PositionalRangeCell(address, None, None, False, labels[address]))
+            continue
+        node = None if ctx.graph is None else ctx.graph.get_node(address)
+        if node is not None and not node.has_formula:
+            filled.append(PositionalRangeCell(address, None, None, False, node.value))
+            continue
+        still.append(address)
+    return tuple(filled), tuple(still)
 
 
 def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
     """Emit one MATCH/INDEX window cell by literal coordinate.
 
-    Constant leaves keep their workbook types so `INDEX`/`MATCH` see the
-    named range as Excel does, not the series measure dtype.
+    Lookup tables read the bound series so `overrides` still apply, then
+    `xl_lookup_cell` restores workbook types when the measure dtype hid them.
+    Row-label cells outside `data_range` emit the series key.
     """
     if cell.blank:
         return "None"
-    literal = _workbook_constant_literal(cell.address, ctx)
-    if literal is not None:
-        return literal
-    return _emit_address(cell.address, ctx)
+    if cell.series_id is None:
+        return _scalar_literal(cell.label_value)
+    measure = _emit_address(cell.address, ctx)
+    if not ctx.restore_lookup_types or ctx.graph is None:
+        return measure
+    owner = ctx.catalog.get(cell.series_id)
+    if not _view_preserves_excel_types(owner, (cell.address,), ctx):
+        node = ctx.graph.get_node(cell.address)
+        if node is not None and not node.has_formula:
+            return f"{ctx.use('xl_lookup_cell')}({measure}, {_scalar_literal(node.value)})"
+    return measure
 
 
 def _named_range_view(
@@ -1280,9 +1350,10 @@ def _named_range_view(
     host coordinate, or one key. Fields that vary down the worksheet form
     the row product and fields that vary across it the column product; the
     range lowers only when that product reproduces the cells in worksheet
-    order. Nested layouts select keys per field name. A constant series whose
-    measure dtype would change Excel `=` against workbook values (numeric
-    cells in a string tensor) is not a view; callers emit positional cells.
+    order. Nested layouts select keys per field name. Lookup tables whose
+    measure dtype would stringify workbook values wrap the view in
+    `xl_typed_range` so bound-series `overrides` still apply. Other callers
+    skip the view.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -1409,9 +1480,12 @@ def _named_range_view(
                 + ", ".join(f"{field!r}: {selections[field]}" for field in col_fields)
                 + "}"
             )
-    if not _view_preserves_excel_types(owner, addresses, ctx):
+    view = f"{ctx.use('view')}({', '.join(args)})"
+    if _view_preserves_excel_types(owner, addresses, ctx):
+        return view
+    if not ctx.restore_lookup_types:
         return None
-    return f"{ctx.use('view')}({', '.join(args)})"
+    return f"{ctx.use('xl_typed_range')}({view}, {_natives_tuple(addresses, ctx)})"
 
 
 def _emit_range_table(node: AstNode, ctx: EmitContext) -> str:
@@ -1687,6 +1761,8 @@ def _emit_worksheet_column(node: RangeNode, ctx: EmitContext, col_literal: int) 
     if column_view is not None:
         return column_view
     cells, missing = resolve_positional_range(selected, ctx.catalog, ctx.blank_rects, ctx.graph)
+    parent = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+    cells, missing = _attach_index_label_cells(selected, parent, cells, missing, ctx)
     if missing:
         raise _host_export_error(
             ctx, f"INDEX selected column has unbound cells: {list(missing[:8])}"
@@ -1697,10 +1773,13 @@ def _emit_worksheet_column(node: RangeNode, ctx: EmitContext, col_literal: int) 
 def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     if len(node.args) < 2:
         raise _host_export_error(ctx, "INDEX expects a range and row")
+    ctx = _with_lookup_types(ctx)
     row_arg = node.args[1]
     col_arg = node.args[2] if len(node.args) > 2 else None
     row_expr = "None" if isinstance(row_arg, EmptyArgNode) else emit_expr(row_arg, ctx)
     col_expr, col_literal = _emit_index_column_arg(col_arg, ctx)
+    # Worksheet-column slice uses the explicit column argument. Excel's
+    # 1-row INDEX(array, n) column reinterpretation stays in xl_index.
     if isinstance(node.args[0], RangeNode) and col_literal is not None and col_literal > 0:
         column = _emit_worksheet_column(node.args[0], ctx, col_literal)
         if column is not None:
@@ -1728,6 +1807,7 @@ def _emit_match(node: FunctionCallNode, ctx: EmitContext) -> str:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: MATCH expects lookup and array"
         )
+    ctx = _with_lookup_types(ctx)
     lookup = emit_expr(node.args[0], ctx)
     array = _emit_match_array(node.args[1], ctx)
     match_type = emit_expr(node.args[2], ctx) if len(node.args) > 2 else "0"
