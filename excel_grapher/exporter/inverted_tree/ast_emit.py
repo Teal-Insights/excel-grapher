@@ -1583,9 +1583,91 @@ def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[s
         return "None", None
     col_literal = int(col_arg.value) if isinstance(col_arg, NumberNode) else None
     try:
-        return emit_expr(col_arg, ctx), col_literal
+        col_expr = emit_expr(col_arg, ctx)
     except InvertedTreeExportError as exc:
         raise _host_export_error(ctx, f"INDEX column cannot be lowered ({exc})") from exc
+    if col_literal is None and col_expr.isdigit():
+        col_literal = int(col_expr)
+    return col_expr, col_literal
+
+
+def _index_column_addresses(
+    node: RangeNode, col_literal: int, ctx: EmitContext
+) -> list[CanonicalAddress]:
+    """Return the worksheet column `col_literal` of an INDEX range, in sheet order."""
+    start = as_canonical(resolve_cell_ref(node.start_ref, ctx.host_cell))
+    end = as_canonical(resolve_cell_ref(node.end_ref, ctx.host_cell))
+    first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
+    return [
+        address
+        for address in iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+        if parse_cell_coords(address)[2] == first_col + col_literal - 1
+    ]
+
+
+def _graph_cached_literal(address: CanonicalAddress, ctx: EmitContext) -> str | None:
+    """Workbook-native cached value for an INDEX cell, if the graph has one.
+
+    Lookup tables must keep Excel's stored type (`1`, not `'1'`). Series
+    `dtype: string` would otherwise stringify numeric country codes and
+    0/1 flags, so `INDEX(...)=1` misses after MATCH succeeds.
+    """
+    if ctx.graph is None:
+        return None
+    node = ctx.graph.get_node(address)
+    if node is None or node.has_formula or node.value is None:
+        return None
+    value = node.value
+    if isinstance(value, bool):
+        return "True" if value else "False"
+    if isinstance(value, int | float | str):
+        return repr(value)
+    return None
+
+
+def _emit_index_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
+    """Emit one INDEX-column cell, preferring the workbook's cached type."""
+    if cell.blank:
+        return "None"
+    owner = ctx.catalog.series_for(cell.address)
+    if owner is None or owner.direction == "constant":
+        literal = _graph_cached_literal(cell.address, ctx)
+        if literal is not None:
+            return literal
+    return _emit_address(cell.address, ctx)
+
+
+def _index_column_cells(
+    selected: Sequence[CanonicalAddress], ctx: EmitContext
+) -> tuple[PositionalRangeCell, ...]:
+    """Map an INDEX column to catalog cells, plus on-graph valued leaves."""
+    cells, missing = resolve_positional_range(selected, ctx.catalog, ctx.blank_rects, ctx.graph)
+    by_address = {cell.address: cell for cell in cells}
+    still_missing: list[CanonicalAddress] = []
+    for address in missing:
+        if _graph_cached_literal(address, ctx) is None:
+            still_missing.append(address)
+            continue
+        by_address[address] = PositionalRangeCell(address, None, None, False)
+    if still_missing:
+        raise _host_export_error(
+            ctx, f"INDEX selected column has unbound cells: {list(still_missing[:8])}"
+        )
+    return tuple(by_address[address] for address in selected)
+
+
+def _emit_index_worksheet_column(
+    selected: Sequence[CanonicalAddress], row_expr: str, ctx: EmitContext
+) -> str:
+    """INDEX one worksheet column without rebuilding a dtype-coerced table."""
+    owner = covering_series(ctx.catalog, selected)
+    if owner is not None and owner.dtype not in {"string", "str"}:
+        column_view = _named_range_view(RangeNode(selected[0], selected[-1]), ctx)
+        if column_view is not None:
+            return f"{ctx.use('xl_index')}({column_view}, {row_expr}, 1)"
+    cells = _index_column_cells(selected, ctx)
+    table = "(" + ", ".join(f"({_emit_index_cell(cell, ctx)},)" for cell in cells) + ",)"
+    return f"{ctx.use('xl_index')}({table}, {row_expr}, 1)"
 
 
 def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
@@ -1595,6 +1677,10 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     col_arg = node.args[2] if len(node.args) > 2 else None
     row_expr = "None" if isinstance(row_arg, EmptyArgNode) else emit_expr(row_arg, ctx)
     col_expr, col_literal = _emit_index_column_arg(col_arg, ctx)
+    if isinstance(node.args[0], RangeNode) and col_literal is not None and col_literal > 0:
+        selected = _index_column_addresses(node.args[0], col_literal, ctx)
+        if selected:
+            return _emit_index_worksheet_column(selected, row_expr, ctx)
     if row_expr in {"None", "0", "0.0"} or col_expr in {"None", "0", "0.0"}:
         # Omitted and zero selectors request vectors; the lazy table keeps
         # their shape and Excel's single-row special case.
@@ -1604,32 +1690,6 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
             else _emit_value_or_range(node.args[0], ctx)
         )
         return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
-    if isinstance(node.args[0], RangeNode) and col_literal is not None and col_literal > 0:
-        start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
-        end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
-        first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
-        selected = [
-            address
-            for address in iter_ref_addresses(node.args[0], ctx.host_cell, ctx.graph)
-            if parse_cell_coords(address)[2] == first_col + col_literal - 1
-        ]
-        if selected:
-            # A proven column selection must not introduce dependencies on
-            # other columns excluded by the extracted graph.
-            column_view = _named_range_view(RangeNode(selected[0], selected[-1]), ctx)
-            if column_view is not None:
-                return f"{ctx.use('xl_index')}({column_view}, {row_expr}, 1)"
-            cells, missing = resolve_positional_range(
-                selected, ctx.catalog, ctx.blank_rects, ctx.graph
-            )
-            if missing:
-                raise _host_export_error(
-                    ctx, f"INDEX selected column has unbound cells: {list(missing[:8])}"
-                )
-            table = (
-                "(" + ", ".join(f"({_emit_positional_cell(cell, ctx)},)" for cell in cells) + ",)"
-            )
-            return f"{ctx.use('xl_index')}({table}, {row_expr}, 1)"
     table = _emit_value_or_range(node.args[0], ctx)
     return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
 
