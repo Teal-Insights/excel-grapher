@@ -6,14 +6,15 @@
   <title>__TITLE__</title>
   <style>
     * { box-sizing: border-box; }
-    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #e8eaed; color: #24292f; }
+    html, body { margin: 0; height: 100%; font-family: system-ui, sans-serif; background: #e8eaed; color: #24292f; display: flex; flex-direction: column; }
     #toolbar {
       display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
       padding: 8px 12px; background: #f0f2f5; border-bottom: 1px solid #d0d7de;
-      font-size: 13px;
+      font-size: 13px; flex: 0 0 auto;
     }
     #toolbar label { display: flex; gap: 4px; align-items: center; user-select: none; }
-    #wrap { position: relative; width: 100%; height: calc(100% - 48px); background: #fff; overflow: hidden; }
+    #toolbar select { font: inherit; padding: 3px 6px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; }
+    #wrap { position: relative; flex: 1 1 auto; width: 100%; min-height: 0; background: #fff; overflow: hidden; }
     canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; cursor: grab; background: #fff; }
     canvas.dragging { cursor: grabbing; }
     #tip {
@@ -61,6 +62,21 @@
     <label><input type="checkbox" data-dir="input" checked /> Inputs</label>
     <label><input type="checkbox" data-dir="internal" checked /> Internals</label>
     <label><input type="checkbox" data-dir="output" checked /> Outputs</label>
+    <label>Color by
+      <select id="colorBy">
+        <option value="series" selected>Series</option>
+        <option value="role">Role</option>
+        <option value="sheet">Sheet</option>
+      </select>
+    </label>
+    <label>Cluster by
+      <select id="clusterBy">
+        <option value="none" selected>None</option>
+        <option value="series">Series</option>
+        <option value="role">Role</option>
+        <option value="sheet">Sheet</option>
+      </select>
+    </label>
     <input id="search" type="search" placeholder="Highlight series…" />
     <button id="reset" type="button">Reset</button>
     <span id="banner"></span>
@@ -83,7 +99,7 @@
         <span class="swatch faded" style="color:#24292f"></span> guarded (faded)
       </p>
       <h3>Boxes</h3>
-      <ul>
+      <ul id="legendFill">
         <li><span class="box series"></span><span>fill is a per-series hue (hash of <code>series_id</code>), not direction</span></li>
         <li><span class="box"></span><span>unbound remainder</span></li>
       </ul>
@@ -99,11 +115,25 @@
 (function () {
   'use strict';
 
-  function seriesColor(seriesId, seriesIds) {
-    var i = seriesIds.indexOf(seriesId);
+  var MIXED_SHEET = 'mixed';
+  var ROLE_COLORS = {
+    constant: 'hsl(210, 62%, 78%)',
+    input: 'hsl(142, 52%, 72%)',
+    internal: 'hsl(42, 80%, 78%)',
+    output: 'hsl(16, 80%, 76%)',
+    remainder: '#d0d7de'
+  };
+  var MIXED_SHEET_COLOR = 'hsl(300, 35%, 78%)';
+
+  function hashedColor(key, keys) {
+    var i = keys.indexOf(key);
     if (i < 0) i = 0;
     var h = (i * 47 + 13) % 360;
     return 'hsl(' + h + ', 62%, 78%)';
+  }
+
+  function seriesColor(seriesId, seriesIds) {
+    return hashedColor(seriesId, seriesIds);
   }
 
   async function loadData() {
@@ -178,9 +208,9 @@
     return centers;
   }
 
-  function layoutByRank(nodes, compact) {
-    var pad = compact ? 24 : 48;
-    var rankGap = compact ? 16 : 72;
+  function layoutByRank(nodes, compact, clusterBy) {
+    var pad = compact ? 24 : (clusterBy && clusterBy !== 'none' ? 64 : 48);
+    var rankGap = compact ? 16 : (clusterBy && clusterBy !== 'none' ? 84 : 72);
     var nodeGap = compact ? 4 : 16;
     var byRank = {};
     nodes.forEach(function (n) {
@@ -192,6 +222,12 @@
     ranks.forEach(function (rank) {
       var rowNodes = byRank[rank];
       rowNodes.sort(function (a, b) {
+        if (clusterBy && clusterBy !== 'none') {
+          var ka = a._cluster;
+          var kb = b._cluster;
+          if (ka < kb) return -1;
+          if (ka > kb) return 1;
+        }
         var da = dirRank(a) - dirRank(b);
         if (da !== 0) return da;
         if (a.series_id < b.series_id) return -1;
@@ -253,10 +289,14 @@
     var nodes = data.nodes || [];
     var bundles = data.bundles || [];
     var seriesIds = [];
+    var sheetIds = [];
     nodes.forEach(function (n) {
       if (seriesIds.indexOf(n.series_id) < 0) seriesIds.push(n.series_id);
+      var sheet = n.sheet || MIXED_SHEET;
+      if (sheet !== MIXED_SHEET && sheetIds.indexOf(sheet) < 0) sheetIds.push(sheet);
       n._label = nodeLabel(n);
     });
+    sheetIds.sort();
     var markStyle = (nodes.length + 2 * bundles.length) > BOX_MAX_PRIMITIVES ? 'dots' : 'boxes';
     if (markStyle === 'dots' && !document.getElementById('banner').textContent) {
       document.getElementById('banner').textContent = 'Dots view (large graph)';
@@ -282,10 +322,46 @@
       return (document.getElementById('search').value || '').trim().toLowerCase();
     }
 
+    function colorMode() {
+      var el = document.getElementById('colorBy');
+      return (el && el.value) || 'series';
+    }
+
+    function clusterMode() {
+      var el = document.getElementById('clusterBy');
+      return (el && el.value) || 'none';
+    }
+
+    function roleKey(n) {
+      return n.is_remainder ? 'remainder' : (n.direction || 'internal');
+    }
+
+    function nodeFill(n) {
+      var mode = colorMode();
+      if (mode === 'role') {
+        return ROLE_COLORS[roleKey(n)] || ROLE_COLORS.internal;
+      }
+      if (mode === 'sheet') {
+        var sheet = n.sheet || MIXED_SHEET;
+        if (sheet === MIXED_SHEET) return MIXED_SHEET_COLOR;
+        return hashedColor(sheet, sheetIds);
+      }
+      if (n.is_remainder) return markStyle === 'dots' ? '#8c959f' : '#d0d7de';
+      return seriesColor(n.series_id, seriesIds);
+    }
+
+    function clusterKey(n) {
+      var mode = clusterMode();
+      if (mode === 'role') return roleKey(n);
+      if (mode === 'sheet') return n.sheet || MIXED_SHEET;
+      if (mode === 'series') return String(n.series_id);
+      return '';
+    }
+
     function nodeTip(n) {
       return [
         n.id,
-        'series ' + n.series_id + '  direction ' + n.direction,
+        'series ' + n.series_id + '  direction ' + n.direction + '  sheet ' + (n.sheet || MIXED_SHEET),
         'rank ' + n.rank + '  cells ' + n.cell_count,
         (n.cells || []).slice(0, 8).join(', ')
       ].join('\n');
@@ -321,9 +397,51 @@
       return {ctx: ctx, cssW: cssW};
     }
 
+    function paintClusters(ctx) {
+      if (clusterMode() === 'none') return;
+      var groups = {};
+      nodes.forEach(function (n) {
+        if (n._hidden) return;
+        var key = clusterKey(n);
+        (groups[key] || (groups[key] = [])).push(n);
+      });
+      Object.keys(groups).sort().forEach(function (key) {
+        var members = groups[key];
+        var pad = markStyle === 'dots' ? 10 : 12;
+        var x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+        members.forEach(function (n) {
+          var hw = (n._w || 6) / 2;
+          var hh = (n._h || 6) / 2;
+          x0 = Math.min(x0, n._x - hw);
+          y0 = Math.min(y0, n._y - hh);
+          x1 = Math.max(x1, n._x + hw);
+          y1 = Math.max(y1, n._y + hh);
+        });
+        x0 -= pad; y0 -= pad; x1 += pad; y1 += pad;
+        ctx.save();
+        ctx.fillStyle = 'rgba(31, 35, 40, 0.04)';
+        ctx.strokeStyle = '#656d76';
+        ctx.lineWidth = 1.2;
+        ctx.setLineDash([5, 4]);
+        ctx.beginPath();
+        if (ctx.roundRect) ctx.roundRect(x0, y0, x1 - x0, y1 - y0, 10);
+        else ctx.rect(x0, y0, x1 - x0, y1 - y0);
+        ctx.fill();
+        ctx.stroke();
+        ctx.setLineDash([]);
+        ctx.fillStyle = '#656d76';
+        ctx.font = '11px system-ui, sans-serif';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(key, x0 + 6, y0 - 2);
+        ctx.restore();
+      });
+    }
+
     function paintBoxes() {
       var frame = beginFrame();
       var ctx = frame.ctx;
+      paintClusters(ctx);
       var q = query();
       var zoomedOut = vb.w > 1400;
       bundles.forEach(function (b) {
@@ -378,7 +496,7 @@
         if (!inView(x0, y0, x0 + n._w, y0 + n._h)) return;
         ctx.save();
         if (q && !n._match) ctx.globalAlpha *= 0.18;
-        ctx.fillStyle = n.is_remainder ? '#d0d7de' : seriesColor(n.series_id, seriesIds);
+        ctx.fillStyle = nodeFill(n);
         ctx.strokeStyle = '#1f2328';
         ctx.lineWidth = (q && n._match) ? 2.4 : 1.2;
         ctx.beginPath();
@@ -401,6 +519,7 @@
     function paintDots() {
       var frame = beginFrame();
       var ctx = frame.ctx;
+      paintClusters(ctx);
       var q = query();
       var edgeCap = 8000;
       var painted = 0;
@@ -425,7 +544,7 @@
         if (n._hidden) return;
         if (!inView(n._x - 4, n._y - 4, n._x + 4, n._y + 4)) return;
         ctx.globalAlpha = (q && !n._match) ? 0.18 : 0.95;
-        ctx.fillStyle = n.is_remainder ? '#8c959f' : seriesColor(n.series_id, seriesIds);
+        ctx.fillStyle = nodeFill(n);
         ctx.beginPath();
         ctx.arc(n._x, n._y, q && n._match ? 3.4 : 2.4, 0, Math.PI * 2);
         ctx.fill();
@@ -442,21 +561,53 @@
       }
     }
 
+    function legendSwatch(color) {
+      return '<span class="box" style="background:' + color + '"></span>';
+    }
+
+    function updateLegend() {
+      var list = document.getElementById('legendFill');
+      if (!list) return;
+      var mode = colorMode();
+      var items = [];
+      if (mode === 'role') {
+        ['constant', 'input', 'internal', 'output', 'remainder'].forEach(function (role) {
+          items.push('<li>' + legendSwatch(ROLE_COLORS[role]) + '<span>' + role + '</span></li>');
+        });
+      } else if (mode === 'sheet') {
+        var cap = 24;
+        sheetIds.slice(0, cap).forEach(function (sheet) {
+          items.push('<li>' + legendSwatch(hashedColor(sheet, sheetIds)) + '<span>' + esc(sheet) + '</span></li>');
+        });
+        if (sheetIds.length > cap) {
+          items.push('<li><span>… ' + (sheetIds.length - cap) + ' more sheets</span></li>');
+        }
+        items.push('<li>' + legendSwatch(MIXED_SHEET_COLOR) + '<span>mixed (cells span sheets)</span></li>');
+      } else {
+        items.push('<li>' + legendSwatch('hsl(13, 62%, 78%)') + '<span>fill is a per-series hue (hash of <code>series_id</code>), not direction</span></li>');
+        items.push('<li>' + legendSwatch('#d0d7de') + '<span>unbound remainder</span></li>');
+      }
+      list.innerHTML = items.join('');
+    }
+
     function draw(resetView) {
       var dirs = enabledDirs();
       var q = query();
+      var clustering = clusterMode();
       nodes.forEach(function (n) {
         var dir = n.is_remainder ? 'internal' : (n.direction || 'internal');
         n._hidden = dirs[dir] === false;
         n._match = !q || String(n.series_id).toLowerCase().indexOf(q) >= 0 || String(n.id).toLowerCase().indexOf(q) >= 0;
+        n._cluster = clustering === 'none' ? '' : clusterKey(n);
       });
-      var size = layoutByRank(nodes, markStyle === 'dots');
+      var size = layoutByRank(nodes, markStyle === 'dots', clustering);
       if (resetView !== false) vb = cameraFor(size);
       byId = {};
       nodes.forEach(function (n) { byId[n.id] = n; });
       paintCanvas();
     }
 
+    updateLegend();
     draw();
 
     document.querySelectorAll('#toolbar input[data-dir]').forEach(function (el) {
@@ -464,6 +615,13 @@
     });
     document.getElementById('search').addEventListener('input', function () { draw(false); });
     document.getElementById('reset').addEventListener('click', function () { draw(true); });
+    document.getElementById('colorBy').addEventListener('change', function () {
+      updateLegend();
+      paintCanvas();
+    });
+    document.getElementById('clusterBy').addEventListener('change', function () {
+      draw(false);
+    });
 
     var dragging = false;
     var last = null;

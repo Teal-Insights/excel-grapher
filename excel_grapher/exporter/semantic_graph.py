@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from datetime import datetime
 from typing import Any
 
-from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
+from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_address
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -26,6 +26,7 @@ from excel_grapher.grapher.lightweight_viz import unconditional_scc_ranks
 from excel_grapher.series_bindings.types import Scalar
 
 REMAINDER_STATEMENT_ID = "__unbound__"
+MIXED_SHEET = "mixed"
 
 _BundleKey = tuple[
     str,
@@ -50,6 +51,7 @@ class StatementNode:
     cells: tuple[CanonicalAddress, ...]
     cell_count: int
     direction: str
+    sheet: str
     is_remainder: bool = False
 
 
@@ -95,6 +97,22 @@ class StatementGraph:
     heterogeneous_pairs: tuple[tuple[str, str], ...]
 
 
+def statement_sheet(cells: Sequence[CanonicalAddress]) -> str:
+    """Return the shared worksheet name, or `mixed` when sheets disagree.
+
+    Empty cell lists and multi-sheet statements fail closed to `mixed` rather
+    than silently taking the first address.
+    """
+    sheets: set[str] = set()
+    for cell in cells:
+        sheets.add(parse_address(cell)[0])
+        if len(sheets) > 1:
+            return MIXED_SHEET
+    if len(sheets) != 1:
+        return MIXED_SHEET
+    return next(iter(sheets))
+
+
 def _cell_to_statement(catalog: SeriesCatalog) -> dict[CanonicalAddress, str]:
     """Map each bound cell to its covering statement id."""
     mapping: dict[CanonicalAddress, str] = {}
@@ -122,6 +140,7 @@ def _statement_nodes(catalog: SeriesCatalog) -> dict[str, StatementNode]:
                 cells=stmt.cells,
                 cell_count=len(stmt.cells),
                 direction=series.direction,
+                sheet=statement_sheet(stmt.cells),
             )
     return nodes
 
@@ -142,6 +161,7 @@ def _ensure_statement_node(
         cells=series.cells,
         cell_count=len(series.cells),
         direction=series.direction,
+        sheet=statement_sheet(series.cells),
     )
 
 
@@ -301,13 +321,13 @@ def _unbound_cells(
     catalog: SeriesCatalog,
     *,
     sample_limit: int = 16,
-) -> tuple[tuple[CanonicalAddress, ...], int]:
+) -> tuple[tuple[CanonicalAddress, ...], int, str]:
     unbound: list[CanonicalAddress] = []
     for key in graph.keys(order="workbook"):
         if key not in catalog.address_to_id:
             unbound.append(as_canonical(key))
     unbound.sort()
-    return tuple(unbound[:sample_limit]), len(unbound)
+    return tuple(unbound[:sample_limit]), len(unbound), statement_sheet(unbound)
 
 
 def build_statement_graph(
@@ -338,7 +358,7 @@ def build_statement_graph(
                 nodes, cell_stmt.get(edge.producer_cell, producer_series.series_id), producer_series
             )
 
-    remainder_sample, unbound_count = _unbound_cells(graph, catalog)
+    remainder_sample, unbound_count, remainder_sheet = _unbound_cells(graph, catalog)
     if unbound_count:
         nodes[REMAINDER_STATEMENT_ID] = StatementNode(
             statement_id=REMAINDER_STATEMENT_ID,
@@ -349,6 +369,7 @@ def build_statement_graph(
             cells=remainder_sample,
             cell_count=unbound_count,
             direction="internal",
+            sheet=remainder_sheet,
             is_remainder=True,
         )
 
