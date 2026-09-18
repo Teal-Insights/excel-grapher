@@ -305,6 +305,22 @@ class BoundSeries:
         """Return the 0-based index of canonical `address` in `cells`, if present."""
         return self._cell_indices.get(address)
 
+    def axis_owns_point(self, point: KeyPoint) -> bool:
+        """True when every key of `point` is a declared tensor-axis key.
+
+        Sparse membership may still omit the complete coordinate. Keys that
+        are not on the axis fail closed at lookup time and must not be
+        emitted as producer indexes.
+        """
+        for axis, key_field in zip(self.tensor_domain.axes, self.key_fields, strict=True):
+            try:
+                key = point[key_field]
+            except KeyError:
+                return False
+            if key not in axis:
+                return False
+        return True
+
     def dimension_bind(self, field: str) -> Mapping[str, Any] | None:
         """Return the declared bind mapping for `field`, if any."""
         return self._dimension_binds.get(field)
@@ -922,6 +938,36 @@ def _cell_access_pairs(
             continue
         found.append((owner_id, catalog.get(owner_id).index_of(resolved)))
     return tuple(found)
+
+
+def _cell_refs_support_series_index(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    address: CanonicalAddress,
+) -> bool:
+    """False when a simple series index would use an off-axis or unbound key.
+
+    A relative copy whose producer cell sits in a bound series must land on
+    that series' axis keys. Unbound `blank_ranges` and catalog points whose
+    keys were dropped from the tensor axis cannot reuse a sampled lookup.
+    Range formulas, VLOOKUP tables, and other mixed reads are not gated here.
+    A cell with no formula tree fails closed.
+    """
+    node = graph.get_node(address)
+    formula = getattr(node, "formula_ast", None) if node is not None else None
+    if formula is None:
+        return False
+    for ref in _iter_cell_refs(formula):
+        resolved = as_canonical(resolve_cell_ref(ref, address))
+        owner = catalog.series_for(resolved)
+        if owner is None:
+            return False
+        if owner.single_valued:
+            continue
+        index = owner.index_of(resolved)
+        if index is None or not owner.axis_owns_point(owner.domain[index]):
+            return False
+    return True
 
 
 SlotState = tuple[int, int] | int | None

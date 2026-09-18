@@ -32,6 +32,14 @@ def test_axis_position_returns_the_key_index() -> None:
         axis.position(2023)
 
 
+def test_axis_contains_typed_keys_only() -> None:
+    axis = Axis("TIME_PERIOD", (2024, 2025, 2026), int)
+    assert 2025 in axis
+    assert 2023 not in axis
+    assert "2025" not in axis
+    assert 2025.0 not in axis
+
+
 def test_label_axis_builds_an_axis_and_names_collisions() -> None:
     axis = label_axis("TIME_PERIOD", (2026, 2027), int)
     assert axis == Axis("TIME_PERIOD", (2026, 2027), int)

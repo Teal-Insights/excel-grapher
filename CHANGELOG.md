@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## Unreleased
+
+### Bug Fixes
+
+- **export**: Do not replicate a sampled producer-index affine onto host
+  coordinates whose image is missing from the producer axis
+  ([#882](https://github.com/Teal-Insights/excel-grapher/issues/882)).
+  Bound cells whose catalog keys were dropped from that axis emit `None`
+  instead of `CoordinateError`, including LIC-DSF `('IDA - SML', 51)`.
+  Wrapped lookups (`xl_add(producer[...], 0)`) use the same gate. On-axis
+  triangle holes stay named indexes so VLOOKUP/`ISNUMBER` families still fold.
+
+
 ## v20.3.5 (2026-09-17)
 
 ### Bug Fixes
