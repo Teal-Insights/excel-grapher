@@ -38,6 +38,7 @@
     }
     #legend ul { margin: 0; padding: 0; list-style: none; }
     #legend li { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    #legend li > span:last-child { min-width: 0; }
     #legend .swatch {
       display: inline-block; width: 22px; flex: 0 0 22px; height: 0;
       border-top: 3px solid currentColor; vertical-align: middle;
@@ -71,10 +72,10 @@
       <summary>Legend</summary>
       <h3>Edges</h3>
       <ul>
-        <li><span class="swatch" style="color:#0969da"></span> identity</li>
-        <li><span class="swatch dashed" style="color:#8250df"></span> shift</li>
-        <li><span class="swatch" style="color:#1a7f37"></span> affine</li>
-        <li><span class="swatch" style="color:#9a6700"></span> gather / whole / dynamic / cross_partition</li>
+        <li><span class="swatch" style="color:#0969da"></span><span>identity</span></li>
+        <li><span class="swatch dashed" style="color:#8250df"></span><span>shift</span></li>
+        <li><span class="swatch" style="color:#1a7f37"></span><span>affine</span></li>
+        <li><span class="swatch" style="color:#9a6700"></span><span>gather / whole / dynamic / cross_partition</span></li>
       </ul>
       <p class="note">
         <span class="swatch" style="color:#24292f"></span> contemporaneous (solid)<br />
@@ -83,8 +84,8 @@
       </p>
       <h3>Boxes</h3>
       <ul>
-        <li><span class="box series"></span> fill is a per-series hue (hash of <code>series_id</code>), not direction</li>
-        <li><span class="box"></span> unbound remainder</li>
+        <li><span class="box series"></span><span>fill is a per-series hue (hash of <code>series_id</code>), not direction</span></li>
+        <li><span class="box"></span><span>unbound remainder</span></li>
       </ul>
       <p class="note">Direction uses the Constants / Inputs / Internals / Outputs checkboxes.</p>
     </details>
