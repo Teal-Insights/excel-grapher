@@ -23,6 +23,7 @@ from excel_grapher.exporter.codegen import REPRESENTATION_VERSION
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     EmitContext,
     _as_measure_call,
+    _is_bare_numeric_blank_copy,
     _named_keys,
     emit_expr,
     python_measure_type,
@@ -629,7 +630,10 @@ def _semantic_body(
                 node_formula_ast(graph, cell)
             expression = _hole_expression(series, index, ctx, graph)
         else:
-            expression = _as_measure_call(emit_expr(node, ctx), series)
+            expression = emit_expr(node, ctx)
+            if _is_bare_numeric_blank_copy(node, ctx, series):
+                expression = "0"
+            expression = _as_measure_call(expression, series)
         used.add("as_measure")
         used.update(ctx.used_runtime)
         return expression

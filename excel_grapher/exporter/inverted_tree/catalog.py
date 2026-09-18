@@ -350,15 +350,27 @@ class BoundSeries:
         return self._holes_by_index.get(index)
 
     def is_none_hole(self, index: int) -> bool:
-        """True when catalog `index` is a retained blank or off-closure hole."""
+        """True when catalog `index` is a blank or off-closure hole.
+
+        Input `blank_ranges` cells are stripped from `authored_cells` but can
+        remain in `cells`. A matrix life key those cells use may still sit on
+        the axis because a sibling instrument is valued there.
+        """
         hole = self.hole_at(index)
-        return hole is not None and hole.kind in _NONE_HOLE_KINDS
+        if hole is not None and hole.kind in _NONE_HOLE_KINDS:
+            return True
+        authored = self.authored_cells
+        return authored is not None and self.cells[index] not in authored
 
     def none_hole_at_keys(self, keys: tuple[object, ...]) -> bool:
-        """True when `keys` address a retained blank or off-closure hole."""
+        """True when `keys` are a blank/off-closure hole or a sparse authored miss.
+
+        Called after each key is known to sit on a producer axis, so a missing
+        `coordinate_cells` entry is an on-axis sparse hole, not an unknown key.
+        """
         address = self.coordinate_cells.get(cast(tuple[Scalar, ...], keys))
         if address is None:
-            return False
+            return True
         index = self.index_of(address)
         return index is not None and self.is_none_hole(index)
 

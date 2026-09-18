@@ -22,6 +22,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     write_workbook,
 )
@@ -246,6 +247,11 @@ def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
     workbook = _matrix_copy_workbook(tmp_path)
     document = _matrix_copy_bindings()
     blanks = _mcve_blank_ranges()
+    catalog, _deps, _graph = inverted_graph_parts(workbook, document, blank_ranges=blanks)
+    principal = catalog.get("principal")
+    assert principal.none_hole_at_keys((_BETA, 0))
+    assert principal.none_hole_at_keys((_BETA, 1))
+    assert not principal.none_hole_at_keys((_BETA, 2))
     modules = generate_inverted(workbook, document, blank_ranges=blanks)
     pkg = load_package(modules, tmp_path, name="off_axis_matrix")
     owned_life = {coord[1] for coord in pkg.data.PRINCIPAL.domain}

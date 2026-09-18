@@ -1089,7 +1089,10 @@ class _DepCollector:
     def emit_cell(
         self, address: CanonicalAddress, host_cell: CanonicalAddress, host_index: int
     ) -> None:
-        if address_in_blank_ranges(address, self.blank_rects):
+        if (
+            address_in_blank_ranges(address, self.blank_rects)
+            and self.catalog.series_for(address) is None
+        ):
             return
         owner = self.catalog.require_series_for(address)
         if owner.series_id == self.host.series_id:
