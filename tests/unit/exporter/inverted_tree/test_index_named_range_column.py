@@ -328,9 +328,7 @@ def test_index_named_range_reads_bound_series_overrides(tmp_path: Path) -> None:
 def test_index_named_range_includes_row_label_column(tmp_path: Path) -> None:
     workbook = _mcve_workbook(tmp_path)
     document = _stripped_label_bindings()
-    pkg = load_package(
-        generate_inverted(workbook, document), tmp_path, name="mkt_fin_stripped"
-    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="mkt_fin_stripped")
     kwargs = _kwargs(pkg)
     assert pkg.compute_yes_no(**kwargs) == "Yes"
     assert pkg.compute_chart(**kwargs) == 67.17

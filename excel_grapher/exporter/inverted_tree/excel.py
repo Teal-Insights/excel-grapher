@@ -445,9 +445,7 @@ def xl_lookup_cell(measure: object, workbook: object) -> object:
     return measure
 
 
-def _as_native_grid(
-    natives: object, height: int, width: int
-) -> tuple[tuple[object, ...], ...]:
+def _as_native_grid(natives: object, height: int, width: int) -> tuple[tuple[object, ...], ...]:
     """Interpret `natives` as a `height` by `width` row-major grid."""
     if isinstance(natives, str) or not isinstance(natives, Sequence):
         raise TypeError("natives must be a nested sequence")
