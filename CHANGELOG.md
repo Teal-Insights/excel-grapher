@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.4.0 (2026-09-18)
+
+### Bug Fixes
+
+- **viz**: Keep statement-graph legend labels wrapping as one unit
+  ([#901](https://github.com/Teal-Insights/excel-grapher/pull/901),
+  [`e9054ab`](https://github.com/Teal-Insights/excel-grapher/commit/e9054ab65bccc26be4aa1156b6ccd311e9f1281f))
+
+### Features
+
+- **viz**: Add legend and reset control to statement-graph HTML
+  ([#901](https://github.com/Teal-Insights/excel-grapher/pull/901),
+  [`e9054ab`](https://github.com/Teal-Insights/excel-grapher/commit/e9054ab65bccc26be4aa1156b6ccd311e9f1281f))
+
+
 ## v20.3.7 (2026-09-18)
 
 ### Bug Fixes
