@@ -213,8 +213,8 @@ def _label_values_for_window(
         occupies = [cell for cell in data_cells if cell in parent]
         if not occupies:
             continue
-        for field in series.key_fields:
-            bind = series.dimension_bind(field)
+        for key_field in series.key_fields:
+            bind = series.dimension_bind(key_field)
             if not isinstance(bind, Mapping) or bind.get("kind") not in {
                 "row_label",
                 "column_header",
@@ -225,7 +225,7 @@ def _label_values_for_window(
                 if point is None:
                     continue
                 for source in _bind_source_addresses(dict(bind), data_cell):
-                    values[as_canonical(source)] = point[field]
+                    values[as_canonical(source)] = point[key_field]
     return values
 
 
@@ -237,11 +237,12 @@ def _attach_index_label_cells(
     catalog: SeriesCatalog,
     graph: DependencyGraph | None,
 ) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
-    """Fill INDEX column holes that are row-labels or non-formula header leaves."""
+    """Fill INDEX column holes that are row-labels or the header leaf."""
     if not missing:
         return tuple(cells), tuple(missing)
     labels = _label_values_for_window(catalog, parent_addresses)
     by_addr = {cell.address: cell for cell in cells}
+    header = selected[0] if selected else None
     filled: list[PositionalRangeCell] = []
     still: list[CanonicalAddress] = []
     for address in selected:
@@ -252,7 +253,7 @@ def _attach_index_label_cells(
             filled.append(PositionalRangeCell(address, None, None, False, labels[address]))
             continue
         node = None if graph is None else graph.get_node(address)
-        if node is not None and not node.has_formula:
+        if address == header and node is not None and not node.has_formula:
             filled.append(PositionalRangeCell(address, None, None, False, node.value))
             continue
         still.append(address)
@@ -1374,10 +1375,10 @@ class _DepCollector:
                 self.emit_lookup(
                     covered_col, host_cell, range_column_origin(start, end, col_index), "dynamic"
                 )
-            elif col_literal:
-                self._visit_index_worksheet_column(
-                    node.args[0], col_index, host_cell=host_cell
-                )
+            elif col_literal and self._visit_index_worksheet_column(
+                node.args[0], col_index, host_cell=host_cell
+            ):
+                return
             else:
                 self._visit_range_addresses(
                     iter_range_addresses(start, end),
@@ -1394,8 +1395,12 @@ class _DepCollector:
         col_index: int,
         *,
         host_cell: CanonicalAddress,
-    ) -> None:
-        """Record deps for one INDEX worksheet column, including row-label holes."""
+    ) -> bool:
+        """Record deps for one INDEX worksheet column, including row-label holes.
+
+        Returns False when the selector is outside the range so the caller can
+        keep the full-range visit that lets Excel `INDEX` return `#REF!`.
+        """
         start = as_canonical(resolve_cell_ref(node.start_ref, host_cell))
         end = as_canonical(resolve_cell_ref(node.end_ref, host_cell))
         parent = iter_range_addresses(start, end)
@@ -1406,10 +1411,7 @@ class _DepCollector:
             if parse_cell_coords(address)[2] == first_col + col_index - 1
         ]
         if not selected:
-            raise InvertedTreeExportError(
-                f"series {self.host.series_id!r} cell {host_cell}: "
-                "INDEX selected column is empty"
-            )
+            return False
         cells, missing = resolve_positional_range(
             selected, self.catalog, self.blank_rects, self.graph
         )
