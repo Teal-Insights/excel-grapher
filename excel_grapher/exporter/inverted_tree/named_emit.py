@@ -535,13 +535,15 @@ def _index_image_on_producer_axes(
     axes = owner.tensor_domain.axes
     if len(key_nodes) != len(axes):
         return None
+    keys: list[object] = []
     for axis, key_node in zip(axes, key_nodes, strict=True):
         key = _eval_key_expr(key_node, env, remaps)
         if key is None:
             return None
         if key not in axis:
             return False
-    return True
+        keys.append(key)
+    return not owner.none_hole_at_keys(tuple(keys))
 
 
 def _sampled_index_supported(
@@ -590,9 +592,9 @@ def _semantic_body(
     expressions match, replicate the grouped body; mixed statements still
     emit one body per distinct expression. A sampled series index is not
     copied onto a member whose affine image is missing from the producer
-    axis or whose producer cell is unbound; that member is lowered on its
-    own so `=blank+0` / `=+blank` stay 0 (Excel) instead of AVERAGE-skipped
-    `None`.
+    axis, is a blank/off-closure hole, or whose producer cell is unbound;
+    that member is lowered on its own so a formula copy of a blank stays 0
+    (Excel) instead of AVERAGE-skipped `None`.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
@@ -627,11 +629,7 @@ def _semantic_body(
                 node_formula_ast(graph, cell)
             expression = _hole_expression(series, index, ctx, graph)
         else:
-            emitted = emit_expr(node, ctx)
-            if emitted == "None" and series.python_dtype in {"float", "int", "number"}:
-                # Excel `=blank` is 0; AVERAGE includes that 0 and skips true holes.
-                emitted = "0"
-            expression = _as_measure_call(emitted, series)
+            expression = _as_measure_call(emit_expr(node, ctx), series)
         used.add("as_measure")
         used.update(ctx.used_runtime)
         return expression

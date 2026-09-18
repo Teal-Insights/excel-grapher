@@ -349,6 +349,19 @@ class BoundSeries:
         """Return the hole recorded at catalog `index`, if any."""
         return self._holes_by_index.get(index)
 
+    def is_none_hole(self, index: int) -> bool:
+        """True when catalog `index` is a retained blank or off-closure hole."""
+        hole = self.hole_at(index)
+        return hole is not None and hole.kind in _NONE_HOLE_KINDS
+
+    def none_hole_at_keys(self, keys: tuple[object, ...]) -> bool:
+        """True when `keys` address a retained blank or off-closure hole."""
+        address = self.coordinate_cells.get(cast(tuple[Scalar, ...], keys))
+        if address is None:
+            return False
+        index = self.index_of(address)
+        return index is not None and self.is_none_hole(index)
+
     @property
     def rect(self) -> tuple[str, int, int, int, int] | None:
         """Axis-aligned dense rectangle `(sheet, row1, col1, row2, col2)`.
@@ -948,8 +961,9 @@ def _cell_refs_support_series_index(
     """False when a simple series index would use an off-axis or unbound key.
 
     A relative copy whose producer cell sits in a bound series must land on
-    that series' axis keys. Unbound `blank_ranges` and catalog points whose
-    keys were dropped from the tensor axis cannot reuse a sampled lookup.
+    that series' axis keys. Unbound `blank_ranges`, blank/off-closure holes,
+    and catalog points whose keys were dropped from the tensor axis cannot
+    reuse a sampled lookup.
     Range formulas, VLOOKUP tables, and other mixed reads are not gated here.
     A cell with no formula tree fails closed.
     """
@@ -966,6 +980,8 @@ def _cell_refs_support_series_index(
             continue
         index = owner.index_of(resolved)
         if index is None or not owner.axis_owns_point(owner.domain[index]):
+            return False
+        if owner.is_none_hole(index):
             return False
     return True
 

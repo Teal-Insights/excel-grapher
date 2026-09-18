@@ -4,7 +4,8 @@ A host calendar (or other integer) axis whose formulas copy a shorter producer
 life axis emits `producer[host - origin]`. First/middle/last sampling plus the
 largest-family unconditional return used to replicate that lookup onto years
 whose affine image is missing from the producer axis, raising `CoordinateError`.
-On-axis sparse holes still fold as named indexes; off-axis formula copies
+On-axis sparse holes still fold as named indexes when the host cell is a
+true hole (no formula). Formula copies of a blank, on-axis or off-axis,
 return `0`, matching Excel `=blank`.
 """
 
@@ -239,8 +240,8 @@ def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
     """LIC-DSF MCVE: Alpha year whose life image is 4 must not look up principal.
 
     Excel caches 0 for a ref into an omitted structural cell. Export returns
-    `0` for that off-axis formula rather than raising `CoordinateError`.
-    On-axis producer holes still read as `None`.
+    `0` for that formula copy rather than raising `CoordinateError`, including
+    on-axis producer holes the host copies with `=Input!X`.
     """
     workbook = _matrix_copy_workbook(tmp_path)
     document = _matrix_copy_bindings()
@@ -258,8 +259,6 @@ def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
             assert got[_ALPHA, year] == pytest.approx(0.0)
         if 2 <= life < _VALUED_LIFE:
             assert got[_BETA, year] == pytest.approx(0.2 * (life + 1))
-        elif life < _VALUED_LIFE:
-            assert got[_BETA, year] is None
         else:
             assert got[_BETA, year] == pytest.approx(0.0)
 
@@ -280,7 +279,7 @@ def test_cross_field_integer_affine_does_not_index_missing_step(tmp_path: Path) 
             assert got[bucket] == pytest.approx(float(life + 1))
         else:
             assert got[bucket] == pytest.approx(0.0)
-    targets = [f"Sheet!{_letter(life)}4" for life in range(_VALUED_LIFE)]
+    targets = [f"Sheet!{_letter(life)}4" for life in range(_N_HOST)]
     graph = create_dependency_graph(workbook, targets, load_values=True, blank_ranges=blanks)
     expected = FormulaEvaluator(graph, blank_ranges=blanks).evaluate(targets)
     for life, cell in enumerate(targets):
