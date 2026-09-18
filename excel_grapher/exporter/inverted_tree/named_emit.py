@@ -66,6 +66,8 @@ _SKIP_INDEX_CALLS = frozenset(
         "xl_xlookup",
         "xl_match",
         "xl_index",
+        "xl_typed_range",
+        "xl_lookup_cell",
     }
 )
 _RESERVED_NAMES = frozenset(
@@ -360,7 +362,7 @@ def _outermost_tables(node: ast.AST, local_names: set[str]) -> list[ast.Call]:
     if (
         isinstance(node, ast.Call)
         and isinstance(node.func, ast.Name)
-        and node.func.id in {"lazy_table", "view"}
+        and node.func.id in {"lazy_table", "view", "xl_typed_range"}
         and not any(
             isinstance(child, ast.Name) and child.id in local_names for child in ast.walk(node)
         )
