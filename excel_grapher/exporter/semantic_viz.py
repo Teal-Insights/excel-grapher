@@ -93,6 +93,7 @@ class SemanticVizPayload:
                         list(node.cells) if cell_sample is None else list(node.cells[:cell_sample])
                     ),
                     "direction": node.direction,
+                    "sheet": node.sheet,
                     "is_remainder": node.is_remainder,
                     "rank": g.ranks[i],
                     "x": g.positions[i][0],

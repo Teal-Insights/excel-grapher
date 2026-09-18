@@ -8,11 +8,14 @@ from pathlib import Path
 
 import pytest
 
+from excel_grapher.core.address_keys import canonical_address
 from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.exporter.semantic_catalog import load_semantic_catalog
 from excel_grapher.exporter.semantic_graph import (
+    MIXED_SHEET,
     REMAINDER_STATEMENT_ID,
     build_statement_graph,
+    statement_sheet,
 )
 from excel_grapher.exporter.semantic_viz import (
     SEMANTIC_VIZ_BOX_MAX_PRIMITIVES,
@@ -151,6 +154,16 @@ def test_guarded_access_is_a_separate_bundle(tmp_path: Path) -> None:
     assert any(b.guarded for b in statement_graph.bundles)
 
 
+def test_statement_sheet_is_mixed_when_cells_span_sheets() -> None:
+    same = (canonical_address("Engine!A2"), canonical_address("Engine!B2"))
+    assert statement_sheet(same) == "Engine"
+    quoted = (canonical_address("'My Sheet'!A1"),)
+    assert statement_sheet(quoted) == "My Sheet"
+    mixed = (canonical_address("Engine!A2"), canonical_address("Other!A1"))
+    assert statement_sheet(mixed) == MIXED_SHEET
+    assert statement_sheet(()) == MIXED_SHEET
+
+
 def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
@@ -164,6 +177,9 @@ def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     for node in data["nodes"]:
         if not node["is_remainder"]:
             assert node["cells"]
+            assert node["sheet"] == "Engine"
+        else:
+            assert node["sheet"]
     for bundle in data["bundles"]:
         assert bundle["representative_consumer_cell"]
         assert bundle["representative_producer_cell"]
@@ -228,12 +244,22 @@ def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:
     from excel_grapher.grapher.node import make_cell_node
 
     graph.add_node(make_cell_node("Engine", "Z", 99, value=1, is_leaf=True))
+    graph.add_node(make_cell_node("Other", "A", 1, value=1, is_leaf=True))
     statement_graph = build_statement_graph(view, graph)
     remainder = [n for n in statement_graph.nodes if n.is_remainder]
     assert remainder
     assert remainder[0].statement_id == REMAINDER_STATEMENT_ID
-    assert statement_graph.stats.unbound_cell_count >= 1
+    assert remainder[0].sheet == MIXED_SHEET
+    assert statement_graph.stats.unbound_cell_count >= 2
     assert "Engine!Z99" in catalog.address_to_id or "Engine!Z99" in statement_graph.remainder_sample
+    payload = to_semantic_viz_payload(
+        graph,
+        validate_bindings_document(_zipper_bindings()),
+        workbook=_zipper_workbook(tmp_path),
+        view=view,
+    )
+    remainder_payload = next(node for node in payload.to_dict()["nodes"] if node["is_remainder"])
+    assert remainder_payload["sheet"] == MIXED_SHEET
 
 
 def test_qcraft_scale_uses_boxes() -> None:
@@ -305,5 +331,60 @@ def test_html_ships_legend_and_reset_control(tmp_path: Path) -> None:
     assert 'id="search"' in text
     for direction in ("constant", "input", "internal", "output"):
         assert f'data-dir="{direction}"' in text
+    assert "pointermove" in text
+    assert "wheel" in text
+
+
+def test_html_ships_color_and_cluster_controls(tmp_path: Path) -> None:
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _zipper_bindings())
+    payload = to_semantic_viz_payload(
+        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    )
+    html = tmp_path / "zipper.html"
+    write_semantic_viz_html(payload, html)
+    text = html.read_text(encoding="utf-8")
+
+    assert 'id="colorBy"' in text
+    assert 'id="clusterBy"' in text
+    assert 'value="series"' in text
+    assert 'value="role"' in text
+    assert 'value="sheet"' in text
+    assert 'value="none"' in text
+    assert 'id="colorBy"' in text and "selected" in text
+    assert 'option value="series" selected' in text or 'value="series" selected' in text
+    assert 'option value="none" selected' in text or 'value="none" selected' in text
+
+    assert "ROLE_COLORS" in text
+    assert "constant:" in text
+    assert "input:" in text
+    assert "internal:" in text
+    assert "output:" in text
+    assert "remainder:" in text
+    assert "function nodeFill" in text
+    assert "function clusterKey" in text
+    assert "function paintClusters" in text
+    assert "function updateLegend" in text
+    assert "MIXED_SHEET" in text or "'mixed'" in text or '"mixed"' in text
+    assert "colorMode" in text
+    assert "clusterMode" in text
+    assert "getElementById('colorBy').addEventListener" in text or (
+        'getElementById("colorBy").addEventListener' in text
+    )
+    assert "updateLegend();" in text
+    assert "paintCanvas();" in text
+    assert "getElementById('clusterBy').addEventListener" in text or (
+        'getElementById("clusterBy").addEventListener' in text
+    )
+    assert "draw(false)" in text
+    assert "clusterMode() === 'none'" in text or 'clusterMode() === "none"' in text
+    assert "n.sheet" in text
+    assert "n.direction" in text
+    assert "identity: '#0969da'" in text
+    assert 'id="legendFill"' in text
+    assert 'id="search"' in text
+    for direction in ("constant", "input", "internal", "output"):
+        assert f'data-dir="{direction}"' in text
+    assert 'id="reset"' in text
     assert "pointermove" in text
     assert "wheel" in text
