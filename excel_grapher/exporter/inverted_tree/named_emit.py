@@ -588,7 +588,9 @@ def _semantic_body(
     expressions match, replicate the grouped body; mixed statements still
     emit one body per distinct expression. A sampled series index is not
     copied onto a member whose affine image is missing from the producer
-    axis or whose producer cell is unbound.
+    axis or whose producer cell is unbound; that member is lowered on its
+    own so `=blank+0` / `=+blank` stay 0 (Excel) instead of AVERAGE-skipped
+    `None`.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
@@ -623,7 +625,11 @@ def _semantic_body(
                 node_formula_ast(graph, cell)
             expression = _hole_expression(series, index, ctx, graph)
         else:
-            expression = _as_measure_call(emit_expr(node, ctx), series)
+            emitted = emit_expr(node, ctx)
+            if emitted == "None" and series.python_dtype in {"float", "int", "number"}:
+                # Excel `=blank` is 0; AVERAGE includes that 0 and skips true holes.
+                emitted = "0"
+            expression = _as_measure_call(emitted, series)
         used.add("as_measure")
         used.update(ctx.used_runtime)
         return expression
@@ -664,7 +670,6 @@ def _semantic_body(
             expression = alias_expression(next(iter(unique)))
             subscripts = _direct_series_subscripts(expression, catalog)
             if subscripts:
-                none_expression = _as_measure_call("None", series)
                 for index in members:
                     if _sampled_index_supported(
                         subscripts,
@@ -678,7 +683,7 @@ def _semantic_body(
                     ):
                         record(index, expression)
                     else:
-                        record(index, none_expression)
+                        record(index, alias_expression(lower_member(index, cells[index])))
                 continue
             for index in members:
                 record(index, expression)
