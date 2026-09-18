@@ -258,7 +258,8 @@ def _emit_address(
     belongs to a bound series is indexed by coordinate so formula families
     can fold; the reader returns a blank when that coordinate is absent.
     A catalog point whose keys are not on the producer axis is `None`
-    rather than a `CoordinateError`.
+    rather than a `CoordinateError`. A numeric formula whose whole body is
+    a blank ref becomes `0` at the measure boundary.
     """
     if (
         address_in_blank_ranges(address, ctx.blank_rects)
@@ -1799,6 +1800,28 @@ def _series_for_ref(node: AstNode, ctx: EmitContext) -> BoundSeries:
 
 
 def _as_measure_call(expr: str, series: BoundSeries) -> str:
+    """Wrap a formula body as `as_measure`.
+
+    A numeric formula whose emitted body is only a blank ref (`None`) becomes
+    `0`, matching Excel `=blank`. Nested blank refs stay named indexes so
+    families can fold and `ISBLANK` of a producer hole stays true.
+    """
+    if expr == "None" and series.python_dtype in {"float", "int"}:
+        expr = "0"
     if series.python_dtype == "float":
         return f"as_measure({expr})"
     return f"as_measure({expr}, {series.python_dtype!r})"
+
+
+def _is_bare_numeric_blank_copy(node: AstNode, ctx: EmitContext, series: BoundSeries) -> bool:
+    """True when `node` is a numeric whole-body ref to a blank cell."""
+    if series.python_dtype not in {"float", "int"}:
+        return False
+    if not isinstance(node, CellRefNode):
+        return False
+    address = as_canonical(resolve_cell_ref(node, ctx.host_cell))
+    owner = ctx.catalog.series_for(address)
+    if owner is None:
+        return address_in_blank_ranges(address, ctx.blank_rects)
+    index = owner.index_of(address)
+    return index is not None and owner.is_none_hole(index)

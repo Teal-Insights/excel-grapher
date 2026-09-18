@@ -203,7 +203,7 @@ def inverted_graph_parts(
         capture_dependency_provenance=True,
         blank_ranges=blank_ranges,
     )
-    catalog = build_catalog(bindings, workbook=workbook, graph=graph)
+    catalog = build_catalog(bindings, workbook=workbook, graph=graph, blank_ranges=blank_ranges)
     return (
         catalog,
         collect_all_deps(catalog, graph, blank_rects=normalize_blank_range_specs(blank_ranges)),

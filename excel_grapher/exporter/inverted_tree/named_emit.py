@@ -23,6 +23,7 @@ from excel_grapher.exporter.codegen import REPRESENTATION_VERSION
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     EmitContext,
     _as_measure_call,
+    _is_bare_numeric_blank_copy,
     _named_keys,
     emit_expr,
     python_measure_type,
@@ -535,13 +536,15 @@ def _index_image_on_producer_axes(
     axes = owner.tensor_domain.axes
     if len(key_nodes) != len(axes):
         return None
+    keys: list[object] = []
     for axis, key_node in zip(axes, key_nodes, strict=True):
         key = _eval_key_expr(key_node, env, remaps)
         if key is None:
             return None
         if key not in axis:
             return False
-    return True
+        keys.append(key)
+    return not owner.none_hole_at_keys(tuple(keys))
 
 
 def _sampled_index_supported(
@@ -590,7 +593,9 @@ def _semantic_body(
     expressions match, replicate the grouped body; mixed statements still
     emit one body per distinct expression. A sampled series index is not
     copied onto a member whose affine image is missing from the producer
-    axis or whose producer cell is unbound.
+    axis, is a blank/off-closure hole, or whose producer cell is unbound;
+    that member is lowered on its own so a formula copy of a blank stays 0
+    (Excel) instead of AVERAGE-skipped `None`.
     """
     reserved = set(catalog.series) | set(_RESERVED_NAMES)
     names = _coordinate_names(series, reserved, positional=_is_runtime_labeller(series))
@@ -625,7 +630,10 @@ def _semantic_body(
                 node_formula_ast(graph, cell)
             expression = _hole_expression(series, index, ctx, graph)
         else:
-            expression = _as_measure_call(emit_expr(node, ctx), series)
+            expression = emit_expr(node, ctx)
+            if _is_bare_numeric_blank_copy(node, ctx, series):
+                expression = "0"
+            expression = _as_measure_call(expression, series)
         used.add("as_measure")
         used.update(ctx.used_runtime)
         return expression
@@ -666,7 +674,6 @@ def _semantic_body(
             expression = alias_expression(next(iter(unique)))
             subscripts = _direct_series_subscripts(expression, catalog)
             if subscripts:
-                none_expression = _as_measure_call("None", series)
                 for index in members:
                     if _sampled_index_supported(
                         subscripts,
@@ -680,7 +687,7 @@ def _semantic_body(
                     ):
                         record(index, expression)
                     else:
-                        record(index, none_expression)
+                        record(index, alias_expression(lower_member(index, cells[index])))
                 continue
             for index in members:
                 record(index, expression)

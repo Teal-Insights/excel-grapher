@@ -4,7 +4,9 @@ A host calendar (or other integer) axis whose formulas copy a shorter producer
 life axis emits `producer[host - origin]`. First/middle/last sampling plus the
 largest-family unconditional return used to replicate that lookup onto years
 whose affine image is missing from the producer axis, raising `CoordinateError`.
-On-axis sparse holes still fold as named indexes; off-axis images return `None`.
+On-axis sparse holes still fold as named indexes when the host cell is a
+true hole (no formula). Formula copies of a blank, on-axis or off-axis,
+return `0`, matching Excel `=blank`.
 """
 
 from __future__ import annotations
@@ -20,6 +22,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    inverted_graph_parts,
     load_package,
     write_workbook,
 )
@@ -238,11 +241,17 @@ def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
     """LIC-DSF MCVE: Alpha year whose life image is 4 must not look up principal.
 
     Excel caches 0 for a ref into an omitted structural cell. Export returns
-    `None` for that blank rather than raising `CoordinateError`.
+    `0` for that formula copy rather than raising `CoordinateError`, including
+    on-axis producer holes the host copies with `=Input!X`.
     """
     workbook = _matrix_copy_workbook(tmp_path)
     document = _matrix_copy_bindings()
     blanks = _mcve_blank_ranges()
+    catalog, _deps, _graph = inverted_graph_parts(workbook, document, blank_ranges=blanks)
+    principal = catalog.get("principal")
+    assert principal.none_hole_at_keys((_BETA, 0))
+    assert principal.none_hole_at_keys((_BETA, 1))
+    assert not principal.none_hole_at_keys((_BETA, 2))
     modules = generate_inverted(workbook, document, blank_ranges=blanks)
     pkg = load_package(modules, tmp_path, name="off_axis_matrix")
     owned_life = {coord[1] for coord in pkg.data.PRINCIPAL.domain}
@@ -253,11 +262,11 @@ def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
         if life < _VALUED_LIFE:
             assert got[_ALPHA, year] == pytest.approx(0.1 * (life + 1))
         else:
-            assert got[_ALPHA, year] is None
+            assert got[_ALPHA, year] == pytest.approx(0.0)
         if 2 <= life < _VALUED_LIFE:
             assert got[_BETA, year] == pytest.approx(0.2 * (life + 1))
         else:
-            assert got[_BETA, year] is None
+            assert got[_BETA, year] == pytest.approx(0.0)
 
 
 def test_cross_field_integer_affine_does_not_index_missing_step(tmp_path: Path) -> None:
@@ -275,8 +284,8 @@ def test_cross_field_integer_affine_does_not_index_missing_step(tmp_path: Path) 
         if life < _VALUED_LIFE:
             assert got[bucket] == pytest.approx(float(life + 1))
         else:
-            assert got[bucket] is None
-    targets = [f"Sheet!{_letter(life)}4" for life in range(_VALUED_LIFE)]
+            assert got[bucket] == pytest.approx(0.0)
+    targets = [f"Sheet!{_letter(life)}4" for life in range(_N_HOST)]
     graph = create_dependency_graph(workbook, targets, load_values=True, blank_ranges=blanks)
     expected = FormulaEvaluator(graph, blank_ranges=blanks).evaluate(targets)
     for life, cell in enumerate(targets):
@@ -297,7 +306,7 @@ def test_largest_lookup_family_does_not_cover_off_axis_tail(tmp_path: Path) -> N
         if life < valued_life:
             assert got[bucket] == pytest.approx(float(life + 1))
         else:
-            assert got[bucket] is None
+            assert got[bucket] == pytest.approx(0.0)
 
 
 def test_wrapped_affine_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
@@ -331,7 +340,7 @@ def test_wrapped_affine_does_not_index_off_axis_life_keys(tmp_path: Path) -> Non
         year = _ORIGIN + life
         assert got[_ALPHA, year] == pytest.approx(0.1 * (life + 1))
     assert got[_ALPHA, _ORIGIN + alpha_blank_from] == pytest.approx(0.0)
-    assert got[_ALPHA, _ORIGIN + n_host - 1] is None
+    assert got[_ALPHA, _ORIGIN + n_host - 1] == pytest.approx(0.0)
     for life in range(n_host):
         year = _ORIGIN + life
         if 2 <= life < matrix_life:
