@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from ast import literal_eval
 from collections.abc import Iterator, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from itertools import product
@@ -26,6 +27,7 @@ from excel_grapher.core.formula_ast import (
     WholeRowNode,
     resolve_cell_ref,
 )
+from excel_grapher.core.types import FormulaValue
 from excel_grapher.exporter.inverted_tree import excel as inverted_excel
 from excel_grapher.exporter.inverted_tree.access import (
     indirect_argument_addresses,
@@ -1203,10 +1205,66 @@ def _collapse_table_strips(
     return strips
 
 
+def _excel_equal(left: object, right: object) -> bool:
+    """True when Excel `=` treats `left` and `right` as the same value."""
+    from excel_grapher.core.operators_reference import compare_scalars
+
+    return compare_scalars("=", cast(FormulaValue, left), cast(FormulaValue, right)) is True
+
+
+def _view_preserves_excel_types(
+    owner: BoundSeries, addresses: Sequence[CanonicalAddress], ctx: EmitContext
+) -> bool:
+    """False when a series view would change Excel `=` against workbook values.
+
+    A string-dtyped matrix still occupies numeric worksheet cells (country
+    codes, 0/1 flags). `view` of that tensor stringifies them, so
+    `INDEX(...) = 1` becomes `'1' = 1` and fails. Those windows fall back
+    to positional cells that keep the workbook types.
+    """
+    if owner.direction != "constant" or ctx.graph is None:
+        return True
+    from excel_grapher.exporter.inverted_tree.emit import _coerce_cached_value
+
+    for address in addresses:
+        node = ctx.graph.get_node(address)
+        if node is None or node.has_formula or node.value is None:
+            continue
+        try:
+            coerced = _coerce_cached_value(node.value, owner.dtype, address)
+        except InvertedTreeExportError:
+            return False
+        if not _excel_equal(node.value, coerced):
+            return False
+    return True
+
+
+def _workbook_constant_literal(address: CanonicalAddress, ctx: EmitContext) -> str | None:
+    """Python literal of a constant leaf's Excel value, if it is on the graph."""
+    if ctx.graph is None:
+        return None
+    owner = ctx.catalog.series_for(address)
+    if owner is None or owner.direction != "constant":
+        return None
+    node = ctx.graph.get_node(address)
+    if node is None or node.has_formula:
+        return None
+    from excel_grapher.exporter.inverted_tree.emit import _py_literal
+
+    return _py_literal(node.value)
+
+
 def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
-    """Emit one MATCH/INDEX window cell by literal coordinate."""
+    """Emit one MATCH/INDEX window cell by literal coordinate.
+
+    Constant leaves keep their workbook types so `INDEX`/`MATCH` see the
+    named range as Excel does, not the series measure dtype.
+    """
     if cell.blank:
         return "None"
+    literal = _workbook_constant_literal(cell.address, ctx)
+    if literal is not None:
+        return literal
     return _emit_address(cell.address, ctx)
 
 
@@ -1222,7 +1280,9 @@ def _named_range_view(
     host coordinate, or one key. Fields that vary down the worksheet form
     the row product and fields that vary across it the column product; the
     range lowers only when that product reproduces the cells in worksheet
-    order. Nested layouts select keys per field name.
+    order. Nested layouts select keys per field name. A constant series whose
+    measure dtype would change Excel `=` against workbook values (numeric
+    cells in a string tensor) is not a view; callers emit positional cells.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -1349,6 +1409,8 @@ def _named_range_view(
                 + ", ".join(f"{field!r}: {selections[field]}" for field in col_fields)
                 + "}"
             )
+    if not _view_preserves_excel_types(owner, addresses, ctx):
+        return None
     return f"{ctx.use('view')}({', '.join(args)})"
 
 
@@ -1578,14 +1640,58 @@ def _emit_indirect(node: FunctionCallNode, ctx: EmitContext) -> str:
     return _emit_address(targets[0], ctx)
 
 
+def _static_int_expr(expr: str) -> int | None:
+    """Parse a lowered integer literal (`5`, `5.0`); `None` if not static."""
+    try:
+        number = literal_eval(expr)
+    except (SyntaxError, ValueError):
+        return None
+    if isinstance(number, bool) or not isinstance(number, int | float):
+        return None
+    if isinstance(number, float) and not number.is_integer():
+        return None
+    return int(number)
+
+
 def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[str, int | None]:
     if col_arg is None or isinstance(col_arg, EmptyArgNode):
         return "None", None
-    col_literal = int(col_arg.value) if isinstance(col_arg, NumberNode) else None
     try:
-        return emit_expr(col_arg, ctx), col_literal
+        expr = emit_expr(col_arg, ctx)
     except InvertedTreeExportError as exc:
         raise _host_export_error(ctx, f"INDEX column cannot be lowered ({exc})") from exc
+    if isinstance(col_arg, NumberNode):
+        return expr, int(col_arg.value)
+    return expr, _static_int_expr(expr)
+
+
+def _emit_worksheet_column(node: RangeNode, ctx: EmitContext, col_literal: int) -> str | None:
+    """Emit the 1-based worksheet column of `node` that Excel INDEX would select.
+
+    The slice includes the header cell and follows worksheet column order,
+    not the first bound-series measure after a row-label is stripped.
+    """
+    start = as_canonical(resolve_cell_ref(node.start_ref, ctx.host_cell))
+    end = as_canonical(resolve_cell_ref(node.end_ref, ctx.host_cell))
+    first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
+    selected = [
+        address
+        for address in iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+        if parse_cell_coords(address)[2] == first_col + col_literal - 1
+    ]
+    if not selected:
+        return None
+    # A proven column selection must not introduce dependencies on
+    # other columns excluded by the extracted graph.
+    column_view = _named_range_view(RangeNode(selected[0], selected[-1]), ctx)
+    if column_view is not None:
+        return column_view
+    cells, missing = resolve_positional_range(selected, ctx.catalog, ctx.blank_rects, ctx.graph)
+    if missing:
+        raise _host_export_error(
+            ctx, f"INDEX selected column has unbound cells: {list(missing[:8])}"
+        )
+    return "(" + ", ".join(f"({_emit_positional_cell(cell, ctx)},)" for cell in cells) + ",)"
 
 
 def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
@@ -1595,6 +1701,10 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
     col_arg = node.args[2] if len(node.args) > 2 else None
     row_expr = "None" if isinstance(row_arg, EmptyArgNode) else emit_expr(row_arg, ctx)
     col_expr, col_literal = _emit_index_column_arg(col_arg, ctx)
+    if isinstance(node.args[0], RangeNode) and col_literal is not None and col_literal > 0:
+        column = _emit_worksheet_column(node.args[0], ctx, col_literal)
+        if column is not None:
+            return f"{ctx.use('xl_index')}({column}, {row_expr}, 1)"
     if row_expr in {"None", "0", "0.0"} or col_expr in {"None", "0", "0.0"}:
         # Omitted and zero selectors request vectors; the lazy table keeps
         # their shape and Excel's single-row special case.
@@ -1604,32 +1714,6 @@ def _emit_index(node: FunctionCallNode, ctx: EmitContext) -> str:
             else _emit_value_or_range(node.args[0], ctx)
         )
         return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
-    if isinstance(node.args[0], RangeNode) and col_literal is not None and col_literal > 0:
-        start = as_canonical(resolve_cell_ref(node.args[0].start_ref, ctx.host_cell))
-        end = as_canonical(resolve_cell_ref(node.args[0].end_ref, ctx.host_cell))
-        first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
-        selected = [
-            address
-            for address in iter_ref_addresses(node.args[0], ctx.host_cell, ctx.graph)
-            if parse_cell_coords(address)[2] == first_col + col_literal - 1
-        ]
-        if selected:
-            # A proven column selection must not introduce dependencies on
-            # other columns excluded by the extracted graph.
-            column_view = _named_range_view(RangeNode(selected[0], selected[-1]), ctx)
-            if column_view is not None:
-                return f"{ctx.use('xl_index')}({column_view}, {row_expr}, 1)"
-            cells, missing = resolve_positional_range(
-                selected, ctx.catalog, ctx.blank_rects, ctx.graph
-            )
-            if missing:
-                raise _host_export_error(
-                    ctx, f"INDEX selected column has unbound cells: {list(missing[:8])}"
-                )
-            table = (
-                "(" + ", ".join(f"({_emit_positional_cell(cell, ctx)},)" for cell in cells) + ",)"
-            )
-            return f"{ctx.use('xl_index')}({table}, {row_expr}, 1)"
     table = _emit_value_or_range(node.args[0], ctx)
     return f"{ctx.use('xl_index')}({table}, {row_expr}, {col_expr})"
 
