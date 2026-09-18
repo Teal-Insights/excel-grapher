@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.4.1 (2026-09-18)
+
+### Bug Fixes
+
+- Coerce bare hole copies without None-indexing vintage holes
+  ([#900](https://github.com/Teal-Insights/excel-grapher/pull/900),
+  [`47deb1b`](https://github.com/Teal-Insights/excel-grapher/commit/47deb1b7b07c73346b71bbc64788f65bca85c3c4))
+
+- Emit Excel 0 for formula copies of catalog holes
+  ([#900](https://github.com/Teal-Insights/excel-grapher/pull/900),
+  [`47deb1b`](https://github.com/Teal-Insights/excel-grapher/commit/47deb1b7b07c73346b71bbc64788f65bca85c3c4))
+
+- Lower off-axis sampled copies so AVERAGE matches evaluator
+  ([#900](https://github.com/Teal-Insights/excel-grapher/pull/900),
+  [`47deb1b`](https://github.com/Teal-Insights/excel-grapher/commit/47deb1b7b07c73346b71bbc64788f65bca85c3c4))
+
+
 ## v20.4.0 (2026-09-18)
 
 ### Bug Fixes
