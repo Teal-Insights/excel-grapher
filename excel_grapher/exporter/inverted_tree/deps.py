@@ -1430,6 +1430,7 @@ class _DepCollector:
                 continue
             seen.add(cell.series_id)
             self.emit_lookup(self.catalog.get(cell.series_id), host_cell, cell.address, "dynamic")
+        return True
 
     def _visit_match(
         self,
