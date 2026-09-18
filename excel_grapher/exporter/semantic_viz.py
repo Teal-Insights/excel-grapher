@@ -36,6 +36,7 @@ __all__ = [
     "SEMANTIC_VIZ_OVERLAY_ID",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
     "SemanticVizPayload",
+    "semantic_viz_clustered_layout_allowed",
     "semantic_viz_primitive_count",
     "serialize_semantic_viz_json",
     "to_semantic_viz_payload",
@@ -46,6 +47,18 @@ __all__ = [
 def semantic_viz_primitive_count(*, statement_count: int, bundle_count: int) -> int:
     """Return statement + twice-bundle size used to pick boxes vs dots."""
     return statement_count + 2 * bundle_count
+
+
+def semantic_viz_clustered_layout_allowed(*, statement_count: int, bundle_count: int) -> bool:
+    """Return whether the HTML viewer may run clustered force layout.
+
+    Rank layout stays the only mode above `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES`
+    (the dots / LIC-DSF path). Pairwise force is not run there.
+    """
+    return (
+        semantic_viz_primitive_count(statement_count=statement_count, bundle_count=bundle_count)
+        <= SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
+    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,7 +199,12 @@ def write_semantic_viz_html(
     data_mode: Literal["inline", "sidecar", "auto"] = "inline",
     template_path: Path | str | None = None,
 ) -> None:
-    """Write a standalone HTML viewer for a statement-graph payload."""
+    """Write a standalone HTML viewer for a statement-graph payload.
+
+    Rank layout is the default. Below `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES`, the
+    viewer also offers a canvas-side clustered force layout so Cluster by can
+    move nodes without regenerating the HTML. Larger (dots) graphs stay on rank.
+    """
     if payload.version != SEMANTIC_VIZ_PAYLOAD_VERSION:
         raise ValueError(f"Unsupported semantic viz payload version: {payload.version}")
     out = Path(path)
@@ -197,14 +215,12 @@ def write_semantic_viz_html(
         out.parent.mkdir(parents=True, exist_ok=True)
         (out.parent / sidecar_name).write_text(json_payload, encoding="utf-8")
         json_payload = None
+    pkg = resources.files(__package__ or __name__)
     if template_path is None:
-        tpl = (
-            resources.files(__package__ or __name__)
-            .joinpath("semantic_viz_template.html")
-            .read_text(encoding="utf-8")
-        )
+        tpl = pkg.joinpath("semantic_viz_template.html").read_text(encoding="utf-8")
     else:
         tpl = Path(template_path).read_text(encoding="utf-8")
+    layout_js = pkg.joinpath("semantic_viz_layout.js").read_text(encoding="utf-8")
     bootstrap = (
         f"window.__VIZ_DATA__ = {json_payload};"
         if json_payload is not None
@@ -219,6 +235,7 @@ def write_semantic_viz_html(
         tpl.replace("__TITLE__", title)
         .replace("/*__BOOTSTRAP__*/", bootstrap)
         .replace("/*__SIDECAR__*/", sidecar_js)
+        .replace("/*__LAYOUT_JS__*/", layout_js)
         .replace("__BOX_MAX_PRIMITIVES__", str(SEMANTIC_VIZ_BOX_MAX_PRIMITIVES))
     )
     out.parent.mkdir(parents=True, exist_ok=True)
