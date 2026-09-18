@@ -320,7 +320,8 @@ def test_index_named_range_reads_bound_series_overrides(tmp_path: Path) -> None:
         (coord, "0" if coord == ("Ghana", _FLAG) else table[coord]) for coord in table.domain
     ]
     updated = table.with_records(records)
-    assert pkg.compute_yes_no(**_kwargs(pkg, mkt_fin=updated)) == "No"
+    with pkg.data.overrides(MKT_FIN=updated):
+        assert pkg.compute_yes_no(**_kwargs(pkg)) == "No"
     assert pkg.compute_yes_no(**_kwargs(pkg)) == "Yes"
 
 

@@ -70,6 +70,7 @@ from excel_grapher.grapher.blank_ranges import (
 )
 from excel_grapher.series_bindings.geometry import parse_value_map
 from excel_grapher.series_bindings.normalize import is_override_input
+from excel_grapher.series_bindings.resolve import _bind_source_addresses
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -199,6 +200,84 @@ def resolve_positional_range(
     if unbound_blanks and not owned:
         missing.extend(unbound_blanks)
     return tuple(cells), tuple(missing)
+
+
+def _label_values_for_window(
+    catalog: SeriesCatalog, parent_addresses: Sequence[CanonicalAddress]
+) -> dict[CanonicalAddress, object]:
+    """Map row_label/column_header cells inside `parent_addresses` to series keys."""
+    parent = set(parent_addresses)
+    values: dict[CanonicalAddress, object] = {}
+    for series in catalog.series.values():
+        data_cells = series.authored_cells or series.cells
+        occupies = [cell for cell in data_cells if cell in parent]
+        if not occupies:
+            continue
+        for field in series.key_fields:
+            bind = series.dimension_bind(field)
+            if not isinstance(bind, Mapping) or bind.get("kind") not in {
+                "row_label",
+                "column_header",
+            }:
+                continue
+            for data_cell in occupies:
+                point = series.key_point_for(data_cell)
+                if point is None:
+                    continue
+                for source in _bind_source_addresses(dict(bind), data_cell):
+                    values[as_canonical(source)] = point[field]
+    return values
+
+
+def _attach_index_label_cells(
+    selected: Sequence[CanonicalAddress],
+    parent_addresses: Sequence[CanonicalAddress],
+    cells: Sequence[PositionalRangeCell],
+    missing: Sequence[CanonicalAddress],
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
+    """Fill INDEX column holes that are row-labels or non-formula header leaves."""
+    if not missing:
+        return tuple(cells), tuple(missing)
+    labels = _label_values_for_window(catalog, parent_addresses)
+    by_addr = {cell.address: cell for cell in cells}
+    filled: list[PositionalRangeCell] = []
+    still: list[CanonicalAddress] = []
+    for address in selected:
+        if address in by_addr:
+            filled.append(by_addr[address])
+            continue
+        if address in labels:
+            filled.append(PositionalRangeCell(address, None, None, False, labels[address]))
+            continue
+        node = None if graph is None else graph.get_node(address)
+        if node is not None and not node.has_formula:
+            filled.append(PositionalRangeCell(address, None, None, False, node.value))
+            continue
+        still.append(address)
+    return tuple(filled), tuple(still)
+
+
+def index_column_literal(node: AstNode | None, host_cell: CanonicalAddress) -> int | None:
+    """Return a static INDEX column (`1`, `COLUMNS(range)`), else `None`."""
+    if node is None or isinstance(node, EmptyArgNode):
+        return None
+    literal = ast_literal_int(node)
+    if literal is not None:
+        return literal
+    if not isinstance(node, FunctionCallNode):
+        return None
+    if normalize_excel_function_name(node.name) != "COLUMNS" or len(node.args) != 1:
+        return None
+    ref = node.args[0]
+    if not isinstance(ref, RangeNode):
+        return None
+    start = as_canonical(resolve_cell_ref(ref.start_ref, host_cell))
+    end = as_canonical(resolve_cell_ref(ref.end_ref, host_cell))
+    if parse_cell_coords(start)[0] != parse_cell_coords(end)[0]:
+        return None
+    return abs(parse_cell_coords(end)[2] - parse_cell_coords(start)[2]) + 1
 
 
 def range_ref_label(node: AstNode, host_cell: CanonicalAddress) -> str:
@@ -1223,7 +1302,7 @@ class _DepCollector:
             self._visit_match(row_arg, host_cell=host_cell, host_index=host_index)
         else:
             self.visit(row_arg, host_cell=host_cell, host_index=host_index)
-        if col_arg is not None and ast_literal_int(col_arg) is None:
+        if col_arg is not None and index_column_literal(col_arg, host_cell) is None:
             try:
                 self.visit(col_arg, host_cell=host_cell, host_index=host_index)
             except InvertedTreeExportError as exc:
@@ -1272,10 +1351,13 @@ class _DepCollector:
             )
         col_arg = node.args[2] if len(node.args) > 2 else None
         self._visit_index_selectors(node, host_cell=host_cell, host_index=host_index)
-        col_index = ast_literal_int(col_arg) if col_arg is not None else 1
-        col_literal = col_index is not None
-        if col_index is None:
-            col_index = 1
+        if col_arg is None:
+            col_index, col_literal = 1, True
+        else:
+            col_index = index_column_literal(col_arg, host_cell)
+            col_literal = col_index is not None
+            if col_index is None:
+                col_index = 1
         if isinstance(node.args[0], RangeNode):
             start = resolve_cell_ref(node.args[0].start_ref, host_cell)
             end = resolve_cell_ref(node.args[0].end_ref, host_cell)
@@ -1292,6 +1374,10 @@ class _DepCollector:
                 self.emit_lookup(
                     covered_col, host_cell, range_column_origin(start, end, col_index), "dynamic"
                 )
+            elif col_literal:
+                self._visit_index_worksheet_column(
+                    node.args[0], col_index, host_cell=host_cell
+                )
             else:
                 self._visit_range_addresses(
                     iter_range_addresses(start, end),
@@ -1301,6 +1387,47 @@ class _DepCollector:
                 )
         else:
             self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
+
+    def _visit_index_worksheet_column(
+        self,
+        node: RangeNode,
+        col_index: int,
+        *,
+        host_cell: CanonicalAddress,
+    ) -> None:
+        """Record deps for one INDEX worksheet column, including row-label holes."""
+        start = as_canonical(resolve_cell_ref(node.start_ref, host_cell))
+        end = as_canonical(resolve_cell_ref(node.end_ref, host_cell))
+        parent = iter_range_addresses(start, end)
+        first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
+        selected = [
+            address
+            for address in parent
+            if parse_cell_coords(address)[2] == first_col + col_index - 1
+        ]
+        if not selected:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                "INDEX selected column is empty"
+            )
+        cells, missing = resolve_positional_range(
+            selected, self.catalog, self.blank_rects, self.graph
+        )
+        cells, missing = _attach_index_label_cells(
+            selected, parent, cells, missing, self.catalog, self.graph
+        )
+        if missing:
+            raise InvertedTreeExportError(
+                f"series {self.host.series_id!r} cell {host_cell}: "
+                f"range {range_ref_label(node, host_cell)} is not a bound series "
+                f"(unbound cells: {list(missing[:8])})"
+            )
+        seen: set[str] = set()
+        for cell in cells:
+            if cell.blank or cell.series_id is None or cell.series_id in seen:
+                continue
+            seen.add(cell.series_id)
+            self.emit_lookup(self.catalog.get(cell.series_id), host_cell, cell.address, "dynamic")
 
     def _visit_match(
         self,

@@ -44,6 +44,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import (
     PositionalRangeCell,
     SeriesDeps,
+    _attach_index_label_cells,
     addresses_outside_blank_ranges,
     covering_series_for_index_window,
     current_blank_rects,
@@ -70,7 +71,6 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     range_overlaps_blank_ranges,
 )
-from excel_grapher.series_bindings.resolve import _bind_source_addresses
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -1260,62 +1260,6 @@ def _view_preserves_excel_types(
     return True
 
 
-def _label_values_for_window(
-    catalog: SeriesCatalog, parent_addresses: Sequence[CanonicalAddress]
-) -> dict[CanonicalAddress, object]:
-    """Map row_label/column_header cells inside `parent_addresses` to series keys."""
-    parent = set(parent_addresses)
-    values: dict[CanonicalAddress, object] = {}
-    for series in catalog.series.values():
-        data_cells = series.authored_cells or series.cells
-        occupies = [cell for cell in data_cells if cell in parent]
-        if not occupies:
-            continue
-        for field in series.key_fields:
-            bind = series.dimension_bind(field)
-            if not isinstance(bind, Mapping) or bind.get("kind") not in {
-                "row_label",
-                "column_header",
-            }:
-                continue
-            for data_cell in occupies:
-                point = series.key_point_for(data_cell)
-                if point is None:
-                    continue
-                for source in _bind_source_addresses(dict(bind), data_cell):
-                    values[as_canonical(source)] = point[field]
-    return values
-
-
-def _attach_index_label_cells(
-    selected: Sequence[CanonicalAddress],
-    parent_addresses: Sequence[CanonicalAddress],
-    cells: Sequence[PositionalRangeCell],
-    missing: Sequence[CanonicalAddress],
-    ctx: EmitContext,
-) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
-    """Fill INDEX column holes that are row-labels or non-formula header leaves."""
-    if not missing:
-        return tuple(cells), tuple(missing)
-    labels = _label_values_for_window(ctx.catalog, parent_addresses)
-    by_addr = {cell.address: cell for cell in cells}
-    filled: list[PositionalRangeCell] = []
-    still: list[CanonicalAddress] = []
-    for address in selected:
-        if address in by_addr:
-            filled.append(by_addr[address])
-            continue
-        if address in labels:
-            filled.append(PositionalRangeCell(address, None, None, False, labels[address]))
-            continue
-        node = None if ctx.graph is None else ctx.graph.get_node(address)
-        if node is not None and not node.has_formula:
-            filled.append(PositionalRangeCell(address, None, None, False, node.value))
-            continue
-        still.append(address)
-    return tuple(filled), tuple(still)
-
-
 def _emit_positional_cell(cell: PositionalRangeCell, ctx: EmitContext) -> str:
     """Emit one MATCH/INDEX window cell by literal coordinate.
 
@@ -1762,7 +1706,9 @@ def _emit_worksheet_column(node: RangeNode, ctx: EmitContext, col_literal: int) 
         return column_view
     cells, missing = resolve_positional_range(selected, ctx.catalog, ctx.blank_rects, ctx.graph)
     parent = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
-    cells, missing = _attach_index_label_cells(selected, parent, cells, missing, ctx)
+    cells, missing = _attach_index_label_cells(
+        selected, parent, cells, missing, ctx.catalog, ctx.graph
+    )
     if missing:
         raise _host_export_error(
             ctx, f"INDEX selected column has unbound cells: {list(missing[:8])}"
