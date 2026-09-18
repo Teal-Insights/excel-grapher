@@ -25,6 +25,33 @@
     #banner { color: #9a6700; font-weight: 600; }
     #search { min-width: 160px; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; }
     button { font: inherit; padding: 4px 8px; border: 1px solid #d0d7de; border-radius: 6px; background: #fff; cursor: pointer; }
+    #legend {
+      position: absolute; left: 12px; bottom: 12px; z-index: 10;
+      max-width: 320px; background: rgba(255,255,255,.96);
+      border: 1px solid #d0d7de; border-radius: 8px; padding: 8px 10px 10px;
+      font-size: 12px; line-height: 1.4; box-shadow: 0 4px 24px rgba(0,0,0,.12);
+    }
+    #legend summary { cursor: pointer; font-weight: 600; }
+    #legend h3 {
+      margin: 8px 0 4px; font-size: 11px; text-transform: uppercase;
+      letter-spacing: .04em; color: #656d76;
+    }
+    #legend ul { margin: 0; padding: 0; list-style: none; }
+    #legend li { display: flex; align-items: center; gap: 8px; margin: 3px 0; }
+    #legend li > span:last-child { min-width: 0; }
+    #legend .swatch {
+      display: inline-block; width: 22px; flex: 0 0 22px; height: 0;
+      border-top: 3px solid currentColor; vertical-align: middle;
+    }
+    #legend .swatch.dashed { border-top-style: dashed; }
+    #legend .swatch.faded { opacity: 0.55; }
+    #legend .note { margin: 6px 0 0; color: #656d76; }
+    #legend .box {
+      flex: 0 0 14px; height: 14px; border: 1px solid #1f2328;
+      border-radius: 3px; background: #d0d7de;
+    }
+    #legend .box.series { background: hsl(13, 62%, 78%); }
+    #legend code { font-size: 11px; }
   </style>
 </head>
 <body>
@@ -35,12 +62,33 @@
     <label><input type="checkbox" data-dir="internal" checked /> Internals</label>
     <label><input type="checkbox" data-dir="output" checked /> Outputs</label>
     <input id="search" type="search" placeholder="Highlight series…" />
-    <button id="fit" type="button">Fit</button>
+    <button id="reset" type="button">Reset</button>
     <span id="banner"></span>
     <span id="stats"></span>
   </div>
   <div id="wrap">
     <canvas id="raster"></canvas>
+    <details id="legend" open>
+      <summary>Legend</summary>
+      <h3>Edges</h3>
+      <ul>
+        <li><span class="swatch" style="color:#0969da"></span><span>identity</span></li>
+        <li><span class="swatch dashed" style="color:#8250df"></span><span>shift</span></li>
+        <li><span class="swatch" style="color:#1a7f37"></span><span>affine</span></li>
+        <li><span class="swatch" style="color:#9a6700"></span><span>gather / whole / dynamic / cross_partition</span></li>
+      </ul>
+      <p class="note">
+        <span class="swatch" style="color:#24292f"></span> contemporaneous (solid)<br />
+        <span class="swatch dashed" style="color:#24292f"></span> lag (dashed; <code>discharged</code> or <code>shift</code>)<br />
+        <span class="swatch faded" style="color:#24292f"></span> guarded (faded)
+      </p>
+      <h3>Boxes</h3>
+      <ul>
+        <li><span class="box series"></span><span>fill is a per-series hue (hash of <code>series_id</code>), not direction</span></li>
+        <li><span class="box"></span><span>unbound remainder</span></li>
+      </ul>
+      <p class="note">Direction uses the Constants / Inputs / Internals / Outputs checkboxes.</p>
+    </details>
   </div>
   <div id="tip"></div>
   <script>
@@ -415,7 +463,7 @@
       el.addEventListener('change', function () { draw(true); });
     });
     document.getElementById('search').addEventListener('input', function () { draw(false); });
-    document.getElementById('fit').addEventListener('click', function () { draw(true); });
+    document.getElementById('reset').addEventListener('click', function () { draw(true); });
 
     var dragging = false;
     var last = null;

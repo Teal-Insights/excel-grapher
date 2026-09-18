@@ -263,3 +263,47 @@ def test_html_ships_canvas_painter_and_rank_spread(tmp_path: Path) -> None:
     assert payload.graph.stats.statement_count + 2 * payload.graph.stats.bundle_count < (
         SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
     )
+
+
+def test_html_ships_legend_and_reset_control(tmp_path: Path) -> None:
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _zipper_bindings())
+    payload = to_semantic_viz_payload(
+        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    )
+    html = tmp_path / "zipper.html"
+    write_semantic_viz_html(payload, html)
+    text = html.read_text(encoding="utf-8")
+
+    assert 'id="legend"' in text
+    assert 'style="color:#0969da"' in text
+    assert 'style="color:#8250df"' in text
+    assert 'style="color:#1a7f37"' in text
+    assert 'style="color:#9a6700"' in text
+    assert "identity: '#0969da'" in text
+    assert "shift: '#8250df'" in text
+    assert "affine: '#1a7f37'" in text
+    assert "gather: '#9a6700'" in text
+    assert "whole: '#9a6700'" in text
+    assert "dynamic: '#9a6700'" in text
+    assert "cross_partition: '#9a6700'" in text
+    assert "lag" in text.lower()
+    assert "dashed" in text.lower()
+    assert "contemporaneous" in text.lower()
+    assert "solid" in text.lower()
+    assert "guarded" in text.lower()
+    assert "per-series hue" in text.lower()
+    assert "unbound remainder" in text.lower()
+    assert "#d0d7de" in text
+
+    assert 'id="reset"' in text
+    assert ">Reset</button>" in text
+    assert 'getElementById("reset")' in text or "getElementById('reset')" in text
+    assert "draw(true)" in text
+    assert ">Fit</button>" not in text
+
+    assert 'id="search"' in text
+    for direction in ("constant", "input", "internal", "output"):
+        assert f'data-dir="{direction}"' in text
+    assert "pointermove" in text
+    assert "wheel" in text
