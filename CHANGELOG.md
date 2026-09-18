@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.5.0 (2026-09-18)
+
+### Bug Fixes
+
+- **viz**: Draw per-rank cluster frames with labeled gaps
+  ([#902](https://github.com/Teal-Insights/excel-grapher/pull/902),
+  [`647b540`](https://github.com/Teal-Insights/excel-grapher/commit/647b54076d5b84d67af612da784e51779bfdb6c4))
+
+### Features
+
+- **viz**: Color and cluster statement graph by role or sheet
+  ([#902](https://github.com/Teal-Insights/excel-grapher/pull/902),
+  [`647b540`](https://github.com/Teal-Insights/excel-grapher/commit/647b54076d5b84d67af612da784e51779bfdb6c4))
+
+- **viz**: Let statement-graph color and clustering encode role, sheet, or series
+  ([#902](https://github.com/Teal-Insights/excel-grapher/pull/902),
+  [`647b540`](https://github.com/Teal-Insights/excel-grapher/commit/647b54076d5b84d67af612da784e51779bfdb6c4))
+
+
 ## v20.4.1 (2026-09-18)
 
 ### Bug Fixes
