@@ -93,7 +93,7 @@ Rules:
   value. Exactly one kind per `domain`.
 - **Range is the series.** `data_range` minus `exclude_rows` /
   `exclude_columns` is the constrained range; the sidecar never lists cells.
-  A range that needs two domains is two series.
+  A range that needs two declared domains is two series (see §7).
 - **Direction defaults.** `constant` implies `from_workbook`. `input` uses
   `domain`, else the values of `value_map` (the workbook needles; the map keys
   remain the public `compute_*` domain). `internal`, `output`, and
@@ -178,7 +178,40 @@ a `feat!` migration. Three phases:
 | Breaking change | Phases A and B are additive; C is one `feat!`. |
 | Who attaches the sidecar | `create_dependency_graph(..., dynamic_refs=DynamicRefConfig.from_bindings(...))` at build time; `graph.attach_domains(bindings)` for enrichment. |
 
-## 7. Follow-up issues (file once agreed)
+## 7. Open question: different declared domains within one series
+
+`constraints.py` keys are cells, so cells in one series can carry arbitrary
+different constraints. The bindings manifest has never supported that:
+`input.domain` is one declaration per series, `measure_domain_from_series`
+returns a single domain, and the generated `require_input_domain` call applies
+it to every coordinate.
+
+The proposal keeps that restriction for declared domains, on purpose:
+
+- `from_workbook: true` already yields a distinct singleton per cell, which is
+  every per-cell case in the committed fixtures (`country_profile_names`,
+  `engine_year_labels`) and in the LIC-DSF chart constraints.
+- A range whose cells need different `enum` / `between` / `real_between`
+  bounds is, in the series model, two measures and so two series.
+
+If a workbook contradicts that (the local corpus was not on disk when this
+was written, so `qcraft` and `lic_dsf` are unverified), the escape hatch is a
+keyed domain that varies along one dimension of the series rather than by
+address:
+
+```yaml
+domain:
+  by: TIME_PERIOD
+  default: { real_between: { min: 0, max: 20 } }
+  values:
+    2026: { real_between: { min: 0, max: 5 } }
+```
+
+Lookup stays O(#series): the index resolves the cell's coordinate on the `by`
+dimension (the same resolution `compute_*` uses) and picks the entry. This is
+deferred until a real workbook needs it; it is not part of schema 1.18.0.
+
+## 8. Follow-up issues (file once agreed)
 
 1. Schema 1.18.0: series-level `domain`, `from_workbook`, `input.domain`
    normalization, validation rules.
