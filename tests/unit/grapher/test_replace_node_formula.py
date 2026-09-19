@@ -75,6 +75,7 @@ def test_replace_clears_formula_and_becomes_leaf() -> None:
     graph = DependencyGraph()
     graph.add_node(_cell("Sheet1!B1"))
     graph.add_node(_cell("Sheet1!A1", "=Sheet1!B1", is_target=True))
+    graph.add_node(_cell("Sheet1!Z1", "=Sheet1!A1"))
     _direct_edge(graph, "Sheet1!A1", "Sheet1!B1")
     _direct_edge(graph, "Sheet1!Z1", "Sheet1!A1")
 

@@ -1886,6 +1886,7 @@ def create_dependency_graph(
             graph.formula_shapes = intern_graph_formula_shapes(graph, parsed=parsed)
     if dynamic_refs is not None:
         graph.cell_type_env = dict(dynamic_refs.cell_type_env)
+    graph.rebuild_adjacency()
     return graph
 
 

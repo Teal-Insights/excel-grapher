@@ -64,12 +64,14 @@ graph: DependencyGraph = create_dependency_graph(
     max_depth=10,
 )
 
+
 def serialize_graph(graph: DependencyGraph) -> dict:
     return {
         "nodes": {k: asdict(v) for k, v in graph._nodes.items()},
         # Adjacency list: node -> dependencies (edges point from node to its deps)
-        "edges": {k: sorted(v) for k, v in graph._edges.items()},
+        "edges": {k: sorted(graph.get_dependencies(k)) for k in graph if graph.get_dependencies(k)},
     }
+
 
 print(json.dumps(serialize_graph(graph), indent=2, sort_keys=True))
 ```
@@ -79,7 +81,6 @@ Example output:
 ```json
 {
   "edges": {
-    "S!A1": [],
     "S!B1": [
       "S!A1"
     ]
@@ -158,7 +159,9 @@ from excel_grapher import (
 )
 
 targets = ["S!B1"]
-expected = build_graph_cache_meta_portable(targets, extraction_params={"load_values": True, "max_depth": 50})
+expected = build_graph_cache_meta_portable(
+    targets, extraction_params={"load_values": True, "max_depth": 50}
+)
 
 graph = try_load_graph_cache(
     Path("graph-cache.json"),

@@ -5,11 +5,11 @@ returns. A single state-dict pickle would therefore peak near 2x final size:
 indexed adjacency sets sit in the memo while live string-keyed maps are built
 beside them.
 
-This module writes a two-frame payload (nodes, then COO edges). Each frame's
-unpickler is discarded before the next frame is read, so peak stays close to
-final resident size. `DependencyGraph.__reduce_ex__` wraps a gzip-compressed
-multipart blob so `pickle.loads` also stays near final size; prefer
-`dump_graph` / `load_graph` for files (no outer bytes envelope).
+This module writes a two-frame payload (nodes, then CSR+CSC arrays). Each
+frame's unpickler is discarded before the next frame is read, so peak stays
+close to final resident size. `DependencyGraph.__reduce_ex__` wraps a
+gzip-compressed multipart blob so `pickle.loads` also stays near final size;
+prefer `dump_graph` / `load_graph` for files (no outer bytes envelope).
 """
 
 from __future__ import annotations
@@ -21,13 +21,15 @@ import pickle
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
+from .csr_adjacency import build_csr_csc
 from .dependency_provenance import EdgeProvenance
 from .node import Node, NodeKey
 
 # Logical payload: magic + little-endian version + two pickle frames.
 # `dumps_graph_blob` gzip-compresses that payload for the pickle reduce path.
 _GRAPH_BLOB_MAGIC = b"EGDG"
-_GRAPH_BLOB_VERSION = 5
+_GRAPH_BLOB_VERSION = 6
+_GRAPH_BLOB_MIN_VERSION = 5
 _GRAPH_BLOB_HEADER = _GRAPH_BLOB_MAGIC + _GRAPH_BLOB_VERSION.to_bytes(4, "little")
 _GZIP_MAGIC = b"\x1f\x8b"
 
@@ -94,13 +96,15 @@ def load_graph(path: str | Path) -> Any:
         header = binary.read(len(_GRAPH_BLOB_HEADER))
         if header.startswith(_GRAPH_BLOB_MAGIC):
             version = int.from_bytes(header[4:8], "little")
-            if version != _GRAPH_BLOB_VERSION:
-                raise TypeError(
-                    "Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache."
-                )
-            return _read_graph_frames(binary)
+            _require_supported_version(version)
+            return _read_graph_frames(binary, version=version)
         binary.seek(0)
         return pickle.load(binary)
+
+
+def _require_supported_version(version: int) -> None:
+    if version < _GRAPH_BLOB_MIN_VERSION or version > _GRAPH_BLOB_VERSION:
+        raise TypeError("Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache.")
 
 
 def _load_header_and_frames(buf: BinaryIO) -> Any:
@@ -108,9 +112,30 @@ def _load_header_and_frames(buf: BinaryIO) -> Any:
     if not header.startswith(_GRAPH_BLOB_MAGIC):
         raise TypeError("Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache.")
     version = int.from_bytes(header[4:8], "little")
-    if version != _GRAPH_BLOB_VERSION:
-        raise TypeError("Unsupported or corrupted DependencyGraph pickle; rebuild the graph cache.")
-    return _read_graph_frames(buf)
+    _require_supported_version(version)
+    return _read_graph_frames(buf, version=version)
+
+
+def _csr_payload(
+    graph: Any,
+) -> tuple[list[NodeKey], array.array[int], array.array[int], array.array[int], array.array[int]]:
+    """Return `(csr_keys, row_ptr, col_idx, col_ptr, row_idx)` without mutating `graph`."""
+    if not graph._staging:
+        return (
+            list(graph._csr_keys),
+            graph._row_ptr,
+            graph._col_idx,
+            graph._col_ptr,
+            graph._row_idx,
+        )
+    empty: tuple[NodeKey, ...] = ()
+    edges = graph._edges
+    built = build_csr_csc(
+        tuple(graph._nodes),
+        lambda key: edges.get(key, empty),
+        is_node=graph._nodes.__contains__,
+    )
+    return built.keys, built.row_ptr, built.col_idx, built.col_ptr, built.row_idx
 
 
 def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
@@ -118,7 +143,8 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
 
     keys_sorted = _collect_graph_keys(graph)
     idx = {k: i for i, k in enumerate(keys_sorted)}
-    node_keys = [k for k in keys_sorted if k in graph._nodes]
+    csr_keys, row_ptr, col_idx, col_ptr, row_idx = _csr_payload(graph)
+    node_keys = csr_keys
     nodes = [graph._nodes[k] for k in node_keys]
 
     # Frame 1: nodes + graph-level metadata (no adjacency).
@@ -139,11 +165,12 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
         protocol=pickle.HIGHEST_PROTOCOL,
     )
 
-    edge_src, edge_dst = _edges_to_coo(graph._edges, idx)
     pickle.dump(
         {
-            "edge_src": edge_src,
-            "edge_dst": edge_dst,
+            "row_ptr": row_ptr,
+            "col_idx": col_idx,
+            "col_ptr": col_ptr,
+            "row_idx": row_idx,
             "_guards": [(idx[a], idx[b], g) for (a, b), g in graph._guards.items()],
             "_edge_provenance": [
                 (idx[a], idx[b], p) for (a, b), p in graph._edge_provenance.items()
@@ -154,7 +181,7 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
     )
 
 
-def _read_graph_frames(buf: BinaryIO) -> Any:
+def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     from .graph import DependencyGraph, _intern_guard_cell_refs
 
     part1 = pickle.load(buf)
@@ -164,8 +191,8 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
     key_index = {s: i for i, s in enumerate(keys)}
 
     graph = DependencyGraph.__new__(DependencyGraph)
-    # Intern node-map keys against the shared `keys` list.
-    graph._nodes = {keys[key_index[k]]: n for k, n in zip(node_keys, nodes, strict=True)}
+    interned_nodes = {keys[key_index[k]]: n for k, n in zip(node_keys, nodes, strict=True)}
+    graph._nodes = interned_nodes
     graph._hooks = part1["_hooks"]
     lc = part1["leaf_classification"]
     if lc:
@@ -183,18 +210,18 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
     graph.formula_shapes = None
     graph.cell_type_env = None
     graph._value_generation = 0
-    del part1, nodes, node_keys
-
-    part2 = pickle.load(buf)
-    edge_src: array.array[int] = part2["edge_src"]
-    edge_dst: array.array[int] = part2["edge_dst"]
     graph._edges = {}
     graph._reverse_edges = {}
-    for s, d in zip(edge_src, edge_dst, strict=True):
-        src = keys[s]
-        dst = keys[d]
-        graph._edges.setdefault(src, set()).add(dst)
-        graph._reverse_edges.setdefault(dst, set()).add(src)
+    graph._staging = True
+    graph._csr_keys = []
+    graph._node_index = {}
+    graph._row_ptr = array.array("I")
+    graph._col_idx = array.array("I")
+    graph._col_ptr = array.array("I")
+    graph._row_idx = array.array("I")
+    del part1, nodes
+
+    part2 = pickle.load(buf)
     graph._guards = {
         (keys[a], keys[b]): _intern_guard_cell_refs(g, keys, key_index=key_index)
         for a, b, g in part2["_guards"]
@@ -202,21 +229,25 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
     graph._edge_provenance = {
         (keys[a], keys[b]): cast(EdgeProvenance, p) for a, b, p in part2["_edge_provenance"]
     }
+    if version >= 6:
+        csr_keys = [keys[key_index[k]] for k in node_keys]
+        graph._csr_keys = csr_keys
+        graph._node_index = {k: i for i, k in enumerate(csr_keys)}
+        graph._row_ptr = part2["row_ptr"]
+        graph._col_idx = part2["col_idx"]
+        graph._col_ptr = part2["col_ptr"]
+        graph._row_idx = part2["row_idx"]
+        graph._staging = False
+        del part2
+        return graph
+
+    edge_src: array.array[int] = part2["edge_src"]
+    edge_dst: array.array[int] = part2["edge_dst"]
+    for s, d in zip(edge_src, edge_dst, strict=True):
+        src = keys[s]
+        dst = keys[d]
+        graph._edges.setdefault(src, set()).add(dst)
+        graph._reverse_edges.setdefault(dst, set()).add(src)
     del part2, edge_src, edge_dst
+    graph.rebuild_adjacency()
     return graph
-
-
-def _edges_to_coo(
-    edges: dict[NodeKey, set[NodeKey]],
-    idx: dict[str, int],
-) -> tuple[array.array[int], array.array[int]]:
-    src = array.array("I")
-    dst = array.array("I")
-    for key, deps in edges.items():
-        if not deps:
-            continue
-        s = idx[key]
-        for dep in deps:
-            src.append(s)
-            dst.append(idx[dep])
-    return src, dst

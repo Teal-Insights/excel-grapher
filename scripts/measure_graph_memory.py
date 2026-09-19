@@ -327,8 +327,10 @@ def _unique_formula_asts(graph: DependencyGraph) -> tuple[AstNode, ...]:
     return tuple(seen.values())
 
 
-def _empty_adj_stats(adj: Mapping[Any, set[Any]]) -> tuple[int, int, int]:
+def _empty_adj_stats(adj: Mapping[Any, set[Any]] | None) -> tuple[int, int, int]:
     """Return `(set_count, empty_count, empty_bytes)` for one adjacency map."""
+    if not adj:
+        return 0, 0, 0
     n_sets = n_empty = empty_bytes = 0
     for neighbors in adj.values():
         n_sets += 1
@@ -346,29 +348,53 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
             "_nodes: Node instances, formula_ast trees, addresses, metadata",
             (graph._nodes,),
         ),
-        _ComponentSpec(
-            "edges_forward",
-            "_edges: node -> dependency set (empty sets split into edges_forward_empty)",
-            (graph._edges,),
-            empty_adj=graph._edges,
-        ),
-        _ComponentSpec(
-            "edges_reverse",
-            "_reverse_edges: node -> dependent set (empty sets split into edges_reverse_empty)",
-            (graph._reverse_edges,),
-            empty_adj=graph._reverse_edges,
-        ),
-        _ComponentSpec(
-            "guards",
-            "_guards: edge key -> interned GuardExpr tree (trees are often shared)",
-            (graph._guards,),
-        ),
-        _ComponentSpec(
-            "provenance",
-            "_edge_provenance: edge key -> EdgeProvenance (causes + normalized site offsets)",
-            (graph._edge_provenance,),
-        ),
     ]
+    if graph._staging:
+        specs.extend(
+            [
+                _ComponentSpec(
+                    "edges_forward",
+                    "_edges: staging node -> dependency set (empty sets split into edges_forward_empty)",
+                    (graph._edges,),
+                    empty_adj=graph._edges,
+                ),
+                _ComponentSpec(
+                    "edges_reverse",
+                    "_reverse_edges: staging node -> dependent set (empty sets split into edges_reverse_empty)",
+                    (graph._reverse_edges,),
+                    empty_adj=graph._reverse_edges,
+                ),
+            ]
+        )
+    else:
+        specs.extend(
+            [
+                _ComponentSpec(
+                    "adjacency_csr",
+                    "uint32 CSR+CSC arrays (row_ptr/col_idx + col_ptr/row_idx); no values array",
+                    (graph._row_ptr, graph._col_idx, graph._col_ptr, graph._row_idx),
+                ),
+                _ComponentSpec(
+                    "node_index",
+                    "NodeKey -> row-id table plus CSR key list (keys shared with _nodes)",
+                    (graph._node_index, graph._csr_keys),
+                ),
+            ]
+        )
+    specs.extend(
+        [
+            _ComponentSpec(
+                "guards",
+                "_guards: edge key -> interned GuardExpr tree (trees are often shared)",
+                (graph._guards,),
+            ),
+            _ComponentSpec(
+                "provenance",
+                "_edge_provenance: edge key -> EdgeProvenance (causes + normalized site offsets)",
+                (graph._edge_provenance,),
+            ),
+        ]
+    )
     metadata_roots = tuple(
         value
         for value in (
@@ -410,7 +436,7 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
 
 def edge_count(graph: DependencyGraph) -> int:
     """Return the number of stored dependency edges in `graph`."""
-    return sum(len(deps) for deps in graph._edges.values())
+    return graph.edge_count()
 
 
 def _accumulate_component(
@@ -520,8 +546,12 @@ def measure_graph_memory(graph: DependencyGraph) -> GraphMemoryReport:
     )
     singleton_bytes = sum(info.size for info in distinct.values() if info.is_singleton)
 
-    forward_sets, empty_forward_sets, empty_forward_bytes = _empty_adj_stats(graph._edges)
-    reverse_sets, empty_reverse_sets, empty_reverse_bytes = _empty_adj_stats(graph._reverse_edges)
+    forward_sets, empty_forward_sets, empty_forward_bytes = _empty_adj_stats(
+        graph._edges if graph._staging else None
+    )
+    reverse_sets, empty_reverse_sets, empty_reverse_bytes = _empty_adj_stats(
+        graph._reverse_edges if graph._staging else None
+    )
 
     unique_asts = _unique_formula_asts(graph)
     formula_nodes_with_ast = sum(
@@ -565,8 +595,9 @@ _LEGEND = (
     "            re-attribution, not a saving. Shared bytes are counted once in\n"
     "            the graph total below, and once per component in the rows above.\n"
     "scaffold  = the dict/set/list/tuple containers themselves, excluding contents\n"
-    "empty-set rows are a partition of the parent adjacency walk (same object ids),\n"
+    "empty-set rows (staging maps only) are a partition of the parent adjacency walk,\n"
     "            not a second walk, so they stay exclusive rather than shared.\n"
+    "CSR adjacency is counted as adjacency_csr (arrays) plus node_index (row-id table).\n"
     "Process-wide singletons (enum members, small ints, single-char strings) are\n"
     "excluded from every figure: they exist whether or not the graph does."
 )

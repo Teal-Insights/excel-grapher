@@ -89,6 +89,7 @@ def replace_node_formula(
         _replace_outgoing(graph, nk, ())
         node.is_leaf = True
         graph._invalidate_formula_shapes()
+        graph.rebuild_adjacency()
         return
 
     if workbook is not None:
@@ -125,8 +126,9 @@ def replace_node_formula(
         named_range_ranges=graph.named_range_ranges,
     )
     _replace_outgoing(graph, nk, edges)
-    node.is_leaf = not bool(graph._edges.get(nk))
+    node.is_leaf = not bool(graph.get_dependencies(nk))
     graph._invalidate_formula_shapes()
+    graph.rebuild_adjacency()
 
 
 def _apply_formula_text(
@@ -165,7 +167,7 @@ def _replace_outgoing(
     host: NodeKey,
     edges: tuple[tuple[NodeKey, GuardExpr | None, EdgeProvenance | None], ...],
 ) -> None:
-    for dep in list(graph._edges.get(host, ())):
+    for dep in list(graph.get_dependencies(host)):
         graph._remove_edge(host, dep)
     for dep_key, guard, provenance in edges:
         graph.add_edge(host, dep_key, guard=guard, provenance=provenance)
@@ -221,8 +223,9 @@ def _replace_with_workbook(
         named_range_ranges=extracted.named_range_ranges or graph.named_range_ranges,
     )
     _merge_extracted_subgraph(graph, nk, extracted)
-    node.is_leaf = not bool(graph._edges.get(nk))
+    node.is_leaf = not bool(graph.get_dependencies(nk))
     graph._invalidate_formula_shapes()
+    graph.rebuild_adjacency()
 
 
 def _merge_extracted_subgraph(
@@ -233,7 +236,7 @@ def _merge_extracted_subgraph(
     existing = set(graph._nodes)
     new_keys = [key for key in extracted if key not in existing]
 
-    for dep in list(graph._edges.get(host, ())):
+    for dep in list(graph.get_dependencies(host)):
         graph._remove_edge(host, dep)
 
     for key in new_keys:

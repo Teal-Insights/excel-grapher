@@ -124,10 +124,12 @@ def test_move_node_keeps_sparse_leaf_and_sink_keys() -> None:
 
     graph.move_node("Sheet1!A1", "Sheet1!C3")
 
-    assert "Sheet1!C3" not in graph._edges
-    assert "Sheet1!B1" not in graph._reverse_edges
-    assert graph._edges["Sheet1!B1"] == {"Sheet1!C3"}
-    assert graph._reverse_edges["Sheet1!C3"] == {"Sheet1!B1"}
+    assert graph._staging is False
+    assert graph._edges == {}
+    assert graph.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!C3"})
+    assert graph.get_dependents("Sheet1!C3") == frozenset({"Sheet1!B1"})
+    assert graph.get_dependencies("Sheet1!C3") == frozenset()
+    assert graph.get_dependents("Sheet1!B1") == frozenset()
     assert _empty_adjacency_set_ids(graph) == set()
 
 
@@ -141,8 +143,8 @@ def test_replace_formula_clearing_outgoing_drops_empty_forward_set() -> None:
 
     graph.replace_node_formula("Sheet1!A1", None, None)
 
-    assert "Sheet1!A1" not in graph._edges
-    assert graph._reverse_edges["Sheet1!A1"] == {"Sheet1!D1"}
+    assert graph._staging is False
+    assert graph._edges == {}
     assert _empty_adjacency_set_ids(graph) == set()
     assert graph.get_dependencies("Sheet1!A1") == frozenset()
     assert graph.get_dependents("Sheet1!A1") == frozenset({"Sheet1!D1"})
@@ -188,9 +190,12 @@ def test_induced_subgraph_omits_empty_adjacency() -> None:
 
     sub = select_path_induced_subgraph(graph, source_keys=["Sheet1!B1"], target_keys=["Sheet1!A1"])
     assert "Sheet1!Z1" not in sub
-    assert sub._edges == {"Sheet1!B1": {"Sheet1!A1"}}
-    assert "Sheet1!A1" not in sub._edges
-    assert "Sheet1!B1" not in sub._reverse_edges
+    assert sub._staging is False
+    assert sub._edges == {}
+    assert sub.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!A1"})
+    assert sub.get_dependents("Sheet1!A1") == frozenset({"Sheet1!B1"})
+    assert sub.get_dependencies("Sheet1!A1") == frozenset()
+    assert sub.get_dependents("Sheet1!B1") == frozenset()
     assert _empty_adjacency_set_ids(sub) == set()
 
 
@@ -205,13 +210,21 @@ def test_json_and_pickle_round_trip_do_not_restore_empty_sets() -> None:
     json_restored = dependency_graph_from_json(dependency_graph_to_json(graph))
     deep = copy.deepcopy(graph)
 
-    for restored in (pickled, json_restored, deep):
-        assert restored._edges == {"Sheet1!B1": {"Sheet1!A1"}}
-        assert restored._reverse_edges == {"Sheet1!A1": {"Sheet1!B1"}}
-        assert "Sheet1!A2" not in restored._edges
-        assert "Sheet1!A2" not in restored._reverse_edges
+    for restored in (pickled, json_restored):
+        assert restored._staging is False
+        assert restored._edges == {}
+        assert restored.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!A1"})
+        assert restored.get_dependents("Sheet1!A1") == frozenset({"Sheet1!B1"})
         assert _empty_adjacency_set_ids(restored) == set()
         for i in range(2, 5):
             key = f"Sheet1!A{i}"
             assert restored.get_dependencies(key) == frozenset()
             assert restored.get_dependents(key) == frozenset()
+
+    assert deep.get_dependencies("Sheet1!B1") == frozenset({"Sheet1!A1"})
+    assert deep.get_dependents("Sheet1!A1") == frozenset({"Sheet1!B1"})
+    assert _empty_adjacency_set_ids(deep) == set()
+    for i in range(2, 5):
+        key = f"Sheet1!A{i}"
+        assert deep.get_dependencies(key) == frozenset()
+        assert deep.get_dependents(key) == frozenset()
