@@ -20,6 +20,7 @@ from .lightweight_viz import (
     write_web_viz_html,
 )
 from .node import Node, NodeKey, NodeView
+from .sheet_graph import SheetGraph
 from .subgraph import select_path_induced_subgraph, select_shortest_path_subgraph
 
 
@@ -63,20 +64,52 @@ def _networkx_value_type(node: Node | NodeView) -> str:
     return "UNKNOWN"
 
 
+def _sheet_graph_to_networkx(graph: SheetGraph):
+    """Convert a sheet graph to a NetworkX DiGraph of worksheet names."""
+    try:
+        import networkx as nx
+    except Exception as e:  # pragma: no cover
+        raise ImportError("networkx is not installed; add it to use to_networkx()") from e
+
+    G = nx.DiGraph()
+    for node in graph.nodes:
+        G.add_node(
+            node.name,
+            sheet=node.name,
+            cell_count=node.cell_count,
+            formula_count=node.formula_count,
+            leaf_count=node.leaf_count,
+            label=node.name,
+        )
+    for edge in graph.edges:
+        G.add_edge(
+            edge.source,
+            edge.target,
+            weight=edge.edge_count,
+            edge_count=edge.edge_count,
+            guarded_count=edge.guarded_count,
+        )
+    return G
+
+
 def to_networkx(
-    graph: DependencyGraph | GraphReadView,
+    graph: DependencyGraph | GraphReadView | SheetGraph,
     *,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ):
-    """Convert a dependency graph to a NetworkX DiGraph.
+    """Convert a dependency graph or sheet graph to a NetworkX DiGraph.
 
-    Accepts `DependencyGraph` or any graph-like object with node iteration,
-    dependency lookup, and edge attributes (for example `ProjectionResult`).
+    Accepts `DependencyGraph`, any graph-like object with node iteration,
+    dependency lookup, and edge attributes (for example `ProjectionResult`),
+    or a `SheetGraph` from `to_sheet_graph`.
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.
     """
+    if isinstance(graph, SheetGraph):
+        return _sheet_graph_to_networkx(graph)
+
     validate_max_formula_length(max_formula_length)
 
     try:
@@ -125,8 +158,26 @@ def to_networkx(
     return G
 
 
+def _sheet_graph_to_graphviz(graph: SheetGraph, *, rankdir: str) -> str:
+    """Render a sheet graph as GraphViz DOT."""
+    lines: list[str] = ["digraph sheet_dependencies {", f"  rankdir={_dot_escape(rankdir)};"]
+    for node in graph.nodes:
+        name = _dot_escape(node.name)
+        lines.append(f'  "{name}" [label="{name}"];')
+    for edge in graph.edges:
+        src = _dot_escape(edge.source)
+        dst = _dot_escape(edge.target)
+        label = _dot_escape(str(edge.edge_count))
+        attrs = f'label="{label}"'
+        if edge.edge_count > 0 and edge.guarded_count == edge.edge_count:
+            attrs = f"style=dashed {attrs}"
+        lines.append(f'  "{src}" -> "{dst}" [{attrs}];')
+    lines.append("}")
+    return "\n".join(lines)
+
+
 def to_graphviz(
-    graph: DependencyGraph,
+    graph: DependencyGraph | SheetGraph,
     *,
     label_fn: Callable[[NodeKey, Node | NodeView], str] | None = None,
     highlight: set[NodeKey] | None = None,
@@ -134,6 +185,15 @@ def to_graphviz(
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ) -> str:
+    """Render a cell graph or `SheetGraph` as GraphViz DOT.
+
+    Formula-label options apply to cell graphs. Sheet graphs emit one node
+    per worksheet and label each consolidated edge with its cell-edge count.
+    Fully guarded sheet edges are dashed.
+    """
+    if isinstance(graph, SheetGraph):
+        return _sheet_graph_to_graphviz(graph, rankdir=rankdir)
+
     validate_max_formula_length(max_formula_length)
 
     lines: list[str] = ["digraph dependencies {", f"  rankdir={_dot_escape(rankdir)};"]
@@ -174,29 +234,63 @@ def to_graphviz(
     return "\n".join(lines)
 
 
+def _safe_mermaid_id(key: str) -> str:
+    """Return a Mermaid node id with punctuation stripped."""
+    return (
+        key.replace("!", "_")
+        .replace(" ", "_")
+        .replace("-", "_")
+        .replace("'", "")
+        .replace('"', "")
+        .replace(".", "_")
+    )
+
+
+def _escape_mermaid_label(label: str) -> str:
+    return label.replace("\\", "\\\\").replace('"', '\\"')
+
+
+def _sheet_graph_to_mermaid(graph: SheetGraph, *, max_nodes: int) -> str:
+    """Render a sheet graph as a Mermaid flowchart."""
+    lines: list[str] = ["flowchart TD"]
+    nodes = graph.nodes[: max_nodes if max_nodes > 0 else 0]
+    node_names = {node.name for node in nodes}
+    for node in nodes:
+        label = _escape_mermaid_label(node.name)
+        lines.append(f'  {_safe_mermaid_id(node.name)}["{label}"]')
+    if len(graph.nodes) > len(nodes):
+        lines.append(f"  truncated[[...{len(graph.nodes) - len(nodes)} more nodes]]")
+    for edge in graph.edges:
+        if edge.source not in node_names or edge.target not in node_names:
+            continue
+        src = _safe_mermaid_id(edge.source)
+        dst = _safe_mermaid_id(edge.target)
+        label = _escape_mermaid_label(str(edge.edge_count))
+        if edge.edge_count > 0 and edge.guarded_count == edge.edge_count:
+            lines.append(f'  {src} -.->|"{label}"| {dst}')
+        else:
+            lines.append(f'  {src} -->|"{label}"| {dst}')
+    return "\n".join(lines)
+
+
 def to_mermaid(
-    graph: DependencyGraph,
+    graph: DependencyGraph | SheetGraph,
     *,
     label_fn: Callable[[NodeKey, Node | NodeView], str] | None = None,
     max_nodes: int = 100,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ) -> str:
+    """Render a cell graph or `SheetGraph` as a Mermaid flowchart.
+
+    Formula-label options apply to cell graphs. Sheet graphs emit one node
+    per worksheet and label each consolidated edge with its cell-edge count.
+    Fully guarded sheet edges use a dashed arrow.
+    """
+    if isinstance(graph, SheetGraph):
+        return _sheet_graph_to_mermaid(graph, max_nodes=max_nodes)
+
     validate_max_formula_length(max_formula_length)
-
-    def safe_id(key: str) -> str:
-        # Mermaid node IDs can't contain many punctuation characters; keep it simple.
-        return (
-            key.replace("!", "_")
-            .replace(" ", "_")
-            .replace("-", "_")
-            .replace("'", "")
-            .replace('"', "")
-            .replace(".", "_")
-        )
-
-    def escape_mermaid_label(label: str) -> str:
-        return label.replace("\\", "\\\\").replace('"', '\\"')
 
     lines: list[str] = ["flowchart TD"]
 
@@ -215,10 +309,10 @@ def to_mermaid(
             max_formula_length=max_formula_length,
         )
         # Mermaid flowchart labels use <br> for line breaks inside shapes.
-        label = escape_mermaid_label(str(label_raw).replace("\n", "<br>"))
+        label = _escape_mermaid_label(str(label_raw).replace("\n", "<br>"))
         # Box for leaves, rounded for formulas.
         shape = f'["{label}"]' if node.is_leaf else f'("{label}")'
-        lines.append(f"  {safe_id(key)}{shape}")
+        lines.append(f"  {_safe_mermaid_id(key)}{shape}")
 
     if len(keys) > len(node_keys):
         lines.append(f"  truncated[[...{len(keys) - len(node_keys)} more nodes]]")
@@ -231,10 +325,12 @@ def to_mermaid(
                 continue
             guard = graph.get_edge_guard(key, dep)
             if guard is None:
-                lines.append(f"  {safe_id(key)} --> {safe_id(resolved)}")
+                lines.append(f"  {_safe_mermaid_id(key)} --> {_safe_mermaid_id(resolved)}")
             else:
-                guard_label = escape_mermaid_label(str(guard))
-                lines.append(f'  {safe_id(key)} -.->|"{guard_label}"| {safe_id(resolved)}')
+                guard_label = _escape_mermaid_label(str(guard))
+                lines.append(
+                    f'  {_safe_mermaid_id(key)} -.->|"{guard_label}"| {_safe_mermaid_id(resolved)}'
+                )
 
     return "\n".join(lines)
 
@@ -246,6 +342,7 @@ __all__ = [
     "LightweightVizPayload",
     "select_path_induced_subgraph",
     "select_shortest_path_subgraph",
+    "SheetGraph",
     "to_graphviz",
     "to_mermaid",
     "to_networkx",

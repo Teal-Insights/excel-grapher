@@ -65,6 +65,23 @@ from excel_grapher.grapher import to_networkx
 G = to_networkx(g)
 ```
 
+### Sheet graph
+
+`to_sheet_graph(...)` collapses a cell-level `DependencyGraph` (or any `GraphReadView`) to **one node per worksheet**. Cell edges between the same pair of sheets become a single directed edge whose label is the number of underlying cell edges. Intra-sheet edges are dropped unless you pass `include_self_loops=True`. Edge direction is unchanged: `Calc -> Inputs` means the Calc sheet depends on Inputs.
+
+Pass the result to `to_graphviz`, `to_mermaid`, or `to_networkx`:
+
+```python
+from excel_grapher.grapher import to_graphviz, to_mermaid, to_networkx, to_sheet_graph
+
+sheets = to_sheet_graph(g)
+dot = to_graphviz(sheets, rankdir="LR")
+mm = to_mermaid(sheets)
+nx_sheets = to_networkx(sheets)  # optional: nodes are sheet names, edges carry `weight`
+```
+
+Fully guarded between-sheet bundles render dashed (GraphViz `style=dashed`, Mermaid `-.->`), matching cell-level guarded edges.
+
 ### Formula text on nodes
 
 For `to_graphviz`, `to_mermaid`, and `to_networkx`, formula cells get a **second line** in the node label (cell address, then the formula). This is on by default (`include_formula_on_nodes=True`). Set `include_formula_on_nodes=False` to use only the cell address. Long formulas are truncated for display: `max_formula_length` defaults to `120` characters; use `None` for no limit. Truncated text ends with `...`.
