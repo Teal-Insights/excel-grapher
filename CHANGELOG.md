@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.8.0 (2026-09-19)
+
+### Bug Fixes
+
+- **grapher**: Overlay bound labels without a second graph extract
+  ([#913](https://github.com/Teal-Insights/excel-grapher/pull/913),
+  [`4de3cf2`](https://github.com/Teal-Insights/excel-grapher/commit/4de3cf293c5e0ef03327928ab675db7e86998104))
+
+### Features
+
+- **grapher**: Include bound labels in Excel writeback
+  ([#913](https://github.com/Teal-Insights/excel-grapher/pull/913),
+  [`4de3cf2`](https://github.com/Teal-Insights/excel-grapher/commit/4de3cf293c5e0ef03327928ab675db7e86998104))
+
+
 ## v20.7.0 (2026-09-19)
 
 ### Bug Fixes
