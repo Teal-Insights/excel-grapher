@@ -81,6 +81,7 @@ from .range_compression import (
     build_taco_index,
     input_keys_from_graph,
 )
+from .sheet_graph import SheetGraph, SheetGraphEdge, SheetGraphNode, to_sheet_graph
 from .validation import ValidationResult, WorkbookCalcSettings, get_calc_settings, validate_graph
 from .writeback import write_workbook
 
@@ -149,6 +150,10 @@ __all__ = [
     "LightweightVizPayload",
     "select_path_induced_subgraph",
     "select_shortest_path_subgraph",
+    "SheetGraph",
+    "SheetGraphEdge",
+    "SheetGraphNode",
+    "to_sheet_graph",
     "to_graphviz",
     "to_mermaid",
     "to_networkx",
