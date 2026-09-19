@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.9.1 (2026-09-19)
+
+### Bug Fixes
+
+- Keep Excel types on computed string 0/1 series for INDEX=1
+  ([#918](https://github.com/Teal-Insights/excel-grapher/pull/918),
+  [`e25158e`](https://github.com/Teal-Insights/excel-grapher/commit/e25158eb60f83c19f0d185e5d9425b36a01dea59))
+
+
 ## v20.9.0 (2026-09-19)
 
 ### Features
