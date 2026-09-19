@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.0.0 (2026-09-19)
+
+### Features
+
+- Parse whole-column/row spans as open-axis AST
+  ([#919](https://github.com/Teal-Insights/excel-grapher/pull/919),
+  [`dcbbe0b`](https://github.com/Teal-Insights/excel-grapher/commit/dcbbe0b4a54645a816ee23d28d4f46ec352b57ae))
+
+
 ## v20.9.1 (2026-09-19)
 
 ### Bug Fixes
