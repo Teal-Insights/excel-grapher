@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.9.0 (2026-09-19)
+
+### Features
+
+- **grapher**: Store DependencyGraph adjacency as CSR+CSC
+  ([#917](https://github.com/Teal-Insights/excel-grapher/pull/917),
+  [`34c19ee`](https://github.com/Teal-Insights/excel-grapher/commit/34c19ee5b39411b6f9e2822d8b6d423d9d3c56c1))
+
+
 ## v20.8.0 (2026-09-19)
 
 ### Bug Fixes
