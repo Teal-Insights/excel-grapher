@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.1.0 (2026-09-19)
+
+### Features
+
+- Compact edge guards and provenance onto CSR intern-id arrays
+  ([#921](https://github.com/Teal-Insights/excel-grapher/pull/921),
+  [`6421940`](https://github.com/Teal-Insights/excel-grapher/commit/6421940d7cf316146d0a40e89a0907b9d6d9cfd0))
+
+
 ## v21.0.0 (2026-09-19)
 
 ### Features
