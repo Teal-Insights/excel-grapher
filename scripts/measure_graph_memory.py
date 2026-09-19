@@ -252,6 +252,8 @@ class GraphMemoryReport:
     guarded_edge_count: int
     guard_intern_pool_size: int
     identity_distinct_guards: int
+    edges_with_provenance: int
+    identity_distinct_provenances: int
     formula_ast_intern_count: int
     formula_ast_intern_bytes: int
     formula_nodes_with_ast: int
@@ -296,6 +298,8 @@ class GraphMemoryReport:
             "guarded_edge_count": self.guarded_edge_count,
             "guard_intern_pool_size": self.guard_intern_pool_size,
             "identity_distinct_guards": self.identity_distinct_guards,
+            "edges_with_provenance": self.edges_with_provenance,
+            "identity_distinct_provenances": self.identity_distinct_provenances,
             "formula_ast_intern_count": self.formula_ast_intern_count,
             "formula_ast_intern_bytes": self.formula_ast_intern_bytes,
             "formula_nodes_with_ast": self.formula_nodes_with_ast,
@@ -459,6 +463,20 @@ def _identity_distinct_guards(graph: DependencyGraph) -> int:
     return sum(expr is not None for expr in graph._guard_exprs)
 
 
+def _edges_with_provenance(graph: DependencyGraph) -> int:
+    """Return the number of edges that carry provenance."""
+    if graph._staging:
+        return len(graph._edge_provenance)
+    return sum(1 for pid in graph._prov_id if pid)
+
+
+def _identity_distinct_provenances(graph: DependencyGraph) -> int:
+    """Return the number of distinct interned `EdgeProvenance` values on `graph`."""
+    if graph._staging:
+        return len(set(graph._edge_provenance.values()))
+    return sum(prov is not None for prov in graph._provenances)
+
+
 def _accumulate_component(
     *,
     name: str,
@@ -595,6 +613,8 @@ def measure_graph_memory(graph: DependencyGraph) -> GraphMemoryReport:
         guarded_edge_count=_guarded_edge_count(graph),
         guard_intern_pool_size=guard_intern_pool_size(),
         identity_distinct_guards=_identity_distinct_guards(graph),
+        edges_with_provenance=_edges_with_provenance(graph),
+        identity_distinct_provenances=_identity_distinct_provenances(graph),
         formula_ast_intern_count=len(unique_asts),
         formula_ast_intern_bytes=formula_ast_intern_bytes,
         formula_nodes_with_ast=formula_nodes_with_ast,
@@ -671,6 +691,10 @@ def _render(report: GraphMemoryReport) -> str:
         f"  identity-distinct trees{report.identity_distinct_guards:,}",
         f"  guard intern pool      {report.guard_intern_pool_size:,} live entries"
         " (process-wide WeakValueDictionary)",
+        "",
+        "provenance intern:",
+        f"  edges with provenance  {report.edges_with_provenance:,}",
+        f"  intern table entries   {report.identity_distinct_provenances:,}",
         "",
         "formula_ast intern pool (unique Node.formula_ast trees, counted once):",
         f"  nodes with formula_ast {report.formula_nodes_with_ast:,}",

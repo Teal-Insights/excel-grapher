@@ -7,12 +7,21 @@ import pickle
 from pathlib import Path
 from typing import cast
 
+import pytest
+
+from excel_grapher import create_dependency_graph
 from excel_grapher.grapher.cache import dependency_graph_from_json, dependency_graph_to_json
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.guard import CellRef, Compare, GuardExpr, Literal
 from excel_grapher.grapher.node import make_cell_node
-from scripts.measure_graph_memory import measure_graph_memory
+from scripts.measure_graph_memory import (
+    DEFAULT_TARGETS,
+    DEFAULT_WORKBOOK,
+    IF_HEAVY_TARGETS,
+    IF_HEAVY_WORKBOOK,
+    measure_graph_memory,
+)
 
 
 def _leaf(column: str, row: int, value: object = 1):
@@ -310,3 +319,44 @@ def test_v6_pickle_blob_compacts_edge_key_lists_on_load(tmp_path: Path) -> None:
     assert restored.is_guarded("Sheet1!B1", "Sheet1!A1")
     assert restored.get_edge_attrs("Sheet1!C1", "Sheet1!A1").provenance == _prov(1, 11)
     assert restored._guard_id.typecode == "I"
+
+
+def _assert_extract_is_compact(graph: DependencyGraph) -> None:
+    assert graph._staging is False
+    assert graph._guards == {}
+    assert graph._edge_provenance == {}
+    assert graph._edges == {}
+    assert graph._reverse_edges == {}
+
+
+@pytest.mark.skipif(not DEFAULT_WORKBOOK.is_file(), reason="taco_patterns.xlsx fixture missing")
+def test_taco_extract_rebuild_drops_edge_key_maps() -> None:
+    graph = create_dependency_graph(
+        DEFAULT_WORKBOOK,
+        DEFAULT_TARGETS,
+        load_values=False,
+        capture_dependency_provenance=True,
+    )
+    _assert_extract_is_compact(graph)
+    report = measure_graph_memory(graph)
+    # Character-span intern table collapses; leftover is a few KiB, not a map.
+    assert report.identity_distinct_provenances < report.edge_count
+    assert report.component("provenance").exclusive_bytes < 8_192
+
+
+@pytest.mark.skipif(not IF_HEAVY_WORKBOOK.is_file(), reason="if_guards.xlsx fixture missing")
+def test_if_guards_extract_rebuild_drops_edge_key_maps() -> None:
+    graph = create_dependency_graph(
+        IF_HEAVY_WORKBOOK,
+        IF_HEAVY_TARGETS,
+        load_values=False,
+        capture_dependency_provenance=True,
+    )
+    _assert_extract_is_compact(graph)
+    report = measure_graph_memory(graph)
+    assert report.guarded_edge_count > 0
+    assert report.identity_distinct_guards == report.guarded_edge_count
+    assert report.identity_distinct_provenances == 1
+    assert report.component("provenance").exclusive_bytes < 8_192
+    # Guard leftover is interned GuardExpr payload, not EdgeKey maps.
+    assert report.component("guards").scaffolding_bytes < report.component("guards").exclusive_bytes

@@ -251,6 +251,31 @@ def test_guard_intern_pool_and_guarded_edge_counts() -> None:
     assert distinct.identity_distinct_guards == 32
 
 
+def test_provenance_intern_table_and_edge_counts() -> None:
+    distinct = measure_graph_memory(_fixture_graph(rows=32))
+    assert distinct.edges_with_provenance == 32
+    # Distinct character-span tuples do not intern together.
+    assert distinct.identity_distinct_provenances == 32
+
+    graph = DependencyGraph()
+    shared_prov = EdgeProvenance(
+        causes=DependencyCause.direct_ref,
+        direct_sites_normalized=((1, 11),),
+    )
+    for row in range(1, 9):
+        graph.add_node(make_cell_node("Sheet1", "A", row, value=float(row), is_leaf=True))
+        graph.add_node(make_cell_node("Sheet1", "B", row, normalized_formula="=1", is_leaf=False))
+        graph.add_edge(
+            f"Sheet1!B{row}",
+            f"Sheet1!A{row}",
+            provenance=shared_prov,
+        )
+    graph.rebuild_adjacency()
+    shared = measure_graph_memory(graph)
+    assert shared.edges_with_provenance == 8
+    assert shared.identity_distinct_provenances == 1
+
+
 def test_formula_ast_intern_pool_counts_shared_trees_once() -> None:
     graph = DependencyGraph()
     ast = parse_formula_text("=Sheet1!A1*2", anchor="Sheet1!B1")
@@ -277,6 +302,7 @@ def test_render_marks_shared_and_owned_bytes() -> None:
     assert "provenance" in text
     assert "empty-set" in text
     assert "guard intern pool" in text
+    assert "provenance intern" in text
     assert "formula_ast intern" in text
     # A reader must be able to tell re-attribution from a real drop.
     assert "shared with another component" in text
@@ -290,6 +316,8 @@ def test_to_dict_is_json_serializable() -> None:
     assert payload["node_count"] == 8
     assert payload["edge_count"] == 4
     assert payload["guarded_edge_count"] == 4
+    assert payload["edges_with_provenance"] == 4
+    assert payload["identity_distinct_provenances"] == 4
     assert payload["empty_forward_sets"] >= 0
     assert payload["formula_ast_intern_count"] > 0
     components = payload["components"]

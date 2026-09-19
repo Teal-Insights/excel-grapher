@@ -57,3 +57,5 @@ def test_if_heavy_fixture_has_guarded_edges(capsys: pytest.CaptureFixture[str]) 
     payload = json.loads(capsys.readouterr().out)
     assert payload["guarded_edge_count"] > 0
     assert payload["identity_distinct_guards"] > 0
+    assert payload["edges_with_provenance"] > 0
+    assert payload["identity_distinct_provenances"] >= 1
