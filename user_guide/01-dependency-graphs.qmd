@@ -38,18 +38,30 @@ print(to_graphviz(g))  # GraphViz DOT
 `write_workbook` is the inverse of `create_dependency_graph`: it writes a
 `GraphReadView` (`DependencyGraph` or `ProjectionResult`) to a **new** `.xlsx`.
 There is no template-patch mode. If `destination` already exists, pass
-`overwrite=True`; the source workbook is never opened or saved as a side
-effect.
+`overwrite=True`. The destination is always a new file; the original workbook
+is never saved in place. Passing `series_bindings` opens that workbook
+read-only so bound labels can be copied.
 
 ```python
 from pathlib import Path
 
 from excel_grapher.grapher import create_dependency_graph, write_workbook
+from excel_grapher.series_bindings import load_series_bindings
 
 graph = create_dependency_graph(Path("model.xlsx"), ["Sheet1!B2"])
 graph.set_node_value("Sheet1!A1", 42)
 graph.move_node("Sheet1!B2", "Sheet1!C3")
 write_workbook(graph, Path("edited.xlsx"))
+
+workbook = Path("model.xlsx")
+bindings = load_series_bindings(workbook.with_suffix(".bindings.yaml"))
+graph = create_dependency_graph(workbook, ["Sheet1!B2"])
+write_workbook(
+    graph,
+    Path("labelled.xlsx"),
+    series_bindings=bindings,
+    bindings_workbook=workbook,
+)
 ```
 
 Default formula spelling is `render_formula(..., style=A1_EXCEL)` from current
@@ -103,6 +115,15 @@ still valid; it exports the pre-move view.
 
 Extraction is a target closure, so styles, charts, VBA, and cells outside
 the view do not appear in the output. That is accepted v1 lossiness.
+Pass `series_bindings` and `bindings_workbook` to also write `row_label`,
+`column_header`, `kind: cell`, and attribute source cells that bindings
+read. Those labels are often outside the formula closure. Formula headers
+are copied only when every static reference is already in the view or is
+itself a bound label; missing deps, `OFFSET`, and `INDIRECT` fail closed
+instead of extracting a second closure. The original graph is not mutated;
+the bindings workbook is opened read-only. Set `include_bound_labels=False`
+to keep the strict target-closure file. `bindings_workbook` is required
+only when bound labels are included.
 
 See [Exporting standalone Python](06-export.qmd) for projection as the
 non-mutating helper shared with Python codegen.

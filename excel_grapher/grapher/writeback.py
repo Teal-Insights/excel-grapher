@@ -10,6 +10,7 @@ from __future__ import annotations
 import os
 from datetime import date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastpyxl import Workbook
 from fastpyxl.utils.cell import coordinate_from_string
@@ -18,17 +19,39 @@ from fastpyxl.workbook.defined_name import DefinedName
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.address_keys import quote_sheet_if_needed
-from excel_grapher.core.formula_ast import FormulaStyle, render_formula
+from excel_grapher.core.address_keys import format_key, parse_address, quote_sheet_if_needed
+from excel_grapher.core.excel_function_names import normalize_excel_function_name
+from excel_grapher.core.formula_ast import (
+    AstNode,
+    BinaryOpNode,
+    CellRef,
+    CellRefNode,
+    FormulaStyle,
+    FunctionCallNode,
+    RangeNode,
+    UnaryOpNode,
+    WholeColumnNode,
+    WholeRowNode,
+    bind_axes,
+    parse_preserving_axes_optional,
+    render_formula,
+    resolve_cell_ref,
+)
 from excel_grapher.core.types import XlError
 
 from .graph import GraphReadView
 from .node import NodeView
+from .parser import DEFAULT_MAX_RANGE_CELLS, expand_range
 from .shared_formulas import (
     SharedFormulasMode,
     parse_shared_formulas_mode,
     shared_formula_cell_values,
 )
+
+_DYNAMIC_OVERLAY_FNS = frozenset({"OFFSET", "INDIRECT"})
+
+if TYPE_CHECKING:
+    from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
 
 def write_workbook(
@@ -40,6 +63,9 @@ def write_workbook(
     overwrite: bool = False,
     include_defined_names: bool = True,
     shared_formulas: SharedFormulasMode = "auto",
+    series_bindings: WorkbookSeriesBindings | None = None,
+    bindings_workbook: Path | str | None = None,
+    include_bound_labels: bool = True,
 ) -> None:
     """Write `graph` to a new `.xlsx` at `destination`.
 
@@ -50,7 +76,15 @@ def write_workbook(
     written as they are. Output contains only sheets and cells from the
     view. Styles, charts, VBA, and cells outside the view are omitted
     (accepted v1 lossiness). Vacated `move_node` addresses are simply
-    absent; there is no template to clear.
+    absent; there is no template to clear. When `series_bindings` is set
+    and `include_bound_labels` is True (default), `row_label`,
+    `column_header`, `kind: cell`, and attribute source cells that
+    bindings read are written too, even if they sit outside the target
+    closure. Formula labels are copied only when every static dependency
+    is already in the view or is itself a bound label; otherwise the
+    writer fails closed rather than extracting a second dependency
+    closure. The bindings workbook is opened read-only for those extra
+    cells; it is never overwritten.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -97,7 +131,10 @@ def write_workbook(
             Shared-formula grouping is skipped (absolute fills are not a
             shared relative shape).
         overwrite: If False (default), raise when `destination` exists.
-            The source workbook is never opened or saved.
+            The destination is always a new file; `graph`'s original
+            workbook is never saved in place. `bindings_workbook` is opened
+            read-only when bound labels are included (`include_bound_labels`
+            is True).
         include_defined_names: If True (default), write `named_ranges` and
             `named_range_ranges` as workbook-global defined names. Set False
             to omit the name table.
@@ -111,6 +148,15 @@ def write_workbook(
             `ProjectionResult` if you want grouping. Stale shapes,
             non-contiguous or mixed-axis leftovers, array formulas, and
             `INDIRECT` emit per-cell rather than an invalid shared formula.
+        series_bindings: Optional sidecar used to locate bound labels.
+            Requires `bindings_workbook` when `include_bound_labels` is True.
+        bindings_workbook: Workbook the sidecar describes. Required when
+            `series_bindings` is set and `include_bound_labels` is True.
+        include_bound_labels: If True (default) and `series_bindings` is
+            set, write `row_label` / `column_header` / `kind: cell` /
+            attribute source cells that are missing from `graph`. Formula
+            labels whose static deps are not already in the view or bound
+            labels are refused. The original graph is not mutated.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
@@ -119,12 +165,20 @@ def write_workbook(
             `formula_style` is `R1C1`, a relative axis has no host
             address, an array formula is missing its observed spill / CSE
             `ref`, a defined name cannot be expressed as a cell or
-            rectangle, `shared_formulas` is not a known mode, or
-            `shared_formulas='require'` and `formula_shapes` is missing.
+            rectangle, `shared_formulas` is not a known mode,
+            `shared_formulas='require'` and `formula_shapes` is missing, or
+            `series_bindings` is set with `include_bound_labels` and without
+            `bindings_workbook`, or a bound formula label cannot be copied
+            as a static overlay.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
     shared_mode = parse_shared_formulas_mode(shared_formulas)
+    if series_bindings is not None and include_bound_labels and bindings_workbook is None:
+        raise ValueError(
+            "bindings_workbook is required when series_bindings is set "
+            "and include_bound_labels is True"
+        )
     if style is FormulaStyle.R1C1:
         raise ValueError(
             "R1C1 formula style is not persisted for normal formula cells; "
@@ -137,12 +191,25 @@ def write_workbook(
     if len(graph) == 0:
         raise ValueError("Cannot write an empty graph view")
 
-    sheet_names = _ordered_sheet_names(graph)
     planned = _plan_cells(
         graph,
         style=style,
         coerce_relative_refs=coerce_relative_refs,
         shared_formulas=shared_mode,
+    )
+    if series_bindings is not None and include_bound_labels:
+        assert bindings_workbook is not None
+        extra_planned = _plan_bound_label_cells(
+            graph,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            style=style,
+            coerce_relative_refs=coerce_relative_refs,
+        )
+        planned = _merge_planned_cells(extra_planned, planned)
+    sheet_names = _ordered_sheet_names(
+        graph,
+        present={sheet for sheet, _coord, _value in planned},
     )
     planned_names = _plan_defined_names(graph) if include_defined_names else []
 
@@ -172,19 +239,23 @@ def _cell_label(node: NodeView, fallback: str) -> str:
     return fallback
 
 
-def _ordered_sheet_names(graph: GraphReadView) -> list[str]:
-    present: set[str] = set()
-    for key in graph:
-        node = graph.get_node(key)
-        if node is None:
-            continue
-        if not node.sheet:
-            raise ValueError(f"Cannot write cell {key} without a sheet name")
-        present.add(node.sheet)
+def _ordered_sheet_names(
+    graph: GraphReadView,
+    present: set[str] | None = None,
+) -> list[str]:
+    if present is None:
+        present = set()
+        for key in graph:
+            node = graph.get_node(key)
+            if node is None:
+                continue
+            if not node.sheet:
+                raise ValueError(f"Cannot write cell {key} without a sheet name")
+            present.add(node.sheet)
     if not present:
         raise ValueError("Cannot write an empty graph view")
 
-    order = graph.sheet_order
+    order = list(graph.sheet_order) if graph.sheet_order else []
     if order:
         seen: set[str] = set()
         names: list[str] = []
@@ -197,6 +268,172 @@ def _ordered_sheet_names(graph: GraphReadView) -> list[str]:
     if len(present) > 1:
         raise ValueError("sheet_order is required when writing a view that spans multiple sheets")
     return list(present)
+
+
+def _merge_planned_cells(
+    base: list[tuple[str, str, object]],
+    overlay: list[tuple[str, str, object]],
+) -> list[tuple[str, str, object]]:
+    merged: dict[tuple[str, str], object] = {(sheet, coord): value for sheet, coord, value in base}
+    for sheet, coord, value in overlay:
+        merged[(sheet, coord)] = value
+    return [(sheet, coord, value) for (sheet, coord), value in merged.items()]
+
+
+def _plan_bound_label_cells(
+    graph: GraphReadView,
+    *,
+    series_bindings: WorkbookSeriesBindings,
+    bindings_workbook: Path | str,
+    style: FormulaStyle,
+    coerce_relative_refs: bool,
+) -> list[tuple[str, str, object]]:
+    from excel_grapher.series_bindings.resolve import _WorkbookValues, bound_label_addresses
+
+    labels = bound_label_addresses(
+        series_bindings,
+        workbook=bindings_workbook,
+        graph=graph,
+    )
+    missing = [address for address in sorted(labels) if address not in graph]
+    if not missing:
+        return []
+    planned: list[tuple[str, str, object]] = []
+    with _WorkbookValues(bindings_workbook, data_only=False) as reader:
+        reader.prefetch(missing)
+        for address in missing:
+            sheet, coord = parse_address(address)
+            value = _bound_label_cell_value(
+                reader.read(address),
+                address=address,
+                graph=graph,
+                labels=labels,
+                style=style,
+                coerce_relative_refs=coerce_relative_refs,
+            )
+            planned.append((sheet, coord, value))
+    return planned
+
+
+def _bound_label_cell_value(
+    raw: object,
+    *,
+    address: str,
+    graph: GraphReadView,
+    labels: set[str],
+    style: FormulaStyle,
+    coerce_relative_refs: bool,
+) -> object:
+    if isinstance(raw, ArrayFormula):
+        raise ValueError(f"Cannot write bound array formula at {address}")
+    if isinstance(raw, str) and raw.startswith("="):
+        return _bound_label_formula_text(
+            raw,
+            address=address,
+            graph=graph,
+            labels=labels,
+            style=style,
+            coerce_relative_refs=coerce_relative_refs,
+        )
+    return _excel_leaf_value(raw, key=address)
+
+
+def _bound_label_formula_text(
+    formula: str,
+    *,
+    address: str,
+    graph: GraphReadView,
+    labels: set[str],
+    style: FormulaStyle,
+    coerce_relative_refs: bool,
+) -> str:
+    ast = parse_preserving_axes_optional(
+        formula,
+        anchor=address,
+        named_ranges=graph.named_ranges,
+        named_range_ranges=graph.named_range_ranges,
+    )
+    if ast is None:
+        raise ValueError(f"Cannot write unparseable bound label formula at {address}")
+    deps = _overlay_formula_deps(bind_axes(ast, address), address=address)
+    missing = sorted(dep for dep in deps if dep not in graph and dep not in labels)
+    if missing:
+        shown = ", ".join(missing)
+        noun = "dependency" if len(missing) == 1 else "dependencies"
+        verb = "is" if len(missing) == 1 else "are"
+        raise ValueError(
+            f"Cannot write bound label formula at {address}: "
+            f"{noun} {shown} {verb} not in the graph view or bound labels"
+        )
+    try:
+        return render_formula(
+            ast,
+            anchor=address,
+            style=style,
+            coerce_relative_refs=coerce_relative_refs,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Cannot render bound label formula at {address}: {exc}") from exc
+
+
+def _overlay_formula_deps(ast: AstNode, *, address: str) -> set[str]:
+    deps: set[str] = set()
+
+    def walk(node: AstNode) -> None:
+        match node:
+            case CellRefNode(ref):
+                deps.add(resolve_cell_ref(ref, address))
+            case RangeNode(start_ref, end_ref):
+                deps.update(_overlay_range_deps(start_ref, end_ref, address=address))
+            case WholeColumnNode() | WholeRowNode():
+                raise ValueError(
+                    f"Cannot write bound label formula at {address}: "
+                    "whole-column/row references cannot be copied as a static overlay"
+                )
+            case FunctionCallNode(name, args):
+                if normalize_excel_function_name(name) in _DYNAMIC_OVERLAY_FNS:
+                    raise ValueError(
+                        f"Cannot write bound label formula at {address}: "
+                        "OFFSET/INDIRECT cannot be copied as a static overlay"
+                    )
+                for arg in args:
+                    walk(arg)
+            case BinaryOpNode(_, left, right):
+                walk(left)
+                walk(right)
+            case UnaryOpNode(_, operand):
+                walk(operand)
+            case _:
+                return
+
+    walk(ast)
+    return deps
+
+
+def _overlay_range_deps(start_ref: CellRef, end_ref: CellRef, *, address: str) -> set[str]:
+    start = resolve_cell_ref(start_ref, address)
+    end = resolve_cell_ref(end_ref, address)
+    start_sheet, start_coord = parse_address(start)
+    end_sheet, end_coord = parse_address(end)
+    if start_sheet != end_sheet:
+        raise ValueError(
+            f"Cannot write bound label formula at {address}: "
+            "cross-sheet ranges cannot be copied as a static overlay"
+        )
+    start_col, start_row = coordinate_from_string(start_coord)
+    end_col, end_row = coordinate_from_string(end_coord)
+    try:
+        pairs = expand_range(
+            sheet=start_sheet,
+            start_col=start_col,
+            start_row=int(start_row),
+            end_col=end_col,
+            end_row=int(end_row),
+            max_cells=DEFAULT_MAX_RANGE_CELLS,
+        )
+    except ValueError as exc:
+        raise ValueError(f"Cannot write bound label formula at {address}: {exc}") from exc
+    return {format_key(sheet, coord) for sheet, coord in pairs}
 
 
 def _create_sheets(wb: Workbook, sheet_names: list[str]) -> dict[str, Worksheet]:
