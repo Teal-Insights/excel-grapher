@@ -45,3 +45,15 @@ def test_add_edge_interns_identical_guards_across_edges() -> None:
     g_c = graph.get_edge_guard("Sheet1!C1", "Sheet1!A1")
     assert g_b is not None and g_c is not None
     assert g_b is g_c
+
+
+def test_is_guarded_and_intern_identity_survive_rebuild() -> None:
+    graph = _graph_with_shared_condition()
+    graph.rebuild_adjacency()
+    assert graph._guards == {}
+    assert graph.is_guarded("Sheet1!B1", "Sheet1!A1")
+    assert graph.is_guarded("Sheet1!C1", "Sheet1!A1")
+    g_b = graph.get_edge_guard("Sheet1!B1", "Sheet1!A1")
+    g_c = graph.get_edge_guard("Sheet1!C1", "Sheet1!A1")
+    assert g_b is not None and g_c is not None
+    assert g_b is g_c

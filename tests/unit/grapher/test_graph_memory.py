@@ -22,13 +22,13 @@ from scripts.measure_graph_memory import (
 ROWS = 200
 
 # Baselines measured on CPython 3.13 (64-bit) with `scripts/measure_graph_memory.py`
-# against `_fixture_graph()`, after CSR+CSC adjacency (#915). Re-measure
+# against `_fixture_graph()`, after CSR intern-id edge metadata (#920). Re-measure
 # (do not hand-tune) when a change moves them out of band, and say in the commit
 # which component moved.
-_BYTES_PER_NODE = 761.6
-_BYTES_PER_EDGE = 1523.2
+_BYTES_PER_NODE = 645.1
+_BYTES_PER_EDGE = 1290.2
 _NODE_BYTES_PER_NODE = 495.4
-_PROVENANCE_BYTES_PER_EDGE = 357.4
+_PROVENANCE_BYTES_PER_EDGE = 166.0
 
 
 def _fixture_graph(rows: int = ROWS, *, distinct_guards: bool = False) -> DependencyGraph:
@@ -136,11 +136,10 @@ def test_component_totals_reconcile_with_the_distinct_total() -> None:
 
 def test_edge_keys_are_reported_as_shared_not_owned() -> None:
     report = measure_graph_memory(_fixture_graph())
-    # CSR `node_index` reuses `_nodes` key objects; guards/provenance still share
-    # the same `NodeKey` strings as the node map.
+    # CSR `node_index` reuses `_nodes` key objects. Compact intern-id metadata
+    # no longer stores `EdgeKey` tuples, so those strings are not charged to
+    # guards/provenance.
     assert report.component("node_index").shared_bytes > 0
-    assert report.component("guards").shared_bytes > 0
-    assert report.component("provenance").shared_bytes > 0
     assert report.shared_bytes > 0
     naive = sum(component.total_bytes for component in report.components)
     # Shared objects appear in >= 2 components, so naive summing over-counts them
@@ -169,7 +168,8 @@ def test_per_edge_provenance_outweighs_a_shared_guard() -> None:
     report = measure_graph_memory(_fixture_graph())
     provenance = report.component("provenance")
     guards = report.component("guards")
-    # Both maps hold one entry per edge; provenance also owns a per-edge payload.
+    # Compact intern-id provenance still owns a per-edge payload; a shared guard
+    # intern table does not.
     assert provenance.exclusive_bytes > 3 * guards.exclusive_bytes
 
 

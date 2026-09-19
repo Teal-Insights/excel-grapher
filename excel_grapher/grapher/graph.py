@@ -36,6 +36,7 @@ from excel_grapher.core.formula_shape import FormulaShapeTable
 
 from .csr_adjacency import CsrCscArrays, build_csr_csc
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
+from .edge_meta import EdgeMetaArrays, EdgeMetaLookup, pack_edge_meta_ids
 from .graph_pickle import dumps_graph_blob, loads_graph_blob
 from .guard import (
     And,
@@ -65,6 +66,16 @@ EdgeKey = tuple[NodeKey, NodeKey]
 def _empty_uint32() -> array.array[int]:
     """Return an empty uint32 array for CSR field defaults."""
     return array.array("I")
+
+
+def _empty_guard_intern() -> list[GuardExpr | None]:
+    """Return a 1-based guard intern table whose index `0` slot is unused."""
+    return [None]
+
+
+def _empty_prov_intern() -> list[EdgeProvenance | None]:
+    """Return a 1-based provenance intern table whose index `0` slot is unused."""
+    return [None]
 
 
 def _copy_adjacency(adjacency: dict[NodeKey, set[NodeKey]]) -> dict[NodeKey, set[NodeKey]]:
@@ -200,10 +211,12 @@ class DependencyGraph:
     `get_dependencies` / `get_dependents` / `get_edge_attrs` return endpoints
     exactly as stored. Topology is uint32 CSR+CSC after `rebuild_adjacency`;
     `_edges` / `_reverse_edges` are a mutation staging buffer and are empty
-    once compact. Missing adjacency is empty (no per-node empty `set()`).
-    `resolve_endpoint` / `get_dependency_nodes` resolve to stored cell keys
-    when present (evaluation order, export, codegen). Rebuild drops
-    non-node endpoints.
+    once compact. Edge guards and provenance are nnz-parallel intern-id
+    arrays beside CSR; `_guards` / `_edge_provenance` are the same kind of
+    staging buffer and are empty once compact. Missing adjacency is empty
+    (no per-node empty `set()`). `resolve_endpoint` / `get_dependency_nodes`
+    resolve to stored cell keys when present (evaluation order, export,
+    codegen). Rebuild drops non-node endpoints.
 
     `formula_shapes` is an optional acceleration overlay from
     `warm_formula_shapes` (unset by default). `Node.formula_ast` is
@@ -225,6 +238,12 @@ class DependencyGraph:
     _col_idx: array.array[int] = field(default_factory=_empty_uint32, repr=False)
     _col_ptr: array.array[int] = field(default_factory=_empty_uint32, repr=False)
     _row_idx: array.array[int] = field(default_factory=_empty_uint32, repr=False)
+    _guard_id: array.array[int] = field(default_factory=_empty_uint32, repr=False)
+    _prov_id: array.array[int] = field(default_factory=_empty_uint32, repr=False)
+    _guard_exprs: list[GuardExpr | None] = field(default_factory=_empty_guard_intern, repr=False)
+    _provenances: list[EdgeProvenance | None] = field(
+        default_factory=_empty_prov_intern, repr=False
+    )
     _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
     _edge_provenance: dict[EdgeKey, EdgeProvenance] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
@@ -272,6 +291,8 @@ class DependencyGraph:
         if self._staging:
             cloned._edges = _copy_adjacency(self._edges)
             cloned._reverse_edges = _copy_adjacency(self._reverse_edges)
+            cloned._guards = dict(self._guards)
+            cloned._edge_provenance = dict(self._edge_provenance)
         else:
             cloned._edges = {}
             cloned._reverse_edges = {}
@@ -281,8 +302,12 @@ class DependencyGraph:
             cloned._col_idx = self._col_idx[:]
             cloned._col_ptr = self._col_ptr[:]
             cloned._row_idx = self._row_idx[:]
-        cloned._guards = dict(self._guards)
-        cloned._edge_provenance = dict(self._edge_provenance)
+            cloned._guard_id = self._guard_id[:]
+            cloned._prov_id = self._prov_id[:]
+            cloned._guard_exprs = list(self._guard_exprs)
+            cloned._provenances = list(self._provenances)
+            cloned._guards = {}
+            cloned._edge_provenance = {}
         cloned.leaf_classification = (
             dict(self.leaf_classification) if self.leaf_classification is not None else None
         )
@@ -466,11 +491,21 @@ class DependencyGraph:
         """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
-        if not self._has_stored_edge(fk, tk):
+        if self._staging:
+            if not self._has_stored_edge(fk, tk):
+                return EdgeAttrs()
+            return EdgeAttrs(
+                guard=self._guards.get((fk, tk)),
+                provenance=self._edge_provenance.get((fk, tk)),
+            )
+        k = self._csr_edge_slot(fk, tk)
+        if k is None:
             return EdgeAttrs()
+        gid = self._guard_id[k]
+        pid = self._prov_id[k]
         return EdgeAttrs(
-            guard=self._guards.get((fk, tk)),
-            provenance=self._edge_provenance.get((fk, tk)),
+            guard=self._guard_exprs[gid] if gid else None,
+            provenance=self._provenances[pid] if pid else None,
         )
 
     def get_edge_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
@@ -480,8 +515,7 @@ class DependencyGraph:
         """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
-        v = self._guards.get((fk, tk))
-        return v if isinstance(v, GuardExpr) else None
+        return self._stored_guard(fk, tk)
 
     def is_guarded(self, from_key: NodeKey, to_key: NodeKey) -> bool:
         """Return whether edge `from_key -> to_key` carries a guard.
@@ -491,7 +525,10 @@ class DependencyGraph:
         """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
-        return (fk, tk) in self._guards
+        if self._staging:
+            return (fk, tk) in self._guards
+        k = self._csr_edge_slot(fk, tk)
+        return k is not None and self._guard_id[k] != 0
 
     def edge_count(self) -> int:
         """Return the number of stored dependency edges."""
@@ -504,8 +541,11 @@ class DependencyGraph:
 
         Index space is `_nodes` insertion order. Non-node endpoints are
         dropped. Scratch is `O(n)` uint32; a second Python edge index is not
-        built. After rebuild, `_edges` and `_reverse_edges` are empty.
+        built. After rebuild, `_edges`, `_reverse_edges`, `_guards`, and
+        `_edge_provenance` are empty. Edge metadata lives in nnz-parallel
+        intern-id arrays beside CSR.
         """
+        lookup = self._snapshot_edge_meta_lookup()
         nodes = self._nodes
         empty: tuple[NodeKey, ...] = ()
         if self._staging:
@@ -519,7 +559,9 @@ class DependencyGraph:
                 return self._csr_dep_keys(key)
 
         built = build_csr_csc(tuple(nodes), neighbors_for, is_node=nodes.__contains__)
+        meta = pack_edge_meta_ids(built, lookup)
         self._install_csr(built)
+        self._install_edge_meta(meta)
 
     def _install_csr(self, built: CsrCscArrays) -> None:
         self._csr_keys = built.keys
@@ -532,6 +574,15 @@ class DependencyGraph:
         self._reverse_edges = {}
         self._staging = False
 
+    def _install_edge_meta(self, meta: EdgeMetaArrays) -> None:
+        """Install nnz intern-id arrays and drop `EdgeKey` staging maps."""
+        self._guard_id = meta.guard_id
+        self._prov_id = meta.prov_id
+        self._guard_exprs = meta.guard_exprs
+        self._provenances = meta.provenances
+        self._guards = {}
+        self._edge_provenance = {}
+
     def _ensure_csr(self) -> None:
         if not self._staging:
             return
@@ -541,6 +592,7 @@ class DependencyGraph:
         if self._staging:
             return
         self._rehydrate_adjacency_maps()
+        self._rehydrate_edge_meta_maps()
         self._clear_csr()
         self._staging = True
 
@@ -551,6 +603,10 @@ class DependencyGraph:
         self._col_idx = array.array("I")
         self._col_ptr = array.array("I")
         self._row_idx = array.array("I")
+        self._guard_id = array.array("I")
+        self._prov_id = array.array("I")
+        self._guard_exprs = _empty_guard_intern()
+        self._provenances = _empty_prov_intern()
 
     def _rehydrate_adjacency_maps(self) -> None:
         edges: dict[NodeKey, set[NodeKey]] = {}
@@ -570,6 +626,123 @@ class DependencyGraph:
             edges[src] = deps
         self._edges = edges
         self._reverse_edges = reverse
+
+    def _rehydrate_edge_meta_maps(self) -> None:
+        """Rebuild `EdgeKey` staging maps from CSR intern-id arrays."""
+        guards: dict[EdgeKey, GuardExpr] = {}
+        provenance: dict[EdgeKey, EdgeProvenance] = {}
+        keys = self._csr_keys
+        row_ptr = self._row_ptr
+        col_idx = self._col_idx
+        guard_id = self._guard_id
+        prov_id = self._prov_id
+        guard_exprs = self._guard_exprs
+        provenances = self._provenances
+        for i, src in enumerate(keys):
+            start, end = row_ptr[i], row_ptr[i + 1]
+            for k in range(start, end):
+                dst = keys[col_idx[k]]
+                ek = (src, dst)
+                gid = guard_id[k]
+                if gid:
+                    expr = guard_exprs[gid]
+                    if isinstance(expr, GuardExpr):
+                        guards[ek] = expr
+                pid = prov_id[k]
+                if pid:
+                    prov = provenances[pid]
+                    if isinstance(prov, EdgeProvenance):
+                        provenance[ek] = prov
+        self._guards = guards
+        self._edge_provenance = provenance
+
+    def _snapshot_edge_meta_lookup(self) -> EdgeMetaLookup:
+        """Return a `(src, dst)` metadata lookup that outlives rebuild mutation."""
+        if self._staging:
+            guards = self._guards
+            prov = self._edge_provenance
+
+            def lookup(
+                src: NodeKey, dst: NodeKey
+            ) -> tuple[GuardExpr | None, EdgeProvenance | None]:
+                return guards.get((src, dst)), prov.get((src, dst))
+
+            return lookup
+
+        index = self._node_index
+        row_ptr = self._row_ptr
+        col_idx = self._col_idx
+        guard_id = self._guard_id
+        prov_id = self._prov_id
+        guard_exprs = self._guard_exprs
+        provenances = self._provenances
+
+        def lookup(src: NodeKey, dst: NodeKey) -> tuple[GuardExpr | None, EdgeProvenance | None]:
+            i = index.get(src)
+            j = index.get(dst)
+            if i is None or j is None:
+                return None, None
+            start, end = row_ptr[i], row_ptr[i + 1]
+            for k in range(start, end):
+                if col_idx[k] == j:
+                    gid = guard_id[k]
+                    pid = prov_id[k]
+                    return (
+                        guard_exprs[gid] if gid else None,
+                        provenances[pid] if pid else None,
+                    )
+            return None, None
+
+        return lookup
+
+    def _csr_edge_slot(self, from_key: NodeKey, to_key: NodeKey) -> int | None:
+        """Return the CSR nnz index of `from_key -> to_key`, or `None`."""
+        i = self._node_index.get(from_key)
+        j = self._node_index.get(to_key)
+        if i is None or j is None:
+            return None
+        start, end = self._row_ptr[i], self._row_ptr[i + 1]
+        col = self._col_idx
+        for k in range(start, end):
+            if col[k] == j:
+                return k
+        return None
+
+    def _stored_guard(self, from_key: NodeKey, to_key: NodeKey) -> GuardExpr | None:
+        """Return the stored guard for `from_key -> to_key` in either storage mode."""
+        if self._staging:
+            v = self._guards.get((from_key, to_key))
+            return v if isinstance(v, GuardExpr) else None
+        k = self._csr_edge_slot(from_key, to_key)
+        if k is None:
+            return None
+        gid = self._guard_id[k]
+        if not gid:
+            return None
+        expr = self._guard_exprs[gid]
+        return expr if isinstance(expr, GuardExpr) else None
+
+    def _stored_provenance(self, from_key: NodeKey, to_key: NodeKey) -> EdgeProvenance | None:
+        """Return stored provenance for `from_key -> to_key` in either storage mode."""
+        if self._staging:
+            return self._edge_provenance.get((from_key, to_key))
+        k = self._csr_edge_slot(from_key, to_key)
+        if k is None:
+            return None
+        pid = self._prov_id[k]
+        if not pid:
+            return None
+        prov = self._provenances[pid]
+        return prov if isinstance(prov, EdgeProvenance) else None
+
+    def _iter_guard_exprs(self) -> Iterator[GuardExpr]:
+        """Iterate interned guard trees (staging map values or compact intern table)."""
+        if self._staging:
+            yield from self._guards.values()
+            return
+        for expr in self._guard_exprs:
+            if isinstance(expr, GuardExpr):
+                yield expr
 
     def _csr_dep_keys(self, key: NodeKey) -> tuple[NodeKey, ...]:
         i = self._node_index.get(key)
@@ -617,16 +790,14 @@ class DependencyGraph:
         i = self._node_index.get(key)
         if i is None:
             return
-        src = key
         keys = self._csr_keys
-        guards = self._guards
         col = self._col_idx
+        guard_id = self._guard_id
         start, end = self._row_ptr[i], self._row_ptr[i + 1]
         for k in range(start, end):
-            j = col[k]
-            dst = keys[j]
-            if (src, dst) not in guards:
-                yield dst
+            if guard_id[k]:
+                continue
+            yield keys[col[k]]
 
     def _csr_neighbor_ids(self, i: int, *, unguarded_only: bool = False) -> Iterator[int]:
         start, end = self._row_ptr[i], self._row_ptr[i + 1]
@@ -635,25 +806,16 @@ class DependencyGraph:
             for k in range(start, end):
                 yield col[k]
             return
-        src = self._csr_keys[i]
-        keys = self._csr_keys
-        guards = self._guards
+        guard_id = self._guard_id
         for k in range(start, end):
-            j = col[k]
-            if (src, keys[j]) not in guards:
-                yield j
+            if not guard_id[k]:
+                yield col[k]
 
     def _has_stored_edge(self, from_key: NodeKey, to_key: NodeKey) -> bool:
         if self._staging:
             deps = self._edges.get(from_key)
             return deps is not None and to_key in deps
-        i = self._node_index.get(from_key)
-        j = self._node_index.get(to_key)
-        if i is None or j is None:
-            return False
-        start, end = self._row_ptr[i], self._row_ptr[i + 1]
-        col = self._col_idx
-        return any(col[k] == j for k in range(start, end))
+        return self._csr_edge_slot(from_key, to_key) is not None
 
     # ---- durable node mutation ---------------------------------------------
 
@@ -922,7 +1084,7 @@ class DependencyGraph:
             if dep_node is None:
                 continue
             self._require_rewritable_formula(dep_node, dep_key)
-        for guard in self._guards.values():
+        for guard in self._iter_guard_exprs():
             rewrite_guard_keys(guard, old_nk, new_nk)
 
         if node.formula_ast is not None:
@@ -1723,7 +1885,7 @@ def _collect_graph_keys(g: DependencyGraph) -> list[str]:
     for a, b in g._edge_provenance:
         add(a)
         add(b)
-    for guard in g._guards.values():
+    for guard in g._iter_guard_exprs():
         _guard_collect_cellref_keys(guard, add)
     if g.leaf_classification:
         for k in g.leaf_classification:
@@ -1957,9 +2119,9 @@ def _subgraph_has_feasible_cycle(
             w = graph._resolve_graph_endpoint(raw_w)
             if w is None or w not in nodes:
                 continue
-            guard = graph._guards.get((v, raw_w))
+            guard = graph._stored_guard(v, raw_w)
             if guard is None:
-                guard = graph._guards.get((v, w))
+                guard = graph._stored_guard(v, w)
             for c2 in _apply_guard_constraints(
                 c, guard, cell_type_env=cell_type_env, aliases=aliases
             ):
@@ -1999,9 +2161,9 @@ def _find_feasible_cycle_path(
             w = graph._resolve_graph_endpoint(raw_w)
             if w is None or w not in nodes:
                 continue
-            guard = graph._guards.get((v, raw_w))
+            guard = graph._stored_guard(v, raw_w)
             if guard is None:
-                guard = graph._guards.get((v, w))
+                guard = graph._stored_guard(v, w)
             for c2 in _apply_guard_constraints(
                 c, guard, cell_type_env=cell_type_env, aliases=aliases
             ):
