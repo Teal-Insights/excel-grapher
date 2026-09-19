@@ -207,6 +207,8 @@ def _binding(series: BoundSeries) -> str:
 
 def _schema_types(series: BoundSeries) -> str:
     """Name of the shared value-type tuple accepted by the series' schema."""
+    if series.python_dtype == "str" and series.is_formula_series:
+        return "STR_EXCEL_VALUES"
     return f"{series.python_dtype.upper()}_VALUES"
 
 
@@ -2035,6 +2037,11 @@ def emit_named_data(
     lines.append("")
     dtypes = sorted({series.python_dtype for series in retained if not series.single_valued})
     lines.extend(f"{dtype.upper()}_VALUES = {_value_types(dtype)}" for dtype in dtypes)
+    if any(
+        series.python_dtype == "str" and series.is_formula_series and not series.single_valued
+        for series in retained
+    ):
+        lines.append("STR_EXCEL_VALUES = (str, int, float, bool, type(None))")
     domain_owner: dict[str | tuple[str, str], str] = {}
     constant_series: list[BoundSeries] = []
     for series in retained:

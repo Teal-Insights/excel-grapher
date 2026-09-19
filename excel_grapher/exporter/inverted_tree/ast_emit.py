@@ -175,7 +175,12 @@ class EmitContext:
 
 def python_measure_type(series: BoundSeries) -> str:
     """Return the Python type of one observation (`float | str` for numbers)."""
-    base = f"{series.python_dtype} | str" if series.python_dtype != "str" else series.python_dtype
+    if series.python_dtype == "str" and series.direction in {"internal", "output"}:
+        base = "str | int | float | bool"
+    elif series.python_dtype == "str":
+        base = "str"
+    else:
+        base = f"{series.python_dtype} | str"
     if series.has_none_holes or not series.single_valued:
         return f"{base} | None"
     return base

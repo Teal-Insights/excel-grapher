@@ -36,8 +36,9 @@ def int_measure() -> None:
 
 
 def str_measure() -> None:
-    out: list[str] = []
+    out: list[str | int | float | bool] = []
     out.append(as_measure("n/a", "str"))
+    out.append(as_measure(1, "str"))
 
 
 def bool_measure() -> None:

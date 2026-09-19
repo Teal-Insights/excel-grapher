@@ -16,7 +16,7 @@ def test_as_measure_declares_literal_dtype_overloads() -> None:
     assert returns == {
         float | str,
         int | str,
-        str,
+        str | int | float | bool,
         bool | str,
         datetime | str,
     }

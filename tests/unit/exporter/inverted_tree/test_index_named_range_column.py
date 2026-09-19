@@ -1,4 +1,4 @@
-"""INDEX(named_range,,1) keeps the worksheet country-code column (#891).
+"""INDEX(named_range,,1) keeps the worksheet country-code column (#891, #916).
 
 LIC-DSF looks up market access with:
 
@@ -8,6 +8,8 @@ LIC-DSF looks up market access with:
 (including the header cell). The inverted-tree reconstruction must INDEX that
 column — not a bound-series measure column after a row-label is stripped —
 and must keep Excel cell types so `INDEX(...) = 1` is numeric, not `'1' = 1`.
+A computed string 0/1 series (`as_measure(1, 'str')`) must keep the numeric
+Excel type as well; leaf `xl_lookup_cell` restore is not enough (#916).
 """
 
 from __future__ import annotations
@@ -78,7 +80,7 @@ def test_xl_typed_range_restores_stringified_cells_not_overrides() -> None:
     assert excel.xl_typed_range(overridden, ((1,),)).cell(1, 1) == "0"
 
 
-def _mcve_workbook(tmp_path: Path) -> Path:
+def _mcve_workbook(tmp_path: Path, *, computed_flag: bool = False) -> Path:
     cells: dict[str, object] = {
         "C6": "On",
         "C7": "Ghana",
@@ -94,8 +96,12 @@ def _mcve_workbook(tmp_path: Path) -> Path:
         trigger[f"{letter}3"] = col
         trigger[f"{letter}4"] = header
     for offset, row in enumerate(_ROWS):
+        excel_row = 5 + offset
         for col, value in enumerate(row, start=1):
-            trigger[f"{'ABCDE'[col - 1]}{5 + offset}"] = value
+            if computed_flag and col == 5:
+                trigger[f"E{excel_row}"] = f'=IF(C{excel_row}="Yes",1,0)'
+            else:
+                trigger[f"{'ABCDE'[col - 1]}{excel_row}"] = value
     chart = {
         "I21": 1,
         "I19": '=IF(Input!C11="Yes",1,0)',
@@ -142,6 +148,82 @@ def _headers_entry() -> dict[str, Any]:
             ],
         },
         "key": ["POSITION"],
+    }
+
+
+def _country_code_entry() -> dict[str, Any]:
+    return {
+        "id": "mkt_fin_country_code",
+        "sheet": "Trigger",
+        "data_range": "Trigger!A5:A8",
+        "layout": "series",
+        "constant": {},
+        "structure": {
+            "measure": _measure("int"),
+            "dimensions": [
+                {
+                    "id": "COUNTRY",
+                    "concept": "COUNTRY",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "B", "read": "string"},
+                }
+            ],
+        },
+        "key": ["COUNTRY"],
+    }
+
+
+def _labels_entry() -> dict[str, Any]:
+    return {
+        "id": "mkt_fin_labels",
+        "sheet": "Trigger",
+        "data_range": "Trigger!C5:D8",
+        "layout": "matrix",
+        "constant": {},
+        "structure": {
+            "measure": _measure("string"),
+            "dimensions": [
+                {
+                    "id": "COUNTRY",
+                    "concept": "COUNTRY",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "B", "read": "string"},
+                },
+                {
+                    "id": "INDICATOR",
+                    "concept": "INDICATOR",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "column_header", "header_row": 4, "read": "string"},
+                },
+            ],
+        },
+        "key": ["COUNTRY", "INDICATOR"],
+    }
+
+
+def _flag_entry() -> dict[str, Any]:
+    return {
+        "id": "mkt_fin_flag",
+        "sheet": "Trigger",
+        "data_range": "Trigger!E5:E8",
+        "layout": "series",
+        "internal": {},
+        "structure": {
+            "measure": _measure("string"),
+            "dimensions": [
+                {
+                    "id": "COUNTRY",
+                    "concept": "COUNTRY",
+                    "role": "key",
+                    "scope": "cell",
+                    "bind": {"kind": "row_label", "label_column": "B", "read": "string"},
+                }
+            ],
+        },
+        "key": ["COUNTRY"],
     }
 
 
@@ -278,15 +360,22 @@ def _kwargs(pkg: Any, **overrides: object) -> dict[str, object]:
         "country_code": pkg.data.COUNTRY_CODE_DEFAULT,
         "mkt_fin": mkt_fin,
         "mkt_fin_headers": pkg.data.MKT_FIN_HEADERS,
+        "mkt_fin_country_code": getattr(pkg.data, "MKT_FIN_COUNTRY_CODE", None),
+        "mkt_fin_labels": getattr(pkg.data, "MKT_FIN_LABELS", None),
     }
     values.update(overrides)
     accepted = inspect.signature(pkg.compute_yes_no).parameters
     return {key: value for key, value in values.items() if key in accepted}
 
 
-def test_index_named_range_market_access_matches_evaluator(tmp_path: Path) -> None:
-    workbook = _mcve_workbook(tmp_path)
-    document = _mcve_bindings()
+def _computed_flag_bindings() -> dict[str, Any]:
+    """LIC-DSF-style split: int codes, string labels, computed string 0/1 flag."""
+    return _output_bindings(_headers_entry(), _country_code_entry(), _labels_entry(), _flag_entry())
+
+
+def _ghana_market_access_results(tmp_path: Path, *, computed_flag: bool) -> None:
+    workbook = _mcve_workbook(tmp_path, computed_flag=computed_flag)
+    document = _computed_flag_bindings() if computed_flag else _mcve_bindings()
     targets = ["Input!C11", "Chart!I19", "Chart!D251", "Chart!D242"]
     graph = create_dependency_graph(
         workbook, targets, load_values=True, use_cached_dynamic_refs=True
@@ -297,12 +386,22 @@ def test_index_named_range_market_access_matches_evaluator(tmp_path: Path) -> No
         "Chart!D251": 67.17,
         "Chart!D242": 76.13,
     }
-    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="mkt_fin_index")
+    name = "mkt_fin_computed_flag" if computed_flag else "mkt_fin_index"
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name=name)
     kwargs = _kwargs(pkg)
     assert pkg.compute_yes_no(**kwargs) == "Yes"
     assert pkg.compute_chart(**kwargs) == 67.17
     assert pkg.compute_b2(**kwargs) == 76.13
-    assert_package_matches_evaluator(workbook, document, tmp_path, "mkt_fin_index_parity")
+    assert_package_matches_evaluator(workbook, document, tmp_path, f"{name}_parity")
+
+
+def test_index_named_range_market_access_matches_evaluator(tmp_path: Path) -> None:
+    _ghana_market_access_results(tmp_path, computed_flag=False)
+
+
+def test_index_computed_string_flag_equals_one(tmp_path: Path) -> None:
+    """`INDEX(...)=1` on a computed string 0/1 series matches the evaluator (#916)."""
+    _ghana_market_access_results(tmp_path, computed_flag=True)
 
 
 def test_index_named_range_off_and_other_country(tmp_path: Path) -> None:
@@ -311,6 +410,31 @@ def test_index_named_range_off_and_other_country(tmp_path: Path) -> None:
     assert pkg.compute_b2(**_kwargs(pkg, enabled="Off")) == 74.12
     assert pkg.compute_yes_no(**_kwargs(pkg, country_code=668)) == "No"
     assert pkg.compute_b2(**_kwargs(pkg, country_code=668)) == 74.12
+
+
+def test_index_computed_string_flag_off_and_other_country(tmp_path: Path) -> None:
+    workbook = _mcve_workbook(tmp_path, computed_flag=True)
+    document = _computed_flag_bindings()
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="mkt_fin_flag_off")
+    assert pkg.compute_yes_no(**_kwargs(pkg, enabled="Off")) == "No"
+    assert pkg.compute_b2(**_kwargs(pkg, enabled="Off")) == 74.12
+    assert pkg.compute_yes_no(**_kwargs(pkg, country_code=668)) == "No"
+    assert pkg.compute_b2(**_kwargs(pkg, country_code=668)) == 74.12
+
+
+def test_index_computed_string_flag_follows_label_overrides(tmp_path: Path) -> None:
+    workbook = _mcve_workbook(tmp_path, computed_flag=True)
+    document = _computed_flag_bindings()
+    pkg = load_package(
+        generate_inverted(workbook, document), tmp_path, name="mkt_fin_flag_override"
+    )
+    table = pkg.data.MKT_FIN_LABELS
+    records = [
+        (coord, "No" if coord == ("Ghana", "Eurobond") else table[coord]) for coord in table.domain
+    ]
+    with pkg.data.overrides(MKT_FIN_LABELS=table.with_records(records)):
+        assert pkg.compute_yes_no(**_kwargs(pkg)) == "No"
+    assert pkg.compute_yes_no(**_kwargs(pkg)) == "Yes"
 
 
 def test_index_named_range_reads_bound_series_overrides(tmp_path: Path) -> None:
