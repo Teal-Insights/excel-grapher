@@ -8,8 +8,10 @@ already accepts (`DependencyGraph` or `ProjectionResult`).
 from __future__ import annotations
 
 import os
+from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
+from typing import TYPE_CHECKING, cast
 
 from fastpyxl import Workbook
 from fastpyxl.utils.cell import coordinate_from_string
@@ -30,6 +32,9 @@ from .shared_formulas import (
     shared_formula_cell_values,
 )
 
+if TYPE_CHECKING:
+    from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+
 
 def write_workbook(
     graph: GraphReadView,
@@ -40,6 +45,9 @@ def write_workbook(
     overwrite: bool = False,
     include_defined_names: bool = True,
     shared_formulas: SharedFormulasMode = "auto",
+    series_bindings: WorkbookSeriesBindings | None = None,
+    bindings_workbook: Path | str | None = None,
+    include_bound_labels: bool = True,
 ) -> None:
     """Write `graph` to a new `.xlsx` at `destination`.
 
@@ -50,7 +58,12 @@ def write_workbook(
     written as they are. Output contains only sheets and cells from the
     view. Styles, charts, VBA, and cells outside the view are omitted
     (accepted v1 lossiness). Vacated `move_node` addresses are simply
-    absent; there is no template to clear.
+    absent; there is no template to clear. When `series_bindings` is set
+    and `include_bound_labels` is True (default), `row_label` and
+    `column_header` source cells that bindings read are written too, even
+    if they sit outside the target closure. Formula labels bring their
+    dependency closure. The bindings workbook is opened read-only for
+    those extra cells; it is never overwritten.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -97,7 +110,9 @@ def write_workbook(
             Shared-formula grouping is skipped (absolute fills are not a
             shared relative shape).
         overwrite: If False (default), raise when `destination` exists.
-            The source workbook is never opened or saved.
+            The destination is always a new file; `graph`'s original
+            workbook is never saved in place. `bindings_workbook` is opened
+            read-only when bound labels are included.
         include_defined_names: If True (default), write `named_ranges` and
             `named_range_ranges` as workbook-global defined names. Set False
             to omit the name table.
@@ -111,6 +126,14 @@ def write_workbook(
             `ProjectionResult` if you want grouping. Stale shapes,
             non-contiguous or mixed-axis leftovers, array formulas, and
             `INDIRECT` emit per-cell rather than an invalid shared formula.
+        series_bindings: Optional sidecar used to locate bound labels.
+            Requires `bindings_workbook`.
+        bindings_workbook: Workbook the sidecar describes. Required when
+            `series_bindings` is set.
+        include_bound_labels: If True (default) and `series_bindings` is
+            set, write `row_label` / `column_header` source cells (and
+            formula-label deps) that are missing from `graph`. The original
+            graph is not mutated.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
@@ -119,12 +142,15 @@ def write_workbook(
             `formula_style` is `R1C1`, a relative axis has no host
             address, an array formula is missing its observed spill / CSE
             `ref`, a defined name cannot be expressed as a cell or
-            rectangle, `shared_formulas` is not a known mode, or
-            `shared_formulas='require'` and `formula_shapes` is missing.
+            rectangle, `shared_formulas` is not a known mode,
+            `shared_formulas='require'` and `formula_shapes` is missing, or
+            `series_bindings` is set without `bindings_workbook`.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
     shared_mode = parse_shared_formulas_mode(shared_formulas)
+    if series_bindings is not None and bindings_workbook is None:
+        raise ValueError("bindings_workbook is required when series_bindings is set")
     if style is FormulaStyle.R1C1:
         raise ValueError(
             "R1C1 formula style is not persisted for normal formula cells; "
@@ -137,12 +163,28 @@ def write_workbook(
     if len(graph) == 0:
         raise ValueError("Cannot write an empty graph view")
 
-    sheet_names = _ordered_sheet_names(graph)
     planned = _plan_cells(
         graph,
         style=style,
         coerce_relative_refs=coerce_relative_refs,
         shared_formulas=shared_mode,
+    )
+    extra_order: list[str] | None = None
+    if series_bindings is not None and include_bound_labels:
+        assert bindings_workbook is not None
+        extra_planned, extra_order = _plan_bound_label_cells(
+            graph,
+            series_bindings=series_bindings,
+            bindings_workbook=bindings_workbook,
+            style=style,
+            coerce_relative_refs=coerce_relative_refs,
+            shared_formulas=shared_mode,
+        )
+        planned = _merge_planned_cells(extra_planned, planned)
+    sheet_names = _ordered_sheet_names(
+        graph,
+        present={sheet for sheet, _coord, _value in planned},
+        extra_order=extra_order,
     )
     planned_names = _plan_defined_names(graph) if include_defined_names else []
 
@@ -172,19 +214,29 @@ def _cell_label(node: NodeView, fallback: str) -> str:
     return fallback
 
 
-def _ordered_sheet_names(graph: GraphReadView) -> list[str]:
-    present: set[str] = set()
-    for key in graph:
-        node = graph.get_node(key)
-        if node is None:
-            continue
-        if not node.sheet:
-            raise ValueError(f"Cannot write cell {key} without a sheet name")
-        present.add(node.sheet)
+def _ordered_sheet_names(
+    graph: GraphReadView,
+    present: set[str] | None = None,
+    *,
+    extra_order: Sequence[str] | None = None,
+) -> list[str]:
+    if present is None:
+        present = set()
+        for key in graph:
+            node = graph.get_node(key)
+            if node is None:
+                continue
+            if not node.sheet:
+                raise ValueError(f"Cannot write cell {key} without a sheet name")
+            present.add(node.sheet)
     if not present:
         raise ValueError("Cannot write an empty graph view")
 
-    order = graph.sheet_order
+    order = list(graph.sheet_order) if graph.sheet_order else []
+    if extra_order:
+        for name in extra_order:
+            if name not in order:
+                order.append(name)
     if order:
         seen: set[str] = set()
         names: list[str] = []
@@ -197,6 +249,52 @@ def _ordered_sheet_names(graph: GraphReadView) -> list[str]:
     if len(present) > 1:
         raise ValueError("sheet_order is required when writing a view that spans multiple sheets")
     return list(present)
+
+
+def _merge_planned_cells(
+    base: list[tuple[str, str, object]],
+    overlay: list[tuple[str, str, object]],
+) -> list[tuple[str, str, object]]:
+    merged: dict[tuple[str, str], object] = {(sheet, coord): value for sheet, coord, value in base}
+    for sheet, coord, value in overlay:
+        merged[(sheet, coord)] = value
+    return [(sheet, coord, value) for (sheet, coord), value in merged.items()]
+
+
+def _plan_bound_label_cells(
+    graph: GraphReadView,
+    *,
+    series_bindings: WorkbookSeriesBindings,
+    bindings_workbook: Path | str,
+    style: FormulaStyle,
+    coerce_relative_refs: bool,
+    shared_formulas: SharedFormulasMode,
+) -> tuple[list[tuple[str, str, object]], list[str] | None]:
+    from excel_grapher.grapher.builder import create_dependency_graph
+    from excel_grapher.series_bindings.resolve import bound_label_addresses
+
+    labels = bound_label_addresses(
+        series_bindings,
+        workbook=bindings_workbook,
+        graph=graph,
+    )
+    missing = [address for address in sorted(labels) if address not in graph]
+    if not missing:
+        return [], None
+    extra = create_dependency_graph(
+        bindings_workbook,
+        missing,
+        load_values=True,
+        use_cached_dynamic_refs=True,
+    )
+    extra_planned = _plan_cells(
+        cast(GraphReadView, extra),
+        style=style,
+        coerce_relative_refs=coerce_relative_refs,
+        shared_formulas=shared_formulas,
+    )
+    extra_order = list(extra.sheet_order) if extra.sheet_order else None
+    return extra_planned, extra_order
 
 
 def _create_sheets(wb: Workbook, sheet_names: list[str]) -> dict[str, Worksheet]:

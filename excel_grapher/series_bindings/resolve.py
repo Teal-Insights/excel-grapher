@@ -15,7 +15,7 @@ from fastpyxl.utils import column_index_from_string, get_column_letter
 
 from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.address_keys import normalize_key as normalize_address
-from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.graph import DependencyGraph, GraphReadView
 from excel_grapher.series_bindings.coerce import coerce_constant, coerce_scalar
 from excel_grapher.series_bindings.geometry import (
     expand_column_specs,
@@ -40,6 +40,7 @@ from excel_grapher.series_bindings.normalize import (
 )
 from excel_grapher.series_bindings.ranges import (
     apply_series_excludes,
+    expand_bound_series_addresses,
     expand_bound_series_addresses_for_graph,
     expand_data_range,
     series_data_ranges,
@@ -118,8 +119,9 @@ class _WorkbookValues:
     rest of that sheet and every unread sheet stay unparsed.
     """
 
-    def __init__(self, path: Path | str) -> None:
+    def __init__(self, path: Path | str, *, data_only: bool = True) -> None:
         self._path = Path(path)
+        self._data_only = data_only
         self._workbook_cache: fastpyxl.Workbook | None = None
         self._sheet_values: dict[str, dict[str, Any]] = {}
 
@@ -129,7 +131,7 @@ class _WorkbookValues:
         keep_vba = self._path.suffix.lower() == ".xlsm"
         self._workbook_cache = fastpyxl.load_workbook(
             self._path,
-            data_only=True,
+            data_only=self._data_only,
             read_only=True,
             keep_vba=keep_vba,
         )
@@ -147,7 +149,12 @@ class _WorkbookValues:
             cached = self._sheet_values.get(sheet)
             if cached is not None and wanted <= cached.keys():
                 continue
-            values = _stream_sheet_values(self._workbook(), sheet, wanted)
+            values = _stream_sheet_values(
+                self._workbook(),
+                sheet,
+                wanted,
+                data_only=self._data_only,
+            )
             self._sheet_values.setdefault(sheet, {}).update(values)
 
     def read(self, address: str) -> Any:
@@ -176,6 +183,8 @@ def _stream_sheet_values(
     workbook: fastpyxl.Workbook,
     sheet: str,
     wanted: set[str],
+    *,
+    data_only: bool = True,
 ) -> dict[str, Any]:
     """Stream one worksheet until every requested coordinate's row is passed."""
     from fastpyxl.worksheet._reader import WorkSheetParser
@@ -194,7 +203,7 @@ def _stream_sheet_values(
         parser = WorkSheetParser(
             source,
             getattr(worksheet, "_shared_strings", []),
-            data_only=True,
+            data_only=data_only,
             epoch=workbook.epoch,
             date_formats=workbook._date_formats,
             timedelta_formats=workbook._timedelta_formats,
@@ -242,6 +251,95 @@ def _bind_source_addresses(bind: dict[str, Any], data_address: str) -> list[str]
         for candidate in candidates
         if _is_label_source(candidate, sources, is_include=is_include)
     ]
+
+
+_LABEL_BIND_KINDS = frozenset({"row_label", "column_header"})
+
+
+def _graph_has_label(graph: GraphReadView | None, address: str) -> bool:
+    if graph is None or address not in graph:
+        return False
+    viewed = graph.get_node(address)
+    if viewed is None:
+        return False
+    return bool(viewed.has_formula) or not _is_blank_label(viewed.value)
+
+
+def _pick_label_source(
+    candidates: Sequence[str],
+    *,
+    graph: GraphReadView | None,
+    reader: _WorkbookValues,
+) -> str | None:
+    for address in candidates:
+        if _graph_has_label(graph, address):
+            return address
+        if not _is_blank_label(reader.read(address)):
+            return address
+    return None
+
+
+def bound_label_addresses(
+    bindings: WorkbookSeriesBindings,
+    *,
+    workbook: Path | str,
+    graph: GraphReadView | None = None,
+) -> set[str]:
+    """Return `row_label` and `column_header` source cells used by `bindings`.
+
+    Fill walks contribute only the cell that actually supplied the label, not
+    empty candidates. Blank sources are omitted. Formula headers are included
+    even when Excel has no cached value (the formula text is the source).
+
+    Args:
+        bindings: Workbook series sidecar (post-schema validation).
+        workbook: Workbook the sidecar describes.
+        graph: Optional read view consulted before the workbook. Formula
+            nodes and non-blank leaves count as present label sources.
+
+    Returns:
+        Canonical sheet-qualified addresses of bound label sources.
+    """
+    pending: list[tuple[dict[str, Any], list[str]]] = []
+    prefetch_addrs: list[str] = []
+    for series in bindings.get("series", []):
+        if not isinstance(series, dict):
+            continue
+        cells = expand_bound_series_addresses(series, workbook=workbook)
+        pending.append((series, cells))
+        structure = series.get("structure") or {}
+        for dim in structure.get("dimensions") or []:
+            if not isinstance(dim, dict):
+                continue
+            bind = dim.get("bind")
+            if not isinstance(bind, dict) or bind.get("kind") not in _LABEL_BIND_KINDS:
+                continue
+            for cell in cells:
+                prefetch_addrs.extend(_bind_source_addresses(bind, cell))
+
+    addresses: set[str] = set()
+    with _WorkbookValues(workbook, data_only=False) as reader:
+        reader.prefetch(
+            prefetch_addrs,
+            graph=graph if isinstance(graph, DependencyGraph) else None,
+        )
+        for series, cells in pending:
+            structure = series.get("structure") or {}
+            for dim in structure.get("dimensions") or []:
+                if not isinstance(dim, dict):
+                    continue
+                bind = dim.get("bind")
+                if not isinstance(bind, dict) or bind.get("kind") not in _LABEL_BIND_KINDS:
+                    continue
+                for cell in cells:
+                    picked = _pick_label_source(
+                        _bind_source_addresses(bind, cell),
+                        graph=graph,
+                        reader=reader,
+                    )
+                    if picked is not None:
+                        addresses.add(normalize_address(picked))
+    return addresses
 
 
 def _structure_source_addresses(

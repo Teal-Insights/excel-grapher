@@ -37,7 +37,11 @@ from excel_grapher.series_bindings.ranges import (
     expand_data_range_for_graph,
     series_data_ranges,
 )
-from excel_grapher.series_bindings.resolve import resolve_series_binding, resolve_series_bindings
+from excel_grapher.series_bindings.resolve import (
+    bound_label_addresses,
+    resolve_series_binding,
+    resolve_series_bindings,
+)
 from excel_grapher.series_bindings.schema import (
     SeriesBindingsSchemaError,
     format_schema_errors,
@@ -108,6 +112,7 @@ __all__ = [
     "GroupMember",
     "GroupNode",
     "GroupsManifest",
+    "bound_label_addresses",
     "bindings_canonical_sha256",
     "bindings_export_order",
     "bindings_have_groups",
