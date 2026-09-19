@@ -60,6 +60,23 @@ NodeHook = Callable[[NodeKey, Node], None]
 EdgeKey = tuple[NodeKey, NodeKey]
 
 
+def _copy_adjacency(adjacency: dict[NodeKey, set[NodeKey]]) -> dict[NodeKey, set[NodeKey]]:
+    """Copy neighbor sets, omitting empty entries."""
+    return {key: set(neighbors) for key, neighbors in adjacency.items() if neighbors}
+
+
+def _discard_adjacency(
+    adjacency: dict[NodeKey, set[NodeKey]], key: NodeKey, neighbor: NodeKey
+) -> None:
+    """Remove `neighbor` from `key`'s set; drop the key when the set is empty."""
+    neighbors = adjacency.get(key)
+    if neighbors is None:
+        return
+    neighbors.discard(neighbor)
+    if not neighbors:
+        del adjacency[key]
+
+
 def _or_merge_optional_guards(parts: list[GuardExpr | None]) -> GuardExpr | None:
     """OR-merge guards; `None` (unconditional) wins, matching `add_edge`."""
     if not parts:
@@ -174,8 +191,9 @@ class DependencyGraph:
     `get_node(key)` looks up that exact stored key.
 
     `get_dependencies` / `get_dependents` / `get_edge_attrs` return endpoints
-    exactly as stored. `resolve_endpoint` / `get_dependency_nodes` resolve to
-    stored cell keys when present (evaluation order, export, codegen).
+    exactly as stored. Missing adjacency keys are empty (no per-node empty
+    `set()`). `resolve_endpoint` / `get_dependency_nodes` resolve to stored
+    cell keys when present (evaluation order, export, codegen).
 
     `formula_shapes` is an optional acceleration overlay from
     `warm_formula_shapes` (unset by default). `Node.formula_ast` is
@@ -186,8 +204,9 @@ class DependencyGraph:
     """
 
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
-    _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> deps
-    _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)  # node -> dependents
+    # node -> deps / dependents; missing key means no neighbors
+    _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)
+    _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)
     _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
     _edge_provenance: dict[EdgeKey, EdgeProvenance] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
@@ -231,10 +250,8 @@ class DependencyGraph:
         """Return an isolated mutable graph clone for projection rewrites."""
         cloned = DependencyGraph()
         cloned._nodes = {key: copy_node(node) for key, node in self._nodes.items()}
-        cloned._edges = {key: set(deps) for key, deps in self._edges.items()}
-        cloned._reverse_edges = {
-            key: set(dependents) for key, dependents in self._reverse_edges.items()
-        }
+        cloned._edges = _copy_adjacency(self._edges)
+        cloned._reverse_edges = _copy_adjacency(self._reverse_edges)
         cloned._guards = dict(self._guards)
         cloned._edge_provenance = dict(self._edge_provenance)
         cloned.leaf_classification = (
@@ -261,8 +278,6 @@ class DependencyGraph:
     def add_node(self, node: Node) -> None:
         key = node.key
         self._nodes[key] = node
-        self._edges.setdefault(key, set())
-        self._reverse_edges.setdefault(key, set())
         for hook in self._hooks:
             hook(key, node)
 
@@ -740,7 +755,7 @@ class DependencyGraph:
         node: Node,
         rewritten_dependents: frozenset[NodeKey],
     ) -> None:
-        old_edges = {src: set(dsts) for src, dsts in self._edges.items()}
+        old_edges = {src: set(dsts) for src, dsts in self._edges.items() if dsts}
         old_guards = dict(self._guards)
         old_prov = dict(self._edge_provenance)
 
@@ -771,8 +786,6 @@ class DependencyGraph:
                 guard_parts.setdefault(new_ek, []).append(old_guards.get((src, dst)))
                 prov_parts.setdefault(new_ek, []).append(old_prov.get((src, dst)))
 
-        new_edges.setdefault(new_key, set())
-        new_reverse.setdefault(new_key, set())
         self._edges = new_edges
         self._reverse_edges = new_reverse
 
@@ -1285,8 +1298,8 @@ class DependencyGraph:
     # ---- internal edge mutation --------------------------------------------
 
     def _remove_edge(self, from_key: NodeKey, to_key: NodeKey) -> None:
-        self._edges.setdefault(from_key, set()).discard(to_key)
-        self._reverse_edges.setdefault(to_key, set()).discard(from_key)
+        _discard_adjacency(self._edges, from_key, to_key)
+        _discard_adjacency(self._reverse_edges, to_key, from_key)
         ek = (from_key, to_key)
         self._guards.pop(ek, None)
         self._edge_provenance.pop(ek, None)

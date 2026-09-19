@@ -165,7 +165,7 @@ def _replace_outgoing(
     host: NodeKey,
     edges: tuple[tuple[NodeKey, GuardExpr | None, EdgeProvenance | None], ...],
 ) -> None:
-    for dep in list(graph._edges.get(host, set())):
+    for dep in list(graph._edges.get(host, ())):
         graph._remove_edge(host, dep)
     for dep_key, guard, provenance in edges:
         graph.add_edge(host, dep_key, guard=guard, provenance=provenance)
@@ -233,7 +233,7 @@ def _merge_extracted_subgraph(
     existing = set(graph._nodes)
     new_keys = [key for key in extracted if key not in existing]
 
-    for dep in list(graph._edges.get(host, set())):
+    for dep in list(graph._edges.get(host, ())):
         graph._remove_edge(host, dep)
 
     for key in new_keys:

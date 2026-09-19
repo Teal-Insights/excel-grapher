@@ -188,8 +188,8 @@ def _read_graph_frames(buf: BinaryIO) -> Any:
     part2 = pickle.load(buf)
     edge_src: array.array[int] = part2["edge_src"]
     edge_dst: array.array[int] = part2["edge_dst"]
-    graph._edges = {k: set() for k in graph._nodes}
-    graph._reverse_edges = {k: set() for k in graph._nodes}
+    graph._edges = {}
+    graph._reverse_edges = {}
     for s, d in zip(edge_src, edge_dst, strict=True):
         src = keys[s]
         dst = keys[d]
@@ -213,6 +213,8 @@ def _edges_to_coo(
     src = array.array("I")
     dst = array.array("I")
     for key, deps in edges.items():
+        if not deps:
+            continue
         s = idx[key]
         for dep in deps:
             src.append(s)
