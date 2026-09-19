@@ -180,10 +180,25 @@ class RangeNode:
         return resolve_cell_ref(self.end_ref, None)
 
 
+def _as_col_axis(value: str | AxisRef) -> AxisRef:
+    if isinstance(value, str):
+        return AbsoluteAxis(int(column_index_from_string(value.upper())))
+    return value
+
+
+def _as_row_axis(value: int | AxisRef) -> AxisRef:
+    if isinstance(value, int):
+        return AbsoluteAxis(value)
+    return value
+
+
 @dataclass(frozen=True, slots=True)
 class WholeColumnNode:
+    """Open-axis whole-column ref (`A:A` or span `A:C`)."""
+
     sheet: str
-    col: AxisRef
+    start_col: AxisRef
+    end_col: AxisRef
 
     def __init__(
         self,
@@ -191,33 +206,69 @@ class WholeColumnNode:
         column: str | AxisRef | None = None,
         *,
         col: AxisRef | None = None,
+        start_col: str | AxisRef | None = None,
+        end_col: str | AxisRef | None = None,
     ) -> None:
         object.__setattr__(self, "sheet", sheet)
-        axis = col if col is not None else column
-        if axis is None:
+        start: str | AxisRef | None = start_col
+        if col is not None:
+            if start is not None:
+                raise TypeError("pass col or start_col, not both")
+            start = col
+        if column is not None:
+            if start is not None:
+                raise TypeError("pass column or start_col/col, not both")
+            start = column
+        if start is None:
             raise TypeError("WholeColumnNode requires a column")
-        if isinstance(axis, str):
-            axis = AbsoluteAxis(int(column_index_from_string(axis.upper())))
-        object.__setattr__(self, "col", axis)
+        start_axis = _as_col_axis(start)
+        end_axis = start_axis if end_col is None else _as_col_axis(end_col)
+        object.__setattr__(self, "start_col", start_axis)
+        object.__setattr__(self, "end_col", end_axis)
+
+    @property
+    def col(self) -> AxisRef:
+        """Start-column axis (equal-endpoint alias)."""
+        return self.start_col
 
     @property
     def column(self) -> str:
-        """Column letter when this whole-column ref is absolute."""
-        _sheet, letter = resolve_whole_column_ref(self, None)
+        """Start column letter when this whole-column ref is absolute."""
+        _sheet, letter, _end = resolve_whole_column_ref(self, None)
         return letter
 
 
 @dataclass(frozen=True, slots=True)
 class WholeRowNode:
-    sheet: str
-    row: AxisRef
+    """Open-axis whole-row ref (`5:5` or span `5:10`)."""
 
-    def __init__(self, sheet: str, row: int | AxisRef) -> None:
+    sheet: str
+    start_row: AxisRef
+    end_row: AxisRef
+
+    def __init__(
+        self,
+        sheet: str,
+        row: int | AxisRef | None = None,
+        *,
+        start_row: int | AxisRef | None = None,
+        end_row: int | AxisRef | None = None,
+    ) -> None:
         object.__setattr__(self, "sheet", sheet)
-        if isinstance(row, int):
-            object.__setattr__(self, "row", AbsoluteAxis(row))
-        else:
-            object.__setattr__(self, "row", row)
+        start: int | AxisRef | None = start_row if start_row is not None else row
+        if start is None:
+            raise TypeError("WholeRowNode requires a row")
+        if start_row is not None and row is not None:
+            raise TypeError("pass row or start_row, not both")
+        start_axis = _as_row_axis(start)
+        end_axis = start_axis if end_row is None else _as_row_axis(end_row)
+        object.__setattr__(self, "start_row", start_axis)
+        object.__setattr__(self, "end_row", end_axis)
+
+    @property
+    def row(self) -> AxisRef:
+        """Start-row axis (equal-endpoint alias)."""
+        return self.start_row
 
 
 def _resolve_axis(axis: AxisRef, base: int | None) -> int:
@@ -258,24 +309,26 @@ def resolve_cell_ref(ref: CellRef | CellRefNode, anchor: CellKey | str | None) -
 
 def resolve_whole_column_ref(
     node: WholeColumnNode, anchor: CellKey | str | None
-) -> tuple[str, str]:
-    """Resolve a whole-column leaf to `(sheet, column_letter)`."""
+) -> tuple[str, str, str]:
+    """Resolve a whole-column leaf to `(sheet, start_letter, end_letter)`."""
     anchor_key = _coerce_anchor_key(anchor)
     col_base = None if anchor_key is None else int(column_index_from_string(anchor_key.column))
-    col_index = _resolve_axis(node.col, col_base)
-    if col_index < 1:
-        raise ValueError(f"resolved column out of range: {col_index}")
-    return node.sheet, get_column_letter(col_index)
+    start_index = _resolve_axis(node.start_col, col_base)
+    end_index = _resolve_axis(node.end_col, col_base)
+    if start_index < 1 or end_index < 1:
+        raise ValueError(f"resolved column out of range: {start_index}:{end_index}")
+    return node.sheet, get_column_letter(start_index), get_column_letter(end_index)
 
 
-def resolve_whole_row_ref(node: WholeRowNode, anchor: CellKey | str | None) -> tuple[str, int]:
-    """Resolve a whole-row leaf to `(sheet, row_number)`."""
+def resolve_whole_row_ref(node: WholeRowNode, anchor: CellKey | str | None) -> tuple[str, int, int]:
+    """Resolve a whole-row leaf to `(sheet, start_row, end_row)`."""
     anchor_key = _coerce_anchor_key(anchor)
     row_base = None if anchor_key is None else int(anchor_key.row)
-    row_index = _resolve_axis(node.row, row_base)
-    if row_index < 1:
-        raise ValueError(f"resolved row out of range: {row_index}")
-    return node.sheet, row_index
+    start_index = _resolve_axis(node.start_row, row_base)
+    end_index = _resolve_axis(node.end_row, row_base)
+    if start_index < 1 or end_index < 1:
+        raise ValueError(f"resolved row out of range: {start_index}:{end_index}")
+    return node.sheet, start_index, end_index
 
 
 @dataclass(frozen=True, slots=True)
@@ -346,11 +399,11 @@ def bind_axes(node: AstNode, anchor: CellKey | str | None) -> AstNode:
                 resolve_cell_ref(end_ref, anchor),
             )
         case WholeColumnNode():
-            sheet, letter = resolve_whole_column_ref(node, anchor)
-            return WholeColumnNode(sheet=sheet, column=letter)
+            sheet, start_letter, end_letter = resolve_whole_column_ref(node, anchor)
+            return WholeColumnNode(sheet=sheet, start_col=start_letter, end_col=end_letter)
         case WholeRowNode():
-            sheet, row = resolve_whole_row_ref(node, anchor)
-            return WholeRowNode(sheet=sheet, row=row)
+            sheet, start_row, end_row = resolve_whole_row_ref(node, anchor)
+            return WholeRowNode(sheet=sheet, start_row=start_row, end_row=end_row)
         case FunctionCallNode(name, args):
             return FunctionCallNode(name, [bind_axes(arg, anchor) for arg in args])
         case BinaryOpNode(op, left, right):
@@ -414,6 +467,14 @@ def _qualify_atom(sheet: str, body: str, *, style: FormulaStyle, host_sheet: str
     return f"{_sheet_prefix(sheet, style=style, host_sheet=host_sheet)}{body}"
 
 
+def _a1_excel_col_token(axis: AxisRef, letter: str) -> str:
+    return f"${letter}" if isinstance(axis, AbsoluteAxis) else letter
+
+
+def _a1_excel_row_token(axis: AxisRef, row: int) -> str:
+    return f"${row}" if isinstance(axis, AbsoluteAxis) else str(row)
+
+
 def _unparse_atom_ref(
     node: CellRefNode | RangeNode | WholeColumnNode | WholeRowNode,
     anchor: CellKey | str | None,
@@ -455,28 +516,32 @@ def _unparse_atom_ref(
             )
         case WholeColumnNode():
             if style is FormulaStyle.R1C1:
-                token = _r1c1_axis(node.col, is_row=False)
-                body = f"{token}:{token}"
+                start_token = _r1c1_axis(node.start_col, is_row=False)
+                end_token = _r1c1_axis(node.end_col, is_row=False)
+                body = f"{start_token}:{end_token}"
                 return _qualify_atom(node.sheet, body, style=style, host_sheet=host_sheet)
-            sheet, letter = resolve_whole_column_ref(node, anchor)
+            sheet, start_letter, end_letter = resolve_whole_column_ref(node, anchor)
             if style is FormulaStyle.A1_EXCEL:
-                marked = f"${letter}" if isinstance(node.col, AbsoluteAxis) else letter
+                start_marked = _a1_excel_col_token(node.start_col, start_letter)
+                end_marked = _a1_excel_col_token(node.end_col, end_letter)
                 return _qualify_atom(
-                    sheet, f"{marked}:{marked}", style=style, host_sheet=host_sheet
+                    sheet, f"{start_marked}:{end_marked}", style=style, host_sheet=host_sheet
                 )
-            return f"{quote_sheet_if_needed(sheet)}!{letter}:{letter}"
+            return f"{quote_sheet_if_needed(sheet)}!{start_letter}:{end_letter}"
         case WholeRowNode():
             if style is FormulaStyle.R1C1:
-                token = _r1c1_axis(node.row, is_row=True)
-                body = f"{token}:{token}"
+                start_token = _r1c1_axis(node.start_row, is_row=True)
+                end_token = _r1c1_axis(node.end_row, is_row=True)
+                body = f"{start_token}:{end_token}"
                 return _qualify_atom(node.sheet, body, style=style, host_sheet=host_sheet)
-            sheet, row = resolve_whole_row_ref(node, anchor)
+            sheet, start_row, end_row = resolve_whole_row_ref(node, anchor)
             if style is FormulaStyle.A1_EXCEL:
-                marked = f"${row}" if isinstance(node.row, AbsoluteAxis) else str(row)
+                start_marked = _a1_excel_row_token(node.start_row, start_row)
+                end_marked = _a1_excel_row_token(node.end_row, end_row)
                 return _qualify_atom(
-                    sheet, f"{marked}:{marked}", style=style, host_sheet=host_sheet
+                    sheet, f"{start_marked}:{end_marked}", style=style, host_sheet=host_sheet
                 )
-            return f"{quote_sheet_if_needed(sheet)}!{row}:{row}"
+            return f"{quote_sheet_if_needed(sheet)}!{start_row}:{end_row}"
 
 
 def _unparse_expr(
@@ -707,15 +772,17 @@ def rebase_relative_axes(
                     return cur
                 return RangeNode(start_ref=new_start, end_ref=new_end)
             case WholeColumnNode():
-                new_axis = _rebase_axis(cur.col, old_col, new_col)
-                if new_axis is cur.col:
+                new_start = _rebase_axis(cur.start_col, old_col, new_col)
+                new_end = _rebase_axis(cur.end_col, old_col, new_col)
+                if new_start is cur.start_col and new_end is cur.end_col:
                     return cur
-                return WholeColumnNode(sheet=cur.sheet, col=new_axis)
+                return WholeColumnNode(sheet=cur.sheet, start_col=new_start, end_col=new_end)
             case WholeRowNode():
-                new_axis = _rebase_axis(cur.row, old_row, new_row)
-                if new_axis is cur.row:
+                new_start = _rebase_axis(cur.start_row, old_row, new_row)
+                new_end = _rebase_axis(cur.end_row, old_row, new_row)
+                if new_start is cur.start_row and new_end is cur.end_row:
                     return cur
-                return WholeRowNode(sheet=cur.sheet, row=new_axis)
+                return WholeRowNode(sheet=cur.sheet, start_row=new_start, end_row=new_end)
             case FunctionCallNode(name, args):
                 new_args = _rewritten_call_args(args, walk)
                 if new_args is None:
@@ -801,36 +868,83 @@ def retarget_resolved_refs(
     return walk(node)
 
 
-def _whole_column_matches_cell_key(node: WholeColumnNode, key: str, anchor: CellKey | str) -> bool:
+def _whole_column_covers_cell_key(node: WholeColumnNode, key: str, anchor: CellKey | str) -> bool:
     parts = _cell_key_parts(key)
     if parts is None:
         return False
     old_sheet, old_col, _old_row = parts
-    sheet, letter = resolve_whole_column_ref(node, anchor)
-    return sheet == old_sheet and letter == old_col
+    sheet, start_letter, end_letter = resolve_whole_column_ref(node, anchor)
+    start_idx = int(column_index_from_string(start_letter))
+    end_idx = int(column_index_from_string(end_letter))
+    lo, hi = min(start_idx, end_idx), max(start_idx, end_idx)
+    key_idx = int(column_index_from_string(old_col))
+    return sheet == old_sheet and lo <= key_idx <= hi
 
 
-def _whole_row_matches_cell_key(node: WholeRowNode, key: str, anchor: CellKey | str) -> bool:
+def _whole_row_covers_cell_key(node: WholeRowNode, key: str, anchor: CellKey | str) -> bool:
     parts = _cell_key_parts(key)
     if parts is None:
         return False
     old_sheet, _old_col, old_row = parts
-    sheet, row = resolve_whole_row_ref(node, anchor)
-    return sheet == old_sheet and row == old_row
+    sheet, start_row, end_row = resolve_whole_row_ref(node, anchor)
+    lo, hi = min(start_row, end_row), max(start_row, end_row)
+    return sheet == old_sheet and lo <= old_row <= hi
+
+
+def _whole_column_endpoint_matches(node: WholeColumnNode, key: str, anchor: CellKey | str) -> bool:
+    parts = _cell_key_parts(key)
+    if parts is None:
+        return False
+    old_sheet, old_col, _old_row = parts
+    sheet, start_letter, end_letter = resolve_whole_column_ref(node, anchor)
+    return sheet == old_sheet and old_col in {start_letter, end_letter}
+
+
+def _whole_row_endpoint_matches(node: WholeRowNode, key: str, anchor: CellKey | str) -> bool:
+    parts = _cell_key_parts(key)
+    if parts is None:
+        return False
+    old_sheet, _old_col, old_row = parts
+    sheet, start_row, end_row = resolve_whole_row_ref(node, anchor)
+    return sheet == old_sheet and old_row in {start_row, end_row}
 
 
 def _retarget_whole_column(
-    node: WholeColumnNode, new_key: str, anchor: CellKey | str
+    node: WholeColumnNode, old_key: str, new_key: str, anchor: CellKey | str
 ) -> WholeColumnNode:
+    parts = _cell_key_parts(old_key)
+    if parts is None:
+        return node
+    _old_sheet, old_col, _old_row = parts
     sheet, new_col, _new_row = _new_key_indexes(new_key)
     col_base, _row_base = _anchor_axis_bases(anchor)
-    return WholeColumnNode(sheet=sheet, col=_retarget_axis(node.col, new_col, col_base))
+    _sheet, start_letter, end_letter = resolve_whole_column_ref(node, anchor)
+    start_axis = node.start_col
+    end_axis = node.end_col
+    if start_letter == old_col:
+        start_axis = _retarget_axis(node.start_col, new_col, col_base)
+    if end_letter == old_col:
+        end_axis = _retarget_axis(node.end_col, new_col, col_base)
+    return WholeColumnNode(sheet=sheet, start_col=start_axis, end_col=end_axis)
 
 
-def _retarget_whole_row(node: WholeRowNode, new_key: str, anchor: CellKey | str) -> WholeRowNode:
+def _retarget_whole_row(
+    node: WholeRowNode, old_key: str, new_key: str, anchor: CellKey | str
+) -> WholeRowNode:
+    parts = _cell_key_parts(old_key)
+    if parts is None:
+        return node
+    _old_sheet, _old_col, old_row = parts
     sheet, _new_col, new_row = _new_key_indexes(new_key)
     _col_base, row_base = _anchor_axis_bases(anchor)
-    return WholeRowNode(sheet=sheet, row=_retarget_axis(node.row, new_row, row_base))
+    _sheet, start_row, end_row = resolve_whole_row_ref(node, anchor)
+    start_axis = node.start_row
+    end_axis = node.end_row
+    if start_row == old_row:
+        start_axis = _retarget_axis(node.start_row, new_row, row_base)
+    if end_row == old_row:
+        end_axis = _retarget_axis(node.end_row, new_row, row_base)
+    return WholeRowNode(sheet=sheet, start_row=start_axis, end_row=end_axis)
 
 
 def ast_mentions_resolved_non_cell_key(
@@ -861,9 +975,9 @@ def ast_mentions_resolved_non_cell_key(
                     or resolve_cell_ref(end_ref, anchor) == key
                 )
             case WholeColumnNode():
-                return _whole_column_matches_cell_key(cur, key, anchor)
+                return _whole_column_covers_cell_key(cur, key, anchor)
             case WholeRowNode():
-                return _whole_row_matches_cell_key(cur, key, anchor)
+                return _whole_row_covers_cell_key(cur, key, anchor)
             case FunctionCallNode(_, args):
                 return any(visit(arg) for arg in args)
             case BinaryOpNode(_, left, right):
@@ -889,7 +1003,8 @@ def replace_resolved_cell_ref(
     When `replacement` is omitted, matching `CellRefNode`s, `RangeNode`
     endpoints, and whole-column/row leaves keep each axis's relative/absolute
     kind and point at `new_key` against `anchor`. Whole-column leaves match
-    `old_key` by sheet and column; whole-row leaves match by sheet and row.
+    `old_key` by sheet and an endpoint column; whole-row leaves match by sheet
+    and an endpoint row. Interior cells inside a span are not rewritten.
 
     When `replacement` is provided, only `CellRefNode` leaves are spliced;
     range endpoints and whole-column/row leaves cannot hold a subtree.
@@ -937,15 +1052,15 @@ def replace_resolved_cell_ref(
             case WholeColumnNode():
                 if replacement is not None:
                     return cur
-                if not _whole_column_matches_cell_key(cur, old_key, anchor):
+                if not _whole_column_endpoint_matches(cur, old_key, anchor):
                     return cur
-                return _retarget_whole_column(cur, new_key, anchor)
+                return _retarget_whole_column(cur, old_key, new_key, anchor)
             case WholeRowNode():
                 if replacement is not None:
                     return cur
-                if not _whole_row_matches_cell_key(cur, old_key, anchor):
+                if not _whole_row_endpoint_matches(cur, old_key, anchor):
                     return cur
-                return _retarget_whole_row(cur, new_key, anchor)
+                return _retarget_whole_row(cur, old_key, new_key, anchor)
             case FunctionCallNode(name, args):
                 new_args = _rewritten_call_args(args, walk)
                 if new_args is None:
@@ -1340,10 +1455,10 @@ def _try_parse_local_whole_row(s: _Scanner, original: str) -> WholeRowNode | Non
     if s.default_sheet is None:
         return None
     s.skip_ws()
-    abs_row = False
+    abs_start = False
     if s.peek() == "$":
         s.consume()
-        abs_row = True
+        abs_start = True
     row_ch = s.peek()
     if row_ch is None or not row_ch.isdigit():
         return None
@@ -1353,13 +1468,18 @@ def _try_parse_local_whole_row(s: _Scanner, original: str) -> WholeRowNode | Non
         return None
     s.consume()
     s.skip_ws()
+    abs_end = False
     if s.peek() == "$":
         s.consume()
-        abs_row = True
+        abs_end = True
     row2 = s.take_while(lambda c: c.isdigit())
-    if row2 != row_str:
+    if not row2:
         return None
-    return WholeRowNode(sheet=s.default_sheet, row=_row_axis(s, int(row_str), abs_row))
+    return WholeRowNode(
+        sheet=s.default_sheet,
+        start_row=_row_axis(s, int(row_str), abs_start),
+        end_row=_row_axis(s, int(row2), abs_end),
+    )
 
 
 def _parse_local_ref(s: _Scanner, original: str) -> AstNode:
@@ -1432,10 +1552,10 @@ def _parse_a1_or_whole_col_or_range(s: _Scanner, original: str, sheet: str) -> A
 def _try_parse_whole_column(s: _Scanner, original: str, sheet: str) -> WholeColumnNode | None:
     del original
     s.skip_ws()
-    abs_col = False
+    abs_start = False
     if s.peek() == "$":
         s.consume()
-        abs_col = True
+        abs_start = True
     col = s.take_while(lambda c: c.isalpha())
     if not col:
         return None
@@ -1444,18 +1564,20 @@ def _try_parse_whole_column(s: _Scanner, original: str, sheet: str) -> WholeColu
         return None
     s.consume()
     s.skip_ws()
+    abs_end = False
     if s.peek() == "$":
         s.consume()
-        abs_col = True
+        abs_end = True
     col2 = s.take_while(lambda c: c.isalpha())
-    if col2.upper() != col.upper():
+    if not col2:
         return None
     after_col = s.peek()
     if after_col is not None and after_col.isdigit():
         return None
     return WholeColumnNode(
         sheet=sheet,
-        col=_col_axis(s, int(column_index_from_string(col.upper())), abs_col),
+        start_col=_col_axis(s, int(column_index_from_string(col.upper())), abs_start),
+        end_col=_col_axis(s, int(column_index_from_string(col2.upper())), abs_end),
     )
 
 
@@ -1514,10 +1636,10 @@ def _parse_ref_after_sheet_bang(s: _Scanner, original: str, *, sheet_qualifier: 
 
 def _try_parse_whole_row_after_bang(s: _Scanner, sheet: str) -> WholeRowNode | None:
     s.skip_ws()
-    abs_row = False
+    abs_start = False
     if s.peek() == "$":
         s.consume()
-        abs_row = True
+        abs_start = True
     row_ch = s.peek()
     if row_ch is None or not row_ch.isdigit():
         return None
@@ -1527,13 +1649,18 @@ def _try_parse_whole_row_after_bang(s: _Scanner, sheet: str) -> WholeRowNode | N
         return None
     s.consume()
     s.skip_ws()
+    abs_end = False
     if s.peek() == "$":
         s.consume()
-        abs_row = True
+        abs_end = True
     row2 = s.take_while(lambda c: c.isdigit())
-    if row2 != row_str:
+    if not row2:
         return None
-    return WholeRowNode(sheet=sheet, row=_row_axis(s, int(row_str), abs_row))
+    return WholeRowNode(
+        sheet=sheet,
+        start_row=_row_axis(s, int(row_str), abs_start),
+        end_row=_row_axis(s, int(row2), abs_end),
+    )
 
 
 def _parse_cell_axes(s: _Scanner, original: str) -> tuple[bool, int, bool, int]:

@@ -26,8 +26,8 @@ from excel_grapher.core.formula_normalization import (
 )
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
-    expand_whole_column_deps,
-    expand_whole_row_deps,
+    expand_whole_column_span_deps,
+    expand_whole_row_span_deps,
 )
 
 from .guard import And, Compare, GuardExpr, Literal, Not, Or, RangeRef, intern_guard
@@ -102,25 +102,27 @@ _RANGE_LOCAL_RE = re.compile(
     r"(?<![!A-Za-z0-9_])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\$?(?P<r1>\d+)\s*:\s*\$?(?P<c2>[A-Z]{1,3})\$?(?P<r2>\d+)(?![A-Za-z0-9_])"
 )
 _RANGE_WHOLE_COL_QUOTED_RE = re.compile(
-    _QUOTED_SHEET_PREFIX + r"\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+    _QUOTED_SHEET_PREFIX + r"\$?(?P<c1>[A-Z]{1,3})\s*:\s*\$?(?P<c2>[A-Z]{1,3})(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
 _RANGE_WHOLE_COL_UNQUOTED_RE = re.compile(
-    r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+    r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!"
+    r"\$?(?P<c1>[A-Z]{1,3})\s*:\s*\$?(?P<c2>[A-Z]{1,3})(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
 _RANGE_WHOLE_COL_LOCAL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b(?![A-Za-z0-9_])",
+    r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\s*:\s*\$?(?P<c2>[A-Z]{1,3})"
+    r"(?![A-Za-z0-9_])",
     re.IGNORECASE,
 )
 _RANGE_WHOLE_ROW_QUOTED_RE = re.compile(
-    _QUOTED_SHEET_PREFIX + r"\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b"
+    _QUOTED_SHEET_PREFIX + r"\$?(?P<r1>\d+)\s*:\s*\$?(?P<r2>\d+)(?!\d)"
 )
 _RANGE_WHOLE_ROW_UNQUOTED_RE = re.compile(
-    r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b"
+    r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<r1>\d+)\s*:\s*\$?(?P<r2>\d+)(?!\d)"
 )
 _RANGE_WHOLE_ROW_LOCAL_RE = re.compile(
-    r"(?<![!A-Za-z0-9_'])(?<!\$)(?P<row>\d+)\s*:\s*\$?(?P=row)\b(?![A-Za-z0-9_])"
+    r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<r1>\d+)\s*:\s*\$?(?P<r2>\d+)(?!\d)"
 )
 
 
@@ -228,37 +230,40 @@ def parse_range_refs_with_spans(formula: str) -> list[tuple[CellRef, CellRef, tu
 
     for m in _RANGE_WHOLE_COL_QUOTED_RE.finditer(formula):
         sheet = _sheet_from_quoted_group(m)
-        col = m.group("col").upper()
-        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
-        out.append((ref, ref, m.span()))
+        start = CellRef(sheet=sheet, column=m.group("c1").upper(), row=0, range_kind="whole_column")
+        end = CellRef(sheet=sheet, column=m.group("c2").upper(), row=0, range_kind="whole_column")
+        out.append((start, end, m.span()))
 
     for m in _RANGE_WHOLE_COL_UNQUOTED_RE.finditer(formula):
         sheet = m.group("sheet")
-        col = m.group("col").upper()
-        ref = CellRef(sheet=sheet, column=col, row=0, range_kind="whole_column")
-        out.append((ref, ref, m.span()))
+        start = CellRef(sheet=sheet, column=m.group("c1").upper(), row=0, range_kind="whole_column")
+        end = CellRef(sheet=sheet, column=m.group("c2").upper(), row=0, range_kind="whole_column")
+        out.append((start, end, m.span()))
 
     for m in _RANGE_WHOLE_COL_LOCAL_RE.finditer(formula):
-        col = m.group("col").upper()
-        ref = CellRef(sheet=None, column=col, row=0, range_kind="whole_column")
-        out.append((ref, ref, m.span()))
+        c1 = m.group("c1").upper()
+        if c1 in _FUNC_LIKE:
+            continue
+        start = CellRef(sheet=None, column=c1, row=0, range_kind="whole_column")
+        end = CellRef(sheet=None, column=m.group("c2").upper(), row=0, range_kind="whole_column")
+        out.append((start, end, m.span()))
 
     for m in _RANGE_WHOLE_ROW_QUOTED_RE.finditer(formula):
         sheet = _sheet_from_quoted_group(m)
-        row = int(m.group("row"))
-        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
-        out.append((ref, ref, m.span()))
+        start = CellRef(sheet=sheet, column="", row=int(m.group("r1")), range_kind="whole_row")
+        end = CellRef(sheet=sheet, column="", row=int(m.group("r2")), range_kind="whole_row")
+        out.append((start, end, m.span()))
 
     for m in _RANGE_WHOLE_ROW_UNQUOTED_RE.finditer(formula):
         sheet = m.group("sheet")
-        row = int(m.group("row"))
-        ref = CellRef(sheet=sheet, column="", row=row, range_kind="whole_row")
-        out.append((ref, ref, m.span()))
+        start = CellRef(sheet=sheet, column="", row=int(m.group("r1")), range_kind="whole_row")
+        end = CellRef(sheet=sheet, column="", row=int(m.group("r2")), range_kind="whole_row")
+        out.append((start, end, m.span()))
 
     for m in _RANGE_WHOLE_ROW_LOCAL_RE.finditer(formula):
-        row = int(m.group("row"))
-        ref = CellRef(sheet=None, column="", row=row, range_kind="whole_row")
-        out.append((ref, ref, m.span()))
+        start = CellRef(sheet=None, column="", row=int(m.group("r1")), range_kind="whole_row")
+        end = CellRef(sheet=None, column="", row=int(m.group("r2")), range_kind="whole_row")
+        out.append((start, end, m.span()))
 
     for m in _RANGE_QUOTED_BOTH_ENDPOINTS_RE.finditer(formula):
         sheet = _sheet_from_quoted_group(m)
@@ -375,9 +380,9 @@ def expand_range_ref(
     bounds = sheet_bounds or {}
 
     if start.range_kind == "whole_column":
-        return expand_whole_column_deps(sheet, start.column, bounds)
+        return expand_whole_column_span_deps(sheet, start.column, end.column, bounds)
     if start.range_kind == "whole_row":
-        return expand_whole_row_deps(sheet, start.row, bounds)
+        return expand_whole_row_span_deps(sheet, start.row, end.row, bounds)
 
     return expand_range(
         sheet=sheet,

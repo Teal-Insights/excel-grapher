@@ -37,7 +37,10 @@ from excel_grapher.core.formula_ast import (
     resolve_whole_column_ref,
     resolve_whole_row_ref,
 )
-from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
+from excel_grapher.core.range_shorthand import (
+    expand_whole_column_span_deps,
+    expand_whole_row_span_deps,
+)
 from excel_grapher.core.types import ExcelRange, XlError
 from excel_grapher.exporter.inverted_tree import excel as inverted_excel
 from excel_grapher.exporter.inverted_tree.access import (
@@ -443,18 +446,22 @@ def iter_ref_addresses(
     if isinstance(node, WholeColumnNode):
         if graph is None or graph.sheet_bounds is None:
             raise InvertedTreeExportError("whole-column ref requires workbook used-range bounds")
-        sheet, letter = resolve_whole_column_ref(node, host_cell)
+        sheet, start_letter, end_letter = resolve_whole_column_ref(node, host_cell)
         return [
             as_canonical(format_key(dep_sheet, a1))
-            for dep_sheet, a1 in expand_whole_column_deps(sheet, letter, graph.sheet_bounds)
+            for dep_sheet, a1 in expand_whole_column_span_deps(
+                sheet, start_letter, end_letter, graph.sheet_bounds
+            )
         ]
     if isinstance(node, WholeRowNode):
         if graph is None or graph.sheet_bounds is None:
             raise InvertedTreeExportError("whole-row ref requires workbook used-range bounds")
-        sheet, row = resolve_whole_row_ref(node, host_cell)
+        sheet, start_row, end_row = resolve_whole_row_ref(node, host_cell)
         return [
             as_canonical(format_key(dep_sheet, a1))
-            for dep_sheet, a1 in expand_whole_row_deps(sheet, row, graph.sheet_bounds)
+            for dep_sheet, a1 in expand_whole_row_span_deps(
+                sheet, start_row, end_row, graph.sheet_bounds
+            )
         ]
     raise InvertedTreeExportError(
         f"expected a range, whole-column, or whole-row ref, got {type(node).__name__}"

@@ -131,6 +131,22 @@ def test_parse_preserving_axes_whole_row_relative_vs_absolute() -> None:
     assert abs_row == WholeRowNode(sheet="Sheet1", row=AbsoluteAxis(1))
 
 
+def test_parse_preserving_axes_whole_column_span_relative() -> None:
+    rel = parse_preserving_axes("=A:C", anchor="Sheet1!B1")
+    assert rel == WholeColumnNode(
+        sheet="Sheet1", start_col=RelativeAxis(-1), end_col=RelativeAxis(1)
+    )
+    mixed = parse_preserving_axes("=$A:C", anchor="Sheet1!B1")
+    assert mixed == WholeColumnNode(
+        sheet="Sheet1", start_col=AbsoluteAxis(1), end_col=RelativeAxis(1)
+    )
+
+
+def test_parse_preserving_axes_whole_row_span_relative() -> None:
+    rel = parse_preserving_axes("=5:10", anchor="Sheet1!A6")
+    assert rel == WholeRowNode(sheet="Sheet1", start_row=RelativeAxis(-1), end_row=RelativeAxis(4))
+
+
 def test_parse_preserving_axes_named_range_is_absolute() -> None:
     ast = parse_preserving_axes(
         "=MyName+A1",

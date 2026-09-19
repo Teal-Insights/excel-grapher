@@ -230,13 +230,13 @@ def test_rebase_relative_axes_range_and_whole_leaves() -> None:
     rebased_col = rebase_relative_axes(col, old_anchor="Sheet1!B2", new_anchor="Sheet1!C3")
     assert isinstance(rebased_col, WholeColumnNode)
     assert rebased_col.col == RelativeAxis(-2)
-    assert resolve_whole_column_ref(rebased_col, "Sheet1!C3") == ("Sheet1", "A")
+    assert resolve_whole_column_ref(rebased_col, "Sheet1!C3") == ("Sheet1", "A", "A")
 
     row = parse_preserving_axes("=1:1", anchor="Sheet1!A3")
     rebased_row = rebase_relative_axes(row, old_anchor="Sheet1!A3", new_anchor="Sheet1!B5")
     assert isinstance(rebased_row, WholeRowNode)
     assert rebased_row.row == RelativeAxis(-4)
-    assert resolve_whole_row_ref(rebased_row, "Sheet1!B5") == ("Sheet1", 1)
+    assert resolve_whole_row_ref(rebased_row, "Sheet1!B5") == ("Sheet1", 1, 1)
 
 
 def test_rebase_relative_axes_noop_when_anchor_unchanged() -> None:
@@ -298,3 +298,32 @@ def test_ast_mentions_resolved_non_cell_key_range_and_whole() -> None:
     assert not ast_mentions_resolved_non_cell_key(
         parse("=Sheet1!B1+1"), key="Sheet1!B1", anchor="Sheet1!A1"
     )
+
+
+def test_replace_resolved_cell_ref_retargets_whole_column_span_endpoint() -> None:
+    ast = parse("=SUM(Sheet1!A:C)")
+    rewritten = replace_resolved_cell_ref(
+        ast, old_key="Sheet1!A1", new_key="Sheet1!D1", anchor="Sheet1!B1"
+    )
+    assert rewritten == parse("=SUM(Sheet1!D:C)")
+    interior = replace_resolved_cell_ref(
+        ast, old_key="Sheet1!B1", new_key="Sheet1!Z1", anchor="Sheet1!A1"
+    )
+    assert interior == ast
+
+
+def test_ast_mentions_whole_column_span_covers_interior() -> None:
+    ast = parse("=SUM(Sheet1!A:C)")
+    assert ast_mentions_resolved_non_cell_key(ast, key="Sheet1!B5", anchor="Sheet1!A1")
+    assert ast_mentions_resolved_non_cell_key(ast, key="Sheet1!A1", anchor="Sheet1!A1")
+    assert ast_mentions_resolved_non_cell_key(ast, key="Sheet1!C9", anchor="Sheet1!A1")
+    assert not ast_mentions_resolved_non_cell_key(ast, key="Sheet1!D1", anchor="Sheet1!A1")
+
+
+def test_rebase_relative_whole_column_span() -> None:
+    ast = parse_preserving_axes("=A:C", anchor="Sheet1!B1")
+    rebased = rebase_relative_axes(ast, old_anchor="Sheet1!B1", new_anchor="Sheet1!C2")
+    assert isinstance(rebased, WholeColumnNode)
+    assert rebased.start_col == RelativeAxis(-2)
+    assert rebased.end_col == RelativeAxis(0)
+    assert resolve_whole_column_ref(rebased, "Sheet1!C2") == ("Sheet1", "A", "C")

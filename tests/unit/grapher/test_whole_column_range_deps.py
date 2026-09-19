@@ -53,6 +53,29 @@ def test_whole_column_deps_bounded_to_used_range_not_excel_max(tmp_path: Path) -
     assert "Data!A1048576" not in deps
 
 
+def test_whole_column_span_deps_include_interior_columns(tmp_path: Path) -> None:
+    excel_path = tmp_path / "sum_span_deps.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    data = wb.add_worksheet("Data")
+    sheet1 = wb.add_worksheet("Sheet1")
+    data.write_number(0, 0, 1)
+    data.write_number(0, 1, 2)
+    data.write_number(0, 2, 3)
+    sheet1.write_formula(0, 0, "=SUM(Data!A:C)", None, 6)
+    wb.close()
+
+    graph = create_dependency_graph(
+        excel_path,
+        ["Sheet1!A1"],
+        load_values=True,
+        max_range_cells=2,
+    )
+    deps = graph.get_dependencies("Sheet1!A1")
+    assert "Data!A1" in deps
+    assert "Data!B1" in deps
+    assert "Data!C1" in deps
+
+
 def test_rectangular_range_over_max_cells_raises(tmp_path: Path) -> None:
     excel_path = tmp_path / "rect_over_cap.xlsx"
     wb = xlsxwriter.Workbook(excel_path)

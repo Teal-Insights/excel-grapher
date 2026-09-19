@@ -38,6 +38,8 @@ def test_canonical_address_strips_dollars_and_quotes() -> None:
         ("Sheet1!A1:Sheet1!$A$3", "Sheet1!A1:A3"),
         ("Sheet1!a1:b2", "Sheet1!A1:B2"),
         ("Sheet1!$A:$A", "Sheet1!A:A"),
+        ("Sheet1!$A:$C", "Sheet1!A:C"),
+        ("Sheet1!$5:$10", "Sheet1!5:10"),
         ("Sheet1!$1:$1", "Sheet1!1:1"),
         ("Sheet1!$A$1:Sheet2!$B$2", "Sheet1!A1:Sheet2!B2"),
         ("'Sheet1'!A1", "Sheet1!A1"),
