@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.7.0 (2026-09-19)
+
+### Bug Fixes
+
+- **scripts**: Align graph-memory tests with omitted empty adjacency
+  ([#911](https://github.com/Teal-Insights/excel-grapher/pull/911),
+  [`45acf6c`](https://github.com/Teal-Insights/excel-grapher/commit/45acf6c11a59e2a22f6ae8293bb45f7bb459313e))
+
+- **scripts**: Widen graph-memory table for hundred-MiB extracts
+  ([#911](https://github.com/Teal-Insights/excel-grapher/pull/911),
+  [`45acf6c`](https://github.com/Teal-Insights/excel-grapher/commit/45acf6c11a59e2a22f6ae8293bb45f7bb459313e))
+
+### Features
+
+- **grapher**: Visualize sheet-level dependency graphs
+  ([#912](https://github.com/Teal-Insights/excel-grapher/pull/912),
+  [`39aa5a9`](https://github.com/Teal-Insights/excel-grapher/commit/39aa5a91505c20ac997ebf431eccbd6b5948841e))
+
+- **scripts**: Restore DependencyGraph memory measurement harness
+  ([#911](https://github.com/Teal-Insights/excel-grapher/pull/911),
+  [`45acf6c`](https://github.com/Teal-Insights/excel-grapher/commit/45acf6c11a59e2a22f6ae8293bb45f7bb459313e))
+
+
 ## v20.6.1 (2026-09-19)
 
 ### Performance Improvements
