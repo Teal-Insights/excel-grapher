@@ -400,6 +400,16 @@ def test_as_measure_preserves_cached_text_sentinels() -> None:
     assert not is_error("n/a")
 
 
+def test_as_measure_str_keeps_numeric_excel_types() -> None:
+    """String dtype must not stringify formula numbers (`INDEX(...)=1`, #916)."""
+    assert as_measure(1, "str") == 1
+    assert as_measure(0, "str") == 0
+    assert as_measure(1.5, "str") == 1.5
+    assert as_measure(True, "str") is True
+    assert as_measure("1", "str") == "1"
+    assert as_measure("Yes", "str") == "Yes"
+
+
 def test_eval_instance_memos_and_detects_cycles() -> None:
     memo: dict[tuple[str, int], float] = {}
     stack: set[tuple[str, int]] = set()

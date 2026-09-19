@@ -107,7 +107,7 @@ def as_measure(value: object, dtype: Literal["int"]) -> int | str: ...
 
 
 @overload
-def as_measure(value: object, dtype: Literal["str"]) -> str: ...
+def as_measure(value: object, dtype: Literal["str"]) -> str | int | float | bool: ...
 
 
 @overload
@@ -128,6 +128,8 @@ def as_measure(value: object, dtype: str = "float") -> int | float | str | bool 
 
     Overloads narrow the return by `dtype`: the default `float` path is
     `float | str` so generated `list[float | str]` accumulators type-check.
+    A `str` measure keeps Excel numbers and bools so `INDEX(...)=1` on a
+    string-dtyped computed 0/1 series stays numeric, matching the evaluator.
     """
     if value is None:
         return None
@@ -144,6 +146,8 @@ def as_measure(value: object, dtype: str = "float") -> int | float | str | bool 
             return int(value)
         raise TypeError(f"cannot coerce {type(value).__name__} to int measure")
     if dtype == "str":
+        if isinstance(value, bool | int | float):
+            return value
         return str(value)
     if dtype == "bool":
         return bool(value)
