@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v20.6.1 (2026-09-19)
+
+### Performance Improvements
+
+- **grapher**: Omit empty adjacency sets on DependencyGraph nodes
+  ([#910](https://github.com/Teal-Insights/excel-grapher/pull/910),
+  [`0e2569f`](https://github.com/Teal-Insights/excel-grapher/commit/0e2569ff89f8c6faa979c0753a7a370f3a078d6f))
+
+
+## v20.6.0 (2026-09-19)
+
+### Features
+
+- **viz**: Force-layout statement graphs with real subgraph clusters
+  ([#904](https://github.com/Teal-Insights/excel-grapher/pull/904),
+  [`ef384a0`](https://github.com/Teal-Insights/excel-grapher/commit/ef384a005a8f4d2bd53a1fc6c8f4c36373a62b4e))
+
+
 ## v20.5.0 (2026-09-18)
 
 ### Bug Fixes
