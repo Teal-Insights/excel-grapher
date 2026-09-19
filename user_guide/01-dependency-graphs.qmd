@@ -115,12 +115,15 @@ still valid; it exports the pre-move view.
 
 Extraction is a target closure, so styles, charts, VBA, and cells outside
 the view do not appear in the output. That is accepted v1 lossiness.
-Pass `series_bindings` and `bindings_workbook` to also write `row_label`
-and `column_header` source cells that bindings read (GitHub #895). Those
-labels are often outside the formula closure. Formula headers bring their
-own dependency closure. The original graph is not mutated; the bindings
-workbook is opened read-only. Set `include_bound_labels=False` to keep the
-strict target-closure file.
+Pass `series_bindings` and `bindings_workbook` to also write `row_label`,
+`column_header`, `kind: cell`, and attribute source cells that bindings
+read. Those labels are often outside the formula closure. Formula headers
+are copied only when every static reference is already in the view or is
+itself a bound label; missing deps, `OFFSET`, and `INDIRECT` fail closed
+instead of extracting a second closure. The original graph is not mutated;
+the bindings workbook is opened read-only. Set `include_bound_labels=False`
+to keep the strict target-closure file. `bindings_workbook` is required
+only when bound labels are included.
 
 See [Exporting standalone Python](06-export.qmd) for projection as the
 non-mutating helper shared with Python codegen.

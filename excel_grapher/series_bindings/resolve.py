@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import warnings
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Iterable, Iterator, Mapping, Sequence
 from collections.abc import Set as AbstractSet
 from pathlib import Path
 from typing import Any, Literal
@@ -253,7 +253,31 @@ def _bind_source_addresses(bind: dict[str, Any], data_address: str) -> list[str]
     ]
 
 
-_LABEL_BIND_KINDS = frozenset({"row_label", "column_header"})
+_LABEL_BIND_KINDS = frozenset({"row_label", "column_header", "cell"})
+
+
+def _iter_label_binds(series: dict[str, Any]) -> Iterator[dict[str, Any]]:
+    """Yield structure binds that read a workbook label, header, or cell."""
+    structure = series.get("structure") or {}
+    if not isinstance(structure, dict):
+        return
+    measure = structure.get("measure") or {}
+    if isinstance(measure, dict):
+        bind = measure.get("bind")
+        if isinstance(bind, dict) and bind.get("kind") in _LABEL_BIND_KINDS:
+            yield bind
+    for dim in structure.get("dimensions") or []:
+        if not isinstance(dim, dict):
+            continue
+        bind = dim.get("bind")
+        if isinstance(bind, dict) and bind.get("kind") in _LABEL_BIND_KINDS:
+            yield bind
+    for attr in structure.get("attributes") or []:
+        if not isinstance(attr, dict):
+            continue
+        bind = _attribute_bind(attr)
+        if bind is not None and bind.get("kind") in _LABEL_BIND_KINDS:
+            yield bind
 
 
 def _graph_has_label(graph: GraphReadView | None, address: str) -> bool:
@@ -285,11 +309,13 @@ def bound_label_addresses(
     workbook: Path | str,
     graph: GraphReadView | None = None,
 ) -> set[str]:
-    """Return `row_label` and `column_header` source cells used by `bindings`.
+    """Return label, header, and `kind: cell` source cells used by `bindings`.
 
-    Fill walks contribute only the cell that actually supplied the label, not
-    empty candidates. Blank sources are omitted. Formula headers are included
-    even when Excel has no cached value (the formula text is the source).
+    Includes dimension and attribute binds (`row_label`, `column_header`, and
+    `cell`). Fill walks contribute only the cell that actually supplied the
+    label, not empty candidates. Blank sources are omitted. Formula headers
+    are included even when Excel has no cached value (the formula text is the
+    source).
 
     Args:
         bindings: Workbook series sidecar (post-schema validation).
@@ -307,13 +333,7 @@ def bound_label_addresses(
             continue
         cells = expand_bound_series_addresses(series, workbook=workbook)
         pending.append((series, cells))
-        structure = series.get("structure") or {}
-        for dim in structure.get("dimensions") or []:
-            if not isinstance(dim, dict):
-                continue
-            bind = dim.get("bind")
-            if not isinstance(bind, dict) or bind.get("kind") not in _LABEL_BIND_KINDS:
-                continue
+        for bind in _iter_label_binds(series):
             for cell in cells:
                 prefetch_addrs.extend(_bind_source_addresses(bind, cell))
 
@@ -324,13 +344,7 @@ def bound_label_addresses(
             graph=graph if isinstance(graph, DependencyGraph) else None,
         )
         for series, cells in pending:
-            structure = series.get("structure") or {}
-            for dim in structure.get("dimensions") or []:
-                if not isinstance(dim, dict):
-                    continue
-                bind = dim.get("bind")
-                if not isinstance(bind, dict) or bind.get("kind") not in _LABEL_BIND_KINDS:
-                    continue
+            for bind in _iter_label_binds(series):
                 for cell in cells:
                     picked = _pick_label_source(
                         _bind_source_addresses(bind, cell),
