@@ -44,8 +44,8 @@ from excel_grapher.core.formula_ast import (
     resolve_whole_row_ref,
 )
 from excel_grapher.core.range_shorthand import (
-    expand_whole_column_deps,
-    expand_whole_row_deps,
+    expand_whole_column_span_deps,
+    expand_whole_row_span_deps,
 )
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.node import NodeKey
@@ -453,7 +453,7 @@ def _keys_for_whole_column(
     host_key: NodeKey,
     add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
-    sheet, letter = resolve_whole_column_ref(leaf, anchor)
+    sheet, start_letter, end_letter = resolve_whole_column_ref(leaf, anchor)
     bounds = graph.sheet_bounds
     if not bounds or sheet not in bounds:
         add(
@@ -462,13 +462,14 @@ def _keys_for_whole_column(
                 node=host_key,
                 from_key=host_key,
                 message=(
-                    f"{host_key} whole-column ref {format_range_key(sheet, letter, letter)} "
+                    f"{host_key} whole-column ref "
+                    f"{format_range_key(sheet, start_letter, end_letter)} "
                     "requires sheet_bounds"
                 ),
             )
         )
         return set()
-    pairs = expand_whole_column_deps(sheet, letter, bounds)
+    pairs = expand_whole_column_span_deps(sheet, start_letter, end_letter, bounds)
     return {format_key(dep_sheet, a1) for dep_sheet, a1 in pairs}
 
 
@@ -480,7 +481,7 @@ def _keys_for_whole_row(
     host_key: NodeKey,
     add: Callable[[GraphConsistencyIssue], None],
 ) -> set[NodeKey]:
-    sheet, row = resolve_whole_row_ref(leaf, anchor)
+    sheet, start_row, end_row = resolve_whole_row_ref(leaf, anchor)
     bounds = graph.sheet_bounds
     if not bounds or sheet not in bounds:
         add(
@@ -489,11 +490,12 @@ def _keys_for_whole_row(
                 node=host_key,
                 from_key=host_key,
                 message=(
-                    f"{host_key} whole-row ref {format_range_key(sheet, str(row), str(row))} "
+                    f"{host_key} whole-row ref "
+                    f"{format_range_key(sheet, str(start_row), str(end_row))} "
                     "requires sheet_bounds"
                 ),
             )
         )
         return set()
-    pairs = expand_whole_row_deps(sheet, row, bounds)
+    pairs = expand_whole_row_span_deps(sheet, start_row, end_row, bounds)
     return {format_key(dep_sheet, a1) for dep_sheet, a1 in pairs}

@@ -31,8 +31,8 @@ from excel_grapher.core.grid import Grid, Range
 from excel_grapher.core.logic_funcs import logical_if
 from excel_grapher.core.range_shorthand import (
     SheetBounds,
-    resolve_whole_column,
-    resolve_whole_row,
+    resolve_whole_column_span,
+    resolve_whole_row_span,
 )
 from excel_grapher.core.types import CellValue, ExcelRange, FormulaValue, XlError
 from excel_grapher.evaluator.name_utils import normalize_excel_function_name
@@ -522,11 +522,11 @@ class FormulaEvaluator:
         if isinstance(node, CellRefNode):
             return self._evaluate_cell(resolve_cell_ref(node.ref, self._formula_anchor()))
         if isinstance(node, WholeColumnNode):
-            sheet, column = resolve_whole_column_ref(node, self._formula_anchor())
-            return self._resolve_whole_column(sheet, column)
+            sheet, start_col, end_col = resolve_whole_column_ref(node, self._formula_anchor())
+            return self._resolve_whole_column(sheet, start_col, end_col)
         if isinstance(node, WholeRowNode):
-            sheet, row = resolve_whole_row_ref(node, self._formula_anchor())
-            return self._resolve_whole_row(sheet, row)
+            sheet, start_row, end_row = resolve_whole_row_ref(node, self._formula_anchor())
+            return self._resolve_whole_row(sheet, start_row, end_row)
         if isinstance(node, RangeNode):
             start = resolve_cell_ref(node.start_ref, self._formula_anchor())
             end = resolve_cell_ref(node.end_ref, self._formula_anchor())
@@ -643,11 +643,11 @@ class FormulaEvaluator:
         bounds = getattr(self.graph, "sheet_bounds", None)
         return dict(bounds) if bounds else {}
 
-    def _resolve_whole_column(self, sheet: str, column: str) -> ExcelRange:
-        return resolve_whole_column(sheet, column, self._sheet_bounds())
+    def _resolve_whole_column(self, sheet: str, start_col: str, end_col: str) -> ExcelRange:
+        return resolve_whole_column_span(sheet, start_col, end_col, self._sheet_bounds())
 
-    def _resolve_whole_row(self, sheet: str, row: int) -> ExcelRange:
-        return resolve_whole_row(sheet, row, self._sheet_bounds())
+    def _resolve_whole_row(self, sheet: str, start_row: int, end_row: int) -> ExcelRange:
+        return resolve_whole_row_span(sheet, start_row, end_row, self._sheet_bounds())
 
     def _evaluate_cross_sheet_range(self, start: str, end: str) -> FormulaValue:
         """Evaluate a 3-D range to a nested grid of cell values.
@@ -987,11 +987,11 @@ class FormulaEvaluator:
     def _index_base_range(self, array_node: AstNode) -> ExcelRange | XlError:
         """Resolve INDEX's array argument to `ExcelRange` geometry when possible."""
         if isinstance(array_node, WholeColumnNode):
-            sheet, column = resolve_whole_column_ref(array_node, self._formula_anchor())
-            return self._resolve_whole_column(sheet, column)
+            sheet, start_col, end_col = resolve_whole_column_ref(array_node, self._formula_anchor())
+            return self._resolve_whole_column(sheet, start_col, end_col)
         if isinstance(array_node, WholeRowNode):
-            sheet, row = resolve_whole_row_ref(array_node, self._formula_anchor())
-            return self._resolve_whole_row(sheet, row)
+            sheet, start_row, end_row = resolve_whole_row_ref(array_node, self._formula_anchor())
+            return self._resolve_whole_row(sheet, start_row, end_row)
         if isinstance(array_node, RangeNode):
             start = resolve_cell_ref(array_node.start_ref, self._formula_anchor())
             end = resolve_cell_ref(array_node.end_ref, self._formula_anchor())
@@ -1016,11 +1016,11 @@ class FormulaEvaluator:
             end = resolve_cell_ref(node.end_ref, self._formula_anchor())
             return _range_from_a1(start, end)
         if isinstance(node, WholeColumnNode):
-            sheet, column = resolve_whole_column_ref(node, self._formula_anchor())
-            return self._resolve_whole_column(sheet, column)
+            sheet, start_col, end_col = resolve_whole_column_ref(node, self._formula_anchor())
+            return self._resolve_whole_column(sheet, start_col, end_col)
         if isinstance(node, WholeRowNode):
-            sheet, row = resolve_whole_row_ref(node, self._formula_anchor())
-            return self._resolve_whole_row(sheet, row)
+            sheet, start_row, end_row = resolve_whole_row_ref(node, self._formula_anchor())
+            return self._resolve_whole_row(sheet, start_row, end_row)
 
         if isinstance(node, CellRefNode):
             address = resolve_cell_ref(node.ref, self._formula_anchor())

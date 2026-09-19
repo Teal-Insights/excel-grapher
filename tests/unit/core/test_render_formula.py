@@ -161,6 +161,17 @@ def test_render_whole_column_and_row() -> None:
     assert render_formula(row, anchor="Sheet1!A1", style=FormulaStyle.R1C1) == "=Data!R4:R4"
 
 
+def test_render_whole_axis_spans() -> None:
+    col = parse("=Data!A:C")
+    row = parse("=Data!5:10")
+    assert render_formula(col, style=FormulaStyle.A1_ABSOLUTE) == "=Data!A:C"
+    assert render_formula(col, anchor="Sheet1!A1", style=FormulaStyle.A1_EXCEL) == "=Data!$A:$C"
+    assert render_formula(col, anchor="Sheet1!A1", style=FormulaStyle.R1C1) == "=Data!C1:C3"
+    assert render_formula(row, style=FormulaStyle.A1_ABSOLUTE) == "=Data!5:10"
+    assert render_formula(row, anchor="Sheet1!A1", style=FormulaStyle.A1_EXCEL) == "=Data!$5:$10"
+    assert render_formula(row, anchor="Sheet1!A1", style=FormulaStyle.R1C1) == "=Data!R5:R10"
+
+
 def test_render_quoted_sheet_name() -> None:
     ast = parse("='Other Sheet'!B5+1")
     assert render_formula(ast, style=FormulaStyle.A1_ABSOLUTE) == "='Other Sheet'!B5+1"

@@ -54,13 +54,17 @@ from excel_grapher.core.formula_ast import (
     WholeColumnNode,
     WholeRowNode,
     bind_axes,
+    resolve_whole_column_ref,
     resolve_whole_row_ref,
 )
 from excel_grapher.core.formula_ast import (
     parse as parse_ast,
 )
 from excel_grapher.core.formula_ast_json import formula_identity_digest
-from excel_grapher.core.range_shorthand import expand_whole_column_deps, expand_whole_row_deps
+from excel_grapher.core.range_shorthand import (
+    expand_whole_column_span_deps,
+    expand_whole_row_span_deps,
+)
 from excel_grapher.core.types import ExcelRange, XlError
 
 from .parser import (
@@ -3950,13 +3954,16 @@ def _collect_static_addresses_from_ast(
             return
         if isinstance(n, WholeColumnNode):
             bounds = sheet_bounds or {}
-            for dep_sheet, dep_a1 in expand_whole_column_deps(n.sheet, n.column, bounds):
+            sheet, start_letter, end_letter = resolve_whole_column_ref(n, None)
+            for dep_sheet, dep_a1 in expand_whole_column_span_deps(
+                sheet, start_letter, end_letter, bounds
+            ):
                 addrs.add(format_key(dep_sheet, dep_a1))
             return
         if isinstance(n, WholeRowNode):
             bounds = sheet_bounds or {}
-            _sheet, row = resolve_whole_row_ref(n, None)
-            for dep_sheet, dep_a1 in expand_whole_row_deps(_sheet, row, bounds):
+            _sheet, start_row, end_row = resolve_whole_row_ref(n, None)
+            for dep_sheet, dep_a1 in expand_whole_row_span_deps(_sheet, start_row, end_row, bounds):
                 addrs.add(format_key(dep_sheet, dep_a1))
             return
         if isinstance(n, RangeNode):

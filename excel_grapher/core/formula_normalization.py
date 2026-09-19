@@ -112,13 +112,15 @@ def _apply_named_range_replacements(
     return names_re.sub(replace_name, formula)
 
 
-def _format_whole_column_ref(sheet: str, column: str) -> str:
-    col = column.upper()
-    return f"{quote_sheet_if_needed(sheet)}!{col}:{col}"
+def _format_whole_column_ref(sheet: str, start_col: str, end_col: str | None = None) -> str:
+    start = start_col.upper()
+    end = (end_col or start_col).upper()
+    return f"{quote_sheet_if_needed(sheet)}!{start}:{end}"
 
 
-def _format_whole_row_ref(sheet: str, row: int) -> str:
-    return f"{quote_sheet_if_needed(sheet)}!{row}:{row}"
+def _format_whole_row_ref(sheet: str, start_row: int, end_row: int | None = None) -> str:
+    end = start_row if end_row is None else end_row
+    return f"{quote_sheet_if_needed(sheet)}!{start_row}:{end}"
 
 
 def _normalize_whole_column_row_shorthand(formula: str, current_sheet: str) -> str:
@@ -127,33 +129,35 @@ def _normalize_whole_column_row_shorthand(formula: str, current_sheet: str) -> s
 
     def quoted_whole_col(m: re.Match[str]) -> str:
         sheet = unescape_formula_sheet_name(m.group("sheet"))
-        return _format_whole_column_ref(sheet, m.group("col"))
+        return _format_whole_column_ref(sheet, m.group("c1"), m.group("c2"))
 
     result = re.sub(
-        _QUOTED_SHEET_PREFIX + r"\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+        _QUOTED_SHEET_PREFIX + r"\$?(?P<c1>[A-Z]{1,3})\s*:\s*\$?(?P<c2>[A-Z]{1,3})(?![A-Za-z0-9_])",
         quoted_whole_col,
         result,
         flags=re.IGNORECASE,
     )
 
     def unquoted_whole_col(m: re.Match[str]) -> str:
-        return _format_whole_column_ref(m.group("sheet"), m.group("col"))
+        return _format_whole_column_ref(m.group("sheet"), m.group("c1"), m.group("c2"))
 
     result = re.sub(
-        r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b",
+        r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!"
+        r"\$?(?P<c1>[A-Z]{1,3})\s*:\s*\$?(?P<c2>[A-Z]{1,3})(?![A-Za-z0-9_])",
         unquoted_whole_col,
         result,
         flags=re.IGNORECASE,
     )
 
     def local_whole_col(m: re.Match[str]) -> str:
-        col = m.group("col")
-        if col in _FUNC_LIKE:
+        c1 = m.group("c1")
+        if c1.upper() in _FUNC_LIKE:
             return m.group(0)
-        return _format_whole_column_ref(current_sheet, col)
+        return _format_whole_column_ref(current_sheet, c1, m.group("c2"))
 
     result = re.sub(
-        r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<col>[A-Z]{1,3})\s*:\s*\$?(?P=col)\b(?![A-Za-z0-9_])",
+        r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<c1>[A-Z]{1,3})\s*:\s*\$?(?P<c2>[A-Z]{1,3})"
+        r"(?![A-Za-z0-9_])",
         local_whole_col,
         result,
         flags=re.IGNORECASE,
@@ -161,28 +165,29 @@ def _normalize_whole_column_row_shorthand(formula: str, current_sheet: str) -> s
 
     def quoted_whole_row(m: re.Match[str]) -> str:
         sheet = unescape_formula_sheet_name(m.group("sheet"))
-        return _format_whole_row_ref(sheet, int(m.group("row")))
+        return _format_whole_row_ref(sheet, int(m.group("r1")), int(m.group("r2")))
 
     result = re.sub(
-        _QUOTED_SHEET_PREFIX + r"\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b",
+        _QUOTED_SHEET_PREFIX + r"\$?(?P<r1>\d+)\s*:\s*\$?(?P<r2>\d+)(?!\d)",
         quoted_whole_row,
         result,
     )
 
     def unquoted_whole_row(m: re.Match[str]) -> str:
-        return _format_whole_row_ref(m.group("sheet"), int(m.group("row")))
+        return _format_whole_row_ref(m.group("sheet"), int(m.group("r1")), int(m.group("r2")))
 
     result = re.sub(
-        r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!\$?(?P<row>\d+)\s*:\s*\$?(?P=row)\b",
+        r"(?<![A-Za-z_'])(?P<sheet>[A-Za-z][A-Za-z0-9_]*)!"
+        r"\$?(?P<r1>\d+)\s*:\s*\$?(?P<r2>\d+)(?!\d)",
         unquoted_whole_row,
         result,
     )
 
     def local_whole_row(m: re.Match[str]) -> str:
-        return _format_whole_row_ref(current_sheet, int(m.group("row")))
+        return _format_whole_row_ref(current_sheet, int(m.group("r1")), int(m.group("r2")))
 
     result = re.sub(
-        r"(?<![!A-Za-z0-9_'])(?<!\$)(?P<row>\d+)\s*:\s*\$?(?P=row)\b(?![A-Za-z0-9_])",
+        r"(?<![!A-Za-z0-9_'])(?<!\$)\$?(?P<r1>\d+)\s*:\s*\$?(?P<r2>\d+)(?!\d)",
         local_whole_row,
         result,
     )
@@ -200,8 +205,8 @@ def expand_whole_column_row_for_parse(
     resolution). Strips ``$`` markers before matching.
     """
     from excel_grapher.core.range_shorthand import (
-        whole_column_to_bounded_a1,
-        whole_row_to_bounded_a1,
+        whole_column_span_to_bounded_a1,
+        whole_row_span_to_bounded_a1,
     )
 
     s = formula.replace("$", "")
@@ -210,25 +215,26 @@ def expand_whole_column_row_for_parse(
         bare = re.escape(sheet)
 
         def repl_col(m: re.Match[str], *, _sheet: str = sheet) -> str:
-            start, end = whole_column_to_bounded_a1(_sheet, m.group(1), bounds)
+            start, end = whole_column_span_to_bounded_a1(_sheet, m.group(1), m.group(2), bounds)
             return f"{start}:{end}"
 
         for prefix in (quoted, bare):
             s = re.sub(
-                prefix + r"!\s*([A-Z]+)\s*:\s*\1\b",
+                prefix + r"!\s*([A-Z]+)\s*:\s*([A-Z]+)(?![A-Za-z0-9_])",
                 repl_col,
                 s,
                 flags=re.IGNORECASE,
             )
 
         def repl_row(m: re.Match[str], *, _sheet: str = sheet) -> str:
-            row = int(m.group(1))
-            start, end = whole_row_to_bounded_a1(_sheet, row, bounds)
+            start, end = whole_row_span_to_bounded_a1(
+                _sheet, int(m.group(1)), int(m.group(2)), bounds
+            )
             return f"{start}:{end}"
 
         for prefix in (quoted, bare):
             s = re.sub(
-                prefix + r"!\s*(\d+)\s*:\s*\1\b",
+                prefix + r"!\s*(\d+)\s*:\s*(\d+)(?!\d)",
                 repl_row,
                 s,
             )

@@ -375,13 +375,13 @@ def _project_parse_holes(node: AstNode) -> SkeletonNode:
                 raise ValueError("parse hole range index out of range")
             return AddressHoleNode(kind="RANGE", index=start.row.index - 1)
         case WholeColumnNode() if node.sheet == _PARSE_HOLE_SHEET:
-            if not isinstance(node.col, AbsoluteAxis) or node.col.index < 1:
+            if not isinstance(node.start_col, AbsoluteAxis) or node.start_col.index < 1:
                 raise ValueError("parse hole whole-column index out of range")
-            return AddressHoleNode(kind="WHOLE_COL", index=node.col.index - 1)
+            return AddressHoleNode(kind="WHOLE_COL", index=node.start_col.index - 1)
         case WholeRowNode() if node.sheet == _PARSE_HOLE_SHEET:
-            if not isinstance(node.row, AbsoluteAxis) or node.row.index < 1:
+            if not isinstance(node.start_row, AbsoluteAxis) or node.start_row.index < 1:
                 raise ValueError("parse hole whole-row index out of range")
-            return AddressHoleNode(kind="WHOLE_ROW", index=node.row.index - 1)
+            return AddressHoleNode(kind="WHOLE_ROW", index=node.start_row.index - 1)
         case FunctionCallNode(name, args):
             return FunctionCallNode(
                 name, [cast(AstNode, _project_parse_holes(arg)) for arg in args]

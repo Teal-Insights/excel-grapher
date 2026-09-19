@@ -65,10 +65,22 @@ def ast_to_json(node: AstNode) -> _JsonObject:
                 "s": _cell_ref_to_json(start_ref),
                 "e": _cell_ref_to_json(end_ref),
             }
-        case WholeColumnNode(sheet, col):
-            return {"t": "whole_col", "sheet": sheet, "col": _axis_to_json(col)}
-        case WholeRowNode(sheet, row):
-            return {"t": "whole_row", "sheet": sheet, "row": _axis_to_json(row)}
+        case WholeColumnNode(sheet, start_col, end_col):
+            payload: _JsonObject = {"t": "whole_col", "sheet": sheet}
+            if start_col == end_col:
+                payload["col"] = _axis_to_json(start_col)
+            else:
+                payload["start_col"] = _axis_to_json(start_col)
+                payload["end_col"] = _axis_to_json(end_col)
+            return payload
+        case WholeRowNode(sheet, start_row, end_row):
+            payload: _JsonObject = {"t": "whole_row", "sheet": sheet}
+            if start_row == end_row:
+                payload["row"] = _axis_to_json(start_row)
+            else:
+                payload["start_row"] = _axis_to_json(start_row)
+                payload["end_row"] = _axis_to_json(end_row)
+            return payload
         case FunctionCallNode(name, args):
             return {"t": "fn", "n": name, "a": [ast_to_json(arg) for arg in args]}
         case BinaryOpNode(op, left, right):
@@ -179,13 +191,29 @@ def ast_from_json(payload: object) -> AstNode:
         sheet = d.get("sheet")
         if not isinstance(sheet, str):
             raise TypeError("whole_col payload must have string sheet")
+        if "start_col" in d or "end_col" in d:
+            start = d.get("start_col", d.get("col", d.get("column")))
+            end = d.get("end_col", start)
+            return WholeColumnNode(
+                sheet=sheet,
+                start_col=_axis_or_column_letter_from_json(start),
+                end_col=_axis_or_column_letter_from_json(end),
+            )
         col = d.get("col", d.get("column"))
         return WholeColumnNode(sheet=sheet, col=_axis_or_column_letter_from_json(col))
     if tag == "whole_row":
         sheet = d.get("sheet")
-        row = d.get("row")
         if not isinstance(sheet, str):
             raise TypeError("whole_row payload must have string sheet")
+        if "start_row" in d or "end_row" in d:
+            start = d.get("start_row", d.get("row"))
+            end = d.get("end_row", start)
+            return WholeRowNode(
+                sheet=sheet,
+                start_row=_axis_or_int_from_json(start),
+                end_row=_axis_or_int_from_json(end),
+            )
+        row = d.get("row")
         return WholeRowNode(sheet=sheet, row=_axis_or_int_from_json(row))
     if tag == "fn":
         name = d.get("n")

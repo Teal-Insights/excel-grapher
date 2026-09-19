@@ -3,11 +3,14 @@ from __future__ import annotations
 import pytest
 
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     CellRefNode,
     FunctionCallNode,
+    RangeNode,
     WholeColumnNode,
     WholeRowNode,
     parse,
+    unparse_normalized_formula,
 )
 from excel_grapher.core.formula_normalization import (
     expand_whole_column_row_for_parse,
@@ -16,6 +19,8 @@ from excel_grapher.core.formula_normalization import (
 from excel_grapher.core.range_shorthand import (
     EXCEL_MAX_ROW,
     expand_whole_column_deps,
+    expand_whole_column_span_deps,
+    expand_whole_row_span_deps,
     resolve_whole_column,
     resolve_whole_column_span,
     resolve_whole_row,
@@ -46,6 +51,44 @@ def test_parse_whole_column_ast_shape() -> None:
 
 def test_parse_whole_row_ast_shape() -> None:
     assert parse("=Data!5:5") == WholeRowNode(sheet="Data", row=5)
+
+
+def test_parse_whole_column_span_is_open_axis_node() -> None:
+    node = parse("=Data!A:C")
+    assert isinstance(node, WholeColumnNode)
+    assert not isinstance(node, RangeNode)
+    assert node == WholeColumnNode(sheet="Data", start_col="A", end_col="C")
+    assert node.start_col == AbsoluteAxis(1)
+    assert node.end_col == AbsoluteAxis(3)
+
+
+def test_parse_whole_row_span_is_open_axis_node() -> None:
+    node = parse("=Data!5:10")
+    assert isinstance(node, WholeRowNode)
+    assert not isinstance(node, RangeNode)
+    assert node == WholeRowNode(sheet="Data", start_row=5, end_row=10)
+
+
+def test_parse_sum_over_whole_column_span() -> None:
+    ast = parse("=SUM(Data!A:C)")
+    assert isinstance(ast, FunctionCallNode)
+    assert ast.name == "SUM"
+    assert ast.args[0] == WholeColumnNode(sheet="Data", start_col="A", end_col="C")
+
+
+def test_parse_preserves_reversed_whole_axis_spans() -> None:
+    assert parse("=Data!C:A") == WholeColumnNode(sheet="Data", start_col="C", end_col="A")
+    assert parse("=Data!10:5") == WholeRowNode(sheet="Data", start_row=10, end_row=5)
+
+
+def test_unparse_whole_axis_spans_round_trip() -> None:
+    for formula in ("=Data!A:C", "=Data!5:10", "=SUM(Data!A:C)", "=Data!C:A"):
+        ast = parse(formula)
+        rendered = unparse_normalized_formula(ast)
+        assert rendered == formula
+        assert parse(rendered) == ast
+        assert "A1:" not in rendered
+        assert "C1048576" not in rendered
 
 
 def test_parse_index_match_whole_column_formula() -> None:
@@ -117,6 +160,30 @@ def test_expand_whole_column_deps_enumerates_used_range() -> None:
     assert deps == [("Data", "A1"), ("Data", "A2"), ("Data", "A3")]
 
 
+def test_expand_whole_column_span_deps_uses_used_rows() -> None:
+    bounds = {"Data": (2, 8)}
+    deps = expand_whole_column_span_deps("Data", "A", "C", bounds)
+    assert deps == [
+        ("Data", "A1"),
+        ("Data", "B1"),
+        ("Data", "C1"),
+        ("Data", "A2"),
+        ("Data", "B2"),
+        ("Data", "C2"),
+    ]
+
+
+def test_expand_whole_row_span_deps_uses_used_columns() -> None:
+    bounds = {"Data": (20, 2)}
+    deps = expand_whole_row_span_deps("Data", 5, 6, bounds)
+    assert deps == [
+        ("Data", "A5"),
+        ("Data", "B5"),
+        ("Data", "A6"),
+        ("Data", "B6"),
+    ]
+
+
 def test_normalize_preserves_whole_column_shorthand() -> None:
     out = normalize_excel_formula("=MATCH(x,Data!$A:$A,0)", "Sheet1")
     assert out == "=MATCH(x,Data!A:A,0)"
@@ -125,6 +192,13 @@ def test_normalize_preserves_whole_column_shorthand() -> None:
 def test_normalize_qualifies_local_whole_column() -> None:
     out = normalize_excel_formula("=MATCH(x,A:A,0)", "Sheet1")
     assert out == "=MATCH(x,Sheet1!A:A,0)"
+
+
+def test_normalize_preserves_whole_axis_spans_without_expanding() -> None:
+    assert normalize_excel_formula("=SUM(Data!$A:$C)", "Sheet1") == "=SUM(Data!A:C)"
+    assert normalize_excel_formula("=SUM(Data!$5:$10)", "Sheet1") == "=SUM(Data!5:10)"
+    assert normalize_excel_formula("=SUM(A:C)", "Sheet1") == "=SUM(Sheet1!A:C)"
+    assert normalize_excel_formula("=SUM(5:10)", "Sheet1") == "=SUM(Sheet1!5:10)"
 
 
 def test_expand_whole_column_row_for_parse_quoted_sheet() -> None:
@@ -157,3 +231,23 @@ def test_parse_range_refs_with_spans_whole_column() -> None:
     assert len(refs) == 1
     _, _, span = refs[0]
     assert span == (9, 19)
+
+
+def test_parse_range_refs_whole_column_span() -> None:
+    refs = parse_range_refs_with_spans("=SUM(Data!A:C)")
+    assert len(refs) == 1
+    start, end, _span = refs[0]
+    assert start.sheet == end.sheet == "Data"
+    assert start.column == "A"
+    assert end.column == "C"
+    assert start.range_kind == end.range_kind == "whole_column"
+
+
+def test_parse_range_refs_whole_row_span() -> None:
+    refs = parse_range_refs_with_spans("=SUM(Data!5:10)")
+    assert len(refs) == 1
+    start, end, _span = refs[0]
+    assert start.sheet == end.sheet == "Data"
+    assert start.row == 5
+    assert end.row == 10
+    assert start.range_kind == end.range_kind == "whole_row"

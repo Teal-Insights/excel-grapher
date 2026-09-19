@@ -70,6 +70,14 @@ def test_fingerprint_whole_column_and_row_kinds_differ() -> None:
     assert "$WHOLE_ROW" in row.shape_key
 
 
+def test_fingerprint_whole_column_span_keeps_whole_col_kind() -> None:
+    equal = fingerprint_formula_shape("=SUM(Data!A:A)")
+    span = fingerprint_formula_shape("=SUM(Data!A:C)")
+    assert equal.shape_key == span.shape_key
+    assert "$WHOLE_COL" in span.shape_key
+    assert span.params == (WholeColumnNode(sheet="Data", start_col="A", end_col="C"),)
+
+
 def test_different_literals_yield_different_shapes() -> None:
     a = fingerprint_formula_shape("=Patterns!P3+1")
     b = fingerprint_formula_shape("=Patterns!P3+2")

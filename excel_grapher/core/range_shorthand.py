@@ -100,9 +100,36 @@ def iter_whole_row_cells(sheet: str, row: int, bounds: SheetBounds) -> Iterator[
         yield sheet, f"{fastpyxl.utils.cell.get_column_letter(col_idx)}{row}"
 
 
+def iter_whole_column_span_cells(
+    sheet: str, start_col: str, end_col: str, bounds: SheetBounds
+) -> Iterator[tuple[str, str]]:
+    """Yield ``(sheet, a1)`` for each cell in a used-range-bounded column span."""
+    rng = resolve_whole_column_span(sheet, start_col, end_col, bounds)
+    for row in range(rng.start_row, rng.end_row + 1):
+        for col_idx in range(rng.start_col, rng.end_col + 1):
+            yield sheet, f"{get_column_letter(col_idx)}{row}"
+
+
+def iter_whole_row_span_cells(
+    sheet: str, start_row: int, end_row: int, bounds: SheetBounds
+) -> Iterator[tuple[str, str]]:
+    """Yield ``(sheet, a1)`` for each cell in a used-range-bounded row span."""
+    rng = resolve_whole_row_span(sheet, start_row, end_row, bounds)
+    for row in range(rng.start_row, rng.end_row + 1):
+        for col_idx in range(rng.start_col, rng.end_col + 1):
+            yield sheet, f"{get_column_letter(col_idx)}{row}"
+
+
 def expand_whole_column_deps(sheet: str, column: str, bounds: SheetBounds) -> list[tuple[str, str]]:
     """Expand a whole-column shorthand to all ``(sheet, a1)`` deps in the used range."""
     return list(iter_whole_column_cells(sheet, column, bounds))
+
+
+def expand_whole_column_span_deps(
+    sheet: str, start_col: str, end_col: str, bounds: SheetBounds
+) -> list[tuple[str, str]]:
+    """Expand a whole-column span to all ``(sheet, a1)`` deps in the used range."""
+    return list(iter_whole_column_span_cells(sheet, start_col, end_col, bounds))
 
 
 def expand_whole_row_deps(sheet: str, row: int, bounds: SheetBounds) -> list[tuple[str, str]]:
@@ -110,20 +137,40 @@ def expand_whole_row_deps(sheet: str, row: int, bounds: SheetBounds) -> list[tup
     return list(iter_whole_row_cells(sheet, row, bounds))
 
 
+def expand_whole_row_span_deps(
+    sheet: str, start_row: int, end_row: int, bounds: SheetBounds
+) -> list[tuple[str, str]]:
+    """Expand a whole-row span to all ``(sheet, a1)`` deps in the used range."""
+    return list(iter_whole_row_span_cells(sheet, start_row, end_row, bounds))
+
+
 def whole_column_to_bounded_a1(sheet: str, column: str, bounds: SheetBounds) -> tuple[str, str]:
     """Return ``(start_ref, end_ref)`` sheet-qualified endpoints for a whole column."""
-    col = column.upper()
-    max_r, _ = sheet_used_extent(bounds, sheet)
+    return whole_column_span_to_bounded_a1(sheet, column, column, bounds)
+
+
+def whole_column_span_to_bounded_a1(
+    sheet: str, start_col: str, end_col: str, bounds: SheetBounds
+) -> tuple[str, str]:
+    """Return ``(start_ref, end_ref)`` sheet-qualified endpoints for a column span."""
+    rng = resolve_whole_column_span(sheet, start_col, end_col, bounds)
     return (
-        format_cell_key(sheet, col, 1),
-        format_cell_key(sheet, col, max_r),
+        format_cell_key(sheet, get_column_letter(rng.start_col), rng.start_row),
+        format_cell_key(sheet, get_column_letter(rng.end_col), rng.end_row),
     )
 
 
 def whole_row_to_bounded_a1(sheet: str, row: int, bounds: SheetBounds) -> tuple[str, str]:
     """Return ``(start_ref, end_ref)`` sheet-qualified endpoints for a whole row."""
-    _, max_c = sheet_used_extent(bounds, sheet)
+    return whole_row_span_to_bounded_a1(sheet, row, row, bounds)
+
+
+def whole_row_span_to_bounded_a1(
+    sheet: str, start_row: int, end_row: int, bounds: SheetBounds
+) -> tuple[str, str]:
+    """Return ``(start_ref, end_ref)`` sheet-qualified endpoints for a row span."""
+    rng = resolve_whole_row_span(sheet, start_row, end_row, bounds)
     return (
-        format_cell_key(sheet, get_column_letter(1), row),
-        format_cell_key(sheet, get_column_letter(max_c), row),
+        format_cell_key(sheet, get_column_letter(rng.start_col), rng.start_row),
+        format_cell_key(sheet, get_column_letter(rng.end_col), rng.end_row),
     )

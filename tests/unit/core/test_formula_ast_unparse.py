@@ -60,6 +60,11 @@ def test_unparse_whole_column() -> None:
     assert unparse_normalized_formula(ast) == '=MATCH("x",Data!A:A,0)'
 
 
+def test_unparse_whole_axis_spans() -> None:
+    assert unparse_normalized_formula(parse("=SUM(Data!A:C)")) == "=SUM(Data!A:C)"
+    assert unparse_normalized_formula(parse("=SUM(Data!5:10)")) == "=SUM(Data!5:10)"
+
+
 def test_unparse_unary_minus_and_percent() -> None:
     assert unparse_normalized_formula(parse("=-Sheet1!A1")) == "=-Sheet1!A1"
     assert unparse_normalized_formula(parse("=100%")) == "=100%"
