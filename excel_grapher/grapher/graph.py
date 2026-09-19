@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import array
 import copy
 import heapq
 import warnings
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, runtime_checkable
 
@@ -33,6 +34,7 @@ from excel_grapher.core.formula_ast import (
 )
 from excel_grapher.core.formula_shape import FormulaShapeTable
 
+from .csr_adjacency import CsrCscArrays, build_csr_csc
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_edge_provenance
 from .graph_pickle import dumps_graph_blob, loads_graph_blob
 from .guard import (
@@ -58,6 +60,11 @@ _FORMULA_UNSET = object()
 NodeHook = Callable[[NodeKey, Node], None]
 
 EdgeKey = tuple[NodeKey, NodeKey]
+
+
+def _empty_uint32() -> array.array[int]:
+    """Return an empty uint32 array for CSR field defaults."""
+    return array.array("I")
 
 
 def _copy_adjacency(adjacency: dict[NodeKey, set[NodeKey]]) -> dict[NodeKey, set[NodeKey]]:
@@ -191,9 +198,12 @@ class DependencyGraph:
     `get_node(key)` looks up that exact stored key.
 
     `get_dependencies` / `get_dependents` / `get_edge_attrs` return endpoints
-    exactly as stored. Missing adjacency keys are empty (no per-node empty
-    `set()`). `resolve_endpoint` / `get_dependency_nodes` resolve to stored
-    cell keys when present (evaluation order, export, codegen).
+    exactly as stored. Topology is uint32 CSR+CSC after `rebuild_adjacency`;
+    `_edges` / `_reverse_edges` are a mutation staging buffer and are empty
+    once compact. Missing adjacency is empty (no per-node empty `set()`).
+    `resolve_endpoint` / `get_dependency_nodes` resolve to stored cell keys
+    when present (evaluation order, export, codegen). Rebuild drops
+    non-node endpoints.
 
     `formula_shapes` is an optional acceleration overlay from
     `warm_formula_shapes` (unset by default). `Node.formula_ast` is
@@ -204,9 +214,17 @@ class DependencyGraph:
     """
 
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
-    # node -> deps / dependents; missing key means no neighbors
+    # Staging adjacency (authoritative while `_staging` is True). Missing key
+    # means no neighbors. Emptied after `rebuild_adjacency`.
     _edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)
     _reverse_edges: dict[NodeKey, set[NodeKey]] = field(default_factory=dict)
+    _staging: bool = field(default=True, repr=False)
+    _csr_keys: list[NodeKey] = field(default_factory=list, repr=False)
+    _node_index: dict[NodeKey, int] = field(default_factory=dict, repr=False)
+    _row_ptr: array.array[int] = field(default_factory=_empty_uint32, repr=False)
+    _col_idx: array.array[int] = field(default_factory=_empty_uint32, repr=False)
+    _col_ptr: array.array[int] = field(default_factory=_empty_uint32, repr=False)
+    _row_idx: array.array[int] = field(default_factory=_empty_uint32, repr=False)
     _guards: dict[EdgeKey, GuardExpr] = field(default_factory=dict)
     _edge_provenance: dict[EdgeKey, EdgeProvenance] = field(default_factory=dict)
     _hooks: list[NodeHook] = field(default_factory=list)
@@ -250,8 +268,19 @@ class DependencyGraph:
         """Return an isolated mutable graph clone for projection rewrites."""
         cloned = DependencyGraph()
         cloned._nodes = {key: copy_node(node) for key, node in self._nodes.items()}
-        cloned._edges = _copy_adjacency(self._edges)
-        cloned._reverse_edges = _copy_adjacency(self._reverse_edges)
+        cloned._staging = self._staging
+        if self._staging:
+            cloned._edges = _copy_adjacency(self._edges)
+            cloned._reverse_edges = _copy_adjacency(self._reverse_edges)
+        else:
+            cloned._edges = {}
+            cloned._reverse_edges = {}
+            cloned._csr_keys = list(cloned._nodes)
+            cloned._node_index = {key: i for i, key in enumerate(cloned._csr_keys)}
+            cloned._row_ptr = self._row_ptr[:]
+            cloned._col_idx = self._col_idx[:]
+            cloned._col_ptr = self._col_ptr[:]
+            cloned._row_idx = self._row_idx[:]
         cloned._guards = dict(self._guards)
         cloned._edge_provenance = dict(self._edge_provenance)
         cloned.leaf_classification = (
@@ -277,7 +306,16 @@ class DependencyGraph:
 
     def add_node(self, node: Node) -> None:
         key = node.key
+        is_new = key not in self._nodes
         self._nodes[key] = node
+        if is_new and not self._staging:
+            self._csr_keys.append(key)
+            self._node_index[key] = len(self._csr_keys) - 1
+            if not self._row_ptr:
+                self._row_ptr.append(0)
+                self._col_ptr.append(0)
+            self._row_ptr.append(self._row_ptr[-1])
+            self._col_ptr.append(self._col_ptr[-1])
         for hook in self._hooks:
             hook(key, node)
 
@@ -331,6 +369,7 @@ class DependencyGraph:
         from_key = normalize_key(from_key)
         to_key = normalize_key(to_key)
         ek = (from_key, to_key)
+        self._ensure_staging()
         deps_existing = self._edges.get(from_key)
         was_present = deps_existing is not None and to_key in deps_existing
 
@@ -379,20 +418,26 @@ class DependencyGraph:
         Endpoints are returned exactly as stored. Use `get_dependency_nodes`
         when only endpoints that exist as graph nodes are required.
         """
-        deps = self._edges.get(normalize_key(key))
-        if not deps:
-            return frozenset()
-        return frozenset(deps)
+        nk = normalize_key(key)
+        if self._staging:
+            deps = self._edges.get(nk)
+            if not deps:
+                return frozenset()
+            return frozenset(deps)
+        return frozenset(self._csr_dep_keys(nk))
 
     def get_dependents(self, key: NodeKey) -> frozenset[NodeKey]:
         """Return an immutable snapshot of cells that depend on `key`.
 
         Endpoints are returned exactly as stored.
         """
-        deps = self._reverse_edges.get(normalize_key(key))
-        if not deps:
-            return frozenset()
-        return frozenset(deps)
+        nk = normalize_key(key)
+        if self._staging:
+            deps = self._reverse_edges.get(nk)
+            if not deps:
+                return frozenset()
+            return frozenset(deps)
+        return frozenset(self._csr_dependent_keys(nk))
 
     def resolve_endpoint(self, key: NodeKey) -> NodeKey | None:
         """Map an edge endpoint to a stored node key when present.
@@ -421,7 +466,7 @@ class DependencyGraph:
         """
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
-        if tk not in self._edges.get(fk, set()):
+        if not self._has_stored_edge(fk, tk):
             return EdgeAttrs()
         return EdgeAttrs(
             guard=self._guards.get((fk, tk)),
@@ -447,6 +492,168 @@ class DependencyGraph:
         fk = normalize_key(from_key)
         tk = normalize_key(to_key)
         return (fk, tk) in self._guards
+
+    def edge_count(self) -> int:
+        """Return the number of stored dependency edges."""
+        if self._staging:
+            return sum(len(deps) for deps in self._edges.values())
+        return len(self._col_idx)
+
+    def rebuild_adjacency(self) -> None:
+        """Materialize CSR+CSC from current topology and drop dict maps.
+
+        Index space is `_nodes` insertion order. Non-node endpoints are
+        dropped. Scratch is `O(n)` uint32; a second Python edge index is not
+        built. After rebuild, `_edges` and `_reverse_edges` are empty.
+        """
+        nodes = self._nodes
+        empty: tuple[NodeKey, ...] = ()
+        if self._staging:
+            edges = self._edges
+
+            def neighbors_for(key: NodeKey) -> Iterable[NodeKey]:
+                return edges.get(key, empty)
+        else:
+
+            def neighbors_for(key: NodeKey) -> Iterable[NodeKey]:
+                return self._csr_dep_keys(key)
+
+        built = build_csr_csc(tuple(nodes), neighbors_for, is_node=nodes.__contains__)
+        self._install_csr(built)
+
+    def _install_csr(self, built: CsrCscArrays) -> None:
+        self._csr_keys = built.keys
+        self._node_index = built.index
+        self._row_ptr = built.row_ptr
+        self._col_idx = built.col_idx
+        self._col_ptr = built.col_ptr
+        self._row_idx = built.row_idx
+        self._edges = {}
+        self._reverse_edges = {}
+        self._staging = False
+
+    def _ensure_csr(self) -> None:
+        if not self._staging:
+            return
+        self.rebuild_adjacency()
+
+    def _ensure_staging(self) -> None:
+        if self._staging:
+            return
+        self._rehydrate_adjacency_maps()
+        self._clear_csr()
+        self._staging = True
+
+    def _clear_csr(self) -> None:
+        self._csr_keys = []
+        self._node_index = {}
+        self._row_ptr = array.array("I")
+        self._col_idx = array.array("I")
+        self._col_ptr = array.array("I")
+        self._row_idx = array.array("I")
+
+    def _rehydrate_adjacency_maps(self) -> None:
+        edges: dict[NodeKey, set[NodeKey]] = {}
+        reverse: dict[NodeKey, set[NodeKey]] = {}
+        keys = self._csr_keys
+        row_ptr = self._row_ptr
+        col_idx = self._col_idx
+        for i, src in enumerate(keys):
+            start, end = row_ptr[i], row_ptr[i + 1]
+            if start == end:
+                continue
+            deps: set[NodeKey] = set()
+            for k in range(start, end):
+                dst = keys[col_idx[k]]
+                deps.add(dst)
+                reverse.setdefault(dst, set()).add(src)
+            edges[src] = deps
+        self._edges = edges
+        self._reverse_edges = reverse
+
+    def _csr_dep_keys(self, key: NodeKey) -> tuple[NodeKey, ...]:
+        i = self._node_index.get(key)
+        if i is None:
+            return ()
+        start, end = self._row_ptr[i], self._row_ptr[i + 1]
+        if start == end:
+            return ()
+        keys = self._csr_keys
+        col = self._col_idx
+        return tuple(keys[col[k]] for k in range(start, end))
+
+    def _csr_dependent_keys(self, key: NodeKey) -> tuple[NodeKey, ...]:
+        j = self._node_index.get(key)
+        if j is None:
+            return ()
+        start, end = self._col_ptr[j], self._col_ptr[j + 1]
+        if start == end:
+            return ()
+        keys = self._csr_keys
+        rows = self._row_idx
+        return tuple(keys[rows[k]] for k in range(start, end))
+
+    def _iter_dep_keys(self, key: NodeKey) -> Iterator[NodeKey]:
+        if self._staging:
+            yield from self._edges.get(key, ())
+            return
+        yield from self._csr_dep_keys(key)
+
+    def _iter_dependent_keys(self, key: NodeKey) -> Iterator[NodeKey]:
+        if self._staging:
+            yield from self._reverse_edges.get(key, ())
+            return
+        yield from self._csr_dependent_keys(key)
+
+    def _iter_unguarded_dep_keys(self, key: NodeKey) -> Iterator[NodeKey]:
+        if self._staging:
+            for dep in self._edges.get(key, ()):
+                if (key, dep) in self._guards:
+                    continue
+                resolved = self._resolve_graph_endpoint(dep)
+                if resolved is not None:
+                    yield resolved
+            return
+        i = self._node_index.get(key)
+        if i is None:
+            return
+        src = key
+        keys = self._csr_keys
+        guards = self._guards
+        col = self._col_idx
+        start, end = self._row_ptr[i], self._row_ptr[i + 1]
+        for k in range(start, end):
+            j = col[k]
+            dst = keys[j]
+            if (src, dst) not in guards:
+                yield dst
+
+    def _csr_neighbor_ids(self, i: int, *, unguarded_only: bool = False) -> Iterator[int]:
+        start, end = self._row_ptr[i], self._row_ptr[i + 1]
+        col = self._col_idx
+        if not unguarded_only:
+            for k in range(start, end):
+                yield col[k]
+            return
+        src = self._csr_keys[i]
+        keys = self._csr_keys
+        guards = self._guards
+        for k in range(start, end):
+            j = col[k]
+            if (src, keys[j]) not in guards:
+                yield j
+
+    def _has_stored_edge(self, from_key: NodeKey, to_key: NodeKey) -> bool:
+        if self._staging:
+            deps = self._edges.get(from_key)
+            return deps is not None and to_key in deps
+        i = self._node_index.get(from_key)
+        j = self._node_index.get(to_key)
+        if i is None or j is None:
+            return False
+        start, end = self._row_ptr[i], self._row_ptr[i + 1]
+        col = self._col_idx
+        return any(col[k] == j for k in range(start, end))
 
     # ---- durable node mutation ---------------------------------------------
 
@@ -635,6 +842,7 @@ class DependencyGraph:
         nk = normalize_key(key)
         if nk not in self._nodes:
             return
+        self._ensure_staging()
         for dep in list(self._edges.get(nk, set())):
             self._remove_edge(nk, dep)
         for dependent in list(self._reverse_edges.get(nk, set())):
@@ -642,6 +850,7 @@ class DependencyGraph:
         self._nodes.pop(nk, None)
         self._edges.pop(nk, None)
         self._reverse_edges.pop(nk, None)
+        self.rebuild_adjacency()
 
     def consistency_issues(self) -> tuple[GraphConsistencyIssue, ...]:
         """Return structured formula/edge/flag disagreements (empty if consistent)."""
@@ -706,7 +915,7 @@ class DependencyGraph:
         if new_nk in self._nodes:
             raise ValueError(f"Cell {new_key} already exists in graph")
 
-        dependents = [key for key in self._reverse_edges.get(old_nk, ()) if key != old_nk]
+        dependents = [key for key in self._iter_dependent_keys(old_nk) if key != old_nk]
         self._require_rewritable_formula(node, old_nk)
         for dep_key in dependents:
             dep_node = self._nodes.get(dep_key)
@@ -743,6 +952,7 @@ class DependencyGraph:
         )
         self._refresh_move_provenance(new_nk, rewritten_dependents)
         self._reintern_moved_formula_shapes(old_nk, new_nk, rewritten_dependents)
+        self.rebuild_adjacency()
 
     def _require_rewritable_formula(self, node: Node, key: NodeKey) -> None:
         if node.formula_ast is None and node.has_formula:
@@ -755,6 +965,7 @@ class DependencyGraph:
         node: Node,
         rewritten_dependents: frozenset[NodeKey],
     ) -> None:
+        self._ensure_staging()
         old_edges = {src: set(dsts) for src, dsts in self._edges.items() if dsts}
         old_guards = dict(self._guards)
         old_prov = dict(self._edge_provenance)
@@ -815,7 +1026,7 @@ class DependencyGraph:
             if node is None:
                 continue
             normalized = node.normalized_formula
-            for dep in list(self._edges.get(key, set())):
+            for dep in self._iter_dep_keys(key):
                 prov = self._edge_provenance.get((key, dep))
                 if prov is None or DependencyCause.direct_ref not in prov.causes:
                     continue
@@ -900,8 +1111,9 @@ class DependencyGraph:
         )
 
     def roots(self) -> Iterator[NodeKey]:
+        """Iterate keys with no in-graph dependents."""
         for key in self._nodes:
-            if not self._reverse_edges.get(key):
+            if not any(self._iter_dependent_keys(key)):
                 yield key
 
     # ---- adjacency helpers for cycle/order analysis ------------------------
@@ -913,27 +1125,6 @@ class DependencyGraph:
             return nk
         return None
 
-    def _unconditional_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
-        out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
-        for k in self._nodes:
-            for dep in self._edges.get(k, ()):
-                # Direct membership: keys are already canonical here.
-                if (k, dep) in self._guards:
-                    continue
-                resolved = self._resolve_graph_endpoint(dep)
-                if resolved is not None:
-                    out[k].add(resolved)
-        return out
-
-    def _all_adjacency(self) -> dict[NodeKey, set[NodeKey]]:
-        out: dict[NodeKey, set[NodeKey]] = {k: set() for k in self._nodes}
-        for k in self._nodes:
-            for dep in self._edges.get(k, ()):
-                resolved = self._resolve_graph_endpoint(dep)
-                if resolved is not None:
-                    out[k].add(resolved)
-        return out
-
     def cycle_report(self, *, cell_type_env: CellTypeEnv | None = None) -> CycleReport:
         """Classify must-cycles vs may-cycles, dropping guard-infeasible SCCs.
 
@@ -944,26 +1135,31 @@ class DependencyGraph:
         """
         env = self.cell_type_env if cell_type_env is None else cell_type_env
         aliases = identity_alias_map(self._nodes)
-        uncond = self._unconditional_adjacency()
-        all_edges = self._all_adjacency()
+        self._ensure_csr()
+        n = len(self._csr_keys)
+        keys = self._csr_keys
 
-        must_sccs = _scc_cycles(uncond)
-        must_nodes = {n for s in must_sccs for n in s}
-        example_must = _find_cycle_path(uncond, must_nodes) if must_sccs else None
+        def all_neighbors(i: int) -> Iterator[int]:
+            return self._csr_neighbor_ids(i)
+
+        def uncond_neighbors(i: int) -> Iterator[int]:
+            return self._csr_neighbor_ids(i, unguarded_only=True)
+
+        must_id_sccs = _scc_cycle_ids(n, uncond_neighbors)
+        must_sccs = [{keys[i] for i in scc} for scc in must_id_sccs]
+        example_must = _find_cycle_path_ids(uncond_neighbors, keys, must_id_sccs)
 
         may_sccs: list[set[NodeKey]] = []
         example_may: list[NodeKey] | None = None
-        for scc in _scc_cycles(all_edges):
-            # If this SCC already has an unconditional cycle, it's not "may".
-            if _subgraph_has_cycle(uncond, scc):
+        for scc_ids in _scc_cycle_ids(n, all_neighbors):
+            scc = {keys[i] for i in scc_ids}
+            if _subgraph_has_cycle_ids(set(scc_ids), uncond_neighbors):
                 continue
-            # Filter out SCCs whose only cycles are infeasible due to contradictory guards.
             if not _subgraph_has_feasible_cycle(self, scc, cell_type_env=env, aliases=aliases):
                 continue
             may_sccs.append(scc)
 
         if may_sccs:
-            # Best-effort: find a feasible example path inside the first may-SCC.
             example_may = _find_feasible_cycle_path(
                 self, may_sccs[0], cell_type_env=env, aliases=aliases
             )
@@ -1046,7 +1242,7 @@ class DependencyGraph:
                 stacklevel=2,
             )
 
-        adjacency = self._unconditional_adjacency()
+        self._ensure_csr()
         order: list[NodeKey] = []
         perm: set[NodeKey] = set()
         temp: set[NodeKey] = set()
@@ -1057,7 +1253,7 @@ class DependencyGraph:
             if n in temp:
                 raise CycleError(f"Cycle detected involving {n}", [n], is_must_cycle=True)
             temp.add(n)
-            for dep in self._workbook_sorted_keys(adjacency.get(n, set())):
+            for dep in self._workbook_sorted_keys(self._iter_unguarded_dep_keys(n)):
                 if dep in exclude:
                     continue
                 if dep in self._nodes and dep not in exclude:
@@ -1124,6 +1320,7 @@ class DependencyGraph:
             collapse_preserve |= frozenset(normalize_key(key) for key in preserve)
 
         require_compression_provenance(self)
+        self._ensure_staging()
         clear_identity_singleton_ref_cache()
         try:
             heap: list[NodeKey] = list(self._nodes.keys())
@@ -1160,6 +1357,7 @@ class DependencyGraph:
                 removed.append(t_key)
                 for d_key in dependents_before:
                     heapq.heappush(heap, d_key)
+            self.rebuild_adjacency()
             return removed
         finally:
             clear_identity_singleton_ref_cache()
@@ -1209,6 +1407,7 @@ class DependencyGraph:
         forwarding_protected: set[NodeKey] = set()
 
         require_compression_provenance(self)
+        self._ensure_staging()
         clear_identity_singleton_ref_cache()
         try:
             heap: list[NodeKey] = list(self._nodes.keys())
@@ -1275,6 +1474,7 @@ class DependencyGraph:
                     record.note_inline(t_key, d_key, snapshot)
                 removed.append(t_key)
                 heapq.heappush(heap, d_key)
+            self.rebuild_adjacency()
             return removed
         finally:
             clear_identity_singleton_ref_cache()
@@ -1298,6 +1498,7 @@ class DependencyGraph:
     # ---- internal edge mutation --------------------------------------------
 
     def _remove_edge(self, from_key: NodeKey, to_key: NodeKey) -> None:
+        self._ensure_staging()
         _discard_adjacency(self._edges, from_key, to_key)
         _discard_adjacency(self._reverse_edges, to_key, from_key)
         ek = (from_key, to_key)
@@ -1388,7 +1589,7 @@ class DependencyGraph:
         if start == target:
             return True
         seen: set[NodeKey] = {start}
-        stack = list(self._edges.get(start, set()))
+        stack = list(self._iter_dep_keys(start))
         while stack:
             key = stack.pop()
             if key == target:
@@ -1396,7 +1597,7 @@ class DependencyGraph:
             if key in seen:
                 continue
             seen.add(key)
-            stack.extend(self._edges.get(key, set()))
+            stack.extend(self._iter_dep_keys(key))
         return False
 
     def _inline_one_node(
@@ -1512,13 +1713,9 @@ def _collect_graph_keys(g: DependencyGraph) -> list[str]:
 
     for k in g._nodes:
         add(k)
-    for k, deps in g._edges.items():
-        add(k)
-        for d in deps:
+        for d in g._iter_dep_keys(k):
             add(d)
-    for k, deps in g._reverse_edges.items():
-        add(k)
-        for d in deps:
+        for d in g._iter_dependent_keys(k):
             add(d)
     for a, b in g._guards:
         add(a)
@@ -1575,80 +1772,106 @@ def _intern_guard_cell_refs(
     return intern_guard(rec(expr))
 
 
-def _scc_cycles(adj: dict[NodeKey, set[NodeKey]]) -> list[set[NodeKey]]:
-    """Return SCCs that are cyclic (size>1 or self-loop)."""
-    sccs = _tarjan_scc(adj)
-    out: list[set[NodeKey]] = []
+def _scc_cycle_ids(
+    n: int,
+    neighbors: Callable[[int], Iterable[int]],
+) -> list[list[int]]:
+    """Return cyclic SCCs as lists of node ids (size>1 or self-loop)."""
+    sccs = _tarjan_scc_ids(n, neighbors)
+    out: list[list[int]] = []
     for scc in sccs:
         if len(scc) > 1:
             out.append(scc)
-        else:
-            (n,) = tuple(scc)
-            if n in adj.get(n, set()):
-                out.append(scc)
+            continue
+        (v,) = scc
+        if any(w == v for w in neighbors(v)):
+            out.append(scc)
     return out
 
 
-def _tarjan_scc(adj: dict[NodeKey, set[NodeKey]]) -> list[set[NodeKey]]:
+def _tarjan_scc_ids(
+    n: int,
+    neighbors: Callable[[int], Iterable[int]],
+) -> list[list[int]]:
     index = 0
-    stack: list[NodeKey] = []
-    on_stack: set[NodeKey] = set()
-    indices: dict[NodeKey, int] = {}
-    lowlinks: dict[NodeKey, int] = {}
-    result: list[set[NodeKey]] = []
+    stack: list[int] = []
+    on_stack = [False] * n
+    indices = [-1] * n
+    lowlinks = [0] * n
+    result: list[list[int]] = []
 
-    def strongconnect(v: NodeKey) -> None:
+    def strongconnect(v: int) -> None:
         nonlocal index
         indices[v] = index
         lowlinks[v] = index
         index += 1
         stack.append(v)
-        on_stack.add(v)
+        on_stack[v] = True
 
-        for w in adj.get(v, set()):
-            if w not in indices:
+        for w in neighbors(v):
+            if indices[w] < 0:
                 strongconnect(w)
-                lowlinks[v] = min(lowlinks[v], lowlinks[w])
-            elif w in on_stack:
-                lowlinks[v] = min(lowlinks[v], indices[w])
+                if lowlinks[w] < lowlinks[v]:
+                    lowlinks[v] = lowlinks[w]
+            elif on_stack[w] and indices[w] < lowlinks[v]:
+                lowlinks[v] = indices[w]
 
         if lowlinks[v] == indices[v]:
-            scc: set[NodeKey] = set()
+            scc: list[int] = []
             while True:
                 w = stack.pop()
-                on_stack.remove(w)
-                scc.add(w)
+                on_stack[w] = False
+                scc.append(w)
                 if w == v:
                     break
             result.append(scc)
 
-    for v in adj:
-        if v not in indices:
+    for v in range(n):
+        if indices[v] < 0:
             strongconnect(v)
 
     return result
 
 
-def _subgraph_has_cycle(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> bool:
-    sub = {n: {d for d in adj.get(n, set()) if d in nodes} for n in nodes}
-    return bool(_scc_cycles(sub))
+def _subgraph_has_cycle_ids(
+    nodes: set[int],
+    neighbors: Callable[[int], Iterable[int]],
+) -> bool:
+    if not nodes:
+        return False
+    ordered = list(nodes)
+    local = {node: i for i, node in enumerate(ordered)}
+
+    def local_neighbors(i: int) -> Iterator[int]:
+        for w in neighbors(ordered[i]):
+            j = local.get(w)
+            if j is not None:
+                yield j
+
+    return bool(_scc_cycle_ids(len(ordered), local_neighbors))
 
 
-def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> list[NodeKey] | None:
-    """Find one cycle path within the given node subset (best-effort)."""
-    visited: set[NodeKey] = set()
-    stack: list[NodeKey] = []
-    in_stack: set[NodeKey] = set()
+def _find_cycle_path_ids(
+    neighbors: Callable[[int], Iterable[int]],
+    keys: Sequence[NodeKey],
+    cyclic_sccs: list[list[int]],
+) -> list[NodeKey] | None:
+    """Find one cycle path within the cyclic SCCs (best-effort)."""
+    allowed = {node for scc in cyclic_sccs for node in scc}
+    if not allowed:
+        return None
+    visited: set[int] = set()
+    stack: list[int] = []
+    in_stack: set[int] = set()
 
-    def dfs(v: NodeKey) -> list[NodeKey] | None:
+    def dfs(v: int) -> list[int] | None:
         visited.add(v)
         stack.append(v)
         in_stack.add(v)
-        for w in adj.get(v, set()):
-            if w not in nodes:
+        for w in neighbors(v):
+            if w not in allowed:
                 continue
             if w in in_stack:
-                # Return the cycle portion from w to v (inclusive) plus w to close.
                 i = stack.index(w)
                 return stack[i:] + [w]
             if w not in visited:
@@ -1659,11 +1882,11 @@ def _find_cycle_path(adj: dict[NodeKey, set[NodeKey]], nodes: set[NodeKey]) -> l
         in_stack.remove(v)
         return None
 
-    for n in nodes:
-        if n not in visited:
-            p = dfs(n)
-            if p is not None:
-                return p
+    for start in allowed:
+        if start not in visited:
+            path = dfs(start)
+            if path is not None:
+                return [keys[i] for i in path]
     return None
 
 
@@ -1730,7 +1953,7 @@ def _subgraph_has_feasible_cycle(
         visited.add(state)
         on_stack.add(v)
 
-        for raw_w in graph._edges.get(v, ()):
+        for raw_w in graph._iter_dep_keys(v):
             w = graph._resolve_graph_endpoint(raw_w)
             if w is None or w not in nodes:
                 continue
@@ -1772,7 +1995,7 @@ def _find_feasible_cycle_path(
         stack.append(v)
         on_stack.add(v)
 
-        for raw_w in graph._edges.get(v, ()):
+        for raw_w in graph._iter_dep_keys(v):
             w = graph._resolve_graph_endpoint(raw_w)
             if w is None or w not in nodes:
                 continue

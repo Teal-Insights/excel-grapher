@@ -305,4 +305,5 @@ def _induced_dependency_subgraph(
             if attrs.provenance is not None:
                 edge_kwargs["provenance"] = attrs.provenance
             sub.add_edge(from_key, to_key, guard=attrs.guard, **edge_kwargs)
+    sub.rebuild_adjacency()
     return sub

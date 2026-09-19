@@ -22,11 +22,11 @@ from scripts.measure_graph_memory import (
 ROWS = 200
 
 # Baselines measured on CPython 3.13 (64-bit) with `scripts/measure_graph_memory.py`
-# against `_fixture_graph()`, after #910 omitted empty adjacency sets. Re-measure
+# against `_fixture_graph()`, after CSR+CSC adjacency (#915). Re-measure
 # (do not hand-tune) when a change moves them out of band, and say in the commit
 # which component moved.
-_BYTES_PER_NODE = 946.9
-_BYTES_PER_EDGE = 1893.7
+_BYTES_PER_NODE = 761.6
+_BYTES_PER_EDGE = 1523.2
 _NODE_BYTES_PER_NODE = 495.4
 _PROVENANCE_BYTES_PER_EDGE = 357.4
 
@@ -62,11 +62,12 @@ def _fixture_graph(rows: int = ROWS, *, distinct_guards: bool = False) -> Depend
                 direct_sites_normalized=((row, row + 10),),
             ),
         )
+    graph.rebuild_adjacency()
     return graph
 
 
 def _edge_count(graph: DependencyGraph) -> int:
-    return sum(len(deps) for deps in graph._edges.values())
+    return graph.edge_count()
 
 
 # ---- deep_size ------------------------------------------------------------
@@ -108,12 +109,14 @@ def test_report_covers_the_current_graph_components() -> None:
     report = measure_graph_memory(_fixture_graph())
     names = [component.name for component in report.components]
     assert names[0] == "nodes"
-    assert "edges_forward" in names
-    assert "edges_reverse" in names
+    assert "adjacency_csr" in names
+    assert "node_index" in names
+    assert "edges_forward" not in names
+    assert "edges_reverse" not in names
     assert "guards" in names
     assert "provenance" in names
     assert "occupancy" not in names
-    # #910 omits empty neighbor sets, so the empty-split rows stay absent.
+    # Compact CSR has no per-node empty neighbor sets.
     assert "edges_forward_empty" not in names
     assert "edges_reverse_empty" not in names
     assert report.node_count == 2 * ROWS
@@ -133,10 +136,9 @@ def test_component_totals_reconcile_with_the_distinct_total() -> None:
 
 def test_edge_keys_are_reported_as_shared_not_owned() -> None:
     report = measure_graph_memory(_fixture_graph())
-    # The same `from_key`/`to_key` objects are stored in adjacency, `_guards`,
-    # and `_edge_provenance`. After #910, `_nodes` keys need not share identity
-    # with those maps (add_node no longer inserts adjacency keys).
-    assert report.component("edges_forward").shared_bytes > 0
+    # CSR `node_index` reuses `_nodes` key objects; guards/provenance still share
+    # the same `NodeKey` strings as the node map.
+    assert report.component("node_index").shared_bytes > 0
     assert report.component("guards").shared_bytes > 0
     assert report.component("provenance").shared_bytes > 0
     assert report.shared_bytes > 0

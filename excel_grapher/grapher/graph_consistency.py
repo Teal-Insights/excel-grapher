@@ -128,9 +128,15 @@ def collect_graph_consistency_issues(
         issues.append(issue)
 
     nodes = graph._nodes
-    for src, dests in graph._edges.items():
+    sources: set[NodeKey] = set(nodes)
+    if graph._staging:
+        sources.update(graph._edges)
+        sources.update(graph._reverse_edges)
+        for dests in graph._reverse_edges.values():
+            sources.update(dests)
+    for src in sources:
         src_missing = src not in nodes
-        for dst in dests:
+        for dst in graph._iter_dep_keys(src):
             if src_missing:
                 add(
                     GraphConsistencyIssue(
@@ -150,9 +156,12 @@ def collect_graph_consistency_issues(
                     )
                 )
 
-    for dst, srcs in graph._reverse_edges.items():
-        for src in srcs:
-            if dst in graph._edges.get(src, ()):
+    reverse_dests: set[NodeKey] = set(nodes)
+    if graph._staging:
+        reverse_dests.update(graph._reverse_edges)
+    for dst in reverse_dests:
+        for src in graph._iter_dependent_keys(dst):
+            if graph._has_stored_edge(src, dst):
                 continue
             if src not in nodes:
                 add(

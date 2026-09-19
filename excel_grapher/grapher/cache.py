@@ -537,4 +537,5 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
             provenance = _edge_provenance_from_json(attrs["provenance"])
         g.add_edge(from_key, to_key, guard=guard, provenance=provenance)
 
+    g.rebuild_adjacency()
     return g

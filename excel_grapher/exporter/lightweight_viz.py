@@ -143,6 +143,7 @@ def _dependency_graph_from_networkx(nx_graph: Any) -> DependencyGraph:
             **edge_kwargs,
         )
 
+    dep_graph.rebuild_adjacency()
     return dep_graph
 
 
