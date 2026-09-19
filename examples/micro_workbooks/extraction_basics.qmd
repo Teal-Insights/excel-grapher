@@ -97,10 +97,17 @@ graph: DependencyGraph = create_dependency_graph(workbook_path, ["Sheet1!E3"], l
 print_mermaid(graph)
 ```
 
-To see the representation of guards in Python, we can inspect the `_guards` attribute on the graph:
+To see the representation of guards in Python, we can inspect them via
+`get_edge_guard` for each stored edge:
 
 ```{python}
-print_text(pformat(graph._guards, indent=4, width=100))
+guards = {
+    (src, dst): graph.get_edge_guard(src, dst)
+    for src in graph
+    for dst in graph.get_dependencies(src)
+    if graph.is_guarded(src, dst)
+}
+print_text(pformat(guards, indent=4, width=100))
 ```
 
 The graph object exposes a `get_edge_guard` method to get the guard expression for a given edge. Printing the returned `GuardExpr` object gives us an Excel-style interpretation of the guard expression:

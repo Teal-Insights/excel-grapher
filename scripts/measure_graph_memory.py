@@ -364,6 +364,16 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
                     (graph._reverse_edges,),
                     empty_adj=graph._reverse_edges,
                 ),
+                _ComponentSpec(
+                    "guards",
+                    "_guards: staging edge key -> interned GuardExpr tree (trees are often shared)",
+                    (graph._guards,),
+                ),
+                _ComponentSpec(
+                    "provenance",
+                    "_edge_provenance: staging edge key -> EdgeProvenance (causes + normalized site offsets)",
+                    (graph._edge_provenance,),
+                ),
             ]
         )
     else:
@@ -379,22 +389,18 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
                     "NodeKey -> row-id table plus CSR key list (keys shared with _nodes)",
                     (graph._node_index, graph._csr_keys),
                 ),
+                _ComponentSpec(
+                    "guards",
+                    "uint32 guard_id[nnz] plus interned GuardExpr table (0 = unguarded)",
+                    (graph._guard_id, graph._guard_exprs),
+                ),
+                _ComponentSpec(
+                    "provenance",
+                    "uint32 prov_id[nnz] plus interned EdgeProvenance table (0 = none)",
+                    (graph._prov_id, graph._provenances),
+                ),
             ]
         )
-    specs.extend(
-        [
-            _ComponentSpec(
-                "guards",
-                "_guards: edge key -> interned GuardExpr tree (trees are often shared)",
-                (graph._guards,),
-            ),
-            _ComponentSpec(
-                "provenance",
-                "_edge_provenance: edge key -> EdgeProvenance (causes + normalized site offsets)",
-                (graph._edge_provenance,),
-            ),
-        ]
-    )
     metadata_roots = tuple(
         value
         for value in (
@@ -437,6 +443,20 @@ def _component_specs(graph: DependencyGraph) -> list[_ComponentSpec]:
 def edge_count(graph: DependencyGraph) -> int:
     """Return the number of stored dependency edges in `graph`."""
     return graph.edge_count()
+
+
+def _guarded_edge_count(graph: DependencyGraph) -> int:
+    """Return the number of edges that carry a guard."""
+    if graph._staging:
+        return len(graph._guards)
+    return sum(1 for gid in graph._guard_id if gid)
+
+
+def _identity_distinct_guards(graph: DependencyGraph) -> int:
+    """Return the number of distinct interned `GuardExpr` trees stored on `graph`."""
+    if graph._staging:
+        return len({id(expr) for expr in graph._guards.values()})
+    return sum(expr is not None for expr in graph._guard_exprs)
 
 
 def _accumulate_component(
@@ -572,9 +592,9 @@ def measure_graph_memory(graph: DependencyGraph) -> GraphMemoryReport:
         reverse_sets=reverse_sets,
         empty_forward_bytes=empty_forward_bytes,
         empty_reverse_bytes=empty_reverse_bytes,
-        guarded_edge_count=len(graph._guards),
+        guarded_edge_count=_guarded_edge_count(graph),
         guard_intern_pool_size=guard_intern_pool_size(),
-        identity_distinct_guards=len({id(expr) for expr in graph._guards.values()}),
+        identity_distinct_guards=_identity_distinct_guards(graph),
         formula_ast_intern_count=len(unique_asts),
         formula_ast_intern_bytes=formula_ast_intern_bytes,
         formula_nodes_with_ast=formula_nodes_with_ast,
@@ -598,6 +618,7 @@ _LEGEND = (
     "empty-set rows (staging maps only) are a partition of the parent adjacency walk,\n"
     "            not a second walk, so they stay exclusive rather than shared.\n"
     "CSR adjacency is counted as adjacency_csr (arrays) plus node_index (row-id table).\n"
+    "Compact edge metadata is counted as guards/provenance intern-id arrays plus intern tables.\n"
     "Process-wide singletons (enum members, small ints, single-char strings) are\n"
     "excluded from every figure: they exist whether or not the graph does."
 )

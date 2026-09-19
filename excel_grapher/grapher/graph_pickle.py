@@ -5,9 +5,9 @@ returns. A single state-dict pickle would therefore peak near 2x final size:
 indexed adjacency sets sit in the memo while live string-keyed maps are built
 beside them.
 
-This module writes a two-frame payload (nodes, then CSR+CSC arrays). Each
-frame's unpickler is discarded before the next frame is read, so peak stays
-close to final resident size. `DependencyGraph.__reduce_ex__` wraps a
+This module writes a two-frame payload (nodes, then CSR+CSC arrays plus
+nnz-aligned intern-id edge metadata). Each frame's unpickler is discarded
+before the next frame is read, so peak stays close to final resident size. `DependencyGraph.__reduce_ex__` wraps a
 gzip-compressed multipart blob so `pickle.loads` also stays near final size;
 prefer `dump_graph` / `load_graph` for files (no outer bytes envelope).
 """
@@ -21,14 +21,15 @@ import pickle
 from pathlib import Path
 from typing import Any, BinaryIO, cast
 
-from .csr_adjacency import build_csr_csc
+from .csr_adjacency import CsrCscArrays, build_csr_csc
 from .dependency_provenance import EdgeProvenance
+from .edge_meta import pack_edge_meta_ids
 from .node import Node, NodeKey
 
 # Logical payload: magic + little-endian version + two pickle frames.
 # `dumps_graph_blob` gzip-compresses that payload for the pickle reduce path.
 _GRAPH_BLOB_MAGIC = b"EGDG"
-_GRAPH_BLOB_VERSION = 6
+_GRAPH_BLOB_VERSION = 7
 _GRAPH_BLOB_MIN_VERSION = 5
 _GRAPH_BLOB_HEADER = _GRAPH_BLOB_MAGIC + _GRAPH_BLOB_VERSION.to_bytes(4, "little")
 _GZIP_MAGIC = b"\x1f\x8b"
@@ -138,14 +139,49 @@ def _csr_payload(
     return built.keys, built.row_ptr, built.col_idx, built.col_ptr, built.row_idx
 
 
+def _edge_meta_payload(
+    graph: Any,
+    csr_keys: list[NodeKey],
+    row_ptr: array.array[int],
+    col_idx: array.array[int],
+    col_ptr: array.array[int],
+    row_idx: array.array[int],
+) -> tuple[array.array[int], array.array[int], list[Any], list[Any]]:
+    """Return `(guard_id, prov_id, guard_exprs, provenances)` without mutating `graph`."""
+    if not graph._staging:
+        return (
+            graph._guard_id,
+            graph._prov_id,
+            graph._guard_exprs[1:],
+            graph._provenances[1:],
+        )
+    built = CsrCscArrays(
+        keys=list(csr_keys),
+        index={key: i for i, key in enumerate(csr_keys)},
+        row_ptr=row_ptr,
+        col_idx=col_idx,
+        col_ptr=col_ptr,
+        row_idx=row_idx,
+        dropped_endpoints=0,
+    )
+    guards = graph._guards
+    provenance = graph._edge_provenance
+    meta = pack_edge_meta_ids(
+        built, lambda src, dst: (guards.get((src, dst)), provenance.get((src, dst)))
+    )
+    return meta.guard_id, meta.prov_id, meta.guard_exprs[1:], meta.provenances[1:]
+
+
 def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
     from .graph import _collect_graph_keys
 
     keys_sorted = _collect_graph_keys(graph)
-    idx = {k: i for i, k in enumerate(keys_sorted)}
     csr_keys, row_ptr, col_idx, col_ptr, row_idx = _csr_payload(graph)
     node_keys = csr_keys
     nodes = [graph._nodes[k] for k in node_keys]
+    guard_id, prov_id, guard_exprs, provenances = _edge_meta_payload(
+        graph, csr_keys, row_ptr, col_idx, col_ptr, row_idx
+    )
 
     # Frame 1: nodes + graph-level metadata (no adjacency).
     pickle.dump(
@@ -171,10 +207,10 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
             "col_idx": col_idx,
             "col_ptr": col_ptr,
             "row_idx": row_idx,
-            "_guards": [(idx[a], idx[b], g) for (a, b), g in graph._guards.items()],
-            "_edge_provenance": [
-                (idx[a], idx[b], p) for (a, b), p in graph._edge_provenance.items()
-            ],
+            "guard_id": guard_id,
+            "prov_id": prov_id,
+            "guard_exprs": guard_exprs,
+            "provenances": provenances,
         },
         buf,
         protocol=pickle.HIGHEST_PROTOCOL,
@@ -219,9 +255,35 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     graph._col_idx = array.array("I")
     graph._col_ptr = array.array("I")
     graph._row_idx = array.array("I")
+    graph._guard_id = array.array("I")
+    graph._prov_id = array.array("I")
+    graph._guard_exprs = [None]
+    graph._provenances = [None]
+    graph._guards = {}
+    graph._edge_provenance = {}
     del part1, nodes
 
     part2 = pickle.load(buf)
+    if version >= 7:
+        csr_keys = [keys[key_index[k]] for k in node_keys]
+        graph._csr_keys = csr_keys
+        graph._node_index = {k: i for i, k in enumerate(csr_keys)}
+        graph._row_ptr = part2["row_ptr"]
+        graph._col_idx = part2["col_idx"]
+        graph._col_ptr = part2["col_ptr"]
+        graph._row_idx = part2["row_idx"]
+        graph._guard_id = part2["guard_id"]
+        graph._prov_id = part2["prov_id"]
+        graph._guard_exprs = [None]
+        for expr in part2["guard_exprs"]:
+            graph._guard_exprs.append(_intern_guard_cell_refs(expr, keys, key_index=key_index))
+        graph._provenances = [None]
+        for prov in part2["provenances"]:
+            graph._provenances.append(cast(EdgeProvenance, prov))
+        graph._staging = False
+        del part2
+        return graph
+
     graph._guards = {
         (keys[a], keys[b]): _intern_guard_cell_refs(g, keys, key_index=key_index)
         for a, b, g in part2["_guards"]
@@ -239,6 +301,7 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
         graph._row_idx = part2["row_idx"]
         graph._staging = False
         del part2
+        _compact_loaded_edge_maps(graph)
         return graph
 
     edge_src: array.array[int] = part2["edge_src"]
@@ -251,3 +314,23 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     del part2, edge_src, edge_dst
     graph.rebuild_adjacency()
     return graph
+
+
+def _compact_loaded_edge_maps(graph: Any) -> None:
+    """Pack v6 EdgeKey maps onto CSR intern-id arrays and drop the maps."""
+    built = CsrCscArrays(
+        keys=graph._csr_keys,
+        index=graph._node_index,
+        row_ptr=graph._row_ptr,
+        col_idx=graph._col_idx,
+        col_ptr=graph._col_ptr,
+        row_idx=graph._row_idx,
+        dropped_endpoints=0,
+    )
+    guards = graph._guards
+    provenance = graph._edge_provenance
+    graph._install_edge_meta(
+        pack_edge_meta_ids(
+            built, lambda src, dst: (guards.get((src, dst)), provenance.get((src, dst)))
+        )
+    )
