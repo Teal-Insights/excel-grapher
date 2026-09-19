@@ -522,7 +522,9 @@ def measure_graph_memory(graph: DependencyGraph) -> GraphMemoryReport:
     reverse_sets, empty_reverse_sets, empty_reverse_bytes = _empty_adj_stats(graph._reverse_edges)
 
     unique_asts = _unique_formula_asts(graph)
-    formula_nodes_with_ast = sum(1 for node in graph._nodes.values() if node.formula_ast is not None)
+    formula_nodes_with_ast = sum(
+        1 for node in graph._nodes.values() if node.formula_ast is not None
+    )
     formula_ast_intern_bytes = deep_size(*unique_asts) if unique_asts else 0
 
     return GraphMemoryReport(
@@ -550,8 +552,8 @@ def measure_graph_memory(graph: DependencyGraph) -> GraphMemoryReport:
 # ---- rendering ------------------------------------------------------------
 
 _HEADER = (
-    f"{'component':<22}{'total':>12}{'B/node':>10}{'B/edge':>10}"
-    f"{'exclusive':>12}{'shared':>12}{'scaffold':>11}{'objects':>10}"
+    f"{'component':<22}{'total':>14}{'B/node':>10}{'B/edge':>10}"
+    f"{'exclusive':>14}{'shared':>14}{'scaffold':>14}{'objects':>12}"
 )
 
 _LEGEND = (
@@ -568,7 +570,10 @@ _LEGEND = (
 )
 
 
-def _kib(value: int) -> str:
+def _human(value: int) -> str:
+    """Format `value` bytes as KiB, or MiB when the figure is at least 1 MiB."""
+    if value >= 1024 * 1024:
+        return f"{value / (1024 * 1024):,.1f} MiB"
     return f"{value / 1024:,.1f} KiB"
 
 
@@ -581,24 +586,24 @@ def _render(report: GraphMemoryReport) -> str:
     ]
     for component in report.components:
         lines.append(
-            f"{component.name:<22}{component.total_bytes:>12,}"
+            f"{component.name:<22}{component.total_bytes:>14,}"
             f"{component.bytes_per_node:>10.1f}{component.bytes_per_edge:>10.1f}"
-            f"{component.exclusive_bytes:>12,}{component.shared_bytes:>12,}"
-            f"{component.scaffolding_bytes:>11,}{component.object_count:>10,}"
+            f"{component.exclusive_bytes:>14,}{component.shared_bytes:>14,}"
+            f"{component.scaffolding_bytes:>14,}{component.object_count:>12,}"
         )
     naive = sum(component.total_bytes for component in report.components)
     empty_tax = report.empty_forward_bytes + report.empty_reverse_bytes
     empty_tax_per_node = empty_tax / report.node_count if report.node_count else 0.0
     lines += [
         "-" * len(_HEADER),
-        f"{'graph total':<22}{report.total_bytes:>12,}"
+        f"{'graph total':<22}{report.total_bytes:>14,}"
         f"{report.bytes_per_node:>10.1f}{report.bytes_per_edge:>10.1f}",
         "",
-        f"graph total          {report.total_bytes:>12,} B ({_kib(report.total_bytes)})",
-        f"  of which shared    {report.shared_bytes:>12,} B ({_kib(report.shared_bytes)})",
-        f"sum of component rows{naive:>12,} B "
+        f"graph total          {report.total_bytes:>14,} B ({_human(report.total_bytes)})",
+        f"  of which shared    {report.shared_bytes:>14,} B ({_human(report.shared_bytes)})",
+        f"sum of component rows{naive:>14,} B "
         f"(over-counts shared objects by {naive - report.total_bytes:,} B)",
-        f"process singletons   {report.singleton_bytes:>12,} B (excluded from the total)",
+        f"process singletons   {report.singleton_bytes:>14,} B (excluded from the total)",
         "",
         "adjacency empty-set tax:",
         f"  forward  {report.empty_forward_sets:,} empty / {report.forward_sets:,} sets"
@@ -617,7 +622,7 @@ def _render(report: GraphMemoryReport) -> str:
         f"  nodes with formula_ast {report.formula_nodes_with_ast:,}",
         f"  interned trees         {report.formula_ast_intern_count:,}",
         f"  interned tree bytes    {report.formula_ast_intern_bytes:,} B"
-        f" ({_kib(report.formula_ast_intern_bytes)})",
+        f" ({_human(report.formula_ast_intern_bytes)})",
         "",
         "notes:",
     ]
