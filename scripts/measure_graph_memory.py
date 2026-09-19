@@ -16,7 +16,9 @@ A drop in `total_bytes` that only moves bytes from `exclusive` to `shared`
 somewhere else is a re-attribution, not a saving.
 
 Empty adjacency sets are **split out** of the forward/reverse maps (not walked
-as a second root) so the empty-`set()` tax stays exclusive to those rows.
+as a second root) so the empty-`set()` tax stays exclusive to those rows when
+those sets exist. After #910, `add_node` omits empty neighbor sets, so those
+rows are absent on a current graph.
 `formula_ast` intern-pool figures are recovered from unique `Node.formula_ast`
 trees; they are not a second walk component, so interned trees stay exclusive
 to `nodes` unless another stored field also reaches them.

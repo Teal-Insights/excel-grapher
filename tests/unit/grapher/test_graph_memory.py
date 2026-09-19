@@ -22,10 +22,11 @@ from scripts.measure_graph_memory import (
 ROWS = 200
 
 # Baselines measured on CPython 3.13 (64-bit) with `scripts/measure_graph_memory.py`
-# against `_fixture_graph()`. Re-measure (do not hand-tune) when a change moves
-# them out of band, and say in the commit which component moved.
-_BYTES_PER_NODE = 1195.3
-_BYTES_PER_EDGE = 2390.5
+# against `_fixture_graph()`, after #910 omitted empty adjacency sets. Re-measure
+# (do not hand-tune) when a change moves them out of band, and say in the commit
+# which component moved.
+_BYTES_PER_NODE = 946.9
+_BYTES_PER_EDGE = 1893.7
 _NODE_BYTES_PER_NODE = 495.4
 _PROVENANCE_BYTES_PER_EDGE = 357.4
 
@@ -109,13 +110,16 @@ def test_report_covers_the_current_graph_components() -> None:
     assert names[0] == "nodes"
     assert "edges_forward" in names
     assert "edges_reverse" in names
-    assert "edges_forward_empty" in names
-    assert "edges_reverse_empty" in names
     assert "guards" in names
     assert "provenance" in names
     assert "occupancy" not in names
+    # #910 omits empty neighbor sets, so the empty-split rows stay absent.
+    assert "edges_forward_empty" not in names
+    assert "edges_reverse_empty" not in names
     assert report.node_count == 2 * ROWS
     assert report.edge_count == ROWS
+    assert report.empty_forward_sets == 0
+    assert report.empty_reverse_sets == 0
 
 
 def test_component_totals_reconcile_with_the_distinct_total() -> None:
@@ -127,11 +131,14 @@ def test_component_totals_reconcile_with_the_distinct_total() -> None:
     assert sum(component.total_bytes for component in report.components) > report.total_bytes
 
 
-def test_interned_keys_are_reported_as_shared_not_owned() -> None:
+def test_edge_keys_are_reported_as_shared_not_owned() -> None:
     report = measure_graph_memory(_fixture_graph())
-    # Node keys live in `_nodes`, `_edges`, and `_reverse_edges` alike.
-    assert report.component("nodes").shared_bytes > 0
+    # The same `from_key`/`to_key` objects are stored in adjacency, `_guards`,
+    # and `_edge_provenance`. After #910, `_nodes` keys need not share identity
+    # with those maps (add_node no longer inserts adjacency keys).
     assert report.component("edges_forward").shared_bytes > 0
+    assert report.component("guards").shared_bytes > 0
+    assert report.component("provenance").shared_bytes > 0
     assert report.shared_bytes > 0
     naive = sum(component.total_bytes for component in report.components)
     # Shared objects appear in >= 2 components, so naive summing over-counts them
@@ -201,21 +208,34 @@ def test_formula_shapes_overlay_is_reported_when_present() -> None:
     assert shapes.total_bytes > 0
 
 
-def test_isolated_nodes_pay_an_empty_set_in_each_adjacency_map() -> None:
+def test_isolated_nodes_do_not_pay_an_empty_adjacency_set_tax() -> None:
     graph = DependencyGraph()
     n_nodes = 50
     for row in range(1, n_nodes + 1):
         graph.add_node(make_cell_node("Sheet1", "A", row, value=float(row), is_leaf=True))
     report = measure_graph_memory(graph)
-    assert report.empty_forward_sets == n_nodes
-    assert report.empty_reverse_sets == n_nodes
-    # Fresh `set()` is ~216 B on CPython 3.13; both directions => ~432 B/node.
-    assert report.empty_forward_bytes / n_nodes >= 200
-    assert report.empty_reverse_bytes / n_nodes >= 200
-    combined = report.empty_forward_bytes + report.empty_reverse_bytes
-    assert combined / n_nodes >= 400
-    assert report.component("edges_forward_empty").exclusive_bytes == report.empty_forward_bytes
-    assert report.component("edges_reverse_empty").exclusive_bytes == report.empty_reverse_bytes
+    assert report.empty_forward_sets == 0
+    assert report.empty_reverse_sets == 0
+    assert report.empty_forward_bytes == 0
+    assert report.empty_reverse_bytes == 0
+    names = [component.name for component in report.components]
+    assert "edges_forward_empty" not in names
+    assert "edges_reverse_empty" not in names
+
+
+def test_harness_splits_empty_adjacency_sets_when_present() -> None:
+    """Empty-set rows are a partition of the parent walk, not a second walk."""
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Sheet1", "A", 1, value=1.0, is_leaf=True))
+    graph._edges["Sheet1!A1"] = set()
+    graph._reverse_edges["Sheet1!A1"] = set()
+    report = measure_graph_memory(graph)
+    assert report.empty_forward_sets == 1
+    assert report.empty_reverse_sets == 1
+    assert report.empty_forward_bytes == report.component("edges_forward_empty").exclusive_bytes
+    assert report.empty_reverse_bytes == report.component("edges_reverse_empty").exclusive_bytes
+    assert report.empty_forward_bytes >= 200
+    assert report.empty_reverse_bytes >= 200
 
 
 def test_guard_intern_pool_and_guarded_edge_counts() -> None:
