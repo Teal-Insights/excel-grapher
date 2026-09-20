@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.2.0 (2026-09-20)
+
+### Features
+
+- **grapher**: Visualize series-level dependency graphs
+  ([#925](https://github.com/Teal-Insights/excel-grapher/pull/925),
+  [`939166e`](https://github.com/Teal-Insights/excel-grapher/commit/939166e4c8bff85de76ca528314978f9d1252a07))
+
+### Testing
+
+- Lock compact edge-metadata profile after intern-ids
+  ([#923](https://github.com/Teal-Insights/excel-grapher/pull/923),
+  [`edafa5a`](https://github.com/Teal-Insights/excel-grapher/commit/edafa5a912b64074e530ae6da67be8c8743be7ea))
+
+
 ## v21.1.0 (2026-09-19)
 
 ### Features
