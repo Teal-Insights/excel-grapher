@@ -30,9 +30,10 @@
         "1.14.0",
         "1.15.0",
         "1.16.0",
-        "1.17.0"
+        "1.17.0",
+        "1.18.0"
       ],
-      "description": "Schema version for tooling and migrations. 1.0.0\u20131.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout (supported with explicit binds). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry (skip/include/fill/missing on row_label and column_header binds, value_map bind kind, series-level exclude_rows) and optional view-level groups for export sequencing and documentation grouping. 1.6.0: input.mode override for user-editable formula cells (non-leaf input setters). 1.7.0: internal direction for non-I/O formula-cell key triangulation (intersect_graph_formulas validation). 1.8.0: optional dimension/attribute id separating dimension identity from concept, so multiple dimensions can share one concept; record fields and key entries use the effective id (id when declared, else concept) while concept keeps dtype inheritance from concept_scheme. Also adds optional per-dimension dtype overriding the concept-scheme dtype for same-concept dimensions with differing storage types. 1.9.0 (historical): optional input.reader name override for generated read_* duals of set_* setters; extra input.reader keys are now rejected. 1.10.0: optional output.compute.helper so compute_* evaluates collapsed / parameterized helpers from record dims instead of xl_cell(address) when a helper covers the published leaves. 1.11.0: constant direction for non-I/O graph-leaf bindings. Historical codegen emitted read_* without set_* or compute_*; inverted-tree imports constants from data. 1.12.0: series-level exclude_columns (ColumnSpec) symmetric with exclude_rows for carving non-data columns out of an expanded data_range. 1.13.0: optional input.domain so inverted-tree compute_* / Model arguments reject out-of-domain measure values (enum literals, integer between, real_between). 1.14.0: complementary shards with the same series id may declare different sheet/data_range (merged data_range is a list); bind.kind sheet_name reads the worksheet name of each data cell, with an optional values map from worksheet name to dimension code. 1.15.0: optional input.value_map on scalar input series maps public compute_* values to workbook cell needles (MATCH/IF labels); domain checks use the map keys. 1.16.0: input direction no longer requires a setter block; empty `input: {}` marks a series as an editable leaf. Extra setter/reader keys are rejected. Package export takes inputs as `compute_*` / `Model` arguments. 1.17.0: series-level axis_labels identifies a series whose values provide runtime labels for its sole key axis."
+      "description": "Schema version for tooling and migrations. 1.0.0\u20131.2.0: row_series and scalar (fully supported). 1.1.0: adds matrix layout (supported with explicit binds). 1.2.0: optional input/output direction blocks and output compute functions. 1.3.0: row_series renamed to series layout; load-time normalization accepts legacy row_series. 1.4.0: adds bool and datetime read modes and dtypes for dimensions and constants (ISO 8601 date strings in manifests). 1.5.0: grouped-row matrix geometry (skip/include/fill/missing on row_label and column_header binds, value_map bind kind, series-level exclude_rows) and optional view-level groups for export sequencing and documentation grouping. 1.6.0: input.mode override for user-editable formula cells (non-leaf input setters). 1.7.0: internal direction for non-I/O formula-cell key triangulation (intersect_graph_formulas validation). 1.8.0: optional dimension/attribute id separating dimension identity from concept, so multiple dimensions can share one concept; record fields and key entries use the effective id (id when declared, else concept) while concept keeps dtype inheritance from concept_scheme. Also adds optional per-dimension dtype overriding the concept-scheme dtype for same-concept dimensions with differing storage types. 1.9.0 (historical): optional input.reader name override for generated read_* duals of set_* setters; extra input.reader keys are now rejected. 1.10.0: optional output.compute.helper so compute_* evaluates collapsed / parameterized helpers from record dims instead of xl_cell(address) when a helper covers the published leaves. 1.11.0: constant direction for non-I/O graph-leaf bindings. Historical codegen emitted read_* without set_* or compute_*; inverted-tree imports constants from data. 1.12.0: series-level exclude_columns (ColumnSpec) symmetric with exclude_rows for carving non-data columns out of an expanded data_range. 1.13.0: optional input.domain so inverted-tree compute_* / Model arguments reject out-of-domain measure values (enum literals, integer between, real_between). 1.14.0: complementary shards with the same series id may declare different sheet/data_range (merged data_range is a list); bind.kind sheet_name reads the worksheet name of each data cell, with an optional values map from worksheet name to dimension code. 1.15.0: optional input.value_map on scalar input series maps public compute_* values to workbook cell needles (MATCH/IF labels); domain checks use the map keys. 1.16.0: input direction no longer requires a setter block; empty `input: {}` marks a series as an editable leaf. Extra setter/reader keys are rejected. Package export takes inputs as `compute_*` / `Model` arguments. 1.17.0: series-level axis_labels identifies a series whose values provide runtime labels for its sole key axis. 1.18.0: series-level relations compile greater_than / not_equal partner series ids to GreaterThanCell / NotEqualCell, aligned on the shared key."
     },
     "workbook": {
       "type": "string",
@@ -877,6 +878,25 @@
       ],
       "description": "Optional declarative intent for analysts and layout-specific validation. Resolution and codegen use bind kinds, not layout name. series: one-dimensional data_range with at least one cell-scoped dimension when declared. scalar: single leaf. matrix: rectangular multi-row data_range with at least two dimensions and a cell-scoped dimension when declared."
     },
+    "SeriesRelation": {
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "maxProperties": 1,
+      "description": "One cell-to-cell comparison against a partner series, aligned on the shared key (1.18.0). Partner is a series id, not an A1 address.",
+      "properties": {
+        "greater_than": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Partner series id. The declaring cell is strictly greater than the partner cell at the same key (GreaterThanCell)."
+        },
+        "not_equal": {
+          "type": "string",
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "description": "Partner series id. The declaring cell is never equal to the partner cell at the same key (NotEqualCell)."
+        }
+      }
+    },
     "SeriesBinding": {
       "type": "object",
       "additionalProperties": false,
@@ -922,6 +942,14 @@
         "axis_labels": {
           "$ref": "#/$defs/DimensionId",
           "description": "The sole key axis whose runtime labels are supplied by this series' values."
+        },
+        "relations": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/SeriesRelation"
+          },
+          "uniqueItems": true,
+          "description": "Optional cell-to-cell comparisons against partner series, aligned on the shared key (1.18.0). greater_than compiles to GreaterThanCell; not_equal to NotEqualCell. Partner is a series id, not an A1 address."
         },
         "exclude_rows": {
           "type": "array",

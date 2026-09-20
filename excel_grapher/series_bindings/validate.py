@@ -32,6 +32,11 @@ from excel_grapher.series_bindings.ranges import (
     series_sheets,
     sheet_from_data_range,
 )
+from excel_grapher.series_bindings.relations import (
+    authored_measure_dtype,
+    relation_alignment_issues,
+    relation_declaration_issues,
+)
 from excel_grapher.series_bindings.types import (
     ValidationIssue,
     ValidationReport,
@@ -858,22 +863,6 @@ def _concept_dtype_map(bindings: WorkbookSeriesBindings) -> dict[str, str]:
     return result
 
 
-def _authored_measure_dtype(series: dict[str, Any]) -> str | None:
-    """Return the measure dtype export will use, or `None` when omitted."""
-    structure = series.get("structure") or {}
-    measure = structure.get("measure")
-    if not isinstance(measure, dict):
-        return None
-    if measure.get("dtype") is not None:
-        return str(measure["dtype"])
-    bind = measure.get("bind")
-    if isinstance(bind, dict):
-        read = bind.get("read")
-        if read not in (None, "auto"):
-            return str(read)
-    return None
-
-
 def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue]:
     """Reject `between` / `real_between` when the kind does not match measure dtype."""
     if not has_input_direction(series):
@@ -885,7 +874,7 @@ def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue
     if not isinstance(domain, dict):
         return []
     series_id = str(series.get("id", "")) or None
-    dtype = _authored_measure_dtype(series)
+    dtype = authored_measure_dtype(series)
     if "between" in domain:
         if dtype in _INTEGER_MEASURE_DTYPES:
             return []
@@ -1010,8 +999,12 @@ def validate_series_bindings(
     """Validate binding manifests against an extracted dependency graph.
 
     Document-level checks include `duplicate_series_id`, `invalid_python_id`,
-    and `geometry_in_id` (A1 cell or rectangle tokens in series ids and
-    `series_context` values).
+    `geometry_in_id` (A1 cell or rectangle tokens in series ids and
+    `series_context` values), and series-relation codes
+    (`unknown_relation_partner`, `incomparable_relation_dtype`,
+    `incompatible_relation_key`, `reflexive_relation`, `cyclic_relation`,
+    `unresolved_relation_key`, `ambiguous_relation_partner_key`,
+    `missing_relation_partner_key`).
     """
     from excel_grapher.series_bindings.resolve import (
         _WorkbookValues,
@@ -1020,6 +1013,7 @@ def validate_series_bindings(
     )
 
     issues: list[ValidationIssue] = []
+    issues.extend(relation_declaration_issues(bindings))
     concept_dtypes = _concept_dtype_map(bindings)
     shared_reader: _WorkbookValues | None = None
     seen_ranges: dict[str, str] = {}
@@ -1158,5 +1152,7 @@ def validate_series_bindings(
 
     issues.extend(_validate_cell_occupancy(graph, occupancy_rows))
     issues = _downgrade_bound_leaf_notices(graph, occupancy_rows, issues)
+    if workbook is not None:
+        issues.extend(relation_alignment_issues(bindings, workbook=workbook))
     ok = not any(i["level"] == "error" for i in issues)
     return {"ok": ok, "issues": issues}
