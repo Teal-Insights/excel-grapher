@@ -40,6 +40,82 @@ _BundleKey = tuple[
 
 
 @dataclass(frozen=True, slots=True)
+class StatementLabels:
+    """Series-level binding documentation copied onto each statement node."""
+
+    notes: str | None = None
+    sdmx_notes: str | None = None
+    compute_name: str | None = None
+    groups: tuple[tuple[str, ...], ...] = ()
+    measure_concept: str | None = None
+    measure_name: str | None = None
+    measure_description: str | None = None
+    axis_labels: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable mapping of label fields."""
+        return {
+            "notes": self.notes,
+            "sdmx_notes": self.sdmx_notes,
+            "compute_name": self.compute_name,
+            "groups": [list(path) for path in self.groups],
+            "measure_concept": self.measure_concept,
+            "measure_name": self.measure_name,
+            "measure_description": self.measure_description,
+            "axis_labels": self.axis_labels,
+        }
+
+
+EMPTY_STATEMENT_LABELS = StatementLabels()
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None
+
+
+def _group_paths(raw: Mapping[str, Any]) -> tuple[tuple[str, ...], ...]:
+    refs = raw.get("groups")
+    if not isinstance(refs, list):
+        return ()
+    paths: list[tuple[str, ...]] = []
+    for ref in refs:
+        if not isinstance(ref, dict):
+            continue
+        path = ref.get("path")
+        if isinstance(path, list) and path:
+            paths.append(tuple(str(part) for part in path))
+    return tuple(paths)
+
+
+def _measure_concept_id(raw: Mapping[str, Any]) -> str | None:
+    structure = raw.get("structure")
+    measure = structure.get("measure") if isinstance(structure, dict) else None
+    if not isinstance(measure, dict) or not measure.get("concept"):
+        return None
+    return str(measure["concept"])
+
+
+def statement_labels_for(
+    series: BoundSeries,
+    concepts: Mapping[str, tuple[str | None, str | None]],
+) -> StatementLabels:
+    """Copy analyst labels from a bound series and its concept-scheme entry."""
+    raw = series.raw
+    concept_id = _measure_concept_id(raw)
+    name, description = concepts.get(concept_id, (None, None)) if concept_id else (None, None)
+    return StatementLabels(
+        notes=_optional_str(raw.get("notes")),
+        sdmx_notes=_optional_str(raw.get("sdmx_notes")),
+        compute_name=series.compute_name,
+        groups=_group_paths(raw),
+        measure_concept=concept_id,
+        measure_name=name,
+        measure_description=description,
+        axis_labels=series.axis_labels,
+    )
+
+
+@dataclass(frozen=True, slots=True)
 class StatementNode:
     """One statement (or the unbound remainder) in the compressed graph."""
 
@@ -53,6 +129,7 @@ class StatementNode:
     direction: str
     sheet: str
     is_remainder: bool = False
+    labels: StatementLabels = EMPTY_STATEMENT_LABELS
 
 
 @dataclass(frozen=True, slots=True)
@@ -96,6 +173,10 @@ class StatementGraph:
     remainder_sample: tuple[CanonicalAddress, ...]
     heterogeneous_pairs: tuple[tuple[str, str], ...]
 
+    def to_networkx(self):
+        """Return a NetworkX MultiDiGraph of statements and typed bundles."""
+        return statement_graph_to_networkx(self)
+
 
 def statement_sheet(cells: Sequence[CanonicalAddress]) -> str:
     """Return the shared worksheet name, or `mixed` when sheets disagree.
@@ -125,11 +206,15 @@ def _cell_to_statement(catalog: SeriesCatalog) -> dict[CanonicalAddress, str]:
     return mapping
 
 
-def _statement_nodes(catalog: SeriesCatalog) -> dict[str, StatementNode]:
+def _statement_nodes(
+    catalog: SeriesCatalog,
+    concepts: Mapping[str, tuple[str | None, str | None]],
+) -> dict[str, StatementNode]:
     """Return statement nodes keyed by statement id, in bindings order."""
     nodes: dict[str, StatementNode] = {}
     for series_id in catalog.order:
         series = catalog.get(series_id)
+        labels = statement_labels_for(series, concepts)
         for stmt in series.statements:
             nodes[stmt.statement_id] = StatementNode(
                 statement_id=stmt.statement_id,
@@ -141,6 +226,7 @@ def _statement_nodes(catalog: SeriesCatalog) -> dict[str, StatementNode]:
                 cell_count=len(stmt.cells),
                 direction=series.direction,
                 sheet=statement_sheet(stmt.cells),
+                labels=labels,
             )
     return nodes
 
@@ -149,6 +235,7 @@ def _ensure_statement_node(
     nodes: dict[str, StatementNode],
     statement_id: str,
     series: BoundSeries,
+    labels: StatementLabels,
 ) -> None:
     if statement_id in nodes:
         return
@@ -162,6 +249,7 @@ def _ensure_statement_node(
         cell_count=len(series.cells),
         direction=series.direction,
         sheet=statement_sheet(series.cells),
+        labels=labels,
     )
 
 
@@ -345,17 +433,27 @@ def build_statement_graph(
     """
     catalog = view.catalog
     cell_stmt = _cell_to_statement(catalog)
-    nodes = _statement_nodes(catalog)
+    series_labels = {
+        series_id: statement_labels_for(catalog.get(series_id), view.concepts)
+        for series_id in catalog.order
+    }
+    nodes = _statement_nodes(catalog, view.concepts)
     for edge in view.edges.edges:
         consumer_series = catalog.series_for(edge.consumer_cell)
         producer_series = catalog.series_for(edge.producer_cell)
         if consumer_series is not None:
             _ensure_statement_node(
-                nodes, cell_stmt.get(edge.consumer_cell, consumer_series.series_id), consumer_series
+                nodes,
+                cell_stmt.get(edge.consumer_cell, consumer_series.series_id),
+                consumer_series,
+                series_labels.get(consumer_series.series_id, EMPTY_STATEMENT_LABELS),
             )
         if producer_series is not None:
             _ensure_statement_node(
-                nodes, cell_stmt.get(edge.producer_cell, producer_series.series_id), producer_series
+                nodes,
+                cell_stmt.get(edge.producer_cell, producer_series.series_id),
+                producer_series,
+                series_labels.get(producer_series.series_id, EMPTY_STATEMENT_LABELS),
             )
 
     remainder_sample, unbound_count, remainder_sheet = _unbound_cells(graph, catalog)
@@ -371,6 +469,7 @@ def build_statement_graph(
             direction="internal",
             sheet=remainder_sheet,
             is_remainder=True,
+            labels=EMPTY_STATEMENT_LABELS,
         )
 
     seen_ids: set[str] = set()
@@ -414,3 +513,75 @@ def jsonable_scalar(value: Scalar) -> Any:
     if isinstance(value, datetime):
         return value.isoformat()
     return value
+
+
+def _bundle_edge_key(bundle: StatementBundle) -> str:
+    return f"{bundle.access}:{bundle.distance}:{bundle.coeff}:{bundle.offset}:{int(bundle.guarded)}"
+
+
+def statement_graph_to_networkx(graph: StatementGraph):
+    """Convert a statement graph to a NetworkX MultiDiGraph.
+
+    Nodes are statement ids. Binding labels and `shape_key` are node
+    attributes; formula text is not. Bundles become directed multi-edges
+    `consumer -> producer` (depends-on), keyed by access class, distance,
+    affine coefficients, and guarded status.
+
+    Raises:
+        ImportError: If NetworkX is not installed.
+    """
+    try:
+        import networkx as nx
+    except Exception as exc:  # pragma: no cover
+        raise ImportError(
+            "networkx is not installed; add it to use statement_graph_to_networkx()"
+        ) from exc
+
+    nx_graph = nx.MultiDiGraph()
+    for index, node in enumerate(graph.nodes):
+        attrs: dict[str, Any] = {
+            "series_id": node.series_id,
+            "shape_key": node.shape_key,
+            "start": node.start,
+            "stop": node.stop,
+            "cell_count": node.cell_count,
+            "direction": node.direction,
+            "sheet": node.sheet,
+            "is_remainder": node.is_remainder,
+            "rank": graph.ranks[index],
+            "x": graph.positions[index][0],
+            "y": graph.positions[index][1],
+        }
+        attrs.update(node.labels.to_dict())
+        nx_graph.add_node(node.statement_id, **attrs)
+    for bundle in graph.bundles:
+        nx_graph.add_edge(
+            bundle.consumer_id,
+            bundle.producer_id,
+            key=_bundle_edge_key(bundle),
+            access=bundle.access,
+            distance=bundle.distance,
+            coeff=bundle.coeff,
+            offset=bundle.offset,
+            guarded=bundle.guarded,
+            instance_edge_count=bundle.instance_edge_count,
+            discharged=bundle.distance > 0 or bundle.access == "shift",
+        )
+    return nx_graph
+
+
+__all__ = [
+    "EMPTY_STATEMENT_LABELS",
+    "MIXED_SHEET",
+    "REMAINDER_STATEMENT_ID",
+    "StatementBundle",
+    "StatementGraph",
+    "StatementGraphStats",
+    "StatementLabels",
+    "StatementNode",
+    "build_statement_graph",
+    "jsonable_scalar",
+    "statement_graph_to_networkx",
+    "statement_labels_for",
+    "statement_sheet",
+]

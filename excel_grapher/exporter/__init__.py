@@ -33,7 +33,19 @@ from .semantic_catalog import (
     SemanticCatalogView,
     load_semantic_catalog,
 )
-from .semantic_graph import StatementGraph, build_statement_graph
+from .semantic_drilldown import (
+    DrilldownCell,
+    SeriesDrilldown,
+    drilldown_series,
+    drilldown_statement,
+)
+from .semantic_graph import (
+    StatementGraph,
+    StatementLabels,
+    StatementNode,
+    build_statement_graph,
+    statement_graph_to_networkx,
+)
 from .semantic_viz import (
     SEMANTIC_VIZ_PAYLOAD_VERSION,
     SemanticVizPayload,
@@ -64,9 +76,16 @@ __all__ = [
     "SemanticCatalogView",
     "SemanticVizPayload",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
+    "DrilldownCell",
+    "SeriesDrilldown",
     "StatementGraph",
+    "StatementLabels",
+    "StatementNode",
     "build_statement_graph",
+    "drilldown_series",
+    "drilldown_statement",
     "load_semantic_catalog",
+    "statement_graph_to_networkx",
     "to_semantic_viz_payload",
     "to_series_graph",
     "write_semantic_viz_html",
