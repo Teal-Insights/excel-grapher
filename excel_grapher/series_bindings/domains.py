@@ -11,7 +11,8 @@ Rules:
   to every bound cell. When only `input.value_map` is declared, the cell domain
   is the set of workbook needles (the map values), not the public keys.
 * `relations` expand per bound cell. Missing partner cells at a key fail closed.
-* Series without a domain or relations contribute nothing.
+* `constant` series are not pinned from workbook values. Series without a
+  domain or relations contribute nothing.
 """
 
 from __future__ import annotations
@@ -32,9 +33,9 @@ from excel_grapher.series_bindings.relations import (
     SeriesRelationError,
     canonical_measure_dtype,
     iter_series_relations,
-    keyed_addresses,
+    missing_partner_cell_issues,
     raise_if_relation_errors,
-    relation_alignment_issues,
+    relation_cell_indexes,
     relation_declaration_issues,
     series_by_id,
 )
@@ -101,14 +102,14 @@ def cell_type_env_from_bindings(
 
     Returns:
         Normalized-address to `CellType` mapping, keyed like
-        `constraints_to_cell_type_env` output.
+        `constraints_to_cell_type_env` output. Constant series are omitted
+        unless they declare `relations`.
 
     Raises:
         SeriesRelationError: A relation partner is missing, incomparable,
             cyclic, reflexive, or has no cell at the declaring key.
     """
     raise_if_relation_errors(relation_declaration_issues(bindings))
-    raise_if_relation_errors(relation_alignment_issues(bindings, workbook=workbook))
 
     indexed = series_by_id(bindings)
     needed: set[str] = set()
@@ -118,11 +119,9 @@ def cell_type_env_from_bindings(
             needed.add(series_id)
             needed.update(partner_id for _kind, partner_id in relations)
 
-    indexes: dict[str, dict[tuple[tuple[str, Any], ...], str]] = {}
-    for series_id in needed:
-        index, index_issues = keyed_addresses(indexed[series_id], workbook=workbook)
-        raise_if_relation_errors(index_issues)
-        indexes[series_id] = index
+    indexes, issues = relation_cell_indexes(bindings, workbook=workbook, series_ids=needed)
+    issues.extend(missing_partner_cell_issues(bindings, indexes))
+    raise_if_relation_errors(issues)
 
     schema: dict[str, Any] = {}
     for series_id, series in indexed.items():

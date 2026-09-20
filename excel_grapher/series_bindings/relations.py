@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -94,6 +94,11 @@ def dtypes_comparable(left: Mapping[str, Any], right: Mapping[str, Any]) -> bool
     return left_dtype == right_dtype
 
 
+def key_field_set(series: Mapping[str, Any]) -> frozenset[str]:
+    """Return declared key field names, ignoring list order."""
+    return frozenset(str(field) for field in (series.get("key") or []))
+
+
 def freeze_key(key: Mapping[str, Any]) -> FrozenKey:
     """Return a hashable key tuple in field-name order."""
     return tuple(sorted(key.items()))
@@ -110,22 +115,23 @@ def _issue(
 
 
 def relation_declaration_issues(bindings: Mapping[str, Any]) -> list[ValidationIssue]:
-    """Validate partner identity, dtypes, irreflexive `greater_than`, and DAG shape.
+    """Validate partner identity, dtypes, irreflexive relations, and DAG shape.
 
     Cycle detection walks `greater_than` edges only: `not_equal` is symmetric
-    and does not impose an order.
+    and does not impose an order. Any relation to the declaring series itself
+    is rejected.
     """
     indexed = series_by_id(bindings)
     issues: list[ValidationIssue] = []
     greater_than_edges: list[tuple[str, str]] = []
     for series_id, series in indexed.items():
-        declaring_key = [str(field) for field in (series.get("key") or [])]
+        declaring_key = key_field_set(series)
         for kind, partner_id in iter_series_relations(series):
-            if kind == "greater_than" and partner_id == series_id:
+            if partner_id == series_id:
                 issues.append(
                     _issue(
-                        "reflexive_greater_than",
-                        f"series {series_id!r} greater_than itself is not allowed",
+                        "reflexive_relation",
+                        f"series {series_id!r} {kind} itself is not allowed",
                         series_id=series_id,
                     )
                 )
@@ -150,13 +156,13 @@ def relation_declaration_issues(bindings: Mapping[str, Any]) -> list[ValidationI
                         series_id=series_id,
                     )
                 )
-            partner_key = [str(field) for field in (partner.get("key") or [])]
+            partner_key = key_field_set(partner)
             if declaring_key != partner_key:
                 issues.append(
                     _issue(
                         "incompatible_relation_key",
                         f"series {series_id!r} {kind} partner {partner_id!r} key "
-                        f"{partner_key!r} must match {declaring_key!r}",
+                        f"{sorted(partner_key)!r} must match {sorted(declaring_key)!r}",
                         series_id=series_id,
                     )
                 )
@@ -192,7 +198,7 @@ def keyed_addresses(
     except PartialKeyDomainError as exc:
         return {}, [
             _issue(
-                "missing_relation_partner_key",
+                "unresolved_relation_key",
                 str(exc),
                 series_id=series_id or exc.series_id,
             )
@@ -226,36 +232,47 @@ def keyed_addresses(
     return index, issues
 
 
-def relation_alignment_issues(
+def relation_cell_indexes(
     bindings: Mapping[str, Any],
     *,
     workbook: Path | str,
+    series_ids: Iterable[str] | None = None,
+) -> tuple[dict[str, dict[FrozenKey, str]], list[ValidationIssue]]:
+    """Resolve key-to-address indexes for `series_ids` (or every series)."""
+    indexed = series_by_id(bindings)
+    wanted = set(series_ids) if series_ids is not None else set(indexed)
+    indexes: dict[str, dict[FrozenKey, str]] = {}
+    issues: list[ValidationIssue] = []
+    for series_id in wanted:
+        series = indexed.get(series_id)
+        if series is None:
+            continue
+        index, index_issues = keyed_addresses(series, workbook=workbook)
+        issues.extend(index_issues)
+        indexes[series_id] = index
+    return indexes, issues
+
+
+def missing_partner_cell_issues(
+    bindings: Mapping[str, Any],
+    indexes: Mapping[str, dict[FrozenKey, str]],
 ) -> list[ValidationIssue]:
     """Fail closed when a declaring cell has no unique partner cell at its key."""
     indexed = series_by_id(bindings)
-    cache: dict[str, tuple[dict[FrozenKey, str], list[ValidationIssue]]] = {}
     issues: list[ValidationIssue] = []
-
-    def _index_for(series_id: str) -> dict[FrozenKey, str]:
-        if series_id not in cache:
-            cache[series_id] = keyed_addresses(indexed[series_id], workbook=workbook)
-            issues.extend(cache[series_id][1])
-        return cache[series_id][0]
-
     for series_id, series in indexed.items():
         relations = iter_series_relations(series)
         if not relations:
             continue
-        declaring_index = _index_for(series_id)
+        declaring_index = indexes.get(series_id) or {}
+        declaring_key = key_field_set(series)
         for kind, partner_id in relations:
-            if partner_id not in indexed:
+            if partner_id == series_id:
                 continue
-            partner = indexed[partner_id]
-            declaring_key = [str(field) for field in (series.get("key") or [])]
-            partner_key = [str(field) for field in (partner.get("key") or [])]
-            if declaring_key != partner_key:
+            partner = indexed.get(partner_id)
+            if partner is None or declaring_key != key_field_set(partner):
                 continue
-            partner_index = _index_for(partner_id)
+            partner_index = indexes.get(partner_id) or {}
             for frozen, address in declaring_index.items():
                 if frozen not in partner_index:
                     issues.append(
@@ -270,11 +287,30 @@ def relation_alignment_issues(
     return issues
 
 
+def relation_alignment_issues(
+    bindings: Mapping[str, Any],
+    *,
+    workbook: Path | str,
+) -> list[ValidationIssue]:
+    """Resolve relation series and report missing or ambiguous partner cells."""
+    indexed = series_by_id(bindings)
+    needed: set[str] = set()
+    for series_id, series in indexed.items():
+        relations = iter_series_relations(series)
+        if not relations:
+            continue
+        needed.add(series_id)
+        needed.update(partner_id for _kind, partner_id in relations if partner_id in indexed)
+    indexes, issues = relation_cell_indexes(bindings, workbook=workbook, series_ids=needed)
+    issues.extend(missing_partner_cell_issues(bindings, indexes))
+    return issues
+
+
 def raise_if_relation_errors(issues: Sequence[ValidationIssue]) -> None:
-    """Raise `SeriesRelationError` on the first error-level issue."""
-    for issue in issues:
-        if issue["level"] == "error":
-            raise SeriesRelationError(issue["message"])
+    """Raise `SeriesRelationError` listing every error-level issue."""
+    messages = [issue["message"] for issue in issues if issue["level"] == "error"]
+    if messages:
+        raise SeriesRelationError("; ".join(messages))
 
 
 def _greater_than_cycle(edges: Sequence[tuple[str, str]]) -> list[str] | None:
