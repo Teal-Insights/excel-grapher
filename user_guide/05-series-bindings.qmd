@@ -797,6 +797,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.15.0** | Optional `input.value_map` on **scalar input** series: map public `compute_*` values to workbook cell needles (MATCH/IF labels). Distinct from bind kind `value_map`. |
 | **1.16.0** | `input` no longer requires a setter block. Empty `input: {}` marks an editable series. Package export takes inputs as `compute_*` / `Model` arguments. |
 | **1.17.0** | Series-level `axis_labels` names a one-key series whose evaluated values are the runtime keys of that axis. |
+| **1.18.0** | Series-level `relations` name a partner series (`greater_than` / `not_equal`). The compiler emits `GreaterThanCell` / `NotEqualCell` on each declaring cell, aligned on the shared key. |
 
 ## Runtime axis labels (1.17.0)
 
@@ -850,6 +851,39 @@ set on neither side.
 **Out of scope.** Translated input enums / `value_map` needles; f-string key
 templates over a runtime string axis; host-key remaps over a runtime string
 axis; cross-field key equality between a runtime axis and a static axis.
+
+## Series relations (1.18.0)
+
+A pair of input series that must stay ordered (maturity strictly above grace)
+or unequal (a tenor and its amortization mirror) declare that as a **partner
+series**, not an A1 address. `cell_type_env_from_bindings` expands each
+declaring cell to `GreaterThanCell` / `NotEqualCell` naming the partner cell
+at the same key:
+
+```yaml
+schema_version: "1.18.0"
+series:
+  - id: input4_grace_period
+    data_range: Inputs!G2:G3
+    input:
+      domain: { between: { min: 0, max: 50 } }
+    key: [INSTRUMENT]
+    # ...
+
+  - id: input4_loan_maturity
+    data_range: Inputs!H2:H3
+    input:
+      domain: { between: { min: 0, max: 80 } }
+    relations:
+      - greater_than: input4_grace_period
+    key: [INSTRUMENT]
+    # ...
+```
+
+Kinds: `greater_than` → `GreaterThanCell`, `not_equal` → `NotEqualCell`.
+Validation requires the partner series to exist, comparable measure dtypes,
+no `greater_than` cycles, and irreflexive `greater_than`. Expansion fails
+closed when the partner has no cell at that key.
 
 ## Input domains (1.13.0)
 

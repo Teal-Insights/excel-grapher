@@ -32,6 +32,10 @@ from excel_grapher.series_bindings.ranges import (
     series_sheets,
     sheet_from_data_range,
 )
+from excel_grapher.series_bindings.relations import (
+    relation_alignment_issues,
+    relation_declaration_issues,
+)
 from excel_grapher.series_bindings.types import (
     ValidationIssue,
     ValidationReport,
@@ -1020,6 +1024,7 @@ def validate_series_bindings(
     )
 
     issues: list[ValidationIssue] = []
+    issues.extend(relation_declaration_issues(bindings))
     concept_dtypes = _concept_dtype_map(bindings)
     shared_reader: _WorkbookValues | None = None
     seen_ranges: dict[str, str] = {}
@@ -1158,5 +1163,7 @@ def validate_series_bindings(
 
     issues.extend(_validate_cell_occupancy(graph, occupancy_rows))
     issues = _downgrade_bound_leaf_notices(graph, occupancy_rows, issues)
+    if workbook is not None:
+        issues.extend(relation_alignment_issues(bindings, workbook=workbook))
     ok = not any(i["level"] == "error" for i in issues)
     return {"ok": ok, "issues": issues}
