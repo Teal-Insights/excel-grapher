@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+import shutil
+import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
 
-import yaml
+from ruamel.yaml import YAML
 
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.series_bindings.audit import audit_binding_resolutions, format_audit_findings
-from excel_grapher.series_bindings.load import (
-    SeriesBindingsLoadError,
-    parse_bindings_file,
-)
+from excel_grapher.series_bindings.load import SeriesBindingsLoadError
 from excel_grapher.series_bindings.occupancy import Direction, binding_direction
 from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
 from excel_grapher.series_bindings.versions import CURRENT_SCHEMA_VERSION
@@ -26,6 +25,8 @@ SHARD_FILENAMES: dict[Direction, str] = {
     "internal": "internals.bindings.yaml",
     "constant": "constants.bindings.yaml",
 }
+
+_FILE_SUFFIXES = {".yaml", ".yml", ".json"}
 
 
 class BindingUpsertError(ValueError):
@@ -47,6 +48,31 @@ class BindingUpsertResult:
         return "replaced" if self.replaced else "inserted"
 
 
+def _round_trip_yaml() -> YAML:
+    yaml_rt = YAML()
+    yaml_rt.preserve_quotes = True
+    yaml_rt.default_flow_style = False
+    yaml_rt.width = 4096
+    return yaml_rt
+
+
+def _dump_binding_document(path: Path, document: Any) -> None:
+    yaml_rt = _round_trip_yaml()
+    with path.open("w", encoding="utf-8") as handle:
+        yaml_rt.dump(document, handle)
+
+
+def _empty_shard_document(
+    *,
+    schema_version: str,
+    workbook: str | None,
+) -> dict[str, Any]:
+    document: dict[str, Any] = {"schema_version": schema_version, "series": []}
+    if workbook is not None:
+        document["workbook"] = workbook
+    return document
+
+
 def bootstrap_binding_shards(
     directory: Path,
     *,
@@ -64,33 +90,12 @@ def bootstrap_binding_shards(
     for filename in SHARD_FILENAMES.values():
         path = directory / filename
         if not path.is_file():
-            document: dict[str, Any] = {"schema_version": version, "series": []}
-            if workbook is not None:
-                document["workbook"] = workbook
-            path.write_text(
-                yaml.safe_dump(document, sort_keys=False, allow_unicode=True),
-                encoding="utf-8",
+            _dump_binding_document(
+                path,
+                _empty_shard_document(schema_version=version, workbook=workbook),
             )
         written.append(path)
     return written
-
-
-def _dump_binding_document(path: Path, document: Mapping[str, Any]) -> None:
-    path.write_text(
-        yaml.safe_dump(dict(document), sort_keys=False, allow_unicode=True),
-        encoding="utf-8",
-    )
-
-
-def _empty_shard_document(
-    *,
-    schema_version: str,
-    workbook: str | None,
-) -> dict[str, Any]:
-    document: dict[str, Any] = {"schema_version": schema_version, "series": []}
-    if workbook is not None:
-        document["workbook"] = workbook
-    return document
 
 
 def _group_placement(
@@ -99,15 +104,22 @@ def _group_placement(
     groups = series.get("groups")
     if not isinstance(groups, list) or not groups:
         return None, None
-    first = groups[0]
-    if not isinstance(first, dict):
-        return None, None
-    path_raw = first.get("path")
-    if not isinstance(path_raw, list) or not path_raw:
-        return None, None
-    path = tuple(str(part) for part in path_raw)
-    order = first.get("order")
-    return path, int(order) if isinstance(order, int) else None
+    best_path: tuple[str, ...] | None = None
+    best_order: int | None = None
+    for item in groups:
+        if not isinstance(item, dict):
+            continue
+        path_raw = item.get("path")
+        if not isinstance(path_raw, list) or not path_raw:
+            continue
+        path = tuple(str(part) for part in path_raw)
+        order = item.get("order")
+        if not isinstance(order, int):
+            continue
+        if best_order is None or order < best_order:
+            best_path = path
+            best_order = order
+    return best_path, best_order
 
 
 def _insert_series(
@@ -115,22 +127,22 @@ def _insert_series(
     series: Mapping[str, Any],
     *,
     replace: bool,
-) -> list[dict[str, Any]]:
+) -> list[Any]:
     series_id = str(series["id"])
     copied = dict(series)
     if replace:
-        return [copied if item.get("id") == series_id else dict(item) for item in existing]
+        return [copied if item.get("id") == series_id else item for item in existing]
     path, order = _group_placement(series)
     if path is None or order is None:
-        return [dict(item) for item in existing] + [copied]
-    result: list[dict[str, Any]] = []
+        return [*existing, copied]
+    result: list[Any] = []
     inserted = False
     for item in existing:
         item_path, item_order = _group_placement(item)
         if not inserted and item_path == path and item_order is not None and item_order > order:
             result.append(copied)
             inserted = True
-        result.append(dict(item))
+        result.append(item)
     if not inserted:
         result.append(copied)
     return result
@@ -150,14 +162,82 @@ def _load_shard_document(
     *,
     schema_version: str,
     workbook: str | None,
-) -> dict[str, Any]:
+) -> Any:
     if not path.is_file():
         return _empty_shard_document(schema_version=schema_version, workbook=workbook)
-    document = parse_bindings_file(path)
+    yaml_rt = _round_trip_yaml()
+    with path.open(encoding="utf-8") as handle:
+        document = yaml_rt.load(handle)
+    if not isinstance(document, dict):
+        raise BindingUpsertError(f"Shard {path} must contain a mapping document")
     series = document.get("series")
     if not isinstance(series, list):
         raise BindingUpsertError(f"Shard {path} must contain a series list")
     return document
+
+
+def _is_file_sidecar(path: Path) -> bool:
+    if path.is_file():
+        return True
+    if path.is_dir():
+        return False
+    return path.suffix.lower() in _FILE_SUFFIXES
+
+
+def _copy_binding_tree(source: Path, dest: Path) -> None:
+    dest.mkdir(parents=True, exist_ok=True)
+    for src in source.iterdir():
+        if src.is_file():
+            shutil.copy2(src, dest / src.name)
+
+
+def _prepare_work_tree(
+    bindings_path: Path,
+    *,
+    direction: Direction,
+    workbook_name: str,
+) -> tuple[Path, Path]:
+    """Copy or bootstrap bindings into a temp tree. Return (work_root, work_shard)."""
+    work_root = Path(tempfile.mkdtemp(prefix="excel-grapher-upsert-"))
+    try:
+        if _is_file_sidecar(bindings_path):
+            work_shard = work_root / bindings_path.name
+            if bindings_path.is_file():
+                shutil.copy2(bindings_path, work_shard)
+            return work_root, work_shard
+
+        work_dir = work_root / "bindings"
+        if bindings_path.is_dir():
+            shutil.copytree(bindings_path, work_dir)
+        else:
+            work_dir.mkdir()
+        bootstrap_binding_shards(
+            work_dir,
+            schema_version=CURRENT_SCHEMA_VERSION,
+            workbook=workbook_name,
+        )
+        return work_root, work_dir / SHARD_FILENAMES[direction]
+    except Exception:
+        shutil.rmtree(work_root, ignore_errors=True)
+        raise
+
+
+def _commit_work_tree(
+    *,
+    bindings_path: Path,
+    work_shard: Path,
+    direction: Direction,
+) -> Path:
+    if _is_file_sidecar(bindings_path):
+        bindings_path.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(work_shard, bindings_path)
+        return bindings_path
+    work_dir = work_shard.parent
+    if bindings_path.exists() and bindings_path.is_dir():
+        _copy_binding_tree(work_dir, bindings_path)
+    else:
+        shutil.copytree(work_dir, bindings_path)
+    return bindings_path / SHARD_FILENAMES[direction]
 
 
 def upsert_series_binding(
@@ -172,9 +252,25 @@ def upsert_series_binding(
 ) -> BindingUpsertResult:
     """Insert or replace one series after fail-closed checks.
 
-    The series is written only when schema load, cell occupancy, and
-    resolution audit all succeed. On failure the previous shard bytes are
-    restored.
+    Schema load, occupancy, and resolution audit run against a temporary copy.
+    The destination tree is written only after those checks succeed.
+
+    Args:
+        workbook: Workbook the sidecar describes.
+        bindings_path: Existing sidecar file/directory, or the path to create.
+        series: One series mapping to insert or replace.
+        replace: Replace an existing series with the same id.
+        dynamic_refs: Constraint-based OFFSET/INDEX/INDIRECT config. Ignored
+            when `use_cached_dynamic_refs` is True.
+        use_cached_dynamic_refs: Resolve dynamic refs from cached workbook
+            values. Library default is True (same as `validate_bindings_workbook`).
+            The CLI flag `--use-cached-dynamic-refs` defaults to False, matching
+            other `excel-grapher bindings` commands.
+        blank_ranges: Sheet-qualified rectangles omitted from the graph.
+
+    Raises:
+        BindingUpsertError: The series is not a valid insertion. The destination
+            bindings tree is left unchanged, including when the path did not exist.
     """
     if "id" not in series or not isinstance(series.get("id"), str):
         raise BindingUpsertError("Series requires a string id")
@@ -182,47 +278,44 @@ def upsert_series_binding(
     direction = _require_direction(series)
     workbook_name = workbook.name
 
-    if bindings_path.is_file():
-        shard_path = bindings_path
-        document = _load_shard_document(
-            shard_path,
-            schema_version=CURRENT_SCHEMA_VERSION,
-            workbook=workbook_name,
-        )
-    else:
-        bootstrap_binding_shards(
-            bindings_path,
-            schema_version=CURRENT_SCHEMA_VERSION,
-            workbook=workbook_name,
-        )
-        shard_path = bindings_path / SHARD_FILENAMES[direction]
-        document = _load_shard_document(
-            shard_path,
-            schema_version=CURRENT_SCHEMA_VERSION,
-            workbook=workbook_name,
-        )
-
-    existing_series = list(document.get("series") or [])
-    existing_ids = [str(item.get("id", "")) for item in existing_series if isinstance(item, dict)]
-    replaced = series_id in existing_ids
-    if replaced and not replace:
-        raise BindingUpsertError(
-            f"Series id {series_id!r} already exists; pass replace=True to update it"
-        )
-    if replace and not replaced:
-        raise BindingUpsertError(f"Series id {series_id!r} does not exist to replace")
-
-    document["series"] = _insert_series(existing_series, series, replace=replaced)
-    previous = shard_path.read_text(encoding="utf-8") if shard_path.is_file() else None
-    _dump_binding_document(shard_path, document)
+    work_root: Path | None = None
     try:
-        result = validate_bindings_workbook(
-            workbook,
+        work_root, work_shard = _prepare_work_tree(
             bindings_path,
-            dynamic_refs=dynamic_refs,
-            use_cached_dynamic_refs=use_cached_dynamic_refs,
-            blank_ranges=blank_ranges,
+            direction=direction,
+            workbook_name=workbook_name,
         )
+        work_bindings = work_shard if _is_file_sidecar(bindings_path) else work_shard.parent
+        document = _load_shard_document(
+            work_shard,
+            schema_version=CURRENT_SCHEMA_VERSION,
+            workbook=workbook_name,
+        )
+        existing_series = list(document.get("series") or [])
+        existing_ids = [
+            str(item.get("id", "")) for item in existing_series if isinstance(item, Mapping)
+        ]
+        replaced = series_id in existing_ids
+        if replaced and not replace:
+            raise BindingUpsertError(
+                f"Series id {series_id!r} already exists; pass replace=True to update it"
+            )
+        if replace and not replaced:
+            raise BindingUpsertError(f"Series id {series_id!r} does not exist to replace")
+
+        document["series"] = _insert_series(existing_series, series, replace=replaced)
+        _dump_binding_document(work_shard, document)
+
+        try:
+            result = validate_bindings_workbook(
+                workbook,
+                work_bindings,
+                dynamic_refs=dynamic_refs,
+                use_cached_dynamic_refs=use_cached_dynamic_refs,
+                blank_ranges=blank_ranges,
+            )
+        except (SeriesBindingsLoadError, SeriesBindingsSchemaError) as exc:
+            raise BindingUpsertError(str(exc)) from exc
         report = result["report"]
         if not report["ok"]:
             errors = [issue for issue in report["issues"] if issue["level"] == "error"]
@@ -236,24 +329,16 @@ def upsert_series_binding(
         if not audit.ok:
             preview = "\n".join(format_audit_findings(audit.findings)[:12])
             raise BindingUpsertError(f"Upsert failed resolution audit:\n{preview}")
-    except (SeriesBindingsLoadError, SeriesBindingsSchemaError) as exc:
-        if previous is None:
-            shard_path.unlink(missing_ok=True)
-        else:
-            shard_path.write_text(previous, encoding="utf-8")
-        raise BindingUpsertError(str(exc)) from exc
-    except BindingUpsertError:
-        if previous is None:
-            shard_path.unlink(missing_ok=True)
-        else:
-            shard_path.write_text(previous, encoding="utf-8")
-        raise
-    except Exception:
-        if previous is None:
-            shard_path.unlink(missing_ok=True)
-        else:
-            shard_path.write_text(previous, encoding="utf-8")
-        raise
+
+        shard_path = _commit_work_tree(
+            bindings_path=bindings_path,
+            work_shard=work_shard,
+            direction=direction,
+        )
+    finally:
+        if work_root is not None:
+            shutil.rmtree(work_root, ignore_errors=True)
+
     return BindingUpsertResult(
         series_id=series_id,
         shard_path=shard_path,

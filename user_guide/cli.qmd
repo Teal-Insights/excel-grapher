@@ -28,7 +28,7 @@ When the package is installed, `excel-grapher` is also available as a console sc
 |---------|---------|
 | `bindings validate` | Load a sidecar, build the dependency graph, and validate bindings against the workbook |
 | `bindings audit` | Resolve bindings the way codegen does and fail if resolution is not `ok=True` |
-| `bindings burndown` | Print unbound formula cells as a coverage worklist (not candidate bindings) |
+| `bindings burndown` | Print unbound formula cells in the current bound graph closure as a coverage worklist (not a full workbook walk; not candidate bindings) |
 | `bindings upsert` | Insert or replace one series after fail-closed schema, occupancy, and resolution checks |
 | `bindings viz` | Write a statement-graph HTML visualization from series bindings |
 
@@ -258,10 +258,12 @@ Exit `1` on error findings. `--strict` also fails on warnings such as
 
 ## `bindings burndown`
 
-Print formula nodes not covered by input, output, or internal bindings as a
-**coverage worklist**. Collapsed A1 rectangles include a weak layout hint
-(`scalar`, `series`, or `matrix`). Do not treat each printed range as a series
-to emit.
+Print formula nodes **in the current bound graph closure** (the graph built
+from bound `data_range` targets) that are not covered by input, output, or
+internal bindings as a **coverage worklist**. This is not a full workbook
+walk; empty shards yield an empty graph. Collapsed A1 rectangles include a
+weak layout hint (`scalar`, `series`, or `matrix`). Do not treat each printed
+range as a series to emit.
 
 ```bash
 excel-grapher bindings burndown WORKBOOK [--bindings PATH] [--json]
@@ -270,12 +272,14 @@ excel-grapher bindings burndown WORKBOOK [--bindings PATH] [--json]
 ```
 
 `--exempt` is a text file of reviewed addresses (one per line; `#` comments
-allowed). `--strict` exits `1` when unbound cells remain.
+allowed). `--strict` exits `1` when unbound cells remain. `--max-rows` limits
+row detail and prints `... (truncated)` when it cuts off.
 
 ## `bindings upsert`
 
 Insert or replace **one** series after schema, occupancy, shard, and resolution
-checks. There is no catalog → four-file bulk emitter.
+checks against a temporary copy. The destination is written only when those
+checks succeed. There is no catalog → four-file bulk emitter.
 
 ```bash
 excel-grapher bindings upsert WORKBOOK --series SERIES.yaml
@@ -285,6 +289,8 @@ excel-grapher bindings upsert WORKBOOK --series SERIES.yaml
 
 `SERIES.yaml` is one series mapping, or a document with `series: [one entry]`.
 `--replace` updates an existing id. When `--bindings` is omitted and no
-colocated sidecar exists, the command bootstraps `{stem}.bindings/` with empty
-four-file shards.
+colocated sidecar exists, a successful upsert creates `{stem}.bindings/` with
+four-file shards. A failed upsert leaves the destination unchanged.
+`--use-cached-dynamic-refs` defaults to off on the CLI (same as `validate`);
+the Python helper `upsert_series_binding` defaults it to on.
 

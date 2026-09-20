@@ -40,6 +40,7 @@ def test_bindings_burndown_prints_coverage_worklist(
     assert "coverage worklist" in captured.out.lower()
     assert "Engine!B2:C2" in captured.out
     assert "not a generator" in captured.out.lower()
+    assert "closure" in captured.out.lower()
 
 
 def test_bindings_burndown_strict_exits_nonzero_when_unbound(

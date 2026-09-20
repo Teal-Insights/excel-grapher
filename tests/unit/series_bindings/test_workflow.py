@@ -43,6 +43,32 @@ def test_resolve_bindings_path_raises_when_missing(tmp_path: Path) -> None:
         resolve_bindings_path(workbook)
 
 
+def test_resolve_bindings_path_create_if_missing_returns_colocated_directory(
+    tmp_path: Path,
+) -> None:
+    workbook = tmp_path / "model.xlsx"
+    workbook.write_bytes(b"")
+
+    resolved = resolve_bindings_path(workbook, create_if_missing=True)
+
+    assert resolved == tmp_path / "model.bindings"
+    assert not resolved.exists()
+
+
+def test_resolve_bindings_path_create_if_missing_keeps_relative_next_to_workbook(
+    tmp_path: Path,
+) -> None:
+    project = tmp_path / "project"
+    project.mkdir()
+    workbook = project / "model.xlsx"
+    workbook.write_bytes(b"")
+
+    resolved = resolve_bindings_path(workbook, Path("sidecar.bindings"), create_if_missing=True)
+
+    assert resolved == project / "sidecar.bindings"
+    assert not resolved.exists()
+
+
 def test_resolve_bindings_path_explicit_folder_relative_to_workbook(
     tmp_path: Path,
 ) -> None:

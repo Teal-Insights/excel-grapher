@@ -60,8 +60,11 @@ bindings for a workbook.
    YAML as a first pass. Walk sheets and tables with domain meaning, and write
    the intended series correctly once.
 6. Run bundled checks (`validate` then `audit`) until resolution is clean.
-   Use `burndown` only as a **coverage worklist** for remaining holes; author
-   those holes with the same semantic standard (often another matrix).
+   Use `burndown` only as a **coverage worklist** for remaining holes *inside
+   the current bound graph closure* (the dependency graph built from bound
+   `data_range` targets). It is **not** a full workbook walk. Empty shards
+   yield an empty graph and a zero unbound count; that is not “done.” Author
+   remaining holes with the same semantic standard (often another matrix).
 7. Optional: `bindings upsert` writes **one** already-reflected series after
    fail-closed checks. A workbook-specific script that upserts many semantic
    families is allowed. A generic catalog → four-file replace is not.
@@ -83,8 +86,14 @@ uv run excel-grapher bindings upsert WORKBOOK --bindings BINDINGS_DIR --series o
 ```
 
 `validate` can look fine while resolution `ok=False`. Codegen requires `ok=True`.
-`audit` is the codegen-fatal gate. `burndown` is advisory coverage (exit 1 only
-with `--strict`).
+`audit` is the codegen-fatal gate. `burndown` is advisory coverage of the
+**current bound graph closure** (exit 1 only with `--strict`). It is not a
+sheet-by-sheet walk of every formula in the workbook.
+
+This skill is **not** inside the `excel-grapher` wheel. Install the separate
+`excel-grapher-author-bindings` distribution (`uv add excel-grapher --extra skills`)
+or copy `skills/author-bindings` from the git tree / sdist into
+`.cursor/skills/author-bindings` or Claude's skill path.
 
 Thin wrappers: `scripts/audit.sh`, `scripts/burndown.sh`, `scripts/upsert.sh`.
 

@@ -39,7 +39,6 @@ from excel_grapher.series_bindings.smoke import BindingsSmokeError
 from excel_grapher.series_bindings.types import ValidationIssue, ValidationReport
 from excel_grapher.series_bindings.upsert import (
     BindingUpsertError,
-    bootstrap_binding_shards,
     upsert_series_binding,
 )
 from excel_grapher.series_bindings.workflow import (
@@ -579,20 +578,7 @@ def cmd_upsert(args: argparse.Namespace) -> int:
         return 1
     try:
         series = _load_series_document(args.series)
-        if args.bindings is not None:
-            bindings_path = args.bindings
-            if not bindings_path.is_absolute():
-                candidate = workbook.parent / bindings_path
-                if candidate.exists() or args.bindings.suffix == "":
-                    bindings_path = candidate if candidate.exists() else bindings_path
-        else:
-            try:
-                bindings_path = resolve_bindings_path(workbook, None)
-            except SeriesBindingsLoadError:
-                bindings_path = workbook.parent / f"{workbook.stem}.bindings"
-                bootstrap_binding_shards(bindings_path, workbook=workbook.name)
-        if not bindings_path.exists():
-            bootstrap_binding_shards(bindings_path, workbook=workbook.name)
+        bindings_path = resolve_bindings_path(workbook, args.bindings, create_if_missing=True)
         dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None

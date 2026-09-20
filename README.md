@@ -53,6 +53,9 @@ uv add "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-gra
 
 # With all optional dependencies (includes `fast`)
 uv add "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
+
+# Author-bindings agent skill (separate distribution; not in the library wheel)
+uv add "excel-grapher[skills] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
 
 **Using `pip`:**
@@ -64,6 +67,9 @@ pip install git+https://github.com/Teal-Insights/excel-grapher
 pip install "excel-grapher[fast] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
+
+# Author-bindings agent skill (separate distribution):
+pip install "excel-grapher[skills] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
 
 The default install is correct without NumPy. Install the **`fast`** extra when

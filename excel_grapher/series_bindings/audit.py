@@ -61,6 +61,7 @@ class AuditFinding:
     direction: BindingDirection
     message: str
     address: str | None = None
+    series_ids: tuple[str, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping of this finding."""
@@ -252,6 +253,7 @@ def find_sparse_label_bind_issues(
                         f"fill: true ({detail})"
                     ),
                     address=sample,
+                    series_ids=(series_id,),
                 )
             )
         return findings
@@ -283,6 +285,7 @@ def findings_from_resolution(
                 direction=direction,
                 message=str(issue["message"]),
                 address=issue.get("address"),
+                series_ids=(series_id,),
             )
         )
 
@@ -298,6 +301,7 @@ def findings_from_resolution(
                     f"No resolved {direction} cells for public series "
                     "(codegen skips emission when resolution is otherwise ok)"
                 ),
+                series_ids=(series_id,),
             )
         )
 
@@ -312,6 +316,7 @@ def findings_from_resolution(
                     f"Resolved {leaf_count} leaf(ves) but {bind_failures} "
                     "bind_resolution_failed issue(s); codegen requires ok=True"
                 ),
+                series_ids=(series_id,),
             )
         )
 
@@ -323,6 +328,7 @@ def findings_from_resolution(
                 series_id=series_id,
                 direction=direction,
                 message="Series resolution reported ok=False without error issues",
+                series_ids=(series_id,),
             )
         )
     return findings
@@ -383,6 +389,7 @@ def _duplicate_formula_findings(
                     f"series: {list(unique_ids)}"
                 ),
                 address=address,
+                series_ids=unique_ids,
             )
         )
     return findings

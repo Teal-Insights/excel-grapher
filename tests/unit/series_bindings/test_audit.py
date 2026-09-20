@@ -340,6 +340,7 @@ def test_duplicate_internal_audit_expands_list_data_range(
     assert findings
     assert findings[0].code == "duplicate_internal_cell_binding"
     assert findings[0].address == "Engine!B2"
+    assert findings[0].series_ids == ("left_span", "right_cell")
     assert "left_span" in findings[0].message
     assert "right_cell" in findings[0].message
 
@@ -414,6 +415,7 @@ def test_duplicate_internal_formula_ownership_is_audit_error(tmp_path: Path) -> 
     assert findings
     assert findings[0].code == "duplicate_internal_cell_binding"
     assert findings[0].address == "Engine!B2"
+    assert findings[0].series_ids == ("engine_b2", "engine_b2_duplicate")
     assert "engine_b2" in findings[0].message
     assert "engine_b2_duplicate" in findings[0].message
 
@@ -439,10 +441,13 @@ def test_output_and_internal_formula_overlap_is_audit_error(tmp_path: Path) -> N
     graph, bindings = _load_context(workbook, bindings_dir)
     report = audit_binding_resolutions(graph, bindings, workbook=workbook)
     assert not report.ok
-    assert any(
-        finding.code == "duplicate_formula_cell_binding" and finding.address == "Outputs!B1"
+    clash = next(
+        finding
         for finding in report.findings
+        if finding.code == "duplicate_formula_cell_binding" and finding.address == "Outputs!B1"
     )
+    assert "result_a" in clash.series_ids
+    assert "engine_as_internal" in clash.series_ids
 
 
 def test_audit_clean_for_filled_public_and_internal_shards(tmp_path: Path) -> None:

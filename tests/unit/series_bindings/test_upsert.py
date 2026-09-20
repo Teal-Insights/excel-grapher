@@ -131,6 +131,87 @@ def test_upsert_places_series_by_groups_order(tmp_path: Path) -> None:
     ]
 
 
+def test_failed_upsert_leaves_existing_shards_byte_identical(tmp_path: Path) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx")
+    inputs, result_a, result_b = public_io_series()
+    bindings_dir = write_shards(
+        tmp_path / "bindings",
+        inputs=[inputs],
+        outputs=[result_a, result_b],
+    )
+    internals = bindings_dir / "internals.bindings.yaml"
+    internals.write_text(
+        internals.read_text(encoding="utf-8") + "# keep this comment\n",
+        encoding="utf-8",
+    )
+    before = {path: path.read_bytes() for path in sorted(bindings_dir.iterdir())}
+    overlapping = scalar_series("engine_as_internal", "Outputs!B1", direction="internal")
+
+    with pytest.raises(BindingUpsertError, match="ownership|audit|duplicate"):
+        upsert_series_binding(workbook, bindings_dir, overlapping)
+
+    after = {path: path.read_bytes() for path in sorted(bindings_dir.iterdir())}
+    assert after == before
+
+
+def test_failed_upsert_does_not_bootstrap_a_missing_directory(tmp_path: Path) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx", sparse_year=True)
+    bindings_dir = tmp_path / "new.bindings"
+
+    with pytest.raises(BindingUpsertError):
+        upsert_series_binding(workbook, bindings_dir, years_internal_series(fill=False))
+
+    assert not bindings_dir.exists()
+
+
+def test_upsert_preserves_existing_yaml_comments(tmp_path: Path) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx")
+    inputs, result_a, result_b = public_io_series()
+    bindings_dir = write_shards(
+        tmp_path / "bindings",
+        inputs=[inputs],
+        outputs=[result_a, result_b],
+    )
+    internals = bindings_dir / "internals.bindings.yaml"
+    internals.write_text(
+        "# hand-authored internals\n" + internals.read_text(encoding="utf-8"),
+        encoding="utf-8",
+    )
+
+    upsert_series_binding(workbook, bindings_dir, years_internal_series(fill=True))
+
+    text = internals.read_text(encoding="utf-8")
+    assert text.startswith("# hand-authored internals")
+    assert "engine_years" in text
+
+
+def test_upsert_places_by_minimum_group_order(tmp_path: Path) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx", extra_engine_row=True)
+    inputs, result_a, result_b = public_io_series()
+    first = scalar_series("engine_b2", "Engine!B2", direction="internal")
+    first["groups"] = [{"path": ["Engine"], "order": 1}]
+    third = scalar_series("engine_c2", "Engine!C2", direction="internal")
+    third["groups"] = [{"path": ["Engine"], "order": 3}]
+    bindings_dir = write_shards(
+        tmp_path / "bindings",
+        inputs=[inputs],
+        outputs=[result_a, result_b],
+        internals=[first, third],
+    )
+    middle = scalar_series("engine_b3", "Engine!B3", direction="internal")
+    middle["groups"] = [
+        {"path": ["Later"], "order": 9},
+        {"path": ["Engine"], "order": 2},
+    ]
+    result = upsert_series_binding(workbook, bindings_dir, middle)
+    shard = yaml.safe_load(result.shard_path.read_text(encoding="utf-8"))
+    assert [entry["id"] for entry in shard["series"]] == [
+        "engine_b2",
+        "engine_b3",
+        "engine_c2",
+    ]
+
+
 def test_bootstrap_binding_shards_writes_empty_four_files(tmp_path: Path) -> None:
     directory = tmp_path / "model.bindings"
     written = bootstrap_binding_shards(directory, workbook="model.xlsx")

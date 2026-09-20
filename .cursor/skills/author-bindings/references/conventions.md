@@ -56,7 +56,10 @@ Audit reports `duplicate_internal_cell_binding` and `duplicate_formula_cell_bind
 
 ## Graph coverage
 
-Bound `data_range` cells must be on-graph. Widening a shard past the previous
-end requires widening extraction targets / overlapping internals so those cells
-stay in the dependency graph. Structural blanks are `blank_ranges`, not
-inputs/constants. Do not put user-fillable cells in `blank_ranges`.
+Bound `data_range` cells must be on-graph. `bindings burndown` and `bindings
+audit` build that graph from the current sidecar's `data_range` targets, so
+the worklist is residual **inside the bound closure**, not every formula on
+every sheet. Widening a shard past the previous end requires widening
+extraction targets / overlapping internals so those cells stay in the
+dependency graph. Structural blanks are `blank_ranges`, not inputs/constants.
+Do not put user-fillable cells in `blank_ranges`.

@@ -1,7 +1,9 @@
 """Coverage worklist for unbound internal formula cells.
 
-Burndown is a residual report: after semantic authoring, it shows which
-formula nodes are still unbound. Collapsed A1 rectangles are a coverage
+Burndown is a residual report inside the current bound graph closure: after
+semantic authoring, it shows which formula nodes already on that graph are
+still unbound. It is not a full workbook walk. Empty bindings yield an empty
+graph and a zero unbound count. Collapsed A1 rectangles are a coverage
 worklist, not candidate bindings to stamp as YAML.
 """
 
@@ -72,6 +74,7 @@ class BindingBurndownReport:
     collapsed_layout_hints: tuple[LayoutHint, ...]
     sheets: tuple[BurndownSheetSummary, ...]
     rows: tuple[BurndownRow, ...]
+    rows_truncated: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping of this report."""
@@ -83,6 +86,7 @@ class BindingBurndownReport:
             "collapsed_layout_hints": list(self.collapsed_layout_hints),
             "sheets": [sheet.to_dict() for sheet in self.sheets],
             "rows": [row.to_dict() for row in self.rows],
+            "rows_truncated": self.rows_truncated,
         }
 
 
@@ -309,11 +313,13 @@ def internal_binding_burndown(
         )
     )
     rows: list[BurndownRow] = []
+    rows_truncated = False
     for sheet, sheet_rows in sorted(grouped.items()):
         if per_sheet is not None and sheet != per_sheet:
             continue
         for printed, row in enumerate(sorted(sheet_rows)):
             if max_rows is not None and printed >= max_rows:
+                rows_truncated = True
                 break
             columns = sheet_rows[row]
             spans = contiguous_column_ranges(columns)
@@ -334,6 +340,7 @@ def internal_binding_burndown(
         collapsed_layout_hints=tuple(layout_hint_for_range(item) for item in collapsed),
         sheets=sheets,
         rows=tuple(rows),
+        rows_truncated=rows_truncated,
     )
 
 
@@ -341,6 +348,8 @@ def format_burndown_report(report: BindingBurndownReport) -> list[str]:
     """Render a coverage worklist as stable, human-readable lines."""
     lines = [
         "Internal-binding coverage worklist (not a generator)",
+        "Scope: residual formula nodes in the current bound graph closure, "
+        "not a full workbook walk",
         f"Formula nodes: {report.formula_node_count}",
         f"Unbound internal formula cells: {report.unbound_count}",
         f"Collapsed A1 ranges: {len(report.collapsed_ranges)}",
@@ -363,4 +372,6 @@ def format_burndown_report(report: BindingBurndownReport) -> list[str]:
             lines.append(f"== {row.sheet} ==")
             current_sheet = row.sheet
         lines.append(f"  row {row.row}: {row.spans}  [hint: {row.layout_hint}]")
+    if report.rows_truncated:
+        lines.append("  ... (truncated)")
     return lines

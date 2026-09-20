@@ -47,21 +47,31 @@ Tier-1 findings:
 
 ## `bindings burndown`
 
-Coverage residual: formula nodes not covered by input, output, or internal
-bindings (optional `--exempt` file of reviewed addresses). Prints formula-node
-count, unbound count, collapsed A1 rectangles, per-sheet totals, and weak
-layout **hints** (`scalar` / `series` / `matrix`).
+Coverage residual **inside the current bound graph closure**: formula nodes on
+the graph built from bound `data_range` targets that are not covered by input,
+output, or internal bindings (optional `--exempt` file of reviewed addresses).
+This is **not** a full workbook walk. Empty shards mean an empty graph and a
+zero unbound count.
+
+Prints formula-node count, unbound count, collapsed A1 rectangles, per-sheet
+totals, and weak layout **hints** (`scalar` / `series` / `matrix`).
 
 Those ranges are a **coverage worklist**, not candidate bindings. Do not emit
 one YAML series per printed row.
 
-`--strict` exits 1 when unbound cells remain.
+`--strict` exits 1 when unbound cells remain. `--max-rows` limits printed row
+detail and appends `... (truncated)` when it cuts off.
 
 ## `bindings upsert`
 
 Surgical write of **one** series after schema, id, occupancy, shard, and
-resolution checks. Use `--replace` to update an existing id. Never a catalog
-overwrite of four files.
+resolution checks against a temporary copy. The destination tree is written
+only when those checks succeed. Use `--replace` to update an existing id.
+Never a catalog overwrite of four files.
+
+Library `upsert_series_binding(..., use_cached_dynamic_refs=True)` matches
+`validate_bindings_workbook`. The CLI flag `--use-cached-dynamic-refs` defaults
+to False, like the other `bindings` commands.
 
 Agents may write a workbook-specific loop that calls upsert many times for
 semantic families. That is not a geometry dump.

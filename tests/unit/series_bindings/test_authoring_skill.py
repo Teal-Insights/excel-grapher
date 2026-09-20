@@ -1,7 +1,8 @@
-"""Tests for the packaged author-bindings agent skill."""
+"""Tests for the author-bindings agent skill artifact."""
 
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import yaml
@@ -10,10 +11,14 @@ from excel_grapher.series_bindings.versions import CURRENT_SCHEMA_VERSION
 from excel_grapher.skills import author_bindings_skill_dir
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_CANONICAL = _REPO_ROOT / "excel_grapher" / "skills" / "author-bindings"
-_COPIES = (
-    _REPO_ROOT / "skills" / "author-bindings",
-    _REPO_ROOT / ".cursor" / "skills" / "author-bindings",
+_CANONICAL = _REPO_ROOT / "skills" / "author-bindings"
+_CURSOR_COPY = _REPO_ROOT / ".cursor" / "skills" / "author-bindings"
+_EXTRA_PACKAGE_COPY = (
+    _REPO_ROOT
+    / "packages"
+    / "excel-grapher-author-bindings"
+    / "excel_grapher_author_bindings"
+    / "author-bindings"
 )
 
 
@@ -25,18 +30,30 @@ def _skill_files(root: Path) -> dict[str, str]:
     return files
 
 
-def test_author_bindings_skill_dir_matches_package_copy() -> None:
-    packaged = author_bindings_skill_dir()
-    assert packaged.is_dir()
-    assert (packaged / "SKILL.md").is_file()
-    assert _skill_files(packaged) == _skill_files(_CANONICAL)
+def _sync_skill_tree(source: Path, dest: Path) -> None:
+    if dest.exists():
+        shutil.rmtree(dest)
+    shutil.copytree(source, dest)
 
 
-def test_skill_copies_stay_in_sync() -> None:
-    canonical = _skill_files(_CANONICAL)
-    assert canonical
-    for copy in _COPIES:
-        assert _skill_files(copy) == canonical
+def test_generate_agent_facing_skill_copies() -> None:
+    for dest in (_CURSOR_COPY, _EXTRA_PACKAGE_COPY):
+        _sync_skill_tree(_CANONICAL, dest)
+        assert _skill_files(dest) == _skill_files(_CANONICAL)
+
+
+def test_library_package_does_not_ship_skill_markdown() -> None:
+    import excel_grapher.skills as skills_pkg
+
+    packaged = Path(skills_pkg.__file__).resolve().parent / "author-bindings"
+    assert not (packaged / "SKILL.md").is_file()
+
+
+def test_author_bindings_skill_dir_uses_as_file_context() -> None:
+    with author_bindings_skill_dir() as packaged:
+        assert packaged.is_dir()
+        assert (packaged / "SKILL.md").is_file()
+        assert _skill_files(packaged) == _skill_files(_CANONICAL)
 
 
 def test_skill_documents_authoring_loop_without_tiny_dsa() -> None:
@@ -57,6 +74,8 @@ def test_skill_documents_authoring_loop_without_tiny_dsa() -> None:
     assert "matrix" in lowered
     assert "semantic family" in lowered
     assert "coverage worklist" in lowered
+    assert "bound closure" in lowered or "bound graph closure" in lowered
+    assert "full workbook walk" in lowered
     assert "upsert" in lowered
     assert "tiny dsa" not in lowered
     assert "tiny-dsa" not in lowered
@@ -91,3 +110,9 @@ def test_catalog_example_is_pedagogical_not_an_emitter_input() -> None:
         assert isinstance(example[direction]["series"], list)
     skill = (_CANONICAL / "SKILL.md").read_text(encoding="utf-8")
     assert "not an input to a generator" in skill.lower() or "pedagogical" in skill.lower()
+
+
+def test_sdist_includes_author_bindings_skill() -> None:
+    pyproject = (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    assert "skills/author-bindings" in pyproject
+    assert "excel-grapher-author-bindings" in pyproject

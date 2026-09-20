@@ -8,6 +8,7 @@ from excel_grapher.series_bindings.burndown import (
     collapse_unbound_cells_to_ranges,
     contiguous_column_ranges,
     find_unbound_internal_formula_cells,
+    format_burndown_report,
     format_row_column_spans,
     group_unbound_cells_by_sheet_row,
     internal_binding_burndown,
@@ -156,3 +157,19 @@ def test_collapse_two_dimensional_block_hints_matrix() -> None:
     from excel_grapher.series_bindings.burndown import layout_hint_for_range
 
     assert layout_hint_for_range(ranges[0]) == "matrix"
+
+
+def test_burndown_max_rows_marks_truncation(tmp_path: Path) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx", extra_engine_row=True)
+    inputs, result_a, result_b = public_io_series()
+    bindings_dir = write_shards(
+        tmp_path / "bindings",
+        inputs=[inputs],
+        outputs=[result_a, result_b],
+    )
+    result = validate_bindings_workbook(workbook, bindings_dir)
+    report = internal_binding_burndown(result["graph"], result["bindings"], max_rows=0)
+    assert report.rows_truncated is True
+    rendered = "\n".join(format_burndown_report(report))
+    assert "... (truncated)" in rendered
+    assert "bound graph closure" in rendered.lower() or "bound closure" in rendered.lower()
