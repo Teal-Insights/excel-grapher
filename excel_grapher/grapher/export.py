@@ -20,6 +20,7 @@ from .lightweight_viz import (
     write_web_viz_html,
 )
 from .node import Node, NodeKey, NodeView
+from .series_graph import SeriesGraph
 from .sheet_graph import SheetGraph
 from .subgraph import select_path_induced_subgraph, select_shortest_path_subgraph
 
@@ -64,6 +65,17 @@ def _networkx_value_type(node: Node | NodeView) -> str:
     return "UNKNOWN"
 
 
+def _quotient_node_id(node: object) -> str:
+    """Return the GraphViz/Mermaid/NetworkX id for a quotient-graph node."""
+    series_id = getattr(node, "series_id", None)
+    if isinstance(series_id, str):
+        return series_id
+    name = getattr(node, "name", None)
+    if isinstance(name, str):
+        return name
+    raise TypeError(f"unsupported quotient node type: {type(node)!r}")
+
+
 def _sheet_graph_to_networkx(graph: SheetGraph):
     """Convert a sheet graph to a NetworkX DiGraph of worksheet names."""
     try:
@@ -92,23 +104,57 @@ def _sheet_graph_to_networkx(graph: SheetGraph):
     return G
 
 
+def _series_graph_to_networkx(graph: SeriesGraph):
+    """Convert a series graph to a NetworkX DiGraph of series ids."""
+    try:
+        import networkx as nx
+    except Exception as e:  # pragma: no cover
+        raise ImportError("networkx is not installed; add it to use to_networkx()") from e
+
+    G = nx.DiGraph()
+    for node in graph.nodes:
+        G.add_node(
+            node.series_id,
+            series_id=node.series_id,
+            direction=node.direction,
+            layout=node.layout,
+            sheet=node.sheet,
+            cell_count=node.cell_count,
+            formula_count=node.formula_count,
+            leaf_count=node.leaf_count,
+            label=node.series_id,
+        )
+    for edge in graph.edges:
+        G.add_edge(
+            edge.source,
+            edge.target,
+            weight=edge.edge_count,
+            edge_count=edge.edge_count,
+            guarded_count=edge.guarded_count,
+        )
+    return G
+
+
 def to_networkx(
-    graph: DependencyGraph | GraphReadView | SheetGraph,
+    graph: DependencyGraph | GraphReadView | SheetGraph | SeriesGraph,
     *,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ):
-    """Convert a dependency graph or sheet graph to a NetworkX DiGraph.
+    """Convert a dependency, sheet, or series graph to a NetworkX DiGraph.
 
     Accepts `DependencyGraph`, any graph-like object with node iteration,
     dependency lookup, and edge attributes (for example `ProjectionResult`),
-    or a `SheetGraph` from `to_sheet_graph`.
+    a `SheetGraph` from `to_sheet_graph`, or a `SeriesGraph` from
+    `to_series_graph`.
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.
     """
     if isinstance(graph, SheetGraph):
         return _sheet_graph_to_networkx(graph)
+    if isinstance(graph, SeriesGraph):
+        return _series_graph_to_networkx(graph)
 
     validate_max_formula_length(max_formula_length)
 
@@ -158,11 +204,16 @@ def to_networkx(
     return G
 
 
-def _sheet_graph_to_graphviz(graph: SheetGraph, *, rankdir: str) -> str:
-    """Render a sheet graph as GraphViz DOT."""
-    lines: list[str] = ["digraph sheet_dependencies {", f"  rankdir={_dot_escape(rankdir)};"]
+def _quotient_graph_to_graphviz(
+    graph: SheetGraph | SeriesGraph,
+    *,
+    rankdir: str,
+    graph_name: str,
+) -> str:
+    """Render a sheet or series quotient as GraphViz DOT."""
+    lines: list[str] = [f"digraph {graph_name} {{", f"  rankdir={_dot_escape(rankdir)};"]
     for node in graph.nodes:
-        name = _dot_escape(node.name)
+        name = _dot_escape(_quotient_node_id(node))
         lines.append(f'  "{name}" [label="{name}"];')
     for edge in graph.edges:
         src = _dot_escape(edge.source)
@@ -177,7 +228,7 @@ def _sheet_graph_to_graphviz(graph: SheetGraph, *, rankdir: str) -> str:
 
 
 def to_graphviz(
-    graph: DependencyGraph | SheetGraph,
+    graph: DependencyGraph | SheetGraph | SeriesGraph,
     *,
     label_fn: Callable[[NodeKey, Node | NodeView], str] | None = None,
     highlight: set[NodeKey] | None = None,
@@ -185,14 +236,16 @@ def to_graphviz(
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ) -> str:
-    """Render a cell graph or `SheetGraph` as GraphViz DOT.
+    """Render a cell graph, `SheetGraph`, or `SeriesGraph` as GraphViz DOT.
 
-    Formula-label options apply to cell graphs. Sheet graphs emit one node
-    per worksheet and label each consolidated edge with its cell-edge count.
-    Fully guarded sheet edges are dashed.
+    Formula-label options apply to cell graphs. Sheet and series graphs emit
+    one node per worksheet or bound series and label each consolidated edge
+    with its cell-edge count. Fully guarded quotient edges are dashed.
     """
     if isinstance(graph, SheetGraph):
-        return _sheet_graph_to_graphviz(graph, rankdir=rankdir)
+        return _quotient_graph_to_graphviz(graph, rankdir=rankdir, graph_name="sheet_dependencies")
+    if isinstance(graph, SeriesGraph):
+        return _quotient_graph_to_graphviz(graph, rankdir=rankdir, graph_name="series_dependencies")
 
     validate_max_formula_length(max_formula_length)
 
@@ -250,18 +303,19 @@ def _escape_mermaid_label(label: str) -> str:
     return label.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def _sheet_graph_to_mermaid(graph: SheetGraph, *, max_nodes: int) -> str:
-    """Render a sheet graph as a Mermaid flowchart."""
+def _quotient_graph_to_mermaid(graph: SheetGraph | SeriesGraph, *, max_nodes: int) -> str:
+    """Render a sheet or series quotient as a Mermaid flowchart."""
     lines: list[str] = ["flowchart TD"]
     nodes = graph.nodes[: max_nodes if max_nodes > 0 else 0]
-    node_names = {node.name for node in nodes}
+    node_ids = {_quotient_node_id(node) for node in nodes}
     for node in nodes:
-        label = _escape_mermaid_label(node.name)
-        lines.append(f'  {_safe_mermaid_id(node.name)}["{label}"]')
+        node_id = _quotient_node_id(node)
+        label = _escape_mermaid_label(node_id)
+        lines.append(f'  {_safe_mermaid_id(node_id)}["{label}"]')
     if len(graph.nodes) > len(nodes):
         lines.append(f"  truncated[[...{len(graph.nodes) - len(nodes)} more nodes]]")
     for edge in graph.edges:
-        if edge.source not in node_names or edge.target not in node_names:
+        if edge.source not in node_ids or edge.target not in node_ids:
             continue
         src = _safe_mermaid_id(edge.source)
         dst = _safe_mermaid_id(edge.target)
@@ -274,21 +328,21 @@ def _sheet_graph_to_mermaid(graph: SheetGraph, *, max_nodes: int) -> str:
 
 
 def to_mermaid(
-    graph: DependencyGraph | SheetGraph,
+    graph: DependencyGraph | SheetGraph | SeriesGraph,
     *,
     label_fn: Callable[[NodeKey, Node | NodeView], str] | None = None,
     max_nodes: int = 100,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ) -> str:
-    """Render a cell graph or `SheetGraph` as a Mermaid flowchart.
+    """Render a cell graph, `SheetGraph`, or `SeriesGraph` as a Mermaid flowchart.
 
-    Formula-label options apply to cell graphs. Sheet graphs emit one node
-    per worksheet and label each consolidated edge with its cell-edge count.
-    Fully guarded sheet edges use a dashed arrow.
+    Formula-label options apply to cell graphs. Sheet and series graphs emit
+    one node per worksheet or bound series and label each consolidated edge
+    with its cell-edge count. Fully guarded quotient edges use a dashed arrow.
     """
-    if isinstance(graph, SheetGraph):
-        return _sheet_graph_to_mermaid(graph, max_nodes=max_nodes)
+    if isinstance(graph, (SheetGraph, SeriesGraph)):
+        return _quotient_graph_to_mermaid(graph, max_nodes=max_nodes)
 
     validate_max_formula_length(max_formula_length)
 
@@ -343,6 +397,7 @@ __all__ = [
     "select_path_induced_subgraph",
     "select_shortest_path_subgraph",
     "SheetGraph",
+    "SeriesGraph",
     "to_graphviz",
     "to_mermaid",
     "to_networkx",

@@ -12,7 +12,7 @@ from .evaluator import (
     ParseError,
     XlError,
 )
-from .exporter import CodeGenerator, to_web_viz_payload
+from .exporter import CodeGenerator, to_series_graph, to_web_viz_payload
 from .grapher import (
     GRAPH_CACHE_SCHEMA_VERSION,
     And,
@@ -45,6 +45,9 @@ from .grapher import (
     Or,
     RealBetween,
     RealIntervalDomain,
+    SeriesGraph,
+    SeriesGraphEdge,
+    SeriesGraphNode,
     SheetGraph,
     SheetGraphEdge,
     SheetGraphNode,
@@ -147,6 +150,9 @@ __all__ = [
     "LightweightVizPayload",
     "select_path_induced_subgraph",
     "select_shortest_path_subgraph",
+    "SeriesGraph",
+    "SeriesGraphEdge",
+    "SeriesGraphNode",
     "SheetGraph",
     "SheetGraphEdge",
     "SheetGraphNode",
@@ -154,6 +160,7 @@ __all__ = [
     "to_web_viz_payload",
     "to_mermaid",
     "to_networkx",
+    "to_series_graph",
     "to_sheet_graph",
     "write_lightweight_viz_data",
     "write_web_viz_html",
