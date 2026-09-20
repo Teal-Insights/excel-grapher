@@ -798,6 +798,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.16.0** | `input` no longer requires a setter block. Empty `input: {}` marks an editable series. Package export takes inputs as `compute_*` / `Model` arguments. |
 | **1.17.0** | Series-level `axis_labels` names a one-key series whose evaluated values are the runtime keys of that axis. |
 | **1.18.0** | Series-level `relations` name a partner series (`greater_than` / `not_equal`). The compiler emits `GreaterThanCell` / `NotEqualCell` on each declaring cell, aligned on the shared key. |
+| **1.19.0** | Series-level `domain` (`enum`, `between`, `real_between`, `from_workbook`). `input.domain` is accepted and normalized to that key. `constant` implies `from_workbook`. Compiles to the `CellTypeEnv` dynamic-ref inference consumes. |
 
 ## Runtime axis labels (1.17.0)
 
@@ -858,7 +859,7 @@ A pair of input series that must stay ordered (maturity strictly above grace)
 or unequal (a tenor and its amortization mirror) declare that as a **partner
 series**, not an A1 address. `cell_type_env_from_bindings` expands each
 declaring cell to `GreaterThanCell` / `NotEqualCell` naming the partner cell
-at the same key. Constant series are not pinned from workbook values.
+at the same key. `constant` series pin their cached workbook values (`from_workbook`).
 
 ```yaml
 schema_version: "1.18.0"
@@ -913,10 +914,45 @@ the partner has no unique cell at that key.
 Complementary shards of the same series id must repeat the same `relations`
 list on every shard; omitting it on one shard is a structural merge conflict.
 
-Use `input.domain` until a later schema slice promotes `domain` to series
-level. Series-level `domain` is not accepted on 1.18.0.
+## Cell domains (1.19.0)
 
-## Input domains (1.13.0)
+`domain` is series-level. `input.domain` is still accepted and is copied to
+the series-level key at load time. One declaration feeds `compute_*` argument
+checks and the `CellTypeEnv` dynamic-ref inference consumes.
+
+```yaml
+schema_version: "1.19.0"
+series:
+  - id: shock_year
+    data_range: Inputs!B21
+    input: {}
+    domain: { between: { min: 1, max: 5 } }
+
+  - id: country_profile_names
+    data_range: Inputs!A10:A12
+    constant: {}                       # domain: { from_workbook: true } implied
+
+  - id: engine_year_labels
+    data_range: Engine!C5:G5
+    internal: {}
+    domain: { from_workbook: true }    # pin formula cells to template values
+```
+
+Kinds: `enum`, `between`, `real_between`, plus `from_workbook: true` (each cell
+in the range gets a singleton from the cached value). Exactly one kind per
+`domain`. The constrained range is the series (`data_range` minus
+`exclude_rows` / `exclude_columns`).
+
+Direction defaults: `constant` implies `from_workbook`. `input` uses `domain`,
+else the values of `value_map` (workbook needles; map keys remain the public
+`compute_*` domain). `internal`, `output`, and `input.mode: override` contribute
+nothing unless `domain` is explicit.
+
+Build a `DynamicRefConfig` with `DynamicRefConfig.from_bindings(bindings, workbook)`.
+`bindings validate` and `bindings viz` derive that config from the sidecar when
+`--constraints` is absent. When both are given, the union is used with
+`constraints.py` winning per key. `bindings undomained` prints graph leaves that
+still have no domain.
 
 ## Input domains (1.13.0)
 

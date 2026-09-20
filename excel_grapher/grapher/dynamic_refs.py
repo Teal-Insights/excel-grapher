@@ -224,7 +224,8 @@ class DynamicRefLimits:
 class DynamicRefConfig:
     """Configuration for resolving OFFSET/INDIRECT via constraint-based inference.
 
-    Prefer building via `from_constraints`; the constructor is for internal use.
+    Prefer building via `from_constraints` or `from_bindings`; the constructor
+    is for internal use.
     """
 
     cell_type_env: CellTypeEnv
@@ -258,6 +259,30 @@ class DynamicRefConfig:
                 f"constraints_schema must be a mapping, got {type(constraints_schema).__name__!r}"
             )
         env = constraints_to_cell_type_env(constraints_schema, constraints_data)
+        return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
+
+    @classmethod
+    def from_bindings(
+        cls,
+        bindings: Mapping[str, Any],
+        workbook: str | Path,
+        *,
+        limits: DynamicRefLimits | None = None,
+        bindings_path: str | Path | None = None,
+    ) -> DynamicRefConfig:
+        """Build a config whose env is derived from a series binding manifest.
+
+        Args:
+            bindings: Loaded (merged) series binding manifest.
+            workbook: Workbook path; read for range expansion and `from_workbook`.
+            limits: Optional inference limits (defaults to `DynamicRefLimits()`).
+            bindings_path: Sidecar path stored on the domain-index pickle handle.
+        """
+        from excel_grapher.series_bindings.domains import SeriesDomainIndex
+
+        env = SeriesDomainIndex.from_bindings(
+            bindings, workbook=workbook, bindings_path=bindings_path
+        )
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
 
     @classmethod
