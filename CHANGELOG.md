@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.3.0 (2026-09-20)
+
+### Bug Fixes
+
+- **series-bindings**: Fail-closed relation edges and single-pass compile
+  ([#927](https://github.com/Teal-Insights/excel-grapher/pull/927),
+  [`dd7d4bd`](https://github.com/Teal-Insights/excel-grapher/commit/dd7d4bd94857728eb1c5983a9a9e1f9e9938003b))
+
+### Features
+
+- **series-bindings**: Compile key-aligned series relations
+  ([#927](https://github.com/Teal-Insights/excel-grapher/pull/927),
+  [`dd7d4bd`](https://github.com/Teal-Insights/excel-grapher/commit/dd7d4bd94857728eb1c5983a9a9e1f9e9938003b))
+
+
 ## v21.2.0 (2026-09-20)
 
 ### Features
