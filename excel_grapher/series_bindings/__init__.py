@@ -4,6 +4,10 @@ from __future__ import annotations
 
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.constant_series import derive_constant_series
+from excel_grapher.series_bindings.domains import (
+    SeriesRelationError,
+    cell_type_env_from_bindings,
+)
 from excel_grapher.series_bindings.groups import (
     GroupMember,
     GroupNode,
@@ -104,6 +108,7 @@ __all__ = [
     "SeriesResolution",
     "SeriesBindingsLoadError",
     "SeriesBindingsSchemaError",
+    "SeriesRelationError",
     "ValidationIssue",
     "ValidationLevel",
     "ValidationReport",
@@ -114,6 +119,7 @@ __all__ = [
     "GroupsManifest",
     "bound_label_addresses",
     "bindings_canonical_sha256",
+    "cell_type_env_from_bindings",
     "bindings_export_order",
     "bindings_have_groups",
     "group_manifest",

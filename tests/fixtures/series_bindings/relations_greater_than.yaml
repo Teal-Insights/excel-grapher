@@ -1,0 +1,62 @@
+schema_version: "1.18.0"
+workbook: relations_pair.xlsx
+series:
+  - id: input4_grace_period
+    sheet: Inputs
+    data_range: Inputs!G2:G3
+    layout: series
+    input:
+      domain:
+        between:
+          min: 0
+          max: 50
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind:
+          kind: data_cell
+          read: int
+      dimensions:
+        - id: INSTRUMENT
+          concept: INSTRUMENT
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+            normalize: strip
+    key:
+      - INSTRUMENT
+
+  - id: input4_loan_maturity
+    sheet: Inputs
+    data_range: Inputs!H2:H3
+    layout: series
+    input:
+      domain:
+        between:
+          min: 0
+          max: 80
+    relations:
+      - greater_than: input4_grace_period
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind:
+          kind: data_cell
+          read: int
+      dimensions:
+        - id: INSTRUMENT
+          concept: INSTRUMENT
+          role: key
+          scope: cell
+          bind:
+            kind: row_label
+            label_column: A
+            read: string
+            normalize: strip
+    key:
+      - INSTRUMENT

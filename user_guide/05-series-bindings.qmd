@@ -797,6 +797,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.15.0** | Optional `input.value_map` on **scalar input** series: map public `compute_*` values to workbook cell needles (MATCH/IF labels). Distinct from bind kind `value_map`. |
 | **1.16.0** | `input` no longer requires a setter block. Empty `input: {}` marks an editable series. Package export takes inputs as `compute_*` / `Model` arguments. |
 | **1.17.0** | Series-level `axis_labels` names a one-key series whose evaluated values are the runtime keys of that axis. |
+| **1.18.0** | Series-level `relations` name a partner series (`greater_than` / `not_equal`). The compiler emits `GreaterThanCell` / `NotEqualCell` on each declaring cell, aligned on the shared key. |
 
 ## Runtime axis labels (1.17.0)
 
@@ -850,6 +851,72 @@ set on neither side.
 **Out of scope.** Translated input enums / `value_map` needles; f-string key
 templates over a runtime string axis; host-key remaps over a runtime string
 axis; cross-field key equality between a runtime axis and a static axis.
+
+## Series relations (1.18.0)
+
+A pair of input series that must stay ordered (maturity strictly above grace)
+or unequal (a tenor and its amortization mirror) declare that as a **partner
+series**, not an A1 address. `cell_type_env_from_bindings` expands each
+declaring cell to `GreaterThanCell` / `NotEqualCell` naming the partner cell
+at the same key. Constant series are not pinned from workbook values.
+
+```yaml
+schema_version: "1.18.0"
+series:
+  - id: input4_grace_period
+    sheet: Inputs
+    data_range: Inputs!G2:G3
+    layout: series
+    input:
+      domain: { between: { min: 0, max: 50 } }
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind: {kind: data_cell, read: int}
+      dimensions:
+        - id: INSTRUMENT
+          concept: INSTRUMENT
+          role: key
+          scope: cell
+          bind: {kind: row_label, label_column: A, read: string, normalize: strip}
+    key: [INSTRUMENT]
+
+  - id: input4_loan_maturity
+    sheet: Inputs
+    data_range: Inputs!H2:H3
+    layout: series
+    input:
+      domain: { between: { min: 0, max: 80 } }
+    relations:
+      - greater_than: input4_grace_period
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: int
+        bind: {kind: data_cell, read: int}
+      dimensions:
+        - id: INSTRUMENT
+          concept: INSTRUMENT
+          role: key
+          scope: cell
+          bind: {kind: row_label, label_column: A, read: string, normalize: strip}
+    key: [INSTRUMENT]
+```
+
+Kinds: `greater_than` → `GreaterThanCell`, `not_equal` → `NotEqualCell`.
+Validation requires the partner series to exist, comparable measure dtypes,
+matching key field *names* (order does not matter), no self-partner, and no
+`greater_than` cycles. Expansion fails closed when a key does not resolve or
+the partner has no unique cell at that key.
+
+Complementary shards of the same series id must repeat the same `relations`
+list on every shard; omitting it on one shard is a structural merge conflict.
+
+Use `input.domain` until a later schema slice promotes `domain` to series
+level. Series-level `domain` is not accepted on 1.18.0.
+
+## Input domains (1.13.0)
 
 ## Input domains (1.13.0)
 

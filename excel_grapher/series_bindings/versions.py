@@ -22,6 +22,7 @@ SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset(
         "1.15.0",
         "1.16.0",
         "1.17.0",
+        "1.18.0",
     }
 )
 
