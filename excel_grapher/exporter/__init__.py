@@ -35,6 +35,7 @@ from .semantic_catalog import (
 )
 from .semantic_drilldown import (
     DrilldownCell,
+    DrilldownEdge,
     SeriesDrilldown,
     drilldown_series,
     drilldown_statement,
@@ -77,6 +78,7 @@ __all__ = [
     "SemanticVizPayload",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
     "DrilldownCell",
+    "DrilldownEdge",
     "SeriesDrilldown",
     "StatementGraph",
     "StatementLabels",

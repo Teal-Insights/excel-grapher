@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -26,6 +27,7 @@ def _labelled_a12_bindings() -> dict:
     document["series"][0]["notes"] = "Stock path with mixed member formulas."
     document["series"][0]["sdmx_notes"] = "Illustrative TIME_PERIOD series."
     document["series"][0]["groups"] = [{"path": ["Engine", "Stocks"]}]
+    document["series"][0]["series_context"] = {"SCENARIO": "baseline"}
     for concept in document["concept_scheme"]["concepts"]:
         if concept["id"] == "OBS_VALUE":
             concept["name"] = "Observation value"
@@ -66,6 +68,7 @@ def test_statement_nodes_copy_binding_labels_and_keep_one_shape_each(tmp_path: P
         assert node.labels.measure_name == "Observation value"
         assert node.labels.measure_description == "Measured path value"
         assert node.labels.axis_labels is None
+        assert node.labels.series_context == (("SCENARIO", "baseline"),)
 
 
 def test_payload_json_includes_nested_labels(tmp_path: Path) -> None:
@@ -85,6 +88,7 @@ def test_payload_json_includes_nested_labels(tmp_path: Path) -> None:
         assert labels["compute_name"] == "compute_path"
         assert labels["groups"] == [["Engine", "Stocks"]]
         assert labels["measure_name"] == "Observation value"
+        assert labels["series_context"] == {"SCENARIO": "baseline"}
 
 
 def test_html_viewer_embeds_labels_and_shape_key(tmp_path: Path) -> None:
@@ -116,7 +120,7 @@ def test_remainder_node_has_empty_labels(tmp_path: Path) -> None:
 
 
 def test_drilldown_series_returns_cells_formulas_and_adjacency(tmp_path: Path) -> None:
-    from excel_grapher.exporter.semantic_drilldown import drilldown_series
+    from excel_grapher.exporter import drilldown_series
 
     workbook = _a12_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _labelled_a12_bindings())
@@ -134,17 +138,27 @@ def test_drilldown_series_returns_cells_formulas_and_adjacency(tmp_path: Path) -
     consumers = {edge.consumer_cell for edge in drilldown.edges}
     assert "Engine!B2" in consumers
     assert "Engine!C2" in consumers
+    stmt_pairs = {
+        (edge.consumer_statement_id, edge.producer_statement_id) for edge in drilldown.edges
+    }
+    assert ("path__1", "path__0") in stmt_pairs
+    assert ("path__2", "path__1") in stmt_pairs
     payload = drilldown.to_dict()
+    json.dumps(payload)
     assert payload["series_id"] == "path"
     assert [cell["address"] for cell in payload["cells"]] == [
         "Engine!A2",
         "Engine!B2",
         "Engine!C2",
     ]
+    assert any(
+        edge["consumer_statement_id"] == "path__1" and edge["producer_statement_id"] == "path__0"
+        for edge in payload["edges"]
+    )
 
 
 def test_drilldown_statement_is_a_subset_of_the_series(tmp_path: Path) -> None:
-    from excel_grapher.exporter.semantic_drilldown import drilldown_series, drilldown_statement
+    from excel_grapher.exporter import drilldown_series, drilldown_statement
 
     workbook = _a12_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _labelled_a12_bindings())
@@ -157,10 +171,14 @@ def test_drilldown_statement_is_a_subset_of_the_series(tmp_path: Path) -> None:
     assert all(
         edge.consumer_cell == "Engine!B2" or edge.producer_cell == "Engine!B2" for edge in one.edges
     )
+    assert all(
+        edge.consumer_statement_id == "path__1" or edge.producer_statement_id == "path__1"
+        for edge in one.edges
+    )
 
 
 def test_drilldown_unknown_series_fails_closed(tmp_path: Path) -> None:
-    from excel_grapher.exporter.semantic_drilldown import drilldown_series, drilldown_statement
+    from excel_grapher.exporter import drilldown_series, drilldown_statement
 
     workbook = _a12_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _a12_bindings())
@@ -168,10 +186,12 @@ def test_drilldown_unknown_series_fails_closed(tmp_path: Path) -> None:
         drilldown_series(view, graph, "missing")
     with pytest.raises(SemanticCatalogError, match="unknown statement"):
         drilldown_statement(view, graph, "missing")
+    with pytest.raises(SemanticCatalogError, match="unknown statement"):
+        drilldown_statement(view, graph, "__unbound__")
 
 
 def test_zipper_drilldown_keeps_cross_series_neighbors(tmp_path: Path) -> None:
-    from excel_grapher.exporter.semantic_drilldown import drilldown_series
+    from excel_grapher.exporter import drilldown_series
 
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _labelled_zipper_bindings())
@@ -182,11 +202,19 @@ def test_zipper_drilldown_keeps_cross_series_neighbors(tmp_path: Path) -> None:
     pairs = {(edge.consumer_id, edge.producer_id, edge.access) for edge in debt.edges}
     assert ("debt", "adjustment", "identity") in pairs
     assert any(consumer == "adjustment" and producer == "debt" for consumer, producer, _ in pairs)
+    stmt_pairs = {
+        (edge.consumer_statement_id, edge.producer_statement_id, edge.access) for edge in debt.edges
+    }
+    assert ("debt__1", "adjustment", "identity") in stmt_pairs
+    assert any(
+        consumer == "adjustment" and producer is not None and producer.startswith("debt")
+        for consumer, producer, _access in stmt_pairs
+    )
 
 
 def test_statement_graph_to_networkx_is_a_multidigraph(tmp_path: Path) -> None:
     pytest.importorskip("networkx")
-    from excel_grapher.exporter.semantic_graph import statement_graph_to_networkx
+    from excel_grapher.exporter import statement_graph_to_networkx
 
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _labelled_zipper_bindings())
@@ -203,6 +231,7 @@ def test_statement_graph_to_networkx_is_a_multidigraph(tmp_path: Path) -> None:
     ]
     assert debt_nodes
     assert nx_graph.nodes[debt_nodes[0]]["notes"] == "Debt stock zipper."
+    assert nx_graph.nodes[debt_nodes[0]]["representative_cell"]
     assert "formula" not in nx_graph.nodes[debt_nodes[0]]
     accesses = {
         data["access"]
@@ -211,14 +240,63 @@ def test_statement_graph_to_networkx_is_a_multidigraph(tmp_path: Path) -> None:
     }
     assert "identity" in accesses
     assert "shift" in accesses
+    _src, _dst, sample = next(iter(nx_graph.edges(data=True)))
+    assert "partitions" in sample
+    assert "representative_consumer_cell" in sample
+    assert "representative_producer_cell" in sample
     method_graph = statement_graph.to_networkx()
     assert method_graph.number_of_nodes() == nx_graph.number_of_nodes()
     assert method_graph.number_of_edges() == nx_graph.number_of_edges()
 
 
+def test_grapher_to_networkx_rejects_statement_graphs(tmp_path: Path) -> None:
+    from excel_grapher.exporter import drilldown_series
+    from excel_grapher.grapher import to_networkx
+
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _labelled_zipper_bindings())
+    statement_graph = build_statement_graph(view, graph)
+    with pytest.raises(TypeError, match="statement_graph_to_networkx"):
+        to_networkx(statement_graph)
+    with pytest.raises(TypeError, match="SeriesDrilldown"):
+        to_networkx(drilldown_series(view, graph, "debt"))
+
+
+def test_remainder_drilldown_returns_unbound_cells(tmp_path: Path) -> None:
+    from excel_grapher.exporter import drilldown_statement
+    from excel_grapher.grapher.node import make_cell_node
+
+    workbook = _a12_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _labelled_a12_bindings())
+    graph.add_node(make_cell_node("Engine", "Z", 99, value=1, is_leaf=True))
+    remainder = drilldown_statement(view, graph, "__unbound__")
+    assert remainder.statement_id == "__unbound__"
+    assert "Engine!Z99" in {cell.address for cell in remainder.cells}
+    assert remainder.edges == ()
+    json.dumps(remainder.to_dict())
+
+
+def test_drilldown_to_dict_rejects_non_json_values() -> None:
+    from excel_grapher.exporter import DrilldownCell
+
+    cell = DrilldownCell(
+        address="Engine!A1",
+        series_id="path",
+        statement_id="path",
+        shape_key=None,
+        index=0,
+        formula=None,
+        value=object(),
+        key=(),
+        in_series=True,
+    )
+    with pytest.raises(TypeError, match="JSON-serializable"):
+        cell.to_dict()
+
+
 def test_drilldown_to_networkx_includes_formulas(tmp_path: Path) -> None:
     pytest.importorskip("networkx")
-    from excel_grapher.exporter.semantic_drilldown import drilldown_series
+    from excel_grapher.exporter import drilldown_series
 
     workbook = _a12_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _labelled_a12_bindings())
@@ -229,3 +307,6 @@ def test_drilldown_to_networkx_includes_formulas(tmp_path: Path) -> None:
     assert nx_graph.nodes["Engine!B2"]["formula"]
     assert nx_graph.nodes["Engine!B2"]["in_series"] is True
     assert nx_graph.has_edge("Engine!B2", "Engine!A2")
+    edge_data = next(iter(nx_graph.get_edge_data("Engine!B2", "Engine!A2").values()))
+    assert edge_data["consumer_statement_id"] == "path__1"
+    assert edge_data["producer_statement_id"] == "path__0"

@@ -51,6 +51,7 @@ class StatementLabels:
     measure_name: str | None = None
     measure_description: str | None = None
     axis_labels: str | None = None
+    series_context: tuple[tuple[str, Scalar], ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping of label fields."""
@@ -63,6 +64,7 @@ class StatementLabels:
             "measure_name": self.measure_name,
             "measure_description": self.measure_description,
             "axis_labels": self.axis_labels,
+            "series_context": {name: jsonable_scalar(value) for name, value in self.series_context},
         }
 
 
@@ -95,6 +97,13 @@ def _measure_concept_id(raw: Mapping[str, Any]) -> str | None:
     return str(measure["concept"])
 
 
+def _context_items(raw: Mapping[str, Any]) -> tuple[tuple[str, Scalar], ...]:
+    context = raw.get("series_context")
+    if not isinstance(context, dict):
+        return ()
+    return tuple((str(name), value) for name, value in context.items())
+
+
 def statement_labels_for(
     series: BoundSeries,
     concepts: Mapping[str, tuple[str | None, str | None]],
@@ -112,6 +121,7 @@ def statement_labels_for(
         measure_name=name,
         measure_description=description,
         axis_labels=series.axis_labels,
+        series_context=_context_items(raw),
     )
 
 
@@ -208,13 +218,13 @@ def _cell_to_statement(catalog: SeriesCatalog) -> dict[CanonicalAddress, str]:
 
 def _statement_nodes(
     catalog: SeriesCatalog,
-    concepts: Mapping[str, tuple[str | None, str | None]],
+    series_labels: Mapping[str, StatementLabels],
 ) -> dict[str, StatementNode]:
     """Return statement nodes keyed by statement id, in bindings order."""
     nodes: dict[str, StatementNode] = {}
     for series_id in catalog.order:
         series = catalog.get(series_id)
-        labels = statement_labels_for(series, concepts)
+        labels = series_labels.get(series_id, EMPTY_STATEMENT_LABELS)
         for stmt in series.statements:
             nodes[stmt.statement_id] = StatementNode(
                 statement_id=stmt.statement_id,
@@ -437,7 +447,7 @@ def build_statement_graph(
         series_id: statement_labels_for(catalog.get(series_id), view.concepts)
         for series_id in catalog.order
     }
-    nodes = _statement_nodes(catalog, view.concepts)
+    nodes = _statement_nodes(catalog, series_labels)
     for edge in view.edges.edges:
         consumer_series = catalog.series_for(edge.consumer_cell)
         producer_series = catalog.series_for(edge.producer_cell)
@@ -515,6 +525,21 @@ def jsonable_scalar(value: Scalar) -> Any:
     return value
 
 
+def jsonable_cell_value(value: object) -> object:
+    """Return a JSON-serializable form of a cached cell value.
+
+    Raises:
+        TypeError: If `value` is not `None`, a JSON scalar, or `datetime`.
+    """
+    if value is None or isinstance(value, (bool, str, float)):
+        return value
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, datetime):
+        return value.isoformat()
+    raise TypeError(f"cell value is not JSON-serializable: {type(value).__name__}")
+
+
 def _bundle_edge_key(bundle: StatementBundle) -> str:
     return f"{bundle.access}:{bundle.distance}:{bundle.coeff}:{bundle.offset}:{int(bundle.guarded)}"
 
@@ -522,10 +547,11 @@ def _bundle_edge_key(bundle: StatementBundle) -> str:
 def statement_graph_to_networkx(graph: StatementGraph):
     """Convert a statement graph to a NetworkX MultiDiGraph.
 
-    Nodes are statement ids. Binding labels and `shape_key` are node
-    attributes; formula text is not. Bundles become directed multi-edges
-    `consumer -> producer` (depends-on), keyed by access class, distance,
-    affine coefficients, and guarded status.
+    Nodes are statement ids. Binding labels, `shape_key`, and a
+    `representative_cell` are node attributes; formula text is not. Bundles
+    become directed multi-edges `consumer -> producer` (depends-on), keyed by
+    access class, distance, affine coefficients, and guarded status. Edge
+    attributes include partition keys and representative instance cells.
 
     Raises:
         ImportError: If NetworkX is not installed.
@@ -551,6 +577,7 @@ def statement_graph_to_networkx(graph: StatementGraph):
             "rank": graph.ranks[index],
             "x": graph.positions[index][0],
             "y": graph.positions[index][1],
+            "representative_cell": node.cells[0] if node.cells else None,
         }
         attrs.update(node.labels.to_dict())
         nx_graph.add_node(node.statement_id, **attrs)
@@ -566,6 +593,11 @@ def statement_graph_to_networkx(graph: StatementGraph):
             guarded=bundle.guarded,
             instance_edge_count=bundle.instance_edge_count,
             discharged=bundle.distance > 0 or bundle.access == "shift",
+            partitions=tuple(
+                tuple(jsonable_scalar(value) for value in part) for part in bundle.partitions
+            ),
+            representative_consumer_cell=bundle.representative_consumer_cell,
+            representative_producer_cell=bundle.representative_producer_cell,
         )
     return nx_graph
 
@@ -580,6 +612,7 @@ __all__ = [
     "StatementLabels",
     "StatementNode",
     "build_statement_graph",
+    "jsonable_cell_value",
     "jsonable_scalar",
     "statement_graph_to_networkx",
     "statement_labels_for",
