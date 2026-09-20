@@ -53,9 +53,6 @@ uv add "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-gra
 
 # With all optional dependencies (includes `fast`)
 uv add "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
-
-# Author-bindings agent skill (separate distribution; not in the library wheel)
-uv add "excel-grapher[skills] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
 
 **Using `pip`:**
@@ -67,14 +64,24 @@ pip install git+https://github.com/Teal-Insights/excel-grapher
 pip install "excel-grapher[fast] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
-
-# Author-bindings agent skill (separate distribution):
-pip install "excel-grapher[skills] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
 
 The default install is correct without NumPy. Install the **`fast`** extra when
 evaluating large workbooks and you want vectorized operator / `SUMPRODUCT`
 acceleration. Exported standalone code stays NumPy-free either way.
+
+The author-bindings agent skill is **not** in the library wheel. Agents load a
+copied folder, not a Python extra. From a git clone or the `excel-grapher` sdist:
+
+```bash
+mkdir -p .agents/skills
+cp -R skills/author-bindings .agents/skills/author-bindings
+```
+
+Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
+`.claude/skills/author-bindings`. User-level installs go under
+`~/.agents/skills/author-bindings`. The optional
+`excel-grapher-author-bindings` package is only a file source for that copy.
 
 ---
 

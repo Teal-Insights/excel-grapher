@@ -12,6 +12,7 @@ from excel_grapher.skills import author_bindings_skill_dir
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
 _CANONICAL = _REPO_ROOT / "skills" / "author-bindings"
+_AGENTS_COPY = _REPO_ROOT / ".agents" / "skills" / "author-bindings"
 _CURSOR_COPY = _REPO_ROOT / ".cursor" / "skills" / "author-bindings"
 _EXTRA_PACKAGE_COPY = (
     _REPO_ROOT
@@ -37,9 +38,28 @@ def _sync_skill_tree(source: Path, dest: Path) -> None:
 
 
 def test_generate_agent_facing_skill_copies() -> None:
-    for dest in (_CURSOR_COPY, _EXTRA_PACKAGE_COPY):
+    for dest in (_AGENTS_COPY, _CURSOR_COPY, _EXTRA_PACKAGE_COPY):
         _sync_skill_tree(_CANONICAL, dest)
         assert _skill_files(dest) == _skill_files(_CANONICAL)
+
+
+def test_skill_install_is_copy_into_agents_skills() -> None:
+    from excel_grapher.skills import _INSTALL_HINT
+
+    skill = (_CANONICAL / "SKILL.md").read_text(encoding="utf-8")
+    guide = (_REPO_ROOT / "user_guide" / "09-binding-authoring.qmd").read_text(encoding="utf-8")
+    extra_readme = (
+        _REPO_ROOT / "packages" / "excel-grapher-author-bindings" / "README.md"
+    ).read_text(encoding="utf-8")
+    root_readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
+    for text in (skill, guide, extra_readme, root_readme, _INSTALL_HINT):
+        assert ".agents/skills/author-bindings" in text
+        assert "uv add excel-grapher --extra skills" not in text
+        assert "excel-grapher[skills]" not in text
+    assert "mkdir -p .agents/skills" in skill
+    assert "cp -R skills/author-bindings .agents/skills/author-bindings" in skill
+    assert "cp -R skills/author-bindings .agents/skills/author-bindings" in guide
+    assert "cp -R skills/author-bindings .agents/skills/author-bindings" in root_readme
 
 
 def test_library_package_does_not_ship_skill_markdown() -> None:

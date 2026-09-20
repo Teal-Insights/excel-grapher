@@ -90,10 +90,17 @@ uv run excel-grapher bindings upsert WORKBOOK --bindings BINDINGS_DIR --series o
 **current bound graph closure** (exit 1 only with `--strict`). It is not a
 sheet-by-sheet walk of every formula in the workbook.
 
-This skill is **not** inside the `excel-grapher` wheel. Install the separate
-`excel-grapher-author-bindings` distribution (`uv add excel-grapher --extra skills`)
-or copy `skills/author-bindings` from the git tree / sdist into
-`.cursor/skills/author-bindings` or Claude's skill path.
+This skill is **not** inside the `excel-grapher` wheel. Agents load a copied
+folder, not a Python extra. From a git clone or the `excel-grapher` sdist:
+
+```bash
+mkdir -p .agents/skills
+cp -R skills/author-bindings .agents/skills/author-bindings
+```
+
+Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
+`.claude/skills/author-bindings`. User-level installs go under
+`~/.agents/skills/author-bindings`.
 
 Thin wrappers: `scripts/audit.sh`, `scripts/burndown.sh`, `scripts/upsert.sh`.
 
