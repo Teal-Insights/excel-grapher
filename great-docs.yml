@@ -98,6 +98,7 @@ reference:
       - exporter.unregister_projection_manifest
       - exporter.WebVizPayload
       - exporter.to_web_viz_payload
+      - exporter.to_series_graph
       - exporter.LAYOUT_FORCEATLAS2
       - exporter.LAYOUT_GRAPHVIZ_DOT
       - exporter.LAYOUT_GRAPHVIZ_SFDP
@@ -284,6 +285,8 @@ reference:
       - to_graphviz
       - to_mermaid
       - to_networkx
+      - to_series_graph
+      - to_sheet_graph
       - to_web_viz_payload
       - trace_dynamic_refs
       - try_load_graph_cache

@@ -40,6 +40,7 @@ from .semantic_viz import (
     to_semantic_viz_payload,
     write_semantic_viz_html,
 )
+from .series_graph import to_series_graph
 from .web_viz_layout import (
     LAYOUT_FORCEATLAS2,
     LAYOUT_GRAPHVIZ_DOT,
@@ -67,6 +68,7 @@ __all__ = [
     "build_statement_graph",
     "load_semantic_catalog",
     "to_semantic_viz_payload",
+    "to_series_graph",
     "write_semantic_viz_html",
     "BaseProjectionManifest",
     "CollapsedGroup",

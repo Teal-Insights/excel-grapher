@@ -82,6 +82,34 @@ nx_sheets = to_networkx(sheets)  # optional: nodes are sheet names, edges carry 
 
 Fully guarded between-sheet bundles render dashed (GraphViz `style=dashed`, Mermaid `-.->`), matching cell-level guarded edges.
 
+### Series graph
+
+`to_series_graph(...)` collapses a cell-level `DependencyGraph` to **one node per bound series**. Cell edges between the same pair of series become a single directed edge whose label is the number of underlying cell edges. Intra-series edges are dropped unless you pass `include_self_loops=True`.
+
+This quotient does **not** compute a schedule ranking. Contracting cells into series can invent cycles even when the cell graph is a DAG (the zipper case: `debt` depends on `adjustment` in the same period, `adjustment` depends on lagged `debt`). Statement-level visualization keeps those directions by residual distance; the series graph keeps the cycle.
+
+Pass the result to `to_graphviz`, `to_mermaid`, or `to_networkx`. Occupancy can come from a `SeriesCatalog`, or from bindings plus a workbook path:
+
+```python
+from excel_grapher.exporter import to_series_graph
+from excel_grapher.grapher import to_graphviz, to_mermaid, to_networkx
+
+series = to_series_graph(g, bindings, workbook="model.xlsx")
+dot = to_graphviz(series, rankdir="LR")
+mm = to_mermaid(series)
+nx_series = to_networkx(series)  # optional: nodes are series ids, edges carry `weight`
+```
+
+When you already have a catalog (for example from statement visualization), collapse occupancy directly:
+
+```python
+from excel_grapher.grapher import to_series_graph
+
+series = to_series_graph(g, catalog)
+```
+
+Fully guarded between-series bundles render dashed, matching sheet-level and cell-level guarded edges.
+
 ### Formula text on nodes
 
 For `to_graphviz`, `to_mermaid`, and `to_networkx`, formula cells get a **second line** in the node label (cell address, then the formula). This is on by default (`include_formula_on_nodes=True`). Set `include_formula_on_nodes=False` to use only the cell address. Long formulas are truncated for display: `max_formula_length` defaults to `120` characters; use `None` for no limit. Truncated text ends with `...`.
