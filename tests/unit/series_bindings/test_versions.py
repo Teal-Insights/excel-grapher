@@ -14,8 +14,20 @@ from excel_grapher.series_bindings import (
     load_series_bindings,
     validate_series_bindings,
 )
-from excel_grapher.series_bindings.versions import SUPPORTED_SCHEMA_VERSIONS
+from excel_grapher.series_bindings.versions import (
+    CURRENT_SCHEMA_VERSION,
+    SUPPORTED_SCHEMA_VERSIONS,
+)
 from tests.paths import SERIES_BINDINGS_FIXTURES as FIXTURES
+
+
+def test_current_schema_version_is_the_latest_supported() -> None:
+    latest = max(
+        SUPPORTED_SCHEMA_VERSIONS,
+        key=lambda version: tuple(int(part) for part in version.split(".")),
+    )
+    assert latest == CURRENT_SCHEMA_VERSION
+    assert CURRENT_SCHEMA_VERSION in SUPPORTED_SCHEMA_VERSIONS
 
 
 def test_supported_schema_versions_match_json_schema_enum() -> None:

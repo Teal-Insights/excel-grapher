@@ -4,8 +4,10 @@ guide-section: "Export & quality"
 ---
 
 The `excel-grapher` command-line tool validates series-binding sidecars against workbooks,
-optionally smoke-tests generated `compute_*` functions, and can write export modules to disk.
-It complements the Python APIs documented in [Series bindings](series-bindings.qmd).
+audits resolution for codegen, prints an internals coverage worklist, optionally
+smoke-tests generated `compute_*` functions, and can write export modules to disk.
+It complements the Python APIs documented in [Series bindings](series-bindings.qmd)
+and the authoring loop in [Authoring series bindings](binding-authoring.qmd).
 
 Run it from the project environment:
 
@@ -13,6 +15,9 @@ Run it from the project environment:
 uv run excel-grapher --help
 uv run excel-grapher bindings --help
 uv run excel-grapher bindings validate --help
+uv run excel-grapher bindings audit --help
+uv run excel-grapher bindings burndown --help
+uv run excel-grapher bindings upsert --help
 ```
 
 When the package is installed, `excel-grapher` is also available as a console script.
@@ -22,6 +27,10 @@ When the package is installed, `excel-grapher` is also available as a console sc
 | Command | Purpose |
 |---------|---------|
 | `bindings validate` | Load a sidecar, build the dependency graph, and validate bindings against the workbook |
+| `bindings audit` | Resolve bindings the way codegen does and fail if resolution is not `ok=True` |
+| `bindings burndown` | Print unbound formula cells as a coverage worklist (not candidate bindings) |
+| `bindings upsert` | Insert or replace one series after fail-closed schema, occupancy, and resolution checks |
+| `bindings viz` | Write a statement-graph HTML visualization from series bindings |
 
 More subcommands may be added over time; `excel-grapher --help` lists what is available in your
 installed version.
@@ -35,7 +44,7 @@ Validate a workbook and its binding sidecar before export or CI.
 ```bash
 excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
   [--smoke-test] [--emit-dir DIR] [--package-name NAME]
-  [--constraints PATH] [--use-cached-dynamic-refs]
+  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
 ```
 
 ### Arguments
@@ -51,6 +60,7 @@ excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
 | `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
 | `--constraints PATH` | Path to a `constraints.py` module exposing `CONSTRAINTS: Mapping[str, type]` (the same shape `corpus.toml` entries point at). Required for workbooks whose `OFFSET` / `INDEX` / `INDIRECT` arguments are not integer literals. |
 | `--use-cached-dynamic-refs` | Resolve those dynamic refs from the workbook's cached values instead of a constraints module. |
+| `--blank-ranges PATH` | Optional Python module exposing `BLANK_RANGES: Sequence[str]` (sheet-qualified rectangles omitted from the graph). |
 
 Validation-only is the default: no code is generated unless you pass `--smoke-test` or `--emit-dir`.
 
@@ -227,5 +237,54 @@ run_binding_checks(
 ```
 
 See [Series bindings](series-bindings.qmd) for manifest authoring, bind kinds, and export
-integration, and [Exporting standalone Python](06-export.qmd) for inverted-tree packages and
-the ctx migration.
+integration, [Authoring series bindings](binding-authoring.qmd) for the agent skill and
+audit/burndown loop, and [Exporting standalone Python](06-export.qmd) for inverted-tree
+packages and the ctx migration.
+
+## `bindings audit`
+
+Resolve input, output, internal, and constant series the same way codegen does.
+`bindings validate` does not require resolution `ok=True`; this command does.
+
+```bash
+excel-grapher bindings audit WORKBOOK [--bindings PATH] [--json]
+  [--direction DIRECTION] [--strict]
+  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+```
+
+Exit `1` on error findings. `--strict` also fails on warnings such as
+`empty_public_series`. Repeat `--direction` to limit the scan
+(`input` / `output` / `internal` / `constant`).
+
+## `bindings burndown`
+
+Print formula nodes not covered by input, output, or internal bindings as a
+**coverage worklist**. Collapsed A1 rectangles include a weak layout hint
+(`scalar`, `series`, or `matrix`). Do not treat each printed range as a series
+to emit.
+
+```bash
+excel-grapher bindings burndown WORKBOOK [--bindings PATH] [--json]
+  [--per-sheet SHEET] [--max-rows N] [--exempt FILE] [--strict]
+  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+```
+
+`--exempt` is a text file of reviewed addresses (one per line; `#` comments
+allowed). `--strict` exits `1` when unbound cells remain.
+
+## `bindings upsert`
+
+Insert or replace **one** series after schema, occupancy, shard, and resolution
+checks. There is no catalog → four-file bulk emitter.
+
+```bash
+excel-grapher bindings upsert WORKBOOK --series SERIES.yaml
+  [--bindings PATH] [--replace]
+  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+```
+
+`SERIES.yaml` is one series mapping, or a document with `series: [one entry]`.
+`--replace` updates an existing id. When `--bindings` is omitted and no
+colocated sidecar exists, the command bootstraps `{stem}.bindings/` with empty
+four-file shards.
+

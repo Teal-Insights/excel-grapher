@@ -1,0 +1,63 @@
+---
+title: "Authoring series bindings"
+guide-section: "Export & quality"
+---
+
+Agents and humans share one fail-closed loop: declare sidecar YAML, then run
+`excel-grapher bindings validate` and `bindings audit` until codegen would
+succeed. `bindings burndown` is a **coverage worklist** for leftover formula
+cells, not a generator of candidate series.
+
+The packaged skill lives at `excel_grapher/skills/author-bindings/` (also
+copied to `.cursor/skills/author-bindings/` in this repository). Downstream
+repos can copy it from an installed excel-grapher:
+
+```python
+from excel_grapher.skills import author_bindings_skill_dir
+
+print(author_bindings_skill_dir())
+```
+
+Schema version for new sidecars comes from the package, not a prompt string:
+
+```python
+from excel_grapher.series_bindings import CURRENT_SCHEMA_VERSION
+```
+
+## What to author
+
+Write four shards (empty `series: []` is fine while bootstrapping):
+
+- `inputs.bindings.yaml` — editable leaves (`input: {}`)
+- `outputs.bindings.yaml` — public `compute_*` functions
+- `internals.bindings.yaml` — formula-cell triangulation (`internal: {}`)
+- `constants.bindings.yaml` — reader-only leaves (`constant: {}`)
+
+Prefer one series per **semantic family**. If rows share a label dimension and
+headers share a key (usually `TIME_PERIOD`), use `layout: matrix`. Do not stamp
+one series per burndown row.
+
+`validate_series_bindings` can look fine while resolution `ok=False`. Codegen
+requires `ok=True`. Sparse `column_header` / `row_label` binds without
+`fill: true` are the usual cause.
+
+## CLI
+
+```bash
+uv run excel-grapher bindings validate WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings audit WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings burndown WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings upsert WORKBOOK --bindings BINDINGS --series one.yaml
+```
+
+- **audit** — codegen-fatal worklist (`bind_resolution_failed`,
+  `partial_bind_failure`, `sparse_label_without_fill`, duplicate formula
+  ownership, empty public series). `--strict` also fails on warnings.
+- **burndown** — unbound formula cells collapsed to A1 rectangles, with weak
+  layout hints. `--strict` fails when anything remains unbound.
+- **upsert** — write **one** series after schema, occupancy, and resolution
+  checks. `--replace` updates an existing id. There is no catalog → four-file
+  bulk emitter.
+
+Full flag reference: [Command-line interface](cli.qmd). Schema and field
+reference: [Series bindings](05-series-bindings.qmd).

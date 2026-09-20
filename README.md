@@ -120,7 +120,9 @@ write_workbook(graph, Path("edited.xlsx"))
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs for **exported**
 code — inverted-tree `compute_*` functions over named tensors and scalars (`as_records` for a Records
 view). Validate sidecars from the shell with
-`excel-grapher bindings validate`. See the
+`excel-grapher bindings validate`. Authoring agents should follow the
+[Authoring series bindings](https://teal-insights.github.io/excel-grapher/user-guide/binding-authoring.html)
+skill and the same `audit` / `burndown` / `upsert` CLI. See the
 [Series bindings guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html)
 and [Code export](https://teal-insights.github.io/excel-grapher/user-guide/export.html) guide.
 
@@ -135,6 +137,7 @@ Detailed documentation lives in the [User Guide](https://teal-insights.github.io
 | Formula evaluation | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/evaluator.html) |
 | End-to-end demo | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/end-to-end-demo.html) |
 | Series bindings | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html) |
+| Authoring bindings | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/binding-authoring.html) |
 | Code export | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/export.html) |
 | Parity testing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/parity-testing.html) |
 | Contributing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/contributing.html) |
