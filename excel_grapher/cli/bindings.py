@@ -399,9 +399,7 @@ def _derive_dynamic_refs(
     if constraints is None:
         return bindings_config if len(bindings_config.cell_type_env) else None
     constraints_config = dynamic_refs_from_path(resolve_constraints_path(workbook, constraints))
-    base = dict(bindings_config.cell_type_env)
-    overlay = dict(constraints_config.cell_type_env)
-    overrides = sorted(key for key in overlay if key in base)
+    merged, overrides = bindings_config.overlay(constraints_config)
     if overrides:
         preview = ", ".join(overrides[:20])
         extra = "" if len(overrides) <= 20 else f" (+{len(overrides) - 20} more)"
@@ -411,8 +409,7 @@ def _derive_dynamic_refs(
             UserWarning,
             stacklevel=2,
         )
-    base.update(overlay)
-    return DynamicRefConfig(cell_type_env=base, limits=constraints_config.limits)
+    return merged
 
 
 def _format_cli_dynamic_ref_error(exc: BaseException) -> str:

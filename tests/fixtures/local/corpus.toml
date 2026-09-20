@@ -1,13 +1,15 @@
 # Manifest for the uncommitted local inverted-tree workbook pool (#656).
 # Workbook paths with source = "committed" are relative to tests/fixtures/.
 # All other paths are relative to tests/fixtures/local/.
+# `constraints` is optional when the sidecar's series `domain` covers every
+# OFFSET / INDEX / INDIRECT leaf. Q-CRAFT and LIC-DSF still need constraints.py
+# until those catalogs bind the remaining keys (issue 924).
 
 [[entry]]
 id = "tiny_dsa"
 source = "committed"
 workbook = "inverted_tree/tiny_dsa/tiny-dsa.xlsx"
 bindings = "inverted_tree/tiny_dsa/bindings"
-constraints = "inverted_tree/tiny_dsa/constraints.py"
 max_cells = 200
 
 [[entry]]

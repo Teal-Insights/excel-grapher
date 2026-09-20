@@ -38,6 +38,16 @@ def test_local_corpus_path_and_manifest() -> None:
     tiny = entries[0]
     assert tiny.workbook.is_file()
     assert tiny.source == "committed"
+    assert tiny.constraints is None
+
+
+def test_tiny_dsa_corpus_builds_from_bindings_without_constraints() -> None:
+    tiny = next(entry for entry in load_corpus_manifest() if entry.id == "tiny_dsa")
+    catalog, _deps, graph = build_corpus_graph(tiny)
+    assert graph.domains is not None
+    assert graph.domain_for("Inputs!B21") is not None
+    assert graph.domain_for("Inputs!B5") is not None
+    assert "shock_year" in catalog.series
 
 
 @pytest.mark.local_corpus

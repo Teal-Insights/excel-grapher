@@ -285,6 +285,25 @@ class DynamicRefConfig:
         )
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
 
+    def overlay(self, other: DynamicRefConfig) -> tuple[DynamicRefConfig, tuple[str, ...]]:
+        """Union this env with `other`; `other` wins per overlapping key.
+
+        Args:
+            other: Config whose cell types replace this env on shared addresses.
+
+        Returns:
+            The merged config (using `other.limits`) and the sorted keys present
+            in both envs.
+        """
+        base = dict(self.cell_type_env)
+        extra = dict(other.cell_type_env)
+        overrides = tuple(sorted(key for key in extra if key in base))
+        base.update(extra)
+        return (
+            DynamicRefConfig(cell_type_env=base, limits=other.limits),
+            overrides,
+        )
+
     @classmethod
     def from_constraints_and_workbook(
         cls,

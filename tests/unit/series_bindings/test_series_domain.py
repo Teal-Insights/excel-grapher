@@ -324,6 +324,39 @@ def test_tiny_dsa_labelled_bindings_compile_to_constraints_py_env() -> None:
     assert compiled == expected
 
 
+def test_input_value_map_needles_compile_when_domain_omitted(tmp_path: Path) -> None:
+    workbook = _write_inputs_workbook(tmp_path / "wb.xlsx", {"B5": "B"})
+    series = _scalar_series(
+        series_id="country_name",
+        data_range="Inputs!B5",
+        dtype="string",
+    )["series"][0]
+    series["input"] = {"value_map": {"Borvelia": "B", "Litellia": "L"}}
+    bindings = validate_bindings_document({"schema_version": "1.19.0", "series": [series]})
+    env = cell_type_env_from_bindings(bindings, workbook=workbook)
+    expected = constraints_to_cell_type_env({"Inputs!B5": Literal["B", "L"]}, {})
+    assert env == expected
+    assert measure_domain_from_series(bindings["series"][0]) == {
+        "enum": frozenset({"Borvelia", "Litellia"})
+    }
+
+
+def test_overlay_constraints_win_per_key(tmp_path: Path) -> None:
+    workbook = _write_inputs_workbook(tmp_path / "wb.xlsx", {"B21": 2, "B22": 3})
+    bindings = validate_bindings_document(_scalar_series(domain={"between": {"min": 1, "max": 5}}))
+    base = DynamicRefConfig.from_bindings(bindings, workbook)
+    overlay = DynamicRefConfig.from_constraints(
+        {"Inputs!B21": Annotated[int, Between(0, 10)], "Inputs!B22": Literal[1, 2, 3]},
+        {},
+    )
+    merged, overrides = base.overlay(overlay)
+    assert overrides == ("Inputs!B21",)
+    interval = merged.cell_type_env["Inputs!B21"].interval
+    assert interval is not None
+    assert (interval.min, interval.max) == (0, 10)
+    assert "Inputs!B22" in merged.cell_type_env
+
+
 def test_from_bindings_matches_compiler(tmp_path: Path) -> None:
     workbook = _write_inputs_workbook(tmp_path / "wb.xlsx", {"B21": 2})
     bindings = validate_bindings_document(_scalar_series(domain={"between": {"min": 1, "max": 5}}))

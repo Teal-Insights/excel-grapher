@@ -951,8 +951,10 @@ nothing unless `domain` is explicit.
 Build a `DynamicRefConfig` with `DynamicRefConfig.from_bindings(bindings, workbook)`.
 `bindings validate` and `bindings viz` derive that config from the sidecar when
 `--constraints` is absent. When both are given, the union is used with
-`constraints.py` winning per key. `bindings undomained` prints graph leaves that
-still have no domain.
+`constraints.py` winning per key. The local corpus manifest (`corpus.toml`)
+treats `constraints` the same way: omit it when the sidecar covers every
+dynamic-ref leaf. `bindings undomained` prints graph leaves that still have no
+domain.
 
 ## Input domains (1.13.0)
 

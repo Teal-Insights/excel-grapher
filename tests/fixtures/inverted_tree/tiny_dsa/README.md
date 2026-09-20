@@ -13,5 +13,7 @@ uv run excel-grapher bindings validate \
   --smoke-test
 ```
 
-`constraints.py` remains the low-level `CONSTRAINTS: Mapping[str, type]` overlay
-used by `corpus.toml` entries and `--constraints`.
+`corpus.toml` omits `constraints` for this entry; graph building derives
+domains from the sidecar. `constraints.py` remains the low-level
+`CONSTRAINTS: Mapping[str, type]` overlay for `--constraints` and for corpus
+entries whose catalogs are not yet complete.
