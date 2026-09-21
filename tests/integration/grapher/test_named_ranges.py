@@ -8,12 +8,15 @@ remain stable for users importing real workbooks.
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Annotated, Literal
 
 import fastpyxl
 import pytest
 from fastpyxl.workbook.defined_name import DefinedName
 
 from excel_grapher import FormulaEvaluator, create_dependency_graph
+from excel_grapher.core.cell_types import RealBetween
+from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.grapher.resolver import build_named_range_map
 
 
@@ -416,3 +419,127 @@ def test_dependency_graph_expands_offset_counta_plus_named_range(tmp_path: Path)
     assert "CPIA!A1:H7" in node.normalized_formula
     deps = graph.get_dependencies("Sheet1!D1")
     assert "CPIA!C2" in deps
+
+
+def _index_offset_named_start_workbook(path: Path) -> None:
+    """INDEX(PREV_DSA, MATCH(...)) where PREV_DSA is OFFSET of named START (#957)."""
+    wb = fastpyxl.Workbook()
+    data = wb.active
+    data.title = "data all"
+    data["A1"] = "code"
+    data["B1"] = "value"
+    data["A2"] = "NFIG_R_GDP"
+    data["B2"] = 1.71
+    wb.defined_names.add(DefinedName(name="START", attr_text="'data all'!$A$1"))
+    wb.defined_names.add(
+        DefinedName(
+            name="PREV_DSA",
+            attr_text="OFFSET(START,0,0,COUNTA('data all'!$A:$A),2)",
+        )
+    )
+    out = wb.create_sheet("Out")
+    out["C1"] = "NFIG_R_GDP"
+    out["A1"] = "=INDEX(PREV_DSA, MATCH(C1, INDEX(PREV_DSA,,1), 0), 2)"
+    wb.save(path)
+    wb.close()
+
+
+def test_named_range_map_resolves_offset_of_named_start_cell(tmp_path: Path) -> None:
+    """OFFSET(START, ..., COUNTA, width) resolves when START is another defined name."""
+    excel_path = tmp_path / "index_offset_named_start.xlsx"
+    _index_offset_named_start_workbook(excel_path)
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.cell_map["START"] == ("data all", "A1")
+    assert maps.range_map["PREV_DSA"] == ("data all", "A1", "B2")
+
+
+def test_named_range_map_resolves_offset_named_start_counta_minus(tmp_path: Path) -> None:
+    """OFFSET(START, ..., COUNTA(col)-1, COUNTA(row)) matches the LIC-DSF PREV_DSA shape."""
+    excel_path = tmp_path / "index_offset_named_start_counta_minus.xlsx"
+    wb = fastpyxl.Workbook()
+    data = wb.active
+    data.title = "data all"
+    data["A1"] = "code"
+    data["B1"] = "value"
+    data["A2"] = "NFIG_R_GDP"
+    data["B2"] = 1.71
+    data["A3"] = "OTHER"
+    data["B3"] = 0.5
+    wb.defined_names.add(DefinedName(name="START", attr_text="'data all'!$A$1"))
+    wb.defined_names.add(
+        DefinedName(
+            name="PREV_DSA",
+            attr_text="OFFSET(START,0,0,COUNTA('data all'!$A:$A)-1,COUNTA('data all'!$2:$2))",
+        )
+    )
+    wb.save(excel_path)
+    wb.close()
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.cell_map["START"] == ("data all", "A1")
+    # COUNTA(A:A)=3 → height 2; COUNTA(row 2)=2 → A1:B2
+    assert maps.range_map["PREV_DSA"] == ("data all", "A1", "B2")
+
+
+def test_named_range_map_resolves_offset_of_offset_named_start(tmp_path: Path) -> None:
+    """OFFSET of a formula name that is itself OFFSET of a named start cell."""
+    excel_path = tmp_path / "offset_of_offset_named_start.xlsx"
+    wb = fastpyxl.Workbook()
+    data = wb.active
+    data.title = "data all"
+    data["A1"] = "code"
+    data["B1"] = "value"
+    data["A2"] = "NFIG_R_GDP"
+    data["B2"] = 1.71
+    wb.defined_names.add(DefinedName(name="START", attr_text="'data all'!$A$1"))
+    wb.defined_names.add(DefinedName(name="ANCHOR", attr_text="OFFSET(START,0,0,1,1)"))
+    wb.defined_names.add(
+        DefinedName(
+            name="PREV_DSA",
+            attr_text="OFFSET(ANCHOR,0,0,COUNTA('data all'!$A:$A),2)",
+        )
+    )
+    wb.save(excel_path)
+    wb.close()
+
+    maps = build_named_range_map(
+        fastpyxl.load_workbook(excel_path, data_only=False, read_only=True)
+    )
+    assert maps.range_map["ANCHOR"] == ("data all", "A1", "A1")
+    assert maps.range_map["PREV_DSA"] == ("data all", "A1", "B2")
+
+
+def test_index_match_over_offset_named_start_extracts(tmp_path: Path) -> None:
+    """INDEX of an OFFSET-defined name extracts once MATCH leaves are constrained."""
+    excel_path = tmp_path / "index_offset_named_start_extract.xlsx"
+    _index_offset_named_start_workbook(excel_path)
+
+    graph = create_dependency_graph(
+        excel_path,
+        targets=["Out!A1"],
+        dynamic_refs=DynamicRefConfig.from_constraints(
+            {
+                "Out!C1": Literal["NFIG_R_GDP"],
+                "'data all'!A1": Literal["code"],
+                "'data all'!A2": Literal["NFIG_R_GDP"],
+                "'data all'!B1": Literal["value"],
+                "'data all'!B2": Annotated[float, RealBetween(0, 10)],
+            }
+        ),
+    )
+    assert graph.named_range_ranges is not None
+    assert graph.named_range_ranges["PREV_DSA"] == ("data all", "A1", "B2")
+    node = graph.get_node("Out!A1")
+    assert node is not None
+    assert node.normalized_formula is not None
+    formula = node.normalized_formula.replace("$", "")
+    assert "PREV_DSA" not in formula
+    assert "'data all'!A1:B2" in formula
+    deps = graph.get_dependencies("Out!A1")
+    assert "Out!C1" in deps
+    assert "'data all'!B2" in deps

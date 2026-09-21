@@ -26,7 +26,10 @@ from excel_grapher.core.formula_ast import (
 from excel_grapher.core.formula_ast import (
     parse as parse_formula_ast,
 )
-from excel_grapher.core.formula_normalization import expand_whole_column_row_for_parse
+from excel_grapher.core.formula_normalization import (
+    expand_defined_names,
+    expand_whole_column_row_for_parse,
+)
 from excel_grapher.core.operators_reference import apply_arithmetic
 from excel_grapher.core.range_shorthand import resolve_whole_column_span, resolve_whole_row_span
 from excel_grapher.core.types import CellValue, ExcelRange, XlError
@@ -367,16 +370,59 @@ def _try_resolve_whole_axis_defined_name(
     return None
 
 
+def _formula_defined_name_body(attr_text: str) -> str:
+    """Strip a leading `=` from a defined-name formula, if present."""
+    body = attr_text.strip()
+    if body.startswith("="):
+        return body[1:].lstrip()
+    return body
+
+
+def _is_offset_or_indirect_defined_name(attr_text: str) -> bool:
+    """Return True when `attr_text` is an OFFSET or INDIRECT formula."""
+    upper = _formula_defined_name_body(attr_text).upper()
+    return upper.startswith(("OFFSET(", "INDIRECT("))
+
+
+def _store_resolved_defined_name(
+    name: str,
+    resolved: tuple[str, str] | tuple[str, str, str],
+    cell_map: dict[str, tuple[str, str]],
+    range_map: dict[str, tuple[str, str, str]],
+) -> None:
+    """Record a resolved defined name as a cell or rectangle."""
+    if len(resolved) == 2:
+        cell_map[name] = (resolved[0], resolved[1])
+    elif len(resolved) == 3:
+        range_map[name] = resolved
+
+
 def _try_resolve_formula_defined_name(
     attr_text: str,
     wb: fastpyxl.Workbook,
+    named_ranges: dict[str, tuple[str, str]] | None = None,
+    named_range_ranges: dict[str, tuple[str, str, str]] | None = None,
 ) -> tuple[str, str, str] | tuple[str, str] | None:
-    """If attr_text is an OFFSET/INDIRECT formula, evaluate to range or cell; else None."""
-    formula = attr_text.strip()
-    if not formula.upper().startswith("OFFSET(") and not formula.upper().startswith("INDIRECT("):
+    """If attr_text is an OFFSET/INDIRECT formula, evaluate to range or cell.
+
+    Already-resolved `named_ranges` / `named_range_ranges` are substituted
+    before parse so `OFFSET(START, ...)` can resolve when `START` is another
+    defined name (cell or rectangle).
+
+    Returns:
+        `(sheet, a1)` or `(sheet, start_a1, end_a1)` when evaluation succeeds,
+        otherwise `None`.
+    """
+    formula = _formula_defined_name_body(attr_text)
+    if not formula.upper().startswith(("OFFSET(", "INDIRECT(")):
         return None
-    if not formula.startswith("="):
-        formula = "=" + formula
+    formula = "=" + formula
+    if named_ranges or named_range_ranges:
+        formula = expand_defined_names(
+            formula,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+        )
     bounds = _sheet_bounds(wb)
     formula = _normalize_formula_for_parse(formula, bounds)
     try:
@@ -412,7 +458,8 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
     - Rectangles: `Sheet1!$A$1:$B$10`
     - Whole-row spans: `Sheet1!$5:$134` / `Sheet1!$5:$5`
     - Whole-column spans: `Sheet1!$A:$C` / `Sheet1!$A:$A`
-    - Evaluated `OFFSET` / `INDIRECT` formulas using workbook values
+    - Evaluated `OFFSET` / `INDIRECT` formulas using workbook values, including
+      `OFFSET` whose base is another already-resolved defined name
 
     Whole-row and whole-column names expand the **implicit** axis against that
     sheet's used range (`Worksheet.max_row` / `max_column`), the same policy as
@@ -426,20 +473,17 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
     cell_map: dict[str, tuple[str, str]] = {}
     range_map: dict[str, tuple[str, str, str]] = {}
     bounds: dict[str, tuple[int, int]] | None = None
+    pending_formulas: list[tuple[str, str]] = []
     for name, defn in wb.defined_names.items():
         attr_text = getattr(defn, "attr_text", None)
         if not isinstance(attr_text, str) or not attr_text:
             continue
         if attr_text.startswith("{") or attr_text.startswith("#") or attr_text.startswith('"'):
             continue
-        if attr_text.strip().upper().startswith(("OFFSET(", "INDIRECT(")):
-            resolved = _try_resolve_formula_defined_name(attr_text, wb)
-            if resolved is not None:
-                if len(resolved) == 2:
-                    cell_map[str(name)] = (resolved[0], resolved[1])
-                elif len(resolved) == 3:
-                    range_map[str(name)] = resolved
-                continue
+        key = str(name)
+        if _is_offset_or_indirect_defined_name(attr_text):
+            pending_formulas.append((key, attr_text))
+            continue
         if "," in attr_text:
             continue
         if ":" in attr_text:
@@ -448,7 +492,7 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
                 sheet_name = m.group("sheet")
                 start = f"{m.group('c1')}{m.group('r1')}"
                 end = f"{m.group('c2')}{m.group('r2')}"
-                range_map[str(name)] = (sheet_name, start, end)
+                range_map[key] = (sheet_name, start, end)
                 continue
             if _WHOLE_ROW_DEFINED_NAME_RE.match(attr_text) or _WHOLE_COL_DEFINED_NAME_RE.match(
                 attr_text
@@ -457,14 +501,13 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
                     bounds = _sheet_bounds(wb)
                 resolved_axis = _try_resolve_whole_axis_defined_name(attr_text, bounds)
                 if resolved_axis is not None:
-                    range_map[str(name)] = resolved_axis
+                    range_map[key] = resolved_axis
                     continue
-            resolved = _try_resolve_formula_defined_name(attr_text, wb)
+            resolved = _try_resolve_formula_defined_name(
+                attr_text, wb, named_ranges=cell_map, named_range_ranges=range_map
+            )
             if resolved is not None:
-                if len(resolved) == 2:
-                    cell_map[str(name)] = (resolved[0], resolved[1])
-                elif len(resolved) == 3:
-                    range_map[str(name)] = resolved
+                _store_resolved_defined_name(key, resolved, cell_map, range_map)
             continue
 
         m = _CELL_DEFINED_NAME_RE.match(attr_text)
@@ -473,5 +516,23 @@ def build_named_range_map(wb: fastpyxl.Workbook) -> NamedRangeMaps:
         sheet_name = m.group(1)
         col = m.group(2)
         row = m.group(3)
-        cell_map[str(name)] = (sheet_name, f"{col}{row}")
+        cell_map[key] = (sheet_name, f"{col}{row}")
+
+    remaining = pending_formulas
+    while remaining:
+        unresolved: list[tuple[str, str]] = []
+        progress = False
+        for key, attr_text in remaining:
+            resolved = _try_resolve_formula_defined_name(
+                attr_text, wb, named_ranges=cell_map, named_range_ranges=range_map
+            )
+            if resolved is None:
+                unresolved.append((key, attr_text))
+                continue
+            _store_resolved_defined_name(key, resolved, cell_map, range_map)
+            progress = True
+        if not progress:
+            break
+        remaining = unresolved
+
     return NamedRangeMaps(cell_map=cell_map, range_map=range_map)
