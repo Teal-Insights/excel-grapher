@@ -242,14 +242,16 @@ def _snapshot_key_uses(source: str, keys: tuple[object, ...]) -> list[str]:
 def test_static_packages_do_not_emit_runtime_axis_machinery(tmp_path: Path) -> None:
     modules = generate_inverted(_lag_workbook(tmp_path), _lag_bindings())
     joined = "\n".join(
-        modules[name] for name in ("api.py", "data.py", "internals.py", "validation.py")
+        modules[name] for name in ("api.py", "model.py", "data.py", "internals.py", "validation.py")
     )
     assert "AxisTemplate" not in joined
     assert "SchemaTemplate" not in joined
     assert "LABELLED_AXES" not in joined
     assert "label_axis" not in modules["internals.py"]
     assert "def cells(self" not in modules["api.py"]
+    assert "def cells(self" not in modules["model.py"]
     assert "if name in {" not in modules["api.py"]
+    assert "if name in {" not in modules["model.py"]
     assert "Keys along" not in modules["api.py"]
 
 
@@ -306,8 +308,8 @@ def test_shift_oracle_moves_keys_and_preserves_positional_values(tmp_path: Path)
     assert tuple(shifted.domain.axes[0].keys) == tuple(year + delta for year in _YEARS)
     for year in _YEARS:
         assert shifted[year + delta] == pytest.approx(baseline[year])
-    snapshot_active = pkg.api.Model(**kwargs).shock_active
-    moved_active = pkg.api.Model(
+    snapshot_active = pkg.model.Model(**kwargs).shock_active
+    moved_active = pkg.model.Model(
         first_year=kwargs["first_year"] + delta,
         shock_year=kwargs["shock_year"] + delta,
         growth=shifted_growth,
@@ -380,7 +382,7 @@ def test_internals_sel_uses_runtime_labels(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, _labelled_bindings()), tmp_path, name="honest")
     catalog, _deps, graph = inverted_graph_parts(workbook, _labelled_bindings())
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    model = pkg.api.Model(
+    model = pkg.model.Model(
         first_year=kwargs["first_year"] + 2,
         shock_year=kwargs["shock_year"] + 2,
         growth=_shift_tensor(kwargs["growth"], 2),
@@ -400,7 +402,7 @@ def test_model_cells_bind_runtime_keys_and_key_note(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="cells_note")
     catalog, _deps, graph = inverted_graph_parts(workbook, _labelled_bindings())
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    model = pkg.api.Model(
+    model = pkg.model.Model(
         first_year=2030,
         shock_year=2031,
         growth=_shift_tensor(kwargs["growth"], 6),

@@ -84,7 +84,7 @@ def _baseline_kwargs(pkg, *, years: tuple[int, ...] | None = None) -> dict[str, 
 
 def test_labelled_package_exposes_runtime_axes(labelled_pkg) -> None:
     assert labelled_pkg.data.LABELLED_AXES == {"TIME_PERIOD": "engine_year_labels"}
-    assert hasattr(labelled_pkg.api.Model, "cells")
+    assert hasattr(labelled_pkg.model.Model, "cells")
 
 
 def test_labeller_reaches_every_time_period_output(labelled_pkg) -> None:
@@ -95,7 +95,7 @@ def test_labeller_reaches_every_time_period_output(labelled_pkg) -> None:
 
 
 def test_from_defaults_binds_snapshot_inputs(labelled_pkg) -> None:
-    model = labelled_pkg.api.Model.from_defaults()
+    model = labelled_pkg.Model.from_defaults()
     baseline = model.output_baseline
     assert tuple(baseline.domain.axes[0].keys) == (1, 2, 3, 4, 5)
     assert tuple(baseline[year] for year in range(1, 6)) == pytest.approx(
@@ -106,7 +106,7 @@ def test_from_defaults_binds_snapshot_inputs(labelled_pkg) -> None:
 def test_from_defaults_override_shifts_labelled_keys(labelled_pkg) -> None:
     years = (2024, 2025, 2026, 2027, 2028)
     kwargs = _baseline_kwargs(labelled_pkg, years=years)
-    model = labelled_pkg.api.Model.from_defaults(
+    model = labelled_pkg.Model.from_defaults(
         first_projection_year=kwargs["first_projection_year"],
         growth_baseline=kwargs["growth_baseline"],
         interest_baseline=kwargs["interest_baseline"],
@@ -145,7 +145,7 @@ def test_model_cells_and_honest_internals(labelled_pkg) -> None:
             "shock_magnitudes": labelled_pkg.data.SHOCK_MAGNITUDES_DEFAULT,
         }
     )
-    model = labelled_pkg.api.Model(**kwargs)
+    model = labelled_pkg.model.Model(**kwargs)
     assert model.baseline_path_internal.sel(TIME_PERIOD=2026) == pytest.approx(
         model.output_baseline[2026]
     )

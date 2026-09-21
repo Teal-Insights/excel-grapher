@@ -22,7 +22,7 @@ with CodeGenerator(graph) as gen:
 ```
 
 `generate_modules()` returns a `dict[str, str]` keyed by module filename
-(`__init__.py`, `api.py`, `data.py`, `internals.py`, `validation.py`, `tensor.py`, `provenance.py`,
+(`__init__.py`, `api.py`, `model.py`, `data.py`, `internals.py`, `validation.py`, `tensor.py`, `provenance.py`,
 `runtime.py`, and `excel.py`). Write **all** returned files into a package directory of your
 choice, then import the package as usual. The package has no dependency on `excel_grapher`.
 
@@ -60,7 +60,8 @@ emitted in `data.py` (`SERIES_DEFAULT`). Smoke checks call the generated compute
 
 | Module | Role |
 |--------|------|
-| `api.py` | Keyword-only `compute_*` functions and the `Model` they read. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__`, `__domain__`, and `__cells__`. `Model(**inputs)` is the primary constructor: it accepts a subset of **input** series ids, rejects unknown names, validates bound values via `validation.CHECKS`, and evaluates every formula series on demand as a memoized attribute. `Model.from_defaults(...)` binds every input from `data.*_DEFAULT` with explicit keyword overrides. Bare `Model()` still binds nothing, so `compute_*` (`Model(**locals())`) fails closed on a missing leaf. When a series declares `axis_labels`, `Model` evaluates that labeller before checking inputs on the runtime axis, and `Model.cells(series_id)` binds provenance over the evaluated labels. |
+| `api.py` | Keyword-only `compute_*` functions. The signature is the **input** leaf closure; **constant** leaves are read from `data` (`data.CONSTANT_X`, listed on `__constants__`) rather than passed as defaulted kwargs. Each function also publishes `__key__`, `__domain__`, and `__cells__`. A `compute_*` constructs a fresh `model.Model` from its arguments and returns one cached series. `Model` is not an `api` name. |
+| `model.py` | The `Model` session object. `Model(**inputs)` is the primary constructor: it accepts a subset of **input** series ids, rejects unknown names, validates bound values via `validation.CHECKS`, and evaluates every formula series on demand as a memoized attribute. `Model.from_defaults(...)` binds every input from `data.*_DEFAULT` with explicit keyword overrides. Bare `Model()` still binds nothing, so `compute_*` (`model.Model(**locals())`) fails closed on a missing leaf. When a series declares `axis_labels`, `Model` evaluates that labeller before checking inputs on the runtime axis, and `Model.cells(series_id)` binds provenance over the evaluated labels. Import with `from generated import Model` or `from generated.model import Model`. |
 | `data.py` | Immutable constants and `*_DEFAULT` inputs, shared axes, reusable authored domains, graph-required domains, value schemas, generated tensor classes, and coordinate-to-cell provenance descriptors. Runtime-labelled axes are `AxisTemplate` values bound from the labeller; unlabelled packages keep concrete `Axis` constants. |
 | `internals.py` | One named function per formula series, written over semantic coordinates: loops over the required domain, explicit seed and boundary branches, lazy `view` / `span` selections over bound series, and `scan_*` functions returning frozen named results for recurrence groups. Runtime-labelled axes are keyed by the labeller's evaluated values, not by snapshot header literals. |
 | `validation.py` | Private `_check_*` helpers and the `CHECKS` registry used by `Model` to apply input schemas, `input.domain`, and `input.value_map` once at construction. |
@@ -94,11 +95,9 @@ value = result[2026]
 `Model` is the session object those `compute_*` functions construct. Bind a subset of
 input leaves yourself, or bind every snapshot input at once. Unknown names and
 constants are rejected; constants stay on `data` (`data.overrides` to replace them).
-`Model` lives on `api` until the package root re-exports it.
 
 ```python
-from generated.api import Model
-from generated import data
+from generated import Model, data
 
 model = Model.from_defaults()
 model = Model.from_defaults(country_initial_debt=60.0)

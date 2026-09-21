@@ -28,9 +28,9 @@ from tests.unit.exporter.inverted_tree.test_shape_a13_identity_flip import (
 
 
 def test_shared_engine_emits_one_runner(tmp_path: Path) -> None:
-    api = generate_inverted(_a1_workbook(tmp_path), _a1_bindings())["api.py"]
-    assert api.count("internals.engine_path(") == 1
-    assert api.count("internals.engine_year0(") == 1
+    model = generate_inverted(_a1_workbook(tmp_path), _a1_bindings())["model.py"]
+    assert model.count("internals.engine_path(") == 1
+    assert model.count("internals.engine_year0(") == 1
 
 
 def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:
@@ -50,8 +50,8 @@ def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:
 
 def test_identity_flip_outputs_share_one_scan_call(tmp_path: Path) -> None:
     modules = generate_inverted(_qcraft_workbook(tmp_path), _qcraft_bindings())
-    api = modules["api.py"]
-    assert api.count("internals.scan_") == 1
+    model = modules["model.py"]
+    assert model.count("internals.scan_") == 1
     pkg = load_package(modules, tmp_path, name="a14_qc")
     emp = pkg.compute_employment_growth()
     prod = pkg.compute_labour_productivity_growth()
