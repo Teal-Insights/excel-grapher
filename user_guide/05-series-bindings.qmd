@@ -396,7 +396,7 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 
 1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
 2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
-3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
+3. Add dimension binds (`column_header`, `row_label`, `row_index`, `column_letter`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`. Use `row_index` + `column_letter` for grab-bag pins with no header or label.
 4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take a frozen `{Output}Inputs` bundle and return tensors or scalars; use `as_records` for a Records view.
 5. Mark editable series with `input: {}` (plus optional `domain` / `value_map` / `mode`). Generated packages validate input tensors against their declared schemas.
 6. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Build `{Output}Inputs.from_defaults(**overrides)` (or pass every field) and use `as_records` afterward when records are needed.
@@ -474,6 +474,8 @@ Inspect `resolve_series_binding()` output to confirm the types for a given manif
 | `column_header` | cell | **supported** | Header row for the data column |
 | `row_label` | series/cell | **supported** | Label text on the data row |
 | `value_map` | cell | **supported** | Key rows or columns by manifest values (1.5.0) |
+| `row_index` | cell | **supported** | Data cell's own 1-based row index; `Sheet!D18` yields `18` (1.20.0) |
+| `column_letter` | cell | **supported** | Data cell's own column letter; `Sheet!D18` yields `"D"` (1.20.0) |
 | `constant` | series | **supported** | Fixed scalar (e.g. scalar layout key) |
 | `sheet_name` | cell | **supported** | Worksheet name of each data cell; optional `values` map to a code (1.14.0) |
 
@@ -690,6 +692,32 @@ dtypes) like `constant` values; keys within one bind must share one scalar type.
 keys geometry; it is not `input.value_map` (1.15.0), which rewrites scalar public inputs to
 workbook MATCH/IF needles.
 
+### Own-address keys: `row_index` / `column_letter`
+
+A grab-bag `data_range` that must be a keyed tensor (inverted-tree `Domain` uniqueness)
+sometimes has no year header or row label. Hand-written identity `value_map`s
+(`2: 2`, `B: B`, …) encode geometry as YAML. Schema **1.20.0** reads the data
+cell's own address instead:
+
+```yaml
+dimensions:
+  - id: ROW
+    concept: ROW
+    role: key
+    scope: cell
+    bind: {kind: row_index, read: int}
+  - id: COL
+    concept: COL
+    role: key
+    scope: cell
+    bind: {kind: column_letter, read: string}
+key: [ROW, COL]
+```
+
+For data cell `Sheet!D18`, `row_index` yields `18` and `column_letter` yields `"D"`.
+There is no `values:` map. A non-rectangular pin is unique only as `(row, column)` —
+one axis alone still collides when two cells share a row or a column.
+
 ### Choosing a mechanism
 
 | Sheet geometry | Mechanism |
@@ -698,6 +726,7 @@ workbook MATCH/IF needles.
 | Group labels merged or sparse in their own column | `fill: true` |
 | Group headers interleaved with sub-labels in one column | `skip`/`include` + `fill: true` |
 | Labels absent from the sheet | `value_map` |
+| Grab-bag pins keyed by the cell's own row/column | `row_index` + `column_letter` |
 | Referenced non-data rows (headers, separators, subtotals) | `exclude_rows` |
 | Referenced non-data columns (milestones, summary years) | `exclude_columns` |
 
@@ -801,6 +830,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.17.0** | Series-level `axis_labels` names a one-key series whose evaluated values are the runtime keys of that axis. |
 | **1.18.0** | Series-level `relations` name a partner series (`greater_than` / `not_equal`). The compiler emits `GreaterThanCell` / `NotEqualCell` on each declaring cell, aligned on the shared key. |
 | **1.19.0** | Series-level `domain` (`enum`, `between`, `real_between`, `from_workbook`). `input.domain` is accepted and normalized to that key. `constant` implies `from_workbook`. Compiles to the `CellTypeEnv` dynamic-ref inference consumes. |
+| **1.20.0** | `bind.kind: row_index` and `column_letter` key each observation by the data cell's own 1-based row index or column letter, without a `values` map. |
 
 ## Runtime axis labels (1.17.0)
 
