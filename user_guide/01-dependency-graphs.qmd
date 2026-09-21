@@ -125,6 +125,23 @@ the bindings workbook is opened read-only. Set `include_bound_labels=False`
 to keep the strict target-closure file. `bindings_workbook` is required
 only when bound labels are included.
 
+Constrained inputs are written back as Excel data validations.
+`series_bindings` supplies input domains: input `enum` and `value_map`
+needles become dropdown lists (or custom formulas when a member cannot
+be an inline list), `between` / `real_between` become whole or decimal
+rules, and `greater_than` / `not_equal` become custom formulas combined
+with any numeric bounds. Integer bounds keep an `INT(cell)=cell` clause
+when folded into a custom formula so decimals stay rejected. Constants,
+outputs, and internals are not inputs, so they do not receive rules.
+Extract-time `cell_type_env` domains still apply to unbound value leaves
+when a sidecar is present; a cell covered by both sources must agree or
+write-back fails closed. Without a sidecar, value cells in
+`cell_type_env` are used alone, including when the view is a
+`ProjectionResult`. Pass `include_cell_validation=False` to omit the
+rules. A formula longer than 255 characters, a relation partner that is
+not in the written view, or a `from_workbook` input with no cached value
+fails closed.
+
 See [Exporting standalone Python](06-export.qmd) for projection as the
 non-mutating helper shared with Python codegen.
 

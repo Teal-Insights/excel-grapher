@@ -66,6 +66,7 @@ def write_workbook(
     series_bindings: WorkbookSeriesBindings | None = None,
     bindings_workbook: Path | str | None = None,
     include_bound_labels: bool = True,
+    include_cell_validation: bool = True,
 ) -> None:
     """Write `graph` to a new `.xlsx` at `destination`.
 
@@ -84,7 +85,13 @@ def write_workbook(
     is already in the view or is itself a bound label; otherwise the
     writer fails closed rather than extracting a second dependency
     closure. The bindings workbook is opened read-only for those extra
-    cells; it is never overwritten.
+    cells; it is never overwritten. When `include_cell_validation` is
+    True (default), constrained inputs are also written as Excel data
+    validations. Input-series domains and relations apply when
+    `series_bindings` is set; extract-time `cell_type_env` domains still
+    apply to unbound value leaves (conflicts fail closed). Constants,
+    outputs, and formula cells are omitted. Without bindings, value cells
+    in `cell_type_env` are used alone.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -148,15 +155,31 @@ def write_workbook(
             `ProjectionResult` if you want grouping. Stale shapes,
             non-contiguous or mixed-axis leftovers, array formulas, and
             `INDIRECT` emit per-cell rather than an invalid shared formula.
-        series_bindings: Optional sidecar used to locate bound labels.
-            Requires `bindings_workbook` when `include_bound_labels` is True.
+        series_bindings: Optional sidecar used to locate bound labels and
+            input domains for cell validation. Requires
+            `bindings_workbook` when `include_bound_labels` is True, or
+            when input series declare `relations` and cell validation is
+            enabled.
         bindings_workbook: Workbook the sidecar describes. Required when
-            `series_bindings` is set and `include_bound_labels` is True.
+            bound labels are included, or when cell validation needs
+            relation partners from the sidecar.
         include_bound_labels: If True (default) and `series_bindings` is
             set, write `row_label` / `column_header` / `kind: cell` /
             attribute source cells that are missing from `graph`. Formula
             labels whose static deps are not already in the view or bound
             labels are refused. The original graph is not mutated.
+        include_cell_validation: If True (default), write Excel data
+            validations for constrained inputs. With `series_bindings`,
+            rules come from input-series `enum`, `between`,
+            `real_between`, `from_workbook`, `value_map` needles, and
+            `relations`, unioned with `cell_type_env` domains on unbound
+            value leaves (conflicts fail closed). Constants, outputs, and
+            internals are skipped. Without bindings, value cells in
+            `cell_type_env` (including a projection's projected graph)
+            are used. Enum members that cannot form an inline list fall
+            back to a custom formula. Formulas longer than 255
+            characters, relation partners missing from the written view,
+            and `from_workbook` inputs with no cached value fail closed.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
@@ -168,8 +191,9 @@ def write_workbook(
             rectangle, `shared_formulas` is not a known mode,
             `shared_formulas='require'` and `formula_shapes` is missing, or
             `series_bindings` is set with `include_bound_labels` and without
-            `bindings_workbook`, or a bound formula label cannot be copied
-            as a static overlay.
+            `bindings_workbook`, a bound formula label cannot be copied
+            as a static overlay, or a constrained input cannot be written
+            as Excel data validation.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
@@ -219,6 +243,16 @@ def write_workbook(
         sheets = _create_sheets(wb, sheet_names)
         for sheet_name, coord, value in planned:
             sheets[sheet_name][coord] = value
+        if include_cell_validation:
+            from .cell_validation import apply_constrained_input_validations
+
+            apply_constrained_input_validations(
+                sheets,
+                graph,
+                planned=planned,
+                series_bindings=series_bindings,
+                bindings_workbook=bindings_workbook,
+            )
         for name, attr_text in planned_names:
             wb.defined_names.add(DefinedName(name=name, attr_text=attr_text))
         tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
