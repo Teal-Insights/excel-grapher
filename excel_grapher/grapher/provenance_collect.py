@@ -24,6 +24,7 @@ from .dynamic_refs import (
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
+    prepare_dynamic_selector_expr,
 )
 from .parser import (
     FormulaNormalizer,
@@ -211,7 +212,9 @@ def _flat_provenance_one_string(
                         )
                         if fn_name == "INDEX" and i == 0 and "(" not in norm_arg:
                             continue
-                        value_expr = mask_ref_only_function_calls(norm_arg)
+                        value_expr = prepare_dynamic_selector_expr(
+                            norm_arg, current_sheet=current_sheet
+                        )
                         for ref in parse_standalone_cell_refs(value_expr):
                             sh = ref.sheet if ref.sheet is not None else current_sheet
                             a1 = f"{ref.column}{ref.row}"
