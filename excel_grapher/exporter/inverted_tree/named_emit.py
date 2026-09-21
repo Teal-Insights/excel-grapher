@@ -17,8 +17,8 @@ import hashlib
 import json
 import re
 from collections.abc import Mapping, Sequence
-from contextvars import ContextVar
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
 
 from excel_grapher.exporter.codegen import REPRESENTATION_VERSION
@@ -74,10 +74,7 @@ _SKIP_INDEX_CALLS = frozenset(
         "xl_lookup_cell",
     }
 )
-_INPUT_ELEMENT_ANNOTATIONS: ContextVar[Mapping[str, str] | None] = ContextVar(
-    "inverted_tree_input_element_annotations",
-    default=None,
-)
+_NO_DOMAINS: Mapping[str, str] = MappingProxyType({})
 _BETWEEN_CALL = re.compile(r"(?<!Real)Between\(")
 
 _RESERVED_NAMES = frozenset(
@@ -182,24 +179,25 @@ def _inputs_class_name(series: BoundSeries) -> str:
     return f"{_facade(series)}Inputs"
 
 
-def _constraint_element(series: BoundSeries) -> str | None:
+def _constraint_element(
+    series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS
+) -> str | None:
     """Return the `cell_type_env` element annotation for a public input, if any."""
     if series.direction != "input":
         return None
-    overrides = _INPUT_ELEMENT_ANNOTATIONS.get()
-    if not overrides:
-        return None
-    return overrides.get(series.series_id)
+    return domains.get(series.series_id)
 
 
-def _value_annotation(series: BoundSeries) -> str:
+def _value_annotation(
+    series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS
+) -> str:
     """Describe every permitted workbook value, including blanks and errors.
 
     A public input whose cells share a constraint domain uses that domain
     (`Literal` or `Annotated`) instead of the measure dtype. Other series keep
     the dtype, including Excel error strings.
     """
-    element = _constraint_element(series)
+    element = _constraint_element(series, domains)
     if element is not None:
         if series.single_valued:
             return element
@@ -262,13 +260,15 @@ def _public_alias(series: BoundSeries) -> str | None:
     return facade
 
 
-def _annotation(series: BoundSeries) -> str:
+def _annotation(
+    series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS
+) -> str:
     if series.single_valued:
-        return _value_annotation(series)
+        return _value_annotation(series, domains)
     alias = _public_alias(series)
     if alias is not None:
         return f"data.{alias}"
-    return f"data.Series[{_value_annotation(series)}]"
+    return f"data.Series[{_value_annotation(series, domains)}]"
 
 
 def _binding(series: BoundSeries) -> str:
@@ -968,8 +968,15 @@ def _materialize(series: BoundSeries, catalog: SeriesCatalog, required: str | No
 # ---------------------------------------------------------------------------
 
 
-def _signature(name: str, params: Sequence[BoundSeries], returns: str) -> str:
-    joined = ", ".join(f"{series.series_id}: {_annotation(series)}" for series in params)
+def _signature(
+    name: str,
+    params: Sequence[BoundSeries],
+    returns: str,
+    domains: Mapping[str, str] = _NO_DOMAINS,
+) -> str:
+    joined = ", ".join(
+        f"{series.series_id}: {_annotation(series, domains)}" for series in params
+    )
     return f"def {name}({('*, ' + joined) if joined else ''}) -> {returns}:"
 
 
@@ -1015,6 +1022,7 @@ def emit_named_internals(
     graph: DependencyGraph,
     named_axes: NamedAxes,
     literal_tables: dict[str, dict[tuple[object, ...], object]],
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> str:
     """Emit one named calculation function per formula series or recurrence group."""
     functions: list[str] = []
@@ -1027,7 +1035,7 @@ def emit_named_internals(
                 continue
             emitted_groups.add(scc)
             source, group_used = _emit_recurrence_group(
-                scc, catalog, deps, graph, named_axes, literal_tables
+                scc, catalog, deps, graph, named_axes, literal_tables, domains
             )
             functions.append(source)
             used |= group_used
@@ -1042,7 +1050,9 @@ def emit_named_internals(
             "\n".join(
                 [
                     _publish_line(series),
-                    _signature(series.series_id, params, _annotation(series)),
+                    _signature(
+                        series.series_id, params, _annotation(series, domains), domains
+                    ),
                     f'    """Compute `{series.series_id}` using authored coordinate identities."""',
                     *_schema_checks(params, catalog),
                     *body,
@@ -1221,6 +1231,7 @@ def _emit_recurrence_group(
     graph: DependencyGraph,
     named_axes: NamedAxes,
     literal_tables: dict[str, dict[tuple[object, ...], object]],
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> tuple[str, set[str]]:
     """Emit a mutually recursive series group as demand-driven readers."""
     params = [catalog.get(sid) for sid in scc_external_params(scc, deps, catalog.order)]
@@ -1232,12 +1243,12 @@ def _emit_recurrence_group(
         '    """Complete named results of one recurrence group evaluation."""',
     ]
     for sid in scc:
-        lines.append(f"    {sid}: {_annotation(catalog.get(sid))}")
+        lines.append(f"    {sid}: {_annotation(catalog.get(sid), domains)}")
     joined = ", ".join(f"`{sid}`" for sid in scc)
     lines.extend(
         [
             "",
-            _signature(scan_function_name(scc), params, result_type),
+            _signature(scan_function_name(scc), params, result_type, domains),
             f'    """Evaluate the recurrence group {joined} and publish complete tensors."""',
             *_schema_checks(params, catalog),
         ]
@@ -1322,7 +1333,9 @@ def _binding_dtype(series: BoundSeries) -> str:
 
 
 def _input_check(
-    series: BoundSeries, catalog: SeriesCatalog
+    series: BoundSeries,
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> tuple[list[str], set[str], list[str]]:
     """Coerce dtype, validate schema and domain, then apply the value map."""
     lines: list[str] = []
@@ -1336,7 +1349,9 @@ def _input_check(
         and labeller.series_id != series.series_id
     ]
     bind = ", ".join(f"{axis.name}={axis.name}" for axis, _labeller in runtime_axes)
-    extras = [f"{axis.name}: {_annotation(labeller)}" for axis, labeller in runtime_axes]
+    extras = [
+        f"{axis.name}: {_annotation(labeller, domains)}" for axis, labeller in runtime_axes
+    ]
     if not series.single_valued:
         schema = f"{_binding(series)}.schema"
         if bind:
@@ -1348,7 +1363,7 @@ def _input_check(
         f"    {series_id} = coerce_input_measure("
         f"{series_id}, dtype={_python_literal(_binding_dtype(series))}, series_id={quoted_id})"
     )
-    element = _constraint_element(series)
+    element = _constraint_element(series, domains)
     if element is not None:
         used.add("require_annotated_domain")
         used.update(_runtime_domain_names(element))
@@ -1402,7 +1417,9 @@ def _input_check(
     return lines, used, extras
 
 
-def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str], set[str]]:
+def _input_check_functions(
+    catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS
+) -> tuple[list[str], list[str], set[str]]:
     """Collect non-trivial input check sources and the runtime helpers they use."""
     checks: list[str] = []
     checked: list[str] = []
@@ -1410,12 +1427,12 @@ def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str]
     for series in _retained(catalog):
         if series.direction != "input":
             continue
-        body, check_used, extras = _input_check(series, catalog)
+        body, check_used, extras = _input_check(series, catalog, domains)
         if len(body) == 1 and body[0] == f"    return {series.series_id}":
             continue
         used |= check_used
         checked.append(series.series_id)
-        annotation = _annotation(series)
+        annotation = _annotation(series, domains)
         checks.append(
             "\n".join(
                 [
@@ -1428,9 +1445,11 @@ def _input_check_functions(catalog: SeriesCatalog) -> tuple[list[str], list[str]
     return checks, checked, used
 
 
-def emit_named_validation(catalog: SeriesCatalog) -> str:
+def emit_named_validation(
+    catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS
+) -> str:
     """Emit input schema, dtype, domain, and value-map checks for `Model` construction."""
-    checks, checked, used = _input_check_functions(catalog)
+    checks, checked, used = _input_check_functions(catalog, domains)
     lines = [
         '"""Input schema, domain, and value-map checks for bound Model arguments."""',
         "",
@@ -1440,7 +1459,7 @@ def emit_named_validation(catalog: SeriesCatalog) -> str:
     stdlib: list[str] = []
     local: list[str] = []
     blob = "\n".join(checks)
-    if any("datetime" in _annotation(catalog.get(sid)) for sid in checked):
+    if any("datetime" in _annotation(catalog.get(sid), domains) for sid in checked):
         stdlib.append("from datetime import datetime")
     typing_names = _typing_domain_names(blob)
     if typing_names:
@@ -1465,19 +1484,25 @@ def emit_named_validation(catalog: SeriesCatalog) -> str:
 
 
 def _model_attribute(
-    series: BoundSeries, deps: Mapping[str, SeriesDeps], catalog: SeriesCatalog
+    series: BoundSeries,
+    deps: Mapping[str, SeriesDeps],
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> list[str]:
     series_id = series.series_id
     args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids)
     return [
         "    @cached_property",
-        f"    def {series_id}(self) -> {_annotation(series)}:",
+        f"    def {series_id}(self) -> {_annotation(series, domains)}:",
         f"        return internals.{series_id}({args})",
     ]
 
 
 def _model_recurrence_group(
-    scc: tuple[str, ...], deps: Mapping[str, SeriesDeps], catalog: SeriesCatalog
+    scc: tuple[str, ...],
+    deps: Mapping[str, SeriesDeps],
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> list[str]:
     name = scan_function_name(scc)
     params = scc_external_params(scc, deps, catalog.order)
@@ -1492,7 +1517,7 @@ def _model_recurrence_group(
             [
                 "",
                 "    @cached_property",
-                f"    def {sid}(self) -> {_annotation(catalog.get(sid))}:",
+                f"    def {sid}(self) -> {_annotation(catalog.get(sid), domains)}:",
                 f"        return self._{name}.{sid}",
             ]
         )
@@ -1565,7 +1590,9 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
     return lines
 
 
-def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
+def _model_from_defaults(
+    catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS
+) -> list[str]:
     """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
     inputs = [catalog.get(sid) for sid in _input_series_ids(catalog)]
     lines = ["", "    @classmethod"]
@@ -1583,7 +1610,9 @@ def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
     lines.append("        *,")
     for series in inputs:
         default = f"data.{series.series_id.upper()}_DEFAULT"
-        lines.append(f"        {series.series_id}: {_annotation(series)} = {default},")
+        lines.append(
+            f"        {series.series_id}: {_annotation(series, domains)} = {default},"
+        )
     lines.extend(
         [
             "    ) -> Model:",
@@ -1672,7 +1701,12 @@ def _model_init(catalog: SeriesCatalog) -> list[str]:
     ]
 
 
-def _input_class(output: BoundSeries, leaves: Sequence[str], catalog: SeriesCatalog) -> str:
+def _input_class(
+    output: BoundSeries,
+    leaves: Sequence[str],
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
+) -> str:
     """Emit the frozen dataclass that documents one output's input leaf closure."""
     inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
     class_name = _inputs_class_name(output)
@@ -1684,7 +1718,7 @@ def _input_class(output: BoundSeries, leaves: Sequence[str], catalog: SeriesCata
         "",
     ]
     for series in inputs:
-        lines.append(f"    {series.series_id}: {_annotation(series)}")
+        lines.append(f"    {series.series_id}: {_annotation(series, domains)}")
     return "\n".join(lines)
 
 
@@ -1737,6 +1771,7 @@ def _model_class(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> list[str]:
     """Lines of the memoized `Model` class."""
     input_ids = _input_series_ids(catalog)
@@ -1755,10 +1790,10 @@ def _model_class(
         "",
     ]
     for series in inputs:
-        model.append(f"    {series.series_id}: {_annotation(series)}")
+        model.append(f"    {series.series_id}: {_annotation(series, domains)}")
     model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog))
-    model.extend(_model_from_defaults(catalog))
+    model.extend(_model_from_defaults(catalog, domains))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
@@ -1770,9 +1805,9 @@ def _model_class(
                 model.pop()
                 continue
             emitted_groups.add(scc)
-            model.extend(_model_recurrence_group(scc, deps, catalog))
+            model.extend(_model_recurrence_group(scc, deps, catalog, domains))
             continue
-        model.extend(_model_attribute(series, deps, catalog))
+        model.extend(_model_attribute(series, deps, catalog, domains))
     return model
 
 
@@ -1809,14 +1844,15 @@ def emit_named_model(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> str:
     """Emit `Model`, `_BoundInputs`, and per-output Inputs dataclasses."""
-    class_lines = _model_class(catalog, deps, scc_map)
+    class_lines = _model_class(catalog, deps, scc_map, domains)
     input_classes: list[str] = []
     input_names: list[str] = []
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
-        input_classes.append(_input_class(output, leaves, catalog))
+        input_classes.append(_input_class(output, leaves, catalog, domains))
         input_names.append(_inputs_class_name(output))
     sections = [
         "\n".join(_bind_inputs_source(catalog)),
@@ -1871,6 +1907,7 @@ def emit_named_api(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     constant_sets: Mapping[frozenset[str], str],
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> str:
     """Emit the public `compute_*` functions over `Model`."""
     functions: list[str] = []
@@ -1880,7 +1917,9 @@ def emit_named_api(
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
         input_names.append(_inputs_class_name(output))
-        source, name = _public_function(output, catalog, constant_sets[constants], deps)
+        source, name = _public_function(
+            output, catalog, constant_sets[constants], deps, domains
+        )
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
@@ -1982,6 +2021,7 @@ def _public_function(
     catalog: SeriesCatalog,
     constants: str,
     deps: Mapping[str, SeriesDeps] | None = None,
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> tuple[str, str]:
     name = output.compute_name or f"compute_{output.series_id}"
     class_name = _inputs_class_name(output)
@@ -1991,7 +2031,7 @@ def _public_function(
     source = "\n".join(
         [
             _publish_line(output, constants),
-            f"def {name}(inputs: {class_name}) -> {_annotation(output)}:",
+            f"def {name}(inputs: {class_name}) -> {_annotation(output, domains)}:",
             *docstring,
             f"    if not isinstance(inputs, {class_name}):",
             f'        raise TypeError(f"{name}() expected {class_name}, got {{type(inputs).__name__}}")',
@@ -2332,6 +2372,7 @@ def emit_named_data(
     named_axes: NamedAxes,
     literal_tables: Mapping[str, Mapping[tuple[object, ...], object]],
     constant_lines: Sequence[str] = (),
+    domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> str:
     """Emit shared axes, bound series, provenance, and workbook defaults."""
     from excel_grapher.exporter.inverted_tree.emit import _py_literal
@@ -2464,9 +2505,9 @@ def emit_named_data(
                 f"{tuple(range(len(axis.keys)))!r}, int))"
             )
         annotation = (
-            f"Series[{_value_annotation(series)}]"
+            f"Series[{_value_annotation(series, domains)}]"
             if values_source is not None
-            else f"SeriesSpec[{_value_annotation(series)}]"
+            else f"SeriesSpec[{_value_annotation(series, domains)}]"
         )
         lines.append(
             _format_define_series(
@@ -2482,7 +2523,7 @@ def emit_named_data(
         )
         alias = _public_alias(series)
         if alias is not None:
-            lines.append(f"{alias} = Series[{_value_annotation(series)}]")
+            lines.append(f"{alias} = Series[{_value_annotation(series, domains)}]")
         if series.direction == "input":
             lines.append(f"{name}_DEFAULT = {name}")
     for table, values in literal_tables.items():
@@ -2540,10 +2581,27 @@ def _patch_data_domain_imports(lines: list[str]) -> list[str]:
     patched: list[str] = []
     typing_inserted = False
     runtime_done = False
-    for line in lines:
-        if typing_names and not typing_inserted and line.startswith("from datetime import"):
-            patched.append(line)
+    insert_at = 0
+    for index, line in enumerate(lines):
+        is_future = line.startswith("from __future__ import")
+        is_stdlib = line.startswith("from ") and not line.startswith("from .")
+        if is_future or (is_stdlib and insert_at <= index):
+            insert_at = index + 1
+    for index, line in enumerate(lines):
+        if (
+            typing_names
+            and not typing_inserted
+            and index == insert_at
+            and not line.startswith("from typing import")
+        ):
             patched.append(f"from typing import {', '.join(typing_names)}")
+            typing_inserted = True
+        if typing_names and line.startswith("from typing import"):
+            existing = [
+                part.strip() for part in line.removeprefix("from typing import ").split(",")
+            ]
+            names = sorted({*existing, *typing_names})
+            patched.append(f"from typing import {', '.join(names)}")
             typing_inserted = True
             continue
         if runtime_extra and line.startswith("from .runtime import "):
@@ -2559,7 +2617,7 @@ def _patch_data_domain_imports(lines: list[str]) -> list[str]:
             runtime_done = True
         patched.append(line)
     if typing_names and not typing_inserted:
-        raise InvertedTreeExportError("data module is missing a datetime import for domain types")
+        patched.insert(insert_at, f"from typing import {', '.join(typing_names)}")
     return patched
 
 
@@ -2575,21 +2633,18 @@ def emit_named_modules(
     excel_source: str,
 ) -> dict[str, str]:
     """Assemble the standalone named package."""
-    annotations = public_input_annotations(catalog, graph)
-    token = _INPUT_ELEMENT_ANNOTATIONS.set(annotations)
-    try:
-        return _emit_named_modules(
-            catalog,
-            deps,
-            scc_map,
-            graph,
-            workbook,
-            init_source=init_source,
-            runtime_source=runtime_source,
-            excel_source=excel_source,
-        )
-    finally:
-        _INPUT_ELEMENT_ANNOTATIONS.reset(token)
+    domains = public_input_annotations(catalog, graph)
+    return _emit_named_modules(
+        catalog,
+        deps,
+        scc_map,
+        graph,
+        workbook,
+        domains=domains,
+        init_source=init_source,
+        runtime_source=runtime_source,
+        excel_source=excel_source,
+    )
 
 
 def _emit_named_modules(
@@ -2599,6 +2654,7 @@ def _emit_named_modules(
     graph: DependencyGraph,
     workbook: Path | str,
     *,
+    domains: Mapping[str, str],
     init_source: str,
     runtime_source: str,
     excel_source: str,
@@ -2610,12 +2666,16 @@ def _emit_named_modules(
         for axis in series.tensor_domain.axes
     )
     literal_tables: dict[str, dict[tuple[object, ...], object]] = {}
-    internals = emit_named_internals(catalog, deps, scc_map, graph, named_axes, literal_tables)
-    validation = emit_named_validation(catalog)
+    internals = emit_named_internals(
+        catalog, deps, scc_map, graph, named_axes, literal_tables, domains
+    )
+    validation = emit_named_validation(catalog, domains)
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
-    model = emit_named_model(catalog, deps, scc_map)
-    api = emit_named_api(catalog, deps, constant_sets)
-    data = emit_named_data(catalog, workbook, named_axes, literal_tables, constant_lines)
+    model = emit_named_model(catalog, deps, scc_map, domains)
+    api = emit_named_api(catalog, deps, constant_sets, domains)
+    data = emit_named_data(
+        catalog, workbook, named_axes, literal_tables, constant_lines, domains
+    )
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
 
     export_runtime = Path(__file__).parents[1] / "export_runtime"

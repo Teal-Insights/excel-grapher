@@ -5,7 +5,7 @@ from __future__ import annotations
 import math
 import types
 from collections.abc import Callable
-from typing import Any, cast
+from typing import Any, Literal, cast
 
 import pytest
 
@@ -106,6 +106,18 @@ def test_require_aligned_rejects_mismatched_lengths() -> None:
 def test_require_aligned_rejects_empty_call() -> None:
     with pytest.raises(ValueError, match="at least one"):
         require_aligned()
+
+
+def test_require_annotated_domain_rejects_int_for_bool_literal() -> None:
+    from excel_grapher.exporter.inverted_tree.runtime import require_annotated_domain
+
+    annotation = Literal[True, False]
+    require_annotated_domain(True, annotation, series_id="flag")
+    require_annotated_domain(False, annotation, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        require_annotated_domain(1, annotation, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        require_annotated_domain(0, annotation, series_id="flag")
 
 
 def test_require_input_domain_reexports_shared_helper() -> None:

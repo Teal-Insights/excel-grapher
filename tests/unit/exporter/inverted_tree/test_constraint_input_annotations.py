@@ -1,4 +1,4 @@
-"""Issue 944 — public inputs take their type from ``graph.cell_type_env``."""
+"""Issue 944 — public inputs take their type from `graph.cell_type_env`."""
 
 from __future__ import annotations
 
@@ -355,3 +355,74 @@ def test_between_on_float_input_fails_closed(tmp_path: Path) -> None:
                 {"Inputs!A1": Annotated[int, Between(0, 1)]}
             ),
         )
+
+
+def test_bool_literal_rejects_int_one_and_zero(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "bool.xlsx",
+        {"Inputs": {"A1": True}, "Outputs": {"A1": "=Inputs!A1"}},
+    )
+    document = bindings_document(
+        series_entry("flag", "Inputs!A1", layout="scalar", direction="input", dtype="bool"),
+        series_entry("out", "Outputs!A1", layout="scalar", direction="output", dtype="bool"),
+        schema_version="1.19.0",
+    )
+    modules = generate_inverted(
+        workbook,
+        document,
+        dynamic_refs=DynamicRefConfig.from_constraints({"Inputs!A1": Literal[True, False]}),
+    )
+    pkg = load_package(modules, tmp_path, name="bool_literal")
+    assert get_origin(_hints(pkg.Model)["flag"]) is Literal
+    assert pkg.Model(flag=True).flag is True
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        pkg.Model(flag=1)
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        pkg.Model(flag=0)
+
+
+def test_shared_series_enum_is_literal_element_type(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "choices.xlsx",
+        {
+            "Inputs": {"B1": "On", "C1": "Off", "B10": 1, "C10": 2},
+            "Outputs": {"A1": "=Inputs!B1", "B1": "=Inputs!C1", "A10": 1, "B10": 2},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "choice",
+            "Inputs!B1:C1",
+            layout="series",
+            direction="input",
+            dtype="string",
+            header_row=10,
+        ),
+        series_entry(
+            "out",
+            "Outputs!A1:B1",
+            layout="series",
+            direction="output",
+            dtype="string",
+            header_row=10,
+        ),
+        schema_version="1.19.0",
+    )
+    modules = generate_inverted(
+        workbook,
+        document,
+        dynamic_refs=DynamicRefConfig.from_constraints(
+            {
+                "Inputs!B1": Literal["On", "Off"],
+                "Inputs!C1": Literal["On", "Off"],
+            }
+        ),
+    )
+    assert 'Series[Literal["Off", "On"] | None]' in modules["data.py"]
+    assert "require_annotated_domain" in modules["validation.py"]
+    pkg = load_package(modules, tmp_path, name="series_enum")
+    good = pkg.data.CHOICE.with_nested(("On", "Off"))
+    result = pkg.compute_out(pkg.OutInputs(choice=good))
+    assert (result[1], result[2]) == ("On", "Off")
+    with pytest.raises(ValueError, match=r"choice.*out of domain"):
+        pkg.OutInputs(choice=pkg.data.CHOICE.with_nested(("On", "Maybe")))

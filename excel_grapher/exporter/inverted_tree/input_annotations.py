@@ -1,4 +1,4 @@
-"""Public input annotations read from ``graph.cell_type_env``."""
+"""Public input annotations read from `graph.cell_type_env`."""
 
 from __future__ import annotations
 

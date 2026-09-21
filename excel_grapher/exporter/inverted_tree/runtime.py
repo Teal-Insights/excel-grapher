@@ -64,8 +64,10 @@ class RealBetween:
 def require_annotated_domain(value: object, annotation: Any, *, series_id: str) -> None:
     """Reject `value` when it falls outside a generated input annotation.
 
-    `None` is not a domain failure. `Literal` membership uses `get_args`.
-    Interval checks read `Between` and `RealBetween` metadata on `Annotated`.
+    `None` is not a domain failure. `Literal` membership uses `get_args` and
+    requires the same runtime type as the declared member so `1` is not
+    accepted for `Literal[True, False]`. Interval checks read `Between` and
+    `RealBetween` metadata on `Annotated`.
 
     Args:
         value: One coerced measure.
@@ -82,7 +84,7 @@ def require_annotated_domain(value: object, annotation: Any, *, series_id: str) 
     origin = get_origin(annotation)
     if origin is Literal:
         allowed = get_args(annotation)
-        if value not in allowed:
+        if not _literal_contains(value, allowed):
             rendered = ", ".join(repr(item) for item in allowed)
             raise ValueError(f"{series_id} out of domain: {value!r} not in {{{rendered}}}")
         return
@@ -95,6 +97,11 @@ def require_annotated_domain(value: object, annotation: Any, *, series_id: str) 
                 _require_real_between(value, meta, series_id=series_id)
                 return
     raise ValueError(f"{series_id} has no enforceable domain annotation: {annotation!r}")
+
+
+def _literal_contains(value: object, allowed: tuple[object, ...]) -> bool:
+    """Return whether `value` matches a `Literal` member without bool/int confusion."""
+    return any(type(value) is type(item) and value == item for item in allowed)
 
 
 def _require_between(value: object, meta: Between, *, series_id: str) -> None:
