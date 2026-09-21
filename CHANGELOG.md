@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.0 (2026-09-21)
+
+### Bug Fixes
+
+- **export**: Address typed-input annotation review nits
+  ([#961](https://github.com/Teal-Insights/excel-grapher/pull/961),
+  [`14ca54d`](https://github.com/Teal-Insights/excel-grapher/commit/14ca54dbc9c1a3d1b024e492ce1f3d4c4057740c))
+
+### Code Style
+
+- **export**: Ruff format named_emit signatures
+  ([#961](https://github.com/Teal-Insights/excel-grapher/pull/961),
+  [`14ca54d`](https://github.com/Teal-Insights/excel-grapher/commit/14ca54dbc9c1a3d1b024e492ce1f3d4c4057740c))
+
+### Features
+
+- **export**: Type public inputs from cell domains
+  ([#961](https://github.com/Teal-Insights/excel-grapher/pull/961),
+  [`14ca54d`](https://github.com/Teal-Insights/excel-grapher/commit/14ca54dbc9c1a3d1b024e492ce1f3d4c4057740c))
+
+
 ## v23.5.0 (2026-09-21)
 
 ### Bug Fixes
