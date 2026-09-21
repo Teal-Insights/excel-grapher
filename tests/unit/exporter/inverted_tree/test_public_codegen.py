@@ -10,6 +10,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -34,8 +35,8 @@ def test_unused_scalar_lookup_error_does_not_escape_lazy_branch(tmp_path: Path) 
     )
     modules = generate_inverted(workbook, document, blank_ranges=("Sheet1!D1:E2",))
     package = load_package(modules, tmp_path, name="unused_lookup")
-    assert package.compute_result(selector="missing") == 42
-    assert package.compute_result(selector="use") == "#N/A"
+    assert invoke_public_compute(package, package.compute_result, dict(selector="missing")) == 42
+    assert invoke_public_compute(package, package.compute_result, dict(selector="use")) == "#N/A"
 
 
 def test_public_codegen_uses_explicit_inputs(tmp_path: Path) -> None:
@@ -51,7 +52,7 @@ def test_public_codegen_uses_explicit_inputs(tmp_path: Path) -> None:
         )
     package = load_package(modules, tmp_path, name="public_codegen")
     assert "tensor.py" in modules
-    assert package.compute_out(src=7) == 14
+    assert invoke_public_compute(package, package.compute_out, dict(src=7)) == 14
     assert package.compute_out.__cells__ == {(): "Sheet1!B1"}
     assert not hasattr(package, "make_context")
     assert not hasattr(package, "set_src")
@@ -84,7 +85,7 @@ def test_public_codegen_requires_labels_and_returns_tensor(tmp_path: Path) -> No
     assert package.data.SRC.domain is package.data.OUT.domain
     assert CodeGenerator.representation_version == package.data.CODEGEN_SCHEMA_VERSION
     tensor = package.data.SRC.with_records((((2026,), 7.0), ((2025,), 5.0)))
-    result = package.compute_out(src=tensor)
+    result = invoke_public_compute(package, package.compute_out, dict(src=tensor))
     assert package.compute_out.__cells__ == {(2025,): "Sheet1!B3", (2026,): "Sheet1!C3"}
     with pytest.raises(TypeError):
         package.compute_out.__cells__[(2025,)] = "Sheet1!A1"
@@ -92,12 +93,12 @@ def test_public_codegen_requires_labels_and_returns_tensor(tmp_path: Path) -> No
     assert result[2026] == 14
     assert isinstance(result, package.Series)
     with pytest.raises(ValueError, match="src.*Tensor"):
-        package.compute_out(src=(5, 7))
+        invoke_public_compute(package, package.compute_out, dict(src=(5, 7)))
     wrong = package.Tensor.from_nested(
         domain=package.Domain.product(package.Axis("TIME_PERIOD", (2026, 2027), int)), values=(5, 7)
     )
     with pytest.raises(ValueError, match="src.*2025"):
-        package.compute_out(src=wrong)
+        invoke_public_compute(package, package.compute_out, dict(src=wrong))
     assert "Series" in modules["data.py"]
     assert "src[time_period]" in modules["internals.py"]
     assert package.internals.out(src=tensor)[2026] == 14
@@ -149,7 +150,7 @@ def test_input_projection_does_not_require_off_graph_coordinates(tmp_path: Path)
     src = package.Tensor.from_nested(
         domain=package.Domain.product(package.Axis("TIME_PERIOD", (2026,), int)), values=(9.0,)
     )
-    assert package.compute_out(src=src) == 18
+    assert invoke_public_compute(package, package.compute_out, dict(src=src)) == 18
 
 
 def test_four_axis_sparse_generated_function(tmp_path: Path) -> None:
@@ -200,7 +201,7 @@ def test_four_axis_sparse_generated_function(tmp_path: Path) -> None:
             series_bindings=validate_bindings_document(document), bindings_workbook=workbook
         )
     package = load_package(modules, tmp_path, name="named_four_axis")
-    result = package.compute_out(src=package.data.SRC_DEFAULT)
+    result = invoke_public_compute(package, package.compute_out, dict(src=package.data.SRC_DEFAULT))
     assert len(result.domain.axes) == 4
     assert len(result.domain) == 6
     assert result["bond", "foreign", 2025, 2027] == 160
@@ -223,7 +224,7 @@ def test_single_observation_series_keeps_its_axis(tmp_path: Path) -> None:
             series_bindings=validate_bindings_document(document), bindings_workbook=workbook
         )
     package = load_package(modules, tmp_path, name="named_singleton")
-    result = package.compute_out(src=package.data.SRC_DEFAULT)
+    result = invoke_public_compute(package, package.compute_out, dict(src=package.data.SRC_DEFAULT))
     assert result[2025] == 6
     assert package.internals.out(src=package.data.SRC_DEFAULT)[2025] == 6
 
@@ -268,8 +269,10 @@ def test_generated_default_distinguishes_blank_and_zero(tmp_path: Path) -> None:
     package = load_package(modules, tmp_path, name="named_blank_default")
     assert package.data.SRC_DEFAULT[2025] is None
     assert package.data.SRC_DEFAULT[2026] == 0
-    assert package.compute_out(src=package.data.SRC_DEFAULT) == 0
-    assert "data.Src" in modules["api.py"]
+    assert (
+        invoke_public_compute(package, package.compute_out, dict(src=package.data.SRC_DEFAULT)) == 0
+    )
+    assert "data.Src" in modules["model.py"]
     assert "Src = Series[" in modules["data.py"]
     assert "class Src" not in modules["data.py"]
 
@@ -291,7 +294,7 @@ def test_numeric_input_retains_supplied_boolean_comparison_semantics(tmp_path: P
     supplied = package.Tensor.from_records(
         domain=package.data.SRC.domain, records=(((2025,), True),)
     )
-    assert package.compute_out(src=supplied) == 1.0
+    assert invoke_public_compute(package, package.compute_out, dict(src=supplied)) == 1.0
 
 
 @pytest.mark.parametrize("dtype", ["float", "int", "bool", "string", "datetime"])
@@ -308,7 +311,7 @@ def test_generated_schema_preserves_excel_error_values(tmp_path: Path, dtype: st
             series_bindings=validate_bindings_document(document), bindings_workbook=workbook
         )
     package = load_package(modules, tmp_path, name=f"named_error_{dtype}")
-    assert package.compute_out()[2025] == "#DIV/0!"
+    assert invoke_public_compute(package, package.compute_out, {})[2025] == "#DIV/0!"
     assert "str" in str(package.data.Out)
 
 
@@ -414,7 +417,9 @@ def test_generated_orders_reuse_authored_coordinate_metadata(tmp_path: Path) -> 
     )
     modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name="coordinate_metadata")
-    assert pkg.compute_result(values=pkg.data.VALUES_DEFAULT) == 1.0
+    assert (
+        invoke_public_compute(pkg, pkg.compute_result, dict(values=pkg.data.VALUES_DEFAULT)) == 1.0
+    )
     assert list(pkg.data.VALUES_DEFAULT.items())[-1] == (
         ("instrument with an authored descriptive identifier 0199",),
         200.0,

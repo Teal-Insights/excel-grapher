@@ -15,6 +15,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -275,6 +276,6 @@ def test_consistent_two_period_lag_is_not_catalog_adjacency(tmp_path: Path) -> N
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_delta(debt=pkg.data.DEBT_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_delta, dict(debt=pkg.data.DEBT_DEFAULT))
     assert (got[2011], got[2012]) == pytest.approx(tuple(expected[cell] for cell in cells))
     assert (got[2011], got[2012]) == pytest.approx((2.0, 2.0))

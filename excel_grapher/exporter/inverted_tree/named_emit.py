@@ -1413,9 +1413,7 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
         series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
     )
     lines = [
-        "def _bind_inputs(",
-        "    target: object, inputs: dict[str, object], *, validate: bool = True",
-        ") -> None:",
+        "def _bind_inputs(target: object, inputs: dict[str, Any], *, validate: bool = True) -> None:",
         "    if not validate:",
         "        for name, value in inputs.items():",
         "            setattr(target, name, value)",
@@ -1466,6 +1464,8 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
 _BOUND_INPUTS_MIXIN = '''class _BoundInputs:
     """Shared snapshot fill and CHECKS validation for per-output input bundles."""
 
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
+
     @classmethod
     def from_defaults(cls, **overrides: object) -> Self:
         names = {field.name for field in fields(cls)}
@@ -1497,12 +1497,11 @@ def _model_init(_catalog: SeriesCatalog) -> list[str]:
     """Install bound leaves; skip CHECKS when the bundle is already validated."""
     return [
         "",
-        "    def __init__(self, bundle: _BoundInputs | None = None, /, **inputs: object) -> None:",
+        "    def __init__(self, bundle: _BoundInputs | None = None, /, **inputs: Any) -> None:",
         "        if bundle is not None:",
         "            if not isinstance(bundle, _BoundInputs):",
         "                raise TypeError(",
-        '                    "Model() bundle must be a bound inputs instance, "',
-        '                    f"not {type(bundle).__name__}"',
+        '                    f"Model() bundle must be a bound inputs instance, not {type(bundle).__name__}"',
         "                )",
         "            if inputs:",
         '                raise TypeError("Model() does not accept keyword inputs with a bound bundle")',
@@ -1636,7 +1635,8 @@ def _wrapped_from_import(module: str, names: Sequence[str]) -> str:
     one_line = f"from .{module} import {', '.join(names)}"
     if len(one_line) <= 100:
         return one_line
-    return f"from .{module} import (\n    {',\n    '.join(names)},\n)"
+    listed = ",\n    ".join(names)
+    return f"from .{module} import (\n    {listed},\n)"
 
 
 def emit_named_model(
@@ -1660,23 +1660,23 @@ def emit_named_model(
     ]
     body = "\n\n\n".join(section for section in sections if section)
     stdlib = [
-        "from dataclasses import dataclass, fields",
-        "from typing import Self",
+        "from dataclasses import Field, dataclass, fields",
+        "from typing import Any, ClassVar, Self",
     ]
     if "datetime" in body:
         stdlib.insert(1, "from datetime import datetime")
     if "@cached_property" in body:
         stdlib.insert(-1, "from functools import cached_property")
-    imported = [
+    imported = ["data"]
+    imported.extend(
         name
         for name, token in (
-            ("data", "data."),
             ("internals", "internals."),
             ("validation", "validation."),
         )
-        if token in body
-    ]
-    local = [f"from . import {', '.join(imported)}"] if imported else []
+        if token in body and name not in imported
+    )
+    local = [f"from . import {', '.join(imported)}"]
     lines = [
         *_generated_module_preamble(
             "Memoized evaluator and per-output input bundles.",
@@ -1722,7 +1722,11 @@ def emit_named_api(
     if aliases:
         local.append(_constants_import(aliases))
     if functions:
-        local.append(_wrapped_from_import("model", ["Model", *input_names]))
+        if "from . import data" in local:
+            local[local.index("from . import data")] = "from . import data, model"
+        else:
+            local.append("from . import model")
+        local.append(_wrapped_from_import("model", input_names))
         local.append("from .runtime import publish")
     lines = [
         *_generated_module_preamble(
@@ -1818,10 +1822,8 @@ def _public_function(
             f"def {name}(inputs: {class_name}) -> {_annotation(output)}:",
             *docstring,
             f"    if not isinstance(inputs, {class_name}):",
-            "        raise TypeError(",
-            f'            f"{name}() expected {class_name}, got {{type(inputs).__name__}}"',
-            "        )",
-            f"    return Model(inputs).{output.series_id}",
+            f'        raise TypeError(f"{name}() expected {class_name}, got {{type(inputs).__name__}}")',
+            f"    return model.Model(inputs).{output.series_id}",
         ]
     )
     return source, name

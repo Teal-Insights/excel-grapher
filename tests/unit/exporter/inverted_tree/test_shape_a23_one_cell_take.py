@@ -18,6 +18,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -118,7 +119,9 @@ def test_one_cell_helper_indexes_taken_window(tmp_path: Path) -> None:
     assert "growth[2]" not in internals
     assert "growth[time_period]" in internals
     pkg = load_package(modules, tmp_path, name="a23_one")
-    got = pkg.compute_last_growth(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    got = invoke_public_compute(
+        pkg, pkg.compute_last_growth, dict(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    )
     assert tuple(got.domain) == ((2011,),)
     got = got[2011]
     assert got == pytest.approx(5.0)
@@ -136,10 +139,14 @@ def test_shared_runner_takes_at_one_cell_call_site(tmp_path: Path) -> None:
     assert "growth[2]" not in internals
     assert "growth[time_period]" in internals
     pkg = load_package(modules, tmp_path, name="a23_shared")
-    last = pkg.compute_last_growth(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    last = invoke_public_compute(
+        pkg, pkg.compute_last_growth, dict(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    )
     last = last[2011]
     assert last == pytest.approx(5.0)
-    all_growth = pkg.compute_all_growth(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    all_growth = invoke_public_compute(
+        pkg, pkg.compute_all_growth, dict(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    )
     assert [all_growth[year] for year in (2009, 2010, 2011)] == pytest.approx((3.0, 4.0, 5.0))
 
 
@@ -149,7 +156,9 @@ def test_scalar_host_keeps_catalog_subscript(tmp_path: Path) -> None:
     internals = modules["internals.py"]
     assert "growth[2011]" in internals
     pkg = load_package(modules, tmp_path, name="a23_scalar")
-    got = pkg.compute_last_growth(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    got = invoke_public_compute(
+        pkg, pkg.compute_last_growth, dict(growth=pkg.data.GROWTH.with_nested((3.0, 4.0, 5.0)))
+    )
     if isinstance(got, tuple):
         got = got[0]
     assert got == pytest.approx(5.0)

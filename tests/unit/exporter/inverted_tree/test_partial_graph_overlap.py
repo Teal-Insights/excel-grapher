@@ -32,6 +32,7 @@ from excel_grapher.series_bindings.normalize import has_output_direction
 from excel_grapher.series_bindings.ranges import expand_data_range, series_data_ranges
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -279,7 +280,7 @@ def test_year_keyed_interior_hole_exports(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="partial_years")
     assert tuple(pkg.compute_result.__domain__) == ((2021,), (2022,), (2023,), (2024,), (2025,))
     assert tuple(pkg.internals.engine_row.__domain__) == ((2021,), (2022,), (2024,), (2025,))
-    got = pkg.compute_result(rate=pkg.data.RATE_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_result, dict(rate=pkg.data.RATE_DEFAULT))
     assert tuple(got[year] for year in range(2021, 2026)) == pytest.approx(
         (2.0, 3.0, 3.0, 5.0, 6.0)
     )
@@ -466,7 +467,9 @@ def test_matrix_interior_blank_emits_none_and_keeps_stride(tmp_path: Path) -> No
     assert records[1]["OBS_VALUE"] is None
     assert [records[i]["OBS_VALUE"] for i in (0, 2, 3)] == pytest.approx([1.0, 3.0, 4.0])
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_output_cell() == pytest.approx(expected["Outputs!A1"])
+    assert invoke_public_compute(pkg, pkg.compute_output_cell, {}) == pytest.approx(
+        expected["Outputs!A1"]
+    )
 
 
 def test_matrix_off_closure_formula_is_named_in_docstring(tmp_path: Path) -> None:
@@ -523,8 +526,12 @@ def test_matrix_graph_leaf_literal_matches_evaluator(tmp_path: Path) -> None:
     got = pkg.internals.profile_table()
     assert got["France", 2021] == pytest.approx(99.0)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!A2"])
-    assert pkg.compute_on_graph() == pytest.approx(expected["Outputs!A1"])
-    assert pkg.compute_from_literal() == pytest.approx(expected["Outputs!A2"])
+    assert invoke_public_compute(pkg, pkg.compute_on_graph, {}) == pytest.approx(
+        expected["Outputs!A1"]
+    )
+    assert invoke_public_compute(pkg, pkg.compute_from_literal, {}) == pytest.approx(
+        expected["Outputs!A2"]
+    )
 
 
 def test_matrix_graph_leaf_without_cached_value_raises(tmp_path: Path) -> None:
@@ -651,7 +658,9 @@ def test_series_graph_leaf_is_owned_and_sum_emits(tmp_path: Path) -> None:
     modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="series_graph_leaf")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_result(rate=pkg.data.RATE_DEFAULT) == pytest.approx(expected["Outputs!A1"])
+    assert invoke_public_compute(
+        pkg, pkg.compute_result, dict(rate=pkg.data.RATE_DEFAULT)
+    ) == pytest.approx(expected["Outputs!A1"])
     assert pkg.internals.engine_row(rate=pkg.data.RATE_DEFAULT)[2022] == pytest.approx(0.0)
 
 
@@ -678,7 +687,9 @@ def test_series_graph_leaf_strips_off_graph_and_keeps_leaf(tmp_path: Path) -> No
         modules = _emit_from_outputs(workbook, document)
     pkg = load_package(modules, tmp_path, name="series_leaf_extra")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
-    assert pkg.compute_result(rate=pkg.data.RATE_DEFAULT) == pytest.approx(expected["Outputs!A1"])
+    assert invoke_public_compute(
+        pkg, pkg.compute_result, dict(rate=pkg.data.RATE_DEFAULT)
+    ) == pytest.approx(expected["Outputs!A1"])
 
 
 def test_series_graph_leaf_without_cached_value_raises(tmp_path: Path) -> None:

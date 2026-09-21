@@ -7,6 +7,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     write_workbook,
 )
@@ -38,7 +39,7 @@ def test_categorical_self_references_do_not_reverse_output_columns(tmp_path: Pat
         tmp_path,
         name="categorical",
     )
-    actual = pkg.compute_result()
+    actual = invoke_public_compute(pkg, pkg.compute_result, {})
     for row, commodity in enumerate(("Brent", "Wheat", "Coffee"), 2):
         assert actual[commodity, "Latest actual"] == row * 10.0
         assert actual[commodity, "1-year ahead"] == row * 8.0
@@ -79,7 +80,7 @@ def test_row_uses_workbook_geometry_in_categorical_schedule(tmp_path: Path) -> N
         tmp_path,
         name="categorical_row",
     )
-    result = pkg.compute_result()
+    result = invoke_public_compute(pkg, pkg.compute_result, {})
     for row, label in enumerate(("Cameroon", "Cabo Verde", "Cambodia"), 2):
         assert result[label] == row * 10.0
 
@@ -105,5 +106,5 @@ def test_row_geometry_respects_active_group(tmp_path: Path, area, row) -> None:
         _matrix_entry("result", "M!B2:C3", header_row=1, direction="output")
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name=f"group_rows_{area}")
-    result = pkg.compute_result()
+    result = invoke_public_compute(pkg, pkg.compute_result, {})
     assert [result[area, year] for year in (2025, 2026)] == [row, row]

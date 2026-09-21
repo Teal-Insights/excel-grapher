@@ -19,6 +19,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.series_bindings import validate_bindings_document, validate_series_bindings
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    invoke_public_compute,
     load_package,
     series_entry,
 )
@@ -180,7 +181,11 @@ def test_emit_bound_leaf_constant_is_parameter(tmp_path: Path) -> None:
     rate = pkg.data.RATE.collect(
         (((2021,), 1.0), ((2023,), 3.0)),
     )
-    assert pkg.compute_result(rate=rate) == pytest.approx(expected["Outputs!A1"])
+    assert invoke_public_compute(pkg, pkg.compute_result, dict(rate=rate)) == pytest.approx(
+        expected["Outputs!A1"]
+    )
     with pkg.data.overrides(SEED=99.0):
-        assert pkg.compute_result(rate=rate) == pytest.approx(2.0 + 99.0 + 6.0)
+        assert invoke_public_compute(pkg, pkg.compute_result, dict(rate=rate)) == pytest.approx(
+            2.0 + 99.0 + 6.0
+        )
     assert "seed" in pkg.compute_result.__constants__

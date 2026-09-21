@@ -13,6 +13,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     write_workbook,
@@ -125,7 +126,7 @@ def test_repeated_keyed_reads_match_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert dict(got.items()) == pytest.approx(
         {
             coordinate: expected[cell]
@@ -197,7 +198,7 @@ def test_non_affine_keyed_reads_intern_slot_table_once(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert dict(got.items()) == pytest.approx(
         {
             coordinate: expected[cell]

@@ -9,7 +9,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.unit.exporter.inverted_tree.helpers import generate_inverted, load_package
+from tests.unit.exporter.inverted_tree.helpers import (
+    generate_inverted,
+    invoke_public_compute,
+    load_package,
+)
 from tests.unit.exporter.inverted_tree.test_named_provenance import (
     _horizon_bindings,
     _horizon_workbook,
@@ -29,7 +33,9 @@ def test_series_bodies_are_coordinate_functions(tmp_path: Path) -> None:
     assert "_records" not in internals
     assert "_coordinate" not in internals
     pkg = load_package(modules, tmp_path, name="formula_functions")
-    assert pkg.compute_twice(flow=pkg.data.FLOW_DEFAULT)[2022] == 6.0
+    assert (
+        invoke_public_compute(pkg, pkg.compute_twice, dict(flow=pkg.data.FLOW_DEFAULT))[2022] == 6.0
+    )
 
 
 def test_recurrence_readers_call_coordinate_functions(tmp_path: Path) -> None:
@@ -39,5 +45,5 @@ def test_recurrence_readers_call_coordinate_functions(tmp_path: Path) -> None:
     assert "CoordinateReader(" in internals and "debt_formula" in internals
     assert "_coordinate" not in internals
     pkg = load_package(modules, tmp_path, name="formula_readers")
-    got = pkg.compute_debt()
+    got = invoke_public_compute(pkg, pkg.compute_debt, {})
     assert tuple(got[year] for year in (2009, 2010, 2011)) == (100.0, 102.0, 104.04)

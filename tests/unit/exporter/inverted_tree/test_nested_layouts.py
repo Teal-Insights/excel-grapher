@@ -18,6 +18,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     series_entry,
     write_workbook,
 )
@@ -172,7 +173,7 @@ def test_ranges_over_nested_blocks_are_product_views(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _nested_workbook(tmp_path), _nested_bindings(), tmp_path, "nested_views"
     )
-    total = pkg.compute_total(vintage=pkg.data.VINTAGE_DEFAULT)
+    total = invoke_public_compute(pkg, pkg.compute_total, dict(vintage=pkg.data.VINTAGE_DEFAULT))
     assert total[2025] == sum(row * 10 + 1 for row in range(2, 8)) + 3.0
     assert dict(pkg.compute_total.__cells__) == {
         (2024,): "Vintage!B9",
@@ -233,9 +234,9 @@ def test_ragged_domains_list_runs_not_coordinates(tmp_path: Path) -> None:
         _ragged_workbook(tmp_path), _ragged_bindings(), tmp_path, "ragged_runs"
     )
     assert len(pkg.data.VINTAGE.domain) == 15
-    assert pkg.compute_total(vintage=pkg.data.VINTAGE_DEFAULT)[2024] == sum(
-        row * 10 + (1.0 if row >= 5 else 0.0) for row in range(2, 7)
-    )
+    assert invoke_public_compute(pkg, pkg.compute_total, dict(vintage=pkg.data.VINTAGE_DEFAULT))[
+        2024
+    ] == sum(row * 10 + (1.0 if row >= 5 else 0.0) for row in range(2, 7))
 
 
 def test_gapped_layouts_are_grids_with_fixed_positions_where_possible() -> None:

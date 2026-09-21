@@ -11,9 +11,8 @@ import re
 import sys
 import types
 from collections.abc import Callable, Mapping, Sequence
-from functools import update_wrapper
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import pytest
 from fastpyxl.utils.cell import column_index_from_string, get_column_letter
@@ -251,45 +250,6 @@ def unload_package(name: str, tmp_path: Path | None = None) -> None:
         sys.path.remove(path_str)
 
 
-def _adapt_compute(pkg: types.ModuleType, function: Callable[..., object]) -> Callable[..., object]:
-    """Accept either a bound Inputs instance or the previous leaf keywords."""
-    cls = inputs_class_for(pkg, function)
-
-    def adapted(*args: object, **kwargs: object) -> object:
-        if len(args) == 1 and not kwargs:
-            return function(args[0])
-        if args:
-            return function(*args, **kwargs)
-        bound = kwargs.get("inputs")
-        if bound is not None and len(kwargs) == 1 and isinstance(bound, cls):
-            return function(bound)
-        return function(cls(**kwargs))
-
-    update_wrapper(adapted, function)
-    cast(Any, adapted).__signature__ = inspect.signature(function)
-    for attr in ("__cells__", "__domain__", "__key__", "__constants__"):
-        if hasattr(function, attr):
-            setattr(adapted, attr, getattr(function, attr))
-    return adapted
-
-
-def _install_compute_adapters(pkg: types.ModuleType) -> None:
-    """Let corpus tests keep passing leaf keywords into generated `compute_*`."""
-    api = getattr(pkg, "api", None)
-    for name in dir(pkg):
-        if not name.startswith("compute_"):
-            continue
-        function = getattr(pkg, name)
-        if not callable(function):
-            continue
-        if list(inspect.signature(function).parameters) != ["inputs"]:
-            continue
-        adapted = _adapt_compute(pkg, function)
-        setattr(pkg, name, adapted)
-        if api is not None and getattr(api, name, None) is function:
-            setattr(api, name, adapted)
-
-
 def load_package(
     modules: Mapping[str, str],
     tmp_path: Path,
@@ -308,9 +268,8 @@ def load_package(
             if key == name or key.startswith(name + "."):
                 del sys.modules[key]
         imported = importlib.import_module(name)
-        for sub in ("api", "internals", "runtime", "data", "validation", "model"):
+        for sub in ("api", "model", "internals", "runtime", "data", "validation"):
             importlib.import_module(f"{name}.{sub}")
-        _install_compute_adapters(imported)
         return imported
     finally:
         if inserted:
@@ -340,30 +299,17 @@ def input_field_names(pkg: Any, function: Callable[..., object]) -> tuple[str, .
 
 
 def required_param_names(function: Callable[..., object]) -> tuple[str, ...]:
-    original = getattr(function, "__wrapped__", function)
+    """Required parameter names on `function`'s real signature."""
     names: list[str] = []
-    for name, parameter in inspect.signature(original).parameters.items():
+    for name, parameter in inspect.signature(function).parameters.items():
         if parameter.default is inspect.Parameter.empty:
             names.append(name)
-    if names == ["inputs"]:
-        annotation = original.__annotations__.get("inputs")
-        if isinstance(annotation, str):
-            annotation = getattr(original, "__globals__", {}).get(annotation)
-        if annotation is not None and dataclasses.is_dataclass(annotation):
-            return tuple(field.name for field in dataclasses.fields(annotation))
     return tuple(names)
 
 
 def all_param_names(function: Callable[..., object]) -> tuple[str, ...]:
-    original = getattr(function, "__wrapped__", function)
-    names = tuple(inspect.signature(original).parameters)
-    if names == ("inputs",):
-        annotation = original.__annotations__.get("inputs")
-        if isinstance(annotation, str):
-            annotation = getattr(original, "__globals__", {}).get(annotation)
-        if annotation is not None and dataclasses.is_dataclass(annotation):
-            return tuple(field.name for field in dataclasses.fields(annotation))
-    return names
+    """All parameter names on `function`'s real signature."""
+    return tuple(inspect.signature(function).parameters)
 
 
 def transpose_cell_coord(coord: str) -> str:

@@ -16,6 +16,7 @@ from excel_grapher.exporter.inverted_tree.named_axes import NamedAxes
 from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     generate_inverted,
+    invoke_public_compute,
     write_workbook,
 )
 
@@ -183,9 +184,13 @@ def test_subset_time_period_axes_share_one_constant(tmp_path: Path) -> None:
         _subset_workbook(tmp_path), _subset_bindings(), tmp_path, "axis_union"
     )
     assert (
-        pkg.compute_total(
-            prices_full=pkg.data.PRICES_FULL_DEFAULT,
-            prices_short=pkg.data.PRICES_SHORT_DEFAULT,
+        invoke_public_compute(
+            pkg,
+            pkg.compute_total,
+            dict(
+                prices_full=pkg.data.PRICES_FULL_DEFAULT,
+                prices_short=pkg.data.PRICES_SHORT_DEFAULT,
+            ),
         )
         == 27
     )
@@ -275,9 +280,13 @@ def test_ragged_time_order_is_allowed_to_clone(tmp_path: Path) -> None:
         _ragged_workbook(tmp_path), _ragged_bindings(), tmp_path, "axis_ragged"
     )
     assert (
-        pkg.compute_total(
-            prices_full=pkg.data.PRICES_FULL_DEFAULT,
-            prices_ragged=pkg.data.PRICES_RAGGED_DEFAULT,
+        invoke_public_compute(
+            pkg,
+            pkg.compute_total,
+            dict(
+                prices_full=pkg.data.PRICES_FULL_DEFAULT,
+                prices_ragged=pkg.data.PRICES_RAGGED_DEFAULT,
+            ),
         )
         == 39
     )

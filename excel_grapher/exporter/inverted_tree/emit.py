@@ -171,13 +171,13 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
             "from .runtime import as_records",
             "",
             "__all__ = [",
-            "    'as_records',",
-            "    'data',",
-            "    'Model',",
+            '    "as_records",',
+            '    "data",',
+            '    "Model",',
         ]
     )
     for name in [*input_names, *computes]:
-        lines.append(f"    {name!r},")
+        lines.append(f'    "{name}",')
     lines.append("]")
     lines.append("")
     return "\n".join(lines)

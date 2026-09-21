@@ -7,6 +7,7 @@ from pathlib import Path
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -68,7 +69,9 @@ def _mixed_bindings() -> dict:
 def test_mixed_series_returns_error_code_not_abort(tmp_path: Path) -> None:
     workbook = _mixed_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _mixed_bindings()), tmp_path, name="a7_mixed")
-    got = pkg.compute_output_row(denominators=pkg.data.DENOMINATORS_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_output_row, dict(denominators=pkg.data.DENOMINATORS_DEFAULT)
+    )
     assert got[1] == 0.1
     assert got[2] == "#DIV/0!"
 
@@ -93,7 +96,7 @@ def _ref_bindings() -> dict:
 def test_ref_literal_is_error_code_measure(tmp_path: Path) -> None:
     workbook = _ref_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _ref_bindings()), tmp_path, name="a7_ref")
-    assert pkg.compute_output_ref() == "#REF!"
+    assert invoke_public_compute(pkg, pkg.compute_output_ref, {}) == "#REF!"
 
 
 def _scan_poison_workbook(tmp_path: Path) -> Path:
@@ -159,6 +162,8 @@ def test_scan_propagates_error_code_to_later_years(tmp_path: Path) -> None:
         tmp_path,
         name="a7_scan",
     )
-    got = pkg.compute_output_path(initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_output_path, dict(initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT)
+    )
     assert got[1] == "#DIV/0!"
     assert got[2] == "#DIV/0!"

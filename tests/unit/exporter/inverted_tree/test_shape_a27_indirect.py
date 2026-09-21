@@ -11,10 +11,11 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -113,8 +114,8 @@ def test_literal_address_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_lit")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert pkg.compute_out(src=42.0) == pytest.approx(expected)
-    assert "src" in all_param_names(pkg.compute_out)
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(src=42.0)) == pytest.approx(expected)
+    assert "src" in input_field_names(pkg, pkg.compute_out)
 
 
 def test_bound_cell_address_matches_evaluator(tmp_path: Path) -> None:
@@ -126,7 +127,7 @@ def test_bound_cell_address_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_cell")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document, dynamic_refs=refs)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert pkg.compute_out(src=42.0) == pytest.approx(expected)
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(src=42.0)) == pytest.approx(expected)
 
 
 def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
@@ -138,8 +139,10 @@ def test_literal_into_series_emits_xl_at(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a27_series")
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert pkg.compute_out(
-        src=pkg.data.SRC.with_records((((1,), 10.0), ((2,), 20.0), ((3,), 30.0)))
+    assert invoke_public_compute(
+        pkg,
+        pkg.compute_out,
+        dict(src=pkg.data.SRC.with_records((((1,), 10.0), ((2,), 20.0), ((3,), 30.0)))),
     ) == pytest.approx(expected)
 
 

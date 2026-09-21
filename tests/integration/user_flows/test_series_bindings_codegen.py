@@ -16,6 +16,7 @@ from tests.integration.user_flows.utils import (
     load_generated_package,
     write_series_bindings_workbook,
 )
+from tests.unit.exporter.inverted_tree.helpers import invoke_public_compute
 
 _STRUCTURE: dict[str, Any] = {
     "measure": {
@@ -112,10 +113,14 @@ def test_generate_modules_computes_input_series(workbook: Path, tmp_path: Path) 
     assert not hasattr(pkg, "set_borvelia_primary_balance")
     assert not hasattr(pkg, "make_context")
 
-    result = pkg.compute_borvelia_primary_balance_out(
-        borvelia_primary_balance=pkg.data.BORVELIA_PRIMARY_BALANCE.with_records(
-            zip(((1,), (2,), (3,), (4,), (5,)), (-1.0, -0.5, 0.0, 7.5, 1.0), strict=True),
-        )
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_borvelia_primary_balance_out,
+        dict(
+            borvelia_primary_balance=pkg.data.BORVELIA_PRIMARY_BALANCE.with_records(
+                zip(((1,), (2,), (3,), (4,), (5,)), (-1.0, -0.5, 0.0, 7.5, 1.0), strict=True),
+            )
+        ),
     )
     assert tuple(result[period] for period in (1, 2, 3, 4, 5)) == pytest.approx(
         (-1.0, -0.5, 0.0, 7.5, 1.0)

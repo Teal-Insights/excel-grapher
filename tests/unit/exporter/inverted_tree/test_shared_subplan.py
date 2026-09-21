@@ -15,12 +15,12 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -139,15 +139,19 @@ def test_shared_prefix_parity_and_isolation(tmp_path: Path) -> None:
     document = _prefix_bindings()
     modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name="shared_prefix")
-    assert required_param_names(pkg.compute_first) == ("values",)
-    assert "extra" not in all_param_names(pkg.compute_first)
-    assert set(required_param_names(pkg.compute_second)) == {"values", "extra"}
+    assert input_field_names(pkg, pkg.compute_first) == ("values",)
+    assert "extra" not in input_field_names(pkg, pkg.compute_first)
+    assert set(input_field_names(pkg, pkg.compute_second)) == {"values", "extra"}
 
     values = (10.0, 20.0, 30.0)
     extra = (1.0, 2.0, 3.0)
-    first = pkg.compute_first(values=_source(pkg, "values", values))
-    second = pkg.compute_second(
-        values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+    first = invoke_public_compute(
+        pkg, pkg.compute_first, dict(values=_source(pkg, "values", values))
+    )
+    second = invoke_public_compute(
+        pkg,
+        pkg.compute_second,
+        dict(values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)),
     )
     bump = _PREFIX_LEN + 1
     assert _observations(first) == pytest.approx(tuple(v + bump for v in values))
@@ -155,18 +159,24 @@ def test_shared_prefix_parity_and_isolation(tmp_path: Path) -> None:
         tuple(v + _PREFIX_LEN + e for v, e in zip(values, extra, strict=True))
     )
 
-    changed = pkg.compute_first(values=_source(pkg, "values", (11.0, 20.0, 30.0)))
-    assert changed[2020] == pytest.approx(first[2020] + 1.0)
-    assert _observations(pkg.compute_first(values=_source(pkg, "values", values))) == pytest.approx(
-        _observations(first)
+    changed = invoke_public_compute(
+        pkg, pkg.compute_first, dict(values=_source(pkg, "values", (11.0, 20.0, 30.0)))
     )
-    only_extra = pkg.compute_second(
-        values=_source(pkg, "values", values), extra=_source(pkg, "extra", (9.0, 2.0, 3.0))
+    assert changed[2020] == pytest.approx(first[2020] + 1.0)
+    assert _observations(
+        invoke_public_compute(pkg, pkg.compute_first, dict(values=_source(pkg, "values", values)))
+    ) == pytest.approx(_observations(first))
+    only_extra = invoke_public_compute(
+        pkg,
+        pkg.compute_second,
+        dict(values=_source(pkg, "values", values), extra=_source(pkg, "extra", (9.0, 2.0, 3.0))),
     )
     assert only_extra[2020] == pytest.approx(second[2020] + 8.0)
     assert _observations(
-        pkg.compute_second(
-            values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+        invoke_public_compute(
+            pkg,
+            pkg.compute_second,
+            dict(values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)),
         )
     ) == pytest.approx(_observations(second))
 
@@ -188,11 +198,17 @@ def test_shared_helper_is_not_a_cross_call_cache(tmp_path: Path) -> None:
         tmp_path,
         name="shared_no_cache",
     )
-    first_a = pkg.compute_first(values=_source(pkg, "values", (1.0, 2.0, 3.0)))
-    first_b = pkg.compute_first(values=_source(pkg, "values", (4.0, 5.0, 6.0)))
+    first_a = invoke_public_compute(
+        pkg, pkg.compute_first, dict(values=_source(pkg, "values", (1.0, 2.0, 3.0)))
+    )
+    first_b = invoke_public_compute(
+        pkg, pkg.compute_first, dict(values=_source(pkg, "values", (4.0, 5.0, 6.0)))
+    )
     assert _observations(first_a) != pytest.approx(_observations(first_b))
     assert _observations(
-        pkg.compute_first(values=_source(pkg, "values", (1.0, 2.0, 3.0)))
+        invoke_public_compute(
+            pkg, pkg.compute_first, dict(values=_source(pkg, "values", (1.0, 2.0, 3.0)))
+        )
     ) == pytest.approx(_observations(first_a))
 
 
@@ -230,17 +246,19 @@ def test_issue_mcve_partial_overlap_keeps_signatures(tmp_path: Path) -> None:
         series_entry("second", "Data!B6:D6", layout="series", direction="output", header_row=1),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="issue797_mcve")
-    assert required_param_names(pkg.compute_first) == ("values",)
-    assert "extra" not in all_param_names(pkg.compute_first)
-    assert set(required_param_names(pkg.compute_second)) == {"extra", "values"}
+    assert input_field_names(pkg, pkg.compute_first) == ("values",)
+    assert "extra" not in input_field_names(pkg, pkg.compute_first)
+    assert set(input_field_names(pkg, pkg.compute_second)) == {"extra", "values"}
     values = (2.0, 3.0, 4.0)
     extra = (1.0, 2.0, 3.0)
-    assert _observations(pkg.compute_first(values=_source(pkg, "values", values))) == pytest.approx(
-        (5.0, 7.0, 9.0)
-    )
     assert _observations(
-        pkg.compute_second(
-            values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+        invoke_public_compute(pkg, pkg.compute_first, dict(values=_source(pkg, "values", values)))
+    ) == pytest.approx((5.0, 7.0, 9.0))
+    assert _observations(
+        invoke_public_compute(
+            pkg,
+            pkg.compute_second,
+            dict(values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)),
         )
     ) == pytest.approx((5.0, 8.0, 11.0))
     first_src = inspect.getsource(pkg.compute_first)

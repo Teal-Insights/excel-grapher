@@ -10,8 +10,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -101,14 +102,14 @@ def test_public_constant_sets_live_in_data(tmp_path: Path) -> None:
 def test_year_labels_appear_only_on_shocked_compute(tmp_path: Path) -> None:
     workbook = _a5_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a5_bindings()), tmp_path, name="a5_pkg")
-    baseline_all = all_param_names(pkg.compute_output_baseline)
-    shocked_all = all_param_names(pkg.compute_output_shocked)
+    baseline_all = input_field_names(pkg, pkg.compute_output_baseline)
+    shocked_all = input_field_names(pkg, pkg.compute_output_shocked)
     assert "shock_year" not in baseline_all
     assert "engine_year_labels" not in baseline_all
     assert "engine_year_labels" not in shocked_all
-    assert required_param_names(pkg.compute_output_baseline) == ("value",)
-    assert "shock_year" in required_param_names(pkg.compute_output_shocked)
-    assert "value" in required_param_names(pkg.compute_output_shocked)
+    assert input_field_names(pkg, pkg.compute_output_baseline) == ("value",)
+    assert "shock_year" in input_field_names(pkg, pkg.compute_output_shocked)
+    assert "value" in input_field_names(pkg, pkg.compute_output_shocked)
     assert pkg.compute_output_baseline.__constants__ == ()
     assert pkg.compute_output_shocked.__constants__ == ("engine_year_labels",)
     assert "engine_year_labels" in all_param_names(pkg.internals.shocked_path)
@@ -117,19 +118,23 @@ def test_year_labels_appear_only_on_shocked_compute(tmp_path: Path) -> None:
 def test_overriding_data_constant_changes_compute_and_restores(tmp_path: Path) -> None:
     workbook = _a5_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a5_bindings()), tmp_path, name="a5_ov")
-    baseline = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    baseline = invoke_public_compute(
+        pkg, pkg.compute_output_shocked, dict(value=10.0, shock_year=1)
+    )
     assert (baseline[1], baseline[2]) == pytest.approx((11.0, 11.0))
     original = pkg.data.ENGINE_YEAR_LABELS
     zeros = original.with_records((((1,), 0), ((2,), 0)))
     pkg.data.ENGINE_YEAR_LABELS = zeros
-    result = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    result = invoke_public_compute(pkg, pkg.compute_output_shocked, dict(value=10.0, shock_year=1))
     assert (result[1], result[2]) == pytest.approx((10.0, 10.0))
     pkg.data.ENGINE_YEAR_LABELS = original
     with pkg.data.overrides(ENGINE_YEAR_LABELS=zeros):
-        result = pkg.compute_output_shocked(value=10.0, shock_year=1)
+        result = invoke_public_compute(
+            pkg, pkg.compute_output_shocked, dict(value=10.0, shock_year=1)
+        )
         assert (result[1], result[2]) == pytest.approx((10.0, 10.0))
     assert pkg.data.ENGINE_YEAR_LABELS is original
-    result = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    result = invoke_public_compute(pkg, pkg.compute_output_shocked, dict(value=10.0, shock_year=1))
     assert (result[1], result[2]) == pytest.approx((11.0, 11.0))
     with (
         pytest.raises(AttributeError, match="unknown constant"),

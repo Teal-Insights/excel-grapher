@@ -7,6 +7,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -24,6 +25,13 @@ def test_min_export(tmp_path: Path, formula: str) -> None:
         series_entry("result", "Engine!B1", direction="output"),
     )
     package = load_package(generate_inverted(workbook, document), tmp_path)
-    assert package.api.compute_result(first=2.0, second=0.0) == 0.0
-    assert package.api.compute_result(first=-3.0, second=1.0) == -3.0
-    assert package.api.compute_result(first="#DIV/0!", second=1.0) == "#DIV/0!"
+    assert (
+        invoke_public_compute(package, package.compute_result, dict(first=2.0, second=0.0)) == 0.0
+    )
+    assert (
+        invoke_public_compute(package, package.compute_result, dict(first=-3.0, second=1.0)) == -3.0
+    )
+    assert (
+        invoke_public_compute(package, package.compute_result, dict(first="#DIV/0!", second=1.0))
+        == "#DIV/0!"
+    )

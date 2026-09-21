@@ -14,12 +14,12 @@ import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -101,17 +101,25 @@ def test_interleaved_consumer_groups_evaluate_without_unbound_local(tmp_path: Pa
     workbook = _interleave_workbook(tmp_path)
     document = _interleave_bindings()
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="issue813")
-    assert required_param_names(pkg.compute_out_base) == ("x",)
-    assert "y" not in all_param_names(pkg.compute_out_base)
-    assert required_param_names(pkg.compute_out_mid) == ("x",)
-    assert set(required_param_names(pkg.compute_out_shock)) == {"x", "y"}
+    assert input_field_names(pkg, pkg.compute_out_base) == ("x",)
+    assert "y" not in input_field_names(pkg, pkg.compute_out_base)
+    assert input_field_names(pkg, pkg.compute_out_mid) == ("x",)
+    assert set(input_field_names(pkg, pkg.compute_out_shock)) == {"x", "y"}
 
-    assert pkg.compute_out_base(x=1.0) == pytest.approx(13.0)
-    assert pkg.compute_out_mid(x=1.0) == pytest.approx(12.0)
-    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx(15.0)
+    assert invoke_public_compute(pkg, pkg.compute_out_base, dict(x=1.0)) == pytest.approx(13.0)
+    assert invoke_public_compute(pkg, pkg.compute_out_mid, dict(x=1.0)) == pytest.approx(12.0)
+    assert invoke_public_compute(pkg, pkg.compute_out_shock, dict(x=1.0, y=2.0)) == pytest.approx(
+        15.0
+    )
 
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1", "Outputs!C1"])
-    assert pkg.compute_out_base(x=1.0) == pytest.approx(expected["Outputs!A1"])
-    assert pkg.compute_out_shock(x=1.0, y=2.0) == pytest.approx(expected["Outputs!B1"])
-    assert pkg.compute_out_mid(x=1.0) == pytest.approx(expected["Outputs!C1"])
+    assert invoke_public_compute(pkg, pkg.compute_out_base, dict(x=1.0)) == pytest.approx(
+        expected["Outputs!A1"]
+    )
+    assert invoke_public_compute(pkg, pkg.compute_out_shock, dict(x=1.0, y=2.0)) == pytest.approx(
+        expected["Outputs!B1"]
+    )
+    assert invoke_public_compute(pkg, pkg.compute_out_mid, dict(x=1.0)) == pytest.approx(
+        expected["Outputs!C1"]
+    )

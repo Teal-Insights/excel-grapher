@@ -16,6 +16,7 @@ from tests.integration.user_flows.utils import (
     load_generated_package,
     write_series_bindings_workbook,
 )
+from tests.unit.exporter.inverted_tree.helpers import invoke_public_compute
 
 
 def _row_series(
@@ -85,10 +86,14 @@ def test_grouped_bindings_export_computes(workbook: Path, tmp_path: Path) -> Non
     )
 
     assert "def set_primary_balance(" not in "\n".join(modules.values())
-    result = pkg.compute_primary_balance_out(
-        primary_balance=pkg.data.PRIMARY_BALANCE.with_records(
-            zip(((1,), (2,), (3,), (4,), (5,)), (-1.0, -0.5, 0.0, 7.5, 1.0), strict=True),
-        )
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_primary_balance_out,
+        dict(
+            primary_balance=pkg.data.PRIMARY_BALANCE.with_records(
+                zip(((1,), (2,), (3,), (4,), (5,)), (-1.0, -0.5, 0.0, 7.5, 1.0), strict=True),
+            )
+        ),
     )
     assert tuple(result[period] for period in (1, 2, 3, 4, 5)) == pytest.approx(
         (-1.0, -0.5, 0.0, 7.5, 1.0)

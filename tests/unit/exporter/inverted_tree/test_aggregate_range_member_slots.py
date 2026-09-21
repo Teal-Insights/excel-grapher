@@ -16,6 +16,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -61,7 +62,7 @@ def test_range_crossing_input_and_formula_owners_uses_actual_coordinates(tmp_pat
     supplied = package.data.INPUTS.with_records(
         [(("a", 2020), 1.0), (("a", 2021), 2.0), (("a", 2022), 3.0), (("b", 2021), 20.0)],
     )
-    result = package.compute_totals(inputs=supplied)
+    result = invoke_public_compute(package, package.compute_totals, dict(inputs=supplied))
     assert (result[2020], result[2021], result[2022]) == (111.0, 222.0, 333.0)
 
 
@@ -99,7 +100,7 @@ def test_aggregate_uses_each_members_actual_range(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document)
     package = load_package(modules, tmp_path, name="diagonal")
-    result = package.compute_totals()
+    result = invoke_public_compute(package, package.compute_totals, {})
     assert (result[2020], result[2021]) == (3.0, 50.0)
 
 
@@ -235,7 +236,7 @@ def test_sparse_column_sum_exports_and_matches_column_totals(tmp_path: Path) -> 
         blank_ranges=["Engine!B3"],
     )
     pkg = load_package(modules, tmp_path, name="agg_sparse")
-    result = pkg.compute_totals()
+    result = invoke_public_compute(pkg, pkg.compute_totals, {})
     assert [result[year] for year in (2020, 2021, 2022)] == pytest.approx(_SPARSE_TOTALS)
 
 
@@ -244,7 +245,7 @@ def test_dense_column_sum_does_not_freeze_first_column(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _dense_bindings())
     internals = modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="agg_dense")
-    got = pkg.compute_totals()
+    got = invoke_public_compute(pkg, pkg.compute_totals, {})
     assert [got[year] for year in (2020, 2021, 2022)] != pytest.approx((_DENSE_TOTALS[0],) * 3)
     assert [got[year] for year in (2020, 2021, 2022)] == pytest.approx(_DENSE_TOTALS)
     assert "time_period" in internals
@@ -254,5 +255,5 @@ def test_in_scc_column_sum_demands_selected_instances(tmp_path: Path) -> None:
     workbook = _scc_workbook(tmp_path)
     modules = generate_inverted(workbook, _scc_bindings())
     pkg = load_package(modules, tmp_path, name="agg_scc")
-    result = pkg.compute_totals()
+    result = invoke_public_compute(pkg, pkg.compute_totals, {})
     assert [result[year] for year in (2020, 2021, 2022)] == pytest.approx(_SCC_TOTALS)

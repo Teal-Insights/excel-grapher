@@ -10,6 +10,7 @@ from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import validate_bindings_document
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -60,8 +61,8 @@ def test_identity_projected_generate_modules_matches_evaluator(tmp_path: Path) -
     )
     projection = IdentityTransitCompression().project(graph)
     pkg = _export_projected(workbook, projection, tmp_path, "projected_inv")
-    assert pkg.compute_next(seed=10.0) == 11.0
-    assert pkg.compute_next(seed=7.0) == 8.0
+    assert invoke_public_compute(pkg, pkg.compute_next, dict(seed=10.0)) == 11.0
+    assert invoke_public_compute(pkg, pkg.compute_next, dict(seed=7.0)) == 8.0
     with FormulaEvaluator(graph) as evaluator:
         assert evaluator.evaluate(["Outputs!B14"])["Outputs!B14"] == 11.0
 
@@ -76,6 +77,6 @@ def test_optimal_projected_generate_modules_matches_evaluator(tmp_path: Path) ->
     )
     projection = OptimalCompression().project(graph)
     pkg = _export_projected(workbook, projection, tmp_path, "optimal_inv")
-    assert pkg.compute_next(seed=10.0) == 11.0
+    assert invoke_public_compute(pkg, pkg.compute_next, dict(seed=10.0)) == 11.0
     with FormulaEvaluator(graph) as evaluator:
         assert evaluator.evaluate(["Outputs!B14"])["Outputs!B14"] == 11.0

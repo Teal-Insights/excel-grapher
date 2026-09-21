@@ -12,6 +12,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -105,12 +106,14 @@ def test_splice_indexes_last_growth_then_trajectory(tmp_path: Path) -> None:
     assert "as_measure(growth[time_period])" in internals
     assert "as_measure(trajectory[time_period])" in internals
     pkg = load_package(modules, tmp_path, name="a18_splice")
-    got = pkg.compute_result(gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)))
+    got = invoke_public_compute(
+        pkg, pkg.compute_result, dict(gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)))
+    )
     assert [got[year] for year in (2011, 2012, 2013, 2014)] == pytest.approx(
         (121 / 110, 0.02, 0.03, 0.04)
     )
-    assert pkg.compute_growth_keep(
-        gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0))
+    assert invoke_public_compute(
+        pkg, pkg.compute_growth_keep, dict(gdp=pkg.data.GDP.with_nested((100.0, 110.0, 121.0)))
     ) == pytest.approx(110 / 100)
     targets = ["Engine!D6", "Engine!E6", "Engine!F6", "Engine!G6"]
     expected = FormulaEvaluator(

@@ -21,6 +21,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     oriented_addresses,
@@ -165,7 +166,7 @@ def test_matrix_row_slice_matches_evaluator(tmp_path: Path, orientation: str) ->
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    got = pkg.compute_selected(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_selected, named_input_kwargs(pkg, catalog, graph))
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )
@@ -191,7 +192,7 @@ def test_matrix_other_row_slice_matches_evaluator(tmp_path: Path, orientation: s
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, list(cells), load_values=True)
     ).evaluate(list(cells))
-    got = pkg.compute_selected(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_selected, named_input_kwargs(pkg, catalog, graph))
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )

@@ -10,6 +10,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -83,7 +84,7 @@ def test_thousands_space_shared_string_emits_as_float(tmp_path: Path) -> None:
     assert "1000.0" in modules["data.py"]
     assert "1 000" not in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a15_thousands")
-    assert _scalar(pkg.compute_out()) == pytest.approx(1000.0)
+    assert _scalar(invoke_public_compute(pkg, pkg.compute_out, {})) == pytest.approx(1000.0)
 
 
 def test_imf_sentinels_stay_strings_in_float_constant(tmp_path: Path) -> None:
@@ -94,7 +95,7 @@ def test_imf_sentinels_stay_strings_in_float_constant(tmp_path: Path) -> None:
     assert (store[2], store[3], store[4]) == ("n/a", "..", "--")
     assert store[5] in {None, ""}
     assert store[6] == pytest.approx(3.5)
-    assert _scalar(pkg.compute_out()) == pytest.approx(1000.0)
+    assert _scalar(invoke_public_compute(pkg, pkg.compute_out, {})) == pytest.approx(1000.0)
 
 
 def test_empty_and_nbsp_cached_text() -> None:

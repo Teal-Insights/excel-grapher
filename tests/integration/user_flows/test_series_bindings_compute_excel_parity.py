@@ -21,6 +21,7 @@ from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import validate_bindings_document
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.integration.user_flows.utils import load_generated_package
+from tests.unit.exporter.inverted_tree.helpers import invoke_public_compute
 from tests.utils.excel_workbook_parity import (
     assert_workbook_parity,
     compare_cached_to_evaluator,
@@ -116,7 +117,7 @@ def _compute_records(workbook: Path, tmp_path: Path) -> list[dict[str, object]]:
     pkg, _modules = load_generated_package(
         graph, bindings, workbook, tmp_path, name="mixed_error_export"
     )
-    result = pkg.compute_mixed_output(scale_input=5.0)
+    result = invoke_public_compute(pkg, pkg.compute_mixed_output, dict(scale_input=5.0))
     records = pkg.as_records(pkg.compute_mixed_output, result)
     assert len(records) == 2
 

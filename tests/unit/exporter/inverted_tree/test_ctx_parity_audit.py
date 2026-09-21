@@ -17,6 +17,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -68,12 +69,12 @@ def test_bool_dtype_round_trips(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, _copy_bindings("Inputs!A1", "Outputs!A1", dtype="bool"))
     pkg = load_package(modules, tmp_path, name="audit_bool")
-    assert pkg.compute_out(src=False) is False
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(src=False)) is False
     catalog, _deps, graph = inverted_graph_parts(
         workbook, _copy_bindings("Inputs!A1", "Outputs!A1")
     )
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=True)) == expected
+    assert _scalar(invoke_public_compute(pkg, pkg.compute_out, dict(src=True))) == expected
 
 
 def test_datetime_input_emits_data_literals(tmp_path: Path) -> None:
@@ -90,7 +91,7 @@ def test_datetime_input_emits_data_literals(tmp_path: Path) -> None:
     assert "from datetime import datetime" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="audit_dt")
     assert stamp == pkg.data.SRC_DEFAULT
-    assert pkg.compute_out(src=stamp) == stamp
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(src=stamp)) == stamp
 
 
 def test_list_data_range_and_sheet_name_keys_match_evaluator(tmp_path: Path) -> None:
@@ -138,7 +139,13 @@ def test_list_data_range_and_sheet_name_keys_match_evaluator(tmp_path: Path) -> 
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_shards")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!Z1"])["Outputs!Z1"]
     assert (
-        _scalar(pkg.compute_out(growth=pkg.data.GROWTH.with_nested(((1.0, 2.0), (3.0, 4.0)))))
+        _scalar(
+            invoke_public_compute(
+                pkg,
+                pkg.compute_out,
+                dict(growth=pkg.data.GROWTH.with_nested(((1.0, 2.0), (3.0, 4.0)))),
+            )
+        )
         == expected
     )
 
@@ -177,7 +184,14 @@ def test_value_map_key_domain_is_resolved(tmp_path: Path) -> None:
     assert [point["SCENARIO"] for point in catalog.get("src").domain] == ["Base", "Alt"]
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_vmap")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!Z1"])["Outputs!Z1"]
-    assert _scalar(pkg.compute_out(src=pkg.data.SRC.with_nested(((10.0,), (20.0,))))) == expected
+    assert (
+        _scalar(
+            invoke_public_compute(
+                pkg, pkg.compute_out, dict(src=pkg.data.SRC.with_nested(((10.0,), (20.0,))))
+            )
+        )
+        == expected
+    )
 
 
 def test_named_range_data_range_exports(tmp_path: Path) -> None:
@@ -211,7 +225,9 @@ def test_named_range_data_range_exports(tmp_path: Path) -> None:
     assert catalog.get("src").cells == ("Inputs!B2", "Inputs!C2")
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_named")
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
-    result = pkg.compute_out(src=pkg.data.SRC.with_nested((1.5, 2.5)))
+    result = invoke_public_compute(
+        pkg, pkg.compute_out, dict(src=pkg.data.SRC.with_nested((1.5, 2.5)))
+    )
     assert result[1] == expected["Outputs!A1"]
     assert result[2] == expected["Outputs!B1"]
 
@@ -229,7 +245,7 @@ def test_named_range_formula_expands_to_bound_cell(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="audit_named_f")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(pkg.compute_out(src=4.0)) == expected
+    assert _scalar(invoke_public_compute(pkg, pkg.compute_out, dict(src=4.0))) == expected
 
 
 def test_ctx_library_shapes_fail_closed(tmp_path: Path) -> None:
@@ -262,7 +278,7 @@ def test_iferror_matches_evaluator(tmp_path: Path, value: float) -> None:
     _catalog, _deps, graph = inverted_graph_parts(workbook, document)
     with FormulaEvaluator(graph) as evaluator:
         expected = evaluator.evaluate(["Outputs!A1"])["Outputs!A1"]
-    assert _scalar(package.compute_out(src=value)) == expected
+    assert _scalar(invoke_public_compute(package, package.compute_out, dict(src=value))) == expected
 
 
 def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> None:
@@ -307,11 +323,17 @@ def test_sum_and_sumproduct_of_bound_series_match_evaluator(tmp_path: Path) -> N
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
     assert _scalar(
-        pkg.compute_sum_out(left=pkg.data.LEFT.with_nested((1.0, 2.0)))
+        invoke_public_compute(
+            pkg, pkg.compute_sum_out, dict(left=pkg.data.LEFT.with_nested((1.0, 2.0)))
+        )
     ) == pytest.approx(expected["Outputs!A1"])
     assert _scalar(
-        pkg.compute_prod_out(
-            left=pkg.data.LEFT.with_nested((1.0, 2.0)),
-            right=pkg.data.RIGHT.with_nested((3.0, 4.0)),
+        invoke_public_compute(
+            pkg,
+            pkg.compute_prod_out,
+            dict(
+                left=pkg.data.LEFT.with_nested((1.0, 2.0)),
+                right=pkg.data.RIGHT.with_nested((3.0, 4.0)),
+            ),
         )
     ) == pytest.approx(expected["Outputs!B1"])

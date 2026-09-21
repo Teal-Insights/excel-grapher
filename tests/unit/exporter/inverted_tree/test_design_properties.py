@@ -25,15 +25,14 @@ from tests.unit.exporter.inverted_tree import test_shape_a22_guarded_residual as
 from tests.unit.exporter.inverted_tree import test_shape_a22_shift_k as a22_shift_k
 from tests.unit.exporter.inverted_tree.helpers import (
     _evaluator_pairs,
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
     inverted_graph_parts,
     invoke_public_compute,
     load_package,
     named_input_kwargs,
     oriented_document,
-    required_param_names,
     series_entry,
     transpose_sheets,
     write_oriented_workbook,
@@ -541,8 +540,8 @@ def test_code_size_independent_of_constant_series_count(tmp_path: Path) -> None:
 
     small_used, small_pkg = generate_with_used(2)
     large_used, large_pkg = generate_with_used(8)
-    assert all_param_names(small_pkg.compute_result) == ("value",)
-    assert all_param_names(large_pkg.compute_result) == ("value",)
+    assert input_field_names(small_pkg, small_pkg.compute_result) == ("value",)
+    assert input_field_names(large_pkg, large_pkg.compute_result) == ("value",)
     assert small_pkg.compute_result.__constants__ == ("const_0", "const_1")
     assert large_pkg.compute_result.__constants__ == tuple(f"const_{i}" for i in range(8))
     assert "require_length" not in small_used["api.py"]
@@ -588,7 +587,7 @@ def test_lexically_misordered_string_keys_match_evaluator(tmp_path: Path) -> Non
     modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name="lex_order")
     _package_matches_evaluator(pkg, catalog, graph)
-    result = pkg.compute_path()
+    result = invoke_public_compute(pkg, pkg.compute_path, {})
     assert tuple(result.domain) == (("Y9",), ("Y10",), ("Y11",))
     assert [result[year] for year in ("Y9", "Y10", "Y11")] == pytest.approx((100.0, 101.0, 102.0))
 
@@ -599,7 +598,9 @@ def test_leaf_closure_signatures_use_inspect(tmp_path: Path) -> None:
     )
     path_sig = inspect.signature(pkg.compute_output_path)
     year_sig = inspect.signature(pkg.compute_output_year1)
-    assert set(required_param_names(pkg.compute_output_path)) == {
+    assert list(path_sig.parameters) == ["inputs"]
+    assert list(year_sig.parameters) == ["inputs"]
+    assert set(input_field_names(pkg, pkg.compute_output_path)) == {
         "initial_debt",
         "growth",
         "interest",
@@ -618,7 +619,7 @@ def test_leaf_closure_signatures_use_inspect(tmp_path: Path) -> None:
         generate_inverted(_a5_workbook(tmp_path), _a5_bindings()), tmp_path, name="sig_a5"
     )
     shocked_sig = inspect.signature(pkg5.compute_output_shocked)
-    assert set(required_param_names(pkg5.compute_output_shocked)) == {"value", "shock_year"}
+    assert set(input_field_names(pkg5, pkg5.compute_output_shocked)) == {"value", "shock_year"}
     assert "engine_year_labels" not in shocked_sig.parameters
     assert "engine_year_labels" not in inspect.signature(pkg5.compute_output_baseline).parameters
     assert pkg5.compute_output_shocked.__constants__ == ("engine_year_labels",)

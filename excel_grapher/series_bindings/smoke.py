@@ -138,15 +138,16 @@ def _compute_input_names(compute: Callable[..., Any]) -> list[str]:
 
 
 def _call_compute(pkg: Any, compute: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
-    """Call `compute` with either an Inputs bundle or legacy leaf keywords."""
-    if list(inspect.signature(compute).parameters) != ["inputs"]:
-        return compute(**kwargs)
+    """Call `compute` with a constructed `{Output}Inputs` bundle."""
     annotation = compute.__annotations__.get("inputs")
     if isinstance(annotation, str):
         annotation = getattr(pkg, annotation, None)
-    if annotation is None:
-        return compute(**kwargs)
-    return compute(annotation(**kwargs))
+    if annotation is None or not hasattr(annotation, "from_defaults"):
+        raise TypeError(
+            f"{getattr(compute, '__name__', compute)}() expected an Inputs class "
+            "with from_defaults(), not leaf keywords"
+        )
+    return compute(annotation.from_defaults(**kwargs))
 
 
 def _inverted_tree_default_kwargs(

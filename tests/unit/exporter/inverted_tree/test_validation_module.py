@@ -81,8 +81,9 @@ def test_validation_module_passes_ruff_check_and_format(tmp_path: Path) -> None:
     pkg.mkdir()
     for name, content in modules.items():
         (pkg / name).write_text(content, encoding="utf-8")
-    target = str(pkg / "validation.py")
-    check = _run(["uv", "run", "--no-sync", "ruff", "check", target])
-    assert check.returncode == 0, f"ruff check failed:\n{check.stdout}\n{check.stderr}"
-    fmt = _run(["uv", "run", "--no-sync", "ruff", "format", "--check", target])
-    assert fmt.returncode == 0, f"ruff format --check failed:\n{fmt.stdout}\n{fmt.stderr}"
+    for filename in ("validation.py", "api.py", "model.py"):
+        target = str(pkg / filename)
+        check = _run(["uv", "run", "--no-sync", "ruff", "check", target])
+        assert check.returncode == 0, f"ruff check {filename}:\n{check.stdout}\n{check.stderr}"
+        fmt = _run(["uv", "run", "--no-sync", "ruff", "format", "--check", target])
+        assert fmt.returncode == 0, f"ruff format {filename}:\n{fmt.stdout}\n{fmt.stderr}"

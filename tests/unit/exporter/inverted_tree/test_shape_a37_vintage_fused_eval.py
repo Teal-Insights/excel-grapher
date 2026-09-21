@@ -20,6 +20,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from tests.unit.exporter.inverted_tree.helpers import (
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     write_workbook,
 )
@@ -307,11 +308,11 @@ def test_issuance_year_stock_formula_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(inverted_graph_parts(workbook, document)[2]).evaluate(
         ["V!D5", "V!E5", "V!D6", "V!E6", "V!A10"]
     )
-    stock = dict(pkg.compute_stock().items())
+    stock = dict(invoke_public_compute(pkg, pkg.compute_stock, {}).items())
     assert stock[2024, 2024] == pytest.approx(expected["V!D5"])
     assert stock[2024, 2025] == pytest.approx(expected["V!E5"])
     assert stock[2025, 2025] == pytest.approx(expected["V!E6"])
-    assert pkg.compute_result() == pytest.approx(expected["V!A10"])
+    assert invoke_public_compute(pkg, pkg.compute_result, {}) == pytest.approx(expected["V!A10"])
 
 
 def test_opening_stock_is_named_as_issuance_year(tmp_path: Path) -> None:
@@ -344,17 +345,17 @@ def test_vintage_triangle_export_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(graph).evaluate(
         [*stock.cells, *interest.cells, document["series"][-1]["data_range"]]
     )
-    got = pkg.compute_stock()
+    got = invoke_public_compute(pkg, pkg.compute_stock, {})
     for coord, cell in stock.coordinate_cells.items():
         if cell not in expected:
             continue
         assert got[coord] == pytest.approx(expected[cell]), (coord, cell)
-    got_interest = pkg.compute_interest()
+    got_interest = invoke_public_compute(pkg, pkg.compute_interest, {})
     for coord, cell in interest.coordinate_cells.items():
         if cell not in expected:
             continue
         assert got_interest[coord] == pytest.approx(expected[cell]), (coord, cell)
-    result = pkg.compute_result()
+    result = invoke_public_compute(pkg, pkg.compute_result, {})
     if isinstance(result, tuple):
         result = result[0]
     assert result == pytest.approx(expected[document["series"][-1]["data_range"]])
@@ -377,12 +378,12 @@ def test_triangle_blanks_are_named_indexes_not_none(tmp_path: Path) -> None:
     expected = FormulaEvaluator(graph, blank_ranges=blanks).evaluate(
         [cell for cell in (*stock.cells, *interest.cells) if graph.get_node(cell) is not None]
     )
-    got = pkg.compute_stock()
+    got = invoke_public_compute(pkg, pkg.compute_stock, {})
     for coord, cell in stock.coordinate_cells.items():
         if cell not in expected:
             continue
         assert got[coord] == pytest.approx(expected[cell]), (coord, cell)
-    got_interest = pkg.compute_interest()
+    got_interest = invoke_public_compute(pkg, pkg.compute_interest, {})
     for coord, cell in interest.coordinate_cells.items():
         if cell not in expected:
             continue

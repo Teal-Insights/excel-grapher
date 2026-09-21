@@ -20,6 +20,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     series_entry,
     write_workbook,
 )
@@ -195,7 +196,9 @@ def test_scenario_code_to_label_remap_is_a_dict_not_an_if_ladder(tmp_path: Path)
     assert "Bounds Test 1: Real GDP Growth Shock" in internals
     assert "'B1'" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "scenario_remap")
-    got = pkg.compute_dsa_interest(stress_interest=pkg.data.STRESS_INTEREST_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_dsa_interest, dict(stress_interest=pkg.data.STRESS_INTEREST_DEFAULT)
+    )
     assert got["B1", 2025] == 2.0
     assert got["B3", 2026] == 13.0
 
@@ -208,7 +211,9 @@ def test_iso3_to_name_remap_is_a_dict_not_an_if_ladder(tmp_path: Path) -> None:
     assert "catalog_ifs[REF_AREA_TO_CATALOG_IFS[ref_area]]" in internals
     assert not re.search(r"if ref_area ==", internals)
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_remap")
-    got = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_trigger_ifs, dict(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    )
     assert got["BGD"] == 513.0
     assert got["BTN"] == 514.0
 
@@ -264,7 +269,9 @@ def test_inverse_label_to_code_remap_uses_the_same_fold(tmp_path: Path) -> None:
     assert "SCENARIO_TO_DSA_INTEREST[scenario]" in internals
     assert not re.search(r"if scenario ==", internals)
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "scenario_inverse")
-    got = pkg.compute_chart_interest(dsa_interest=pkg.data.DSA_INTEREST_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_chart_interest, dict(dsa_interest=pkg.data.DSA_INTEREST_DEFAULT)
+    )
     assert got["Bounds Test 1: Real GDP Growth Shock", 2025] == 2.0
     assert got["Bound Test 2: Exports Shock", 2026] == 13.0
 
@@ -327,7 +334,9 @@ def test_extra_predicate_member_stays_a_leftover_family(tmp_path: Path) -> None:
     assert re.search(r"if scenario == 'B6':", internals)
     assert "xl_mul(" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "scenario_leftover")
-    got = pkg.compute_dsa_interest(stress_interest=pkg.data.STRESS_INTEREST_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_dsa_interest, dict(stress_interest=pkg.data.STRESS_INTEREST_DEFAULT)
+    )
     assert got["B1", 2025] == 2.0
     assert got["B6", 2026] == 28.0
 
@@ -363,7 +372,9 @@ def test_many_to_one_string_map_is_not_lockstep(tmp_path: Path) -> None:
     assert "catalog_ifs['Benin']" in internals
     assert "catalog_ifs['Bangladesh']" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_many_to_one")
-    got = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_trigger_ifs, dict(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    )
     assert got["BGD"] == 638.0
     assert got["BEN"] == 513.0
     assert got["BTN"] == 513.0
@@ -421,7 +432,9 @@ def test_producer_key_that_is_not_a_function_of_the_host_stays_literal(tmp_path:
     assert "catalog_ifs['Bangladesh', time_period]" in internals
     assert "catalog_ifs['Benin', time_period]" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_independent")
-    got = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_trigger_ifs, dict(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    )
     assert got["BGD", 2025] == 1.0
     assert got["BGD", 2026] == 4.0
     assert got["BEN", 2025] == 3.0
@@ -474,6 +487,6 @@ def test_mismatched_axis_names_do_not_invent_a_remap(tmp_path: Path) -> None:
     assert "VARIANT_KEY" not in internals
     assert "labels['2 Year']" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "cross_axis_literal")
-    got = pkg.compute_picked(labels=pkg.data.LABELS_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_picked, dict(labels=pkg.data.LABELS_DEFAULT))
     assert got["1 Year"] == "2 Year"
     assert got["10 Year"] == "1 Year"

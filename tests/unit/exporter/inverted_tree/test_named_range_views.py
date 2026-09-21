@@ -9,6 +9,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     series_entry,
     write_workbook,
 )
@@ -60,7 +61,10 @@ def test_lookup_ranges_become_views_without_lambdas(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _lookup_workbook(tmp_path), _lookup_bindings(), tmp_path, "lookup_view"
     )
-    assert pkg.compute_out(values=pkg.data.VALUES_DEFAULT, code="KE") == 3.0
+    assert (
+        invoke_public_compute(pkg, pkg.compute_out, dict(values=pkg.data.VALUES_DEFAULT, code="KE"))
+        == 3.0
+    )
 
 
 def _cumulative_workbook(tmp_path: Path, years: int) -> Path:
@@ -175,4 +179,4 @@ def test_keyed_scalar_hosts_have_no_loop_variables(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _keyed_scalar_workbook(tmp_path), _keyed_scalar_bindings(), tmp_path, "keyed_scalar"
     )
-    assert pkg.compute_total(cov=pkg.data.COV_DEFAULT) == 6.0
+    assert invoke_public_compute(pkg, pkg.compute_total, dict(cov=pkg.data.COV_DEFAULT)) == 6.0

@@ -7,6 +7,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -55,7 +56,7 @@ def test_shared_function_export(tmp_path: Path, formula: str, expected: float | 
         series_entry("result", "Engine!B5", direction="output"),
     )
     package = load_package(generate_inverted(workbook, document), tmp_path)
-    result = package.api.compute_result()
+    result = invoke_public_compute(package, package.compute_result, {})
     assert result == (pytest.approx(expected) if isinstance(expected, float) else expected)
 
 
@@ -97,7 +98,7 @@ def test_row_geometry_tracks_series_members(
     )
     modules = generate_inverted(workbook, document)
     package = load_package(modules, tmp_path)
-    result = package.api.compute_result()
+    result = invoke_public_compute(package, package.compute_result, {})
     assert tuple(result.domain) == ((2020,), (2021,), (2022,))
     internal = package.internals.result(**({"base_year": 2020} if "C$2" in expression else {}))
     assert tuple(internal[year] for year in (2020, 2021, 2022)) == expected

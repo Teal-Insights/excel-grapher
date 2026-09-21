@@ -60,6 +60,7 @@ from excel_grapher.grapher.writeback import write_workbook
 from excel_grapher.series_bindings import validate_bindings_document
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
+    invoke_public_compute,
     load_package,
     series_entry,
     unload_package,
@@ -144,7 +145,7 @@ def _export_targets(
                 address = original_by_canon[_canonical(_scalar_address(series["data_range"]))]
                 function = getattr(pkg, f"compute_{series_id}")
                 try:
-                    exported[address] = function()
+                    exported[address] = invoke_public_compute(pkg, function, {})
                 except Exception as exc:
                     if not _is_export_xl_error(exc):
                         raise

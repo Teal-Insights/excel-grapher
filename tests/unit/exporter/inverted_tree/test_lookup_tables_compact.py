@@ -14,6 +14,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     series_entry,
     write_workbook,
 )
@@ -99,7 +100,9 @@ def test_choose_over_a_run_of_cells_is_a_view(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _choose_workbook(tmp_path), _choose_bindings(), tmp_path, "choose_view"
     )
-    picked = pkg.compute_picked(flow=pkg.data.FLOW_DEFAULT, which=3)
+    picked = invoke_public_compute(
+        pkg, pkg.compute_picked, dict(flow=pkg.data.FLOW_DEFAULT, which=3)
+    )
     assert picked[2021] == 3.0
 
 
@@ -186,7 +189,7 @@ def test_multi_series_lookup_tables_keep_one_view_per_series_block(tmp_path: Pat
     pkg = assert_package_matches_evaluator(
         _table_workbook(tmp_path), _table_bindings(), tmp_path, "table_runs"
     )
-    assert pkg.compute_out(rates=pkg.data.RATES_DEFAULT) == 5.0
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(rates=pkg.data.RATES_DEFAULT)) == 5.0
 
 
 def _catalog_workbook(tmp_path: Path) -> Path:
@@ -312,17 +315,25 @@ def test_multi_column_index_match_catalog_is_views_not_per_key_lambdas(tmp_path:
     pkg = assert_package_matches_evaluator(
         workbook, bindings, tmp_path, "catalog_index_match", dynamic_refs=dynamic_refs
     )
-    result = pkg.compute_trigger_code(
-        trigger_ifs=pkg.data.TRIGGER_IFS_DEFAULT,
-        trigger_header=pkg.data.TRIGGER_HEADER_DEFAULT,
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_trigger_code,
+        dict(
+            trigger_ifs=pkg.data.TRIGGER_IFS_DEFAULT,
+            trigger_header=pkg.data.TRIGGER_HEADER_DEFAULT,
+        ),
     )
     assert result["AFG"] == "AFG"
     assert result["BGD"] == "BGD"
     assert result["BEN"] == "BEN"
     missing = pkg.data.TRIGGER_IFS_DEFAULT.with_nested((999, 513, 638))
-    unmatched = pkg.compute_trigger_code(
-        trigger_ifs=missing,
-        trigger_header=pkg.data.TRIGGER_HEADER_DEFAULT,
+    unmatched = invoke_public_compute(
+        pkg,
+        pkg.compute_trigger_code,
+        dict(
+            trigger_ifs=missing,
+            trigger_header=pkg.data.TRIGGER_HEADER_DEFAULT,
+        ),
     )
     assert unmatched["AFG"] == "#N/A"
     assert unmatched["BGD"] == "BGD"

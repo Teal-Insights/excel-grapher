@@ -13,6 +13,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -60,7 +61,7 @@ def test_irregular_recurrence_emits_rung3_and_matches_evaluator(tmp_path: Path) 
     pkg = load_package(modules, tmp_path, name="a19_stride2")
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_value()
+    got = invoke_public_compute(pkg, pkg.compute_value, {})
     assert dict(got.items()) == pytest.approx(
         {
             coordinate: expected[catalog.get("value").coordinate_cells[coordinate]]
@@ -94,7 +95,7 @@ def _backward_chain_closed_form(
     )
     modules = generate_inverted(workbook, doc)
     pkg = load_package(modules, tmp_path, name=f"a19_back_{n}")
-    got = pkg.compute_value()
+    got = invoke_public_compute(pkg, pkg.compute_value, {})
     assert dict(pkg.internals.value().items()) == pytest.approx(dict(got.items()))
     expected = tuple(100.0 * (0.99 ** (n - 1 - i)) for i in range(n))
     return tuple(value for _, value in got.items()), expected

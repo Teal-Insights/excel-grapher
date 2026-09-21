@@ -23,6 +23,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     write_workbook,
 )
@@ -256,7 +257,9 @@ def test_matrix_copy_does_not_index_off_axis_life_keys(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="off_axis_matrix")
     owned_life = {coord[1] for coord in pkg.data.PRINCIPAL.domain}
     assert 4 not in owned_life
-    got = pkg.compute_schedule(principal=pkg.data.PRINCIPAL_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_schedule, dict(principal=pkg.data.PRINCIPAL_DEFAULT)
+    )
     for life in range(_N_HOST):
         year = _ORIGIN + life
         if life < _VALUED_LIFE:
@@ -278,7 +281,7 @@ def test_cross_field_integer_affine_does_not_index_missing_step(tmp_path: Path) 
     pkg = load_package(modules, tmp_path, name="off_axis_series")
     producer_steps = pkg.data.STEPS.domain.axes[0].keys
     assert 4 not in producer_steps
-    got = pkg.compute_copied(steps=pkg.data.STEPS_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_copied, dict(steps=pkg.data.STEPS_DEFAULT))
     for life in range(_N_HOST):
         bucket = _BUCKET_ORIGIN + life
         if life < _VALUED_LIFE:
@@ -300,7 +303,7 @@ def test_largest_lookup_family_does_not_cover_off_axis_tail(tmp_path: Path) -> N
     blanks = _series_blank_ranges(n_host=n_host, valued_life=valued_life)
     modules = generate_inverted(workbook, document, blank_ranges=blanks)
     pkg = load_package(modules, tmp_path, name="off_axis_lookup_default")
-    got = pkg.compute_copied(steps=pkg.data.STEPS_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_copied, dict(steps=pkg.data.STEPS_DEFAULT))
     for life in range(n_host):
         bucket = _BUCKET_ORIGIN + life
         if life < valued_life:
@@ -335,7 +338,9 @@ def test_wrapped_affine_does_not_index_off_axis_life_keys(tmp_path: Path) -> Non
     pkg = load_package(modules, tmp_path, name="off_axis_matrix_wrapped")
     owned_life = {coord[1] for coord in pkg.data.PRINCIPAL.domain}
     assert 4 not in owned_life
-    got = pkg.compute_schedule(principal=pkg.data.PRINCIPAL_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_schedule, dict(principal=pkg.data.PRINCIPAL_DEFAULT)
+    )
     for life in range(alpha_blank_from):
         year = _ORIGIN + life
         assert got[_ALPHA, year] == pytest.approx(0.1 * (life + 1))

@@ -10,11 +10,11 @@ import pytest
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -92,13 +92,13 @@ def _a1_bindings() -> dict:
 def test_leaf_closure_excludes_unused_flag_and_ctx(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _a1_bindings()), tmp_path, name="a1_pkg")
-    required = required_param_names(pkg.compute_output_path)
-    names = all_param_names(pkg.compute_output_path)
+    required = input_field_names(pkg, pkg.compute_output_path)
+    names = input_field_names(pkg, pkg.compute_output_path)
     assert set(required) == {"initial_debt", "growth", "interest"}
     assert "unused_flag" not in names
     assert "ctx" not in names
-    year1_required = required_param_names(pkg.compute_output_year1)
-    year1_names = all_param_names(pkg.compute_output_year1)
+    year1_required = input_field_names(pkg, pkg.compute_output_year1)
+    year1_names = input_field_names(pkg, pkg.compute_output_year1)
     assert "unused_flag" not in year1_names
     assert "ctx" not in year1_names
     assert "initial_debt" in year1_required
@@ -128,8 +128,10 @@ def test_numeric_matches_formula_evaluator(tmp_path: Path) -> None:
     )
     evaluator = FormulaEvaluator(graph)
     expected = evaluator.evaluate(["Outputs!A1", "Outputs!B1"])
-    got = pkg.compute_output_path(
-        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    got = invoke_public_compute(
+        pkg,
+        pkg.compute_output_path,
+        dict(initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT),
     )
     assert got[1] == pytest.approx(expected["Outputs!A1"])
     assert got[2] == pytest.approx(expected["Outputs!B1"])

@@ -18,6 +18,7 @@ from excel_grapher.series_bindings import validate_bindings_document
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -90,4 +91,4 @@ def test_generate_modules_package_imports_valued_constant_series(tmp_path: Path)
     assert "define_series(" in modules["data.py"]
     package = load_package(modules, tmp_path, name="const_out")
     assert package.data.COM_AS_OF_DATE[("Brent",)] == 45345
-    assert package.compute_out() == 45345
+    assert invoke_public_compute(package, package.compute_out, {}) == 45345

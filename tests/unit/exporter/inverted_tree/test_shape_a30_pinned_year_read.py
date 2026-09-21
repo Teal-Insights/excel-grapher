@@ -21,6 +21,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     series_entry,
@@ -184,7 +185,7 @@ def test_pinned_year_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> No
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert tuple(value for _, value in got.items()) == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )
@@ -214,7 +215,7 @@ def test_adjacent_pinned_year_is_not_a_lag(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert tuple(value for _, value in got.items()) == pytest.approx((expected["Results!E19"],))
     assert tuple(value for _, value in got.items()) == pytest.approx((12.0 - 8.0 / 6.0,))
     internals = generate_inverted(workbook, document)["internals.py"]
@@ -293,7 +294,7 @@ def test_aligned_scenario_plus_pinned_year_is_keyed(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert tuple(value for _, value in got.items()) == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )

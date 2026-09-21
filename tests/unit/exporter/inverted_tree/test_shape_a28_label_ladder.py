@@ -17,6 +17,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     oriented_addresses,
     oriented_document,
@@ -139,7 +140,7 @@ def test_label_ladder_matches_evaluator(
     cells = list(oriented_addresses(("S!B2", "S!C2"), orientation))
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_picked(variant=variant)
+    got = invoke_public_compute(pkg, pkg.compute_picked, dict(variant=variant))
     assert tuple(value for _, value in got.items()) == pytest.approx(
         (expected[cells[0]], expected[cells[1]])
     )

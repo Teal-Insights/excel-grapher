@@ -106,18 +106,8 @@ def test_public_output_runs_named_formula_bodies_without_flat_modules(
     tiny_dsa_modules: dict[str, str], tmp_path: Path
 ) -> None:
     package = _public_package(tiny_dsa_modules, tmp_path, "tiny_dsa_public_only")
-    data = package.data
     with execution_witness(tmp_path / "tiny_dsa_public_only") as calls:
-        result = package.compute_output_shocked(
-            country_name=data.COUNTRY_NAME_DEFAULT,
-            country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-            growth_baseline=data.GROWTH_BASELINE_DEFAULT,
-            interest_baseline=data.INTEREST_BASELINE_DEFAULT,
-            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
-            shock_year=data.SHOCK_YEAR_DEFAULT,
-            shock_type=data.SHOCK_TYPE_DEFAULT,
-            shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
-        )
+        result = package.compute_output_shocked(package.OutputShockedInputs.from_defaults())
     values = tuple(result[year] for year in (1, 2, 3, 4, 5))
     assert values == pytest.approx(_EXPECTED_SHOCKED)
     private_frames = sorted({file for file, _ in calls if file.startswith("_")})
