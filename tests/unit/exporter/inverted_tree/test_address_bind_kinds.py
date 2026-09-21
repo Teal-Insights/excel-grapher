@@ -67,14 +67,8 @@ def _column_letter_dim() -> dict[str, Any]:
 
 
 def _pin_series(*, values_row: dict[int, Any] | None, values_col: dict[str, Any] | None) -> dict:
-    if values_row is None:
-        row_dim = _row_index_dim()
-    else:
-        row_dim = _row_value_map(values_row)
-    if values_col is None:
-        col_dim = _column_letter_dim()
-    else:
-        col_dim = _col_value_map(values_col)
+    row_dim = _row_index_dim() if values_row is None else _row_value_map(values_row)
+    col_dim = _column_letter_dim() if values_col is None else _col_value_map(values_col)
     return {
         "id": "pins",
         "sheet": "Engine",
