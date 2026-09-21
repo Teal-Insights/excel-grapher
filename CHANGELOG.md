@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.4.0 (2026-09-21)
+
+### Features
+
+- **bindings**: Add pre-extract bindings candidates
+  ([#959](https://github.com/Teal-Insights/excel-grapher/pull/959),
+  [`68361f6`](https://github.com/Teal-Insights/excel-grapher/commit/68361f63a6f03f3e0332151d30b201d4f8aa1681))
+
+### Testing
+
+- **grapher**: Lock extract-time domains without cached refs
+  ([#959](https://github.com/Teal-Insights/excel-grapher/pull/959),
+  [`68361f6`](https://github.com/Teal-Insights/excel-grapher/commit/68361f63a6f03f3e0332151d30b201d4f8aa1681))
+
+
 ## v23.3.1 (2026-09-21)
 
 ### Bug Fixes
