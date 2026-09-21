@@ -188,9 +188,7 @@ def _constraint_element(
     return domains.get(series.series_id)
 
 
-def _value_annotation(
-    series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS
-) -> str:
+def _value_annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS) -> str:
     """Describe every permitted workbook value, including blanks and errors.
 
     A public input whose cells share a constraint domain uses that domain
@@ -260,9 +258,7 @@ def _public_alias(series: BoundSeries) -> str | None:
     return facade
 
 
-def _annotation(
-    series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS
-) -> str:
+def _annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS) -> str:
     if series.single_valued:
         return _value_annotation(series, domains)
     alias = _public_alias(series)
@@ -974,9 +970,7 @@ def _signature(
     returns: str,
     domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> str:
-    joined = ", ".join(
-        f"{series.series_id}: {_annotation(series, domains)}" for series in params
-    )
+    joined = ", ".join(f"{series.series_id}: {_annotation(series, domains)}" for series in params)
     return f"def {name}({('*, ' + joined) if joined else ''}) -> {returns}:"
 
 
@@ -1050,9 +1044,7 @@ def emit_named_internals(
             "\n".join(
                 [
                     _publish_line(series),
-                    _signature(
-                        series.series_id, params, _annotation(series, domains), domains
-                    ),
+                    _signature(series.series_id, params, _annotation(series, domains), domains),
                     f'    """Compute `{series.series_id}` using authored coordinate identities."""',
                     *_schema_checks(params, catalog),
                     *body,
@@ -1349,9 +1341,7 @@ def _input_check(
         and labeller.series_id != series.series_id
     ]
     bind = ", ".join(f"{axis.name}={axis.name}" for axis, _labeller in runtime_axes)
-    extras = [
-        f"{axis.name}: {_annotation(labeller, domains)}" for axis, labeller in runtime_axes
-    ]
+    extras = [f"{axis.name}: {_annotation(labeller, domains)}" for axis, labeller in runtime_axes]
     if not series.single_valued:
         schema = f"{_binding(series)}.schema"
         if bind:
@@ -1445,9 +1435,7 @@ def _input_check_functions(
     return checks, checked, used
 
 
-def emit_named_validation(
-    catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS
-) -> str:
+def emit_named_validation(catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS) -> str:
     """Emit input schema, dtype, domain, and value-map checks for `Model` construction."""
     checks, checked, used = _input_check_functions(catalog, domains)
     lines = [
@@ -1610,9 +1598,7 @@ def _model_from_defaults(
     lines.append("        *,")
     for series in inputs:
         default = f"data.{series.series_id.upper()}_DEFAULT"
-        lines.append(
-            f"        {series.series_id}: {_annotation(series, domains)} = {default},"
-        )
+        lines.append(f"        {series.series_id}: {_annotation(series, domains)} = {default},")
     lines.extend(
         [
             "    ) -> Model:",
@@ -1917,9 +1903,7 @@ def emit_named_api(
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
         input_names.append(_inputs_class_name(output))
-        source, name = _public_function(
-            output, catalog, constant_sets[constants], deps, domains
-        )
+        source, name = _public_function(output, catalog, constant_sets[constants], deps, domains)
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
@@ -2673,9 +2657,7 @@ def _emit_named_modules(
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
     model = emit_named_model(catalog, deps, scc_map, domains)
     api = emit_named_api(catalog, deps, constant_sets, domains)
-    data = emit_named_data(
-        catalog, workbook, named_axes, literal_tables, constant_lines, domains
-    )
+    data = emit_named_data(catalog, workbook, named_axes, literal_tables, constant_lines, domains)
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
 
     export_runtime = Path(__file__).parents[1] / "export_runtime"
