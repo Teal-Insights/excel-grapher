@@ -103,6 +103,30 @@ def test_labeller_reaches_every_time_period_output(labelled_pkg) -> None:
     assert "engine_year_labels" in required_param_names(labelled_pkg.internals.shock_active)
 
 
+def test_from_defaults_binds_snapshot_inputs(labelled_pkg) -> None:
+    model = labelled_pkg.Model.from_defaults()
+    baseline = model.output_baseline
+    assert tuple(baseline.domain.axes[0].keys) == (1, 2, 3, 4, 5)
+    assert tuple(baseline[year] for year in range(1, 6)) == pytest.approx(
+        _DEFAULT_BASELINE, abs=1e-9
+    )
+
+
+def test_from_defaults_override_shifts_labelled_keys(labelled_pkg) -> None:
+    years = (2024, 2025, 2026, 2027, 2028)
+    kwargs = _baseline_kwargs(labelled_pkg, years=years)
+    model = labelled_pkg.Model.from_defaults(
+        first_projection_year=kwargs["first_projection_year"],
+        growth_baseline=kwargs["growth_baseline"],
+        interest_baseline=kwargs["interest_baseline"],
+        primary_balance_baseline=kwargs["primary_balance_baseline"],
+    )
+    baseline = model.output_baseline
+    assert tuple(baseline.domain.axes[0].keys) == years
+    for index, year in enumerate(years):
+        assert baseline[year] == pytest.approx(_DEFAULT_BASELINE[index])
+
+
 def test_snapshot_numeric_parity_and_shift_oracle(labelled_pkg) -> None:
     baseline = invoke_public_compute(
         labelled_pkg, labelled_pkg.compute_output_baseline, _baseline_kwargs(labelled_pkg)

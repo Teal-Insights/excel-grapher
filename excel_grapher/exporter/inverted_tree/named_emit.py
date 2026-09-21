@@ -1406,6 +1406,17 @@ def _model_recurrence_group(
     return lines
 
 
+def _input_series_ids(catalog: SeriesCatalog) -> tuple[str, ...]:
+    """Retained input series ids in catalog order."""
+    return tuple(series.series_id for series in _retained(catalog) if series.direction == "input")
+
+
+def _input_name_set(names: Sequence[str]) -> str:
+    if not names:
+        return "set()"
+    return "{" + ", ".join(_python_literal(name) for name in names) + "}"
+
+
 def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
     """Emit `_bind_inputs`, the shared CHECKS path for Model and input bundles."""
     deferred_ids = _deferred_runtime_inputs(catalog)
@@ -1461,10 +1472,73 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
     return lines
 
 
+def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
+    """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
+    inputs = [catalog.get(sid) for sid in _input_series_ids(catalog)]
+    lines = ["", "    @classmethod"]
+    if not inputs:
+        lines.extend(
+            [
+                "    def from_defaults(cls) -> Model:",
+                '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
+                "        return cls()",
+            ]
+        )
+        return lines
+    lines.append("    def from_defaults(")
+    lines.append("        cls,")
+    lines.append("        *,")
+    for series in inputs:
+        default = f"data.{series.series_id.upper()}_DEFAULT"
+        lines.append(f"        {series.series_id}: {_annotation(series)} = {default},")
+    lines.extend(
+        [
+            "    ) -> Model:",
+            '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
+        ]
+    )
+    if len(inputs) == 1:
+        sid = inputs[0].series_id
+        lines.append(f"        return cls({sid}={sid})")
+        return lines
+    lines.append("        return cls(")
+    lines.extend(f"            {series.series_id}={series.series_id}," for series in inputs)
+    lines.append("        )")
+    return lines
+
+
 _BOUND_INPUTS_MIXIN = '''class _BoundInputs:
-    """Shared snapshot fill and CHECKS validation for per-output input bundles."""
+    """Shared workbook bind and CHECKS validation for Model and input bundles."""
 
     __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
+    _INPUT_IDS: tuple[str, ...] = ()
+
+    @classmethod
+    def from_workbook(cls, workbook: Path | str, **overrides: object) -> Self:
+        """Bind input leaves from a populated workbook of this vintage."""
+        declared = getattr(cls, "__dataclass_fields__", None)
+        names = tuple(declared) if declared else cls._INPUT_IDS
+        unknown = overrides.keys() - set(names)
+        if unknown:
+            raise TypeError(f"unknown inputs: {sorted(unknown)}")
+        values = read_bound_inputs(Path(workbook), names, data)
+        values.update(overrides)
+        return cls(**values)
+
+    def __post_init__(self) -> None:
+        self._validate()
+
+    def _validate(self) -> None:
+        holder = Model.__new__(Model)
+        names = {field.name for field in fields(self)}
+        values = {name: getattr(self, name) for name in names}
+        _bind_inputs(holder, values)
+        for name in names:
+            object.__setattr__(self, name, getattr(holder, name))
+
+
+class _SnapshotInputs(_BoundInputs):
+    """Per-output bundle factory over `data.*_DEFAULT` leaves."""
 
     @classmethod
     def from_defaults(cls, **overrides: object) -> Self:
@@ -1479,22 +1553,12 @@ _BOUND_INPUTS_MIXIN = '''class _BoundInputs:
             )
             for name in names
         }
-        return cls(**values)
-
-    def __post_init__(self) -> None:
-        self._validate()
-
-    def _validate(self) -> None:
-        holder = Model.__new__(Model)
-        names = {field.name for field in fields(self)}
-        values = {name: getattr(self, name) for name in names}
-        _bind_inputs(holder, values)
-        for name in names:
-            object.__setattr__(self, name, getattr(holder, name))'''
+        return cls(**values)'''
 
 
-def _model_init(_catalog: SeriesCatalog) -> list[str]:
+def _model_init(catalog: SeriesCatalog) -> list[str]:
     """Install bound leaves; skip CHECKS when the bundle is already validated."""
+    input_ids = _input_series_ids(catalog)
     return [
         "",
         "    def __init__(self, bundle: _BoundInputs | None = None, /, **inputs: Any) -> None:",
@@ -1508,6 +1572,9 @@ def _model_init(_catalog: SeriesCatalog) -> list[str]:
         "            values = {field.name: getattr(bundle, field.name) for field in fields(bundle)}",
         "            _bind_inputs(self, values, validate=False)",
         "            return",
+        f"        unknown = inputs.keys() - {_input_name_set(input_ids)}",
+        "        if unknown:",
+        '            raise TypeError(f"unknown inputs: {sorted(unknown)}")',
         "        _bind_inputs(self, inputs)",
     ]
 
@@ -1519,7 +1586,7 @@ def _input_class(output: BoundSeries, leaves: Sequence[str], catalog: SeriesCata
     compute = output.compute_name or f"compute_{output.series_id}"
     lines = [
         "@dataclass(frozen=True, kw_only=True)",
-        f"class {class_name}(_BoundInputs):",
+        f"class {class_name}(_SnapshotInputs):",
         f'    """Bound input leaves for `{compute}`."""',
         "",
     ]
@@ -1579,20 +1646,26 @@ def _model_class(
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> list[str]:
     """Lines of the memoized `Model` class."""
-    inputs = [s for s in _retained(catalog) if s.direction == "input"]
+    input_ids = _input_series_ids(catalog)
+    inputs = [catalog.get(sid) for sid in input_ids]
     model = [
-        "class Model:",
+        "class Model(_BoundInputs):",
         '    """Formula series of the workbook, evaluated on demand from bound inputs.',
         "",
         "    Each attribute evaluates its named formula once per model. Only the",
         "    inputs bound at construction are available, so a public function",
-        "    supplies exactly the leaves of its output.",
+        "    supplies exactly the leaves of its output. Unknown constructor",
+        "    names fail closed. `from_defaults` binds every input from",
+        "    `data.*_DEFAULT`. `from_workbook` reads those input cells from a",
+        "    populated workbook of this vintage.",
         '    """',
         "",
     ]
     for series in inputs:
         model.append(f"    {series.series_id}: {_annotation(series)}")
+    model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog))
+    model.extend(_model_from_defaults(catalog))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
@@ -1659,14 +1732,14 @@ def emit_named_model(
         *input_classes,
     ]
     body = "\n\n\n".join(section for section in sections if section)
-    stdlib = [
-        "from dataclasses import Field, dataclass, fields",
-        "from typing import Any, ClassVar, Self",
-    ]
+    stdlib = ["from dataclasses import Field, dataclass, fields"]
     if "datetime" in body:
-        stdlib.insert(1, "from datetime import datetime")
+        stdlib.append("from datetime import datetime")
     if "@cached_property" in body:
-        stdlib.insert(-1, "from functools import cached_property")
+        stdlib.append("from functools import cached_property")
+    if "Path" in body:
+        stdlib.append("from pathlib import Path")
+    stdlib.append("from typing import Any, ClassVar, Self")
     imported = ["data"]
     imported.extend(
         name
@@ -1677,6 +1750,8 @@ def emit_named_model(
         if token in body and name not in imported
     )
     local = [f"from . import {', '.join(imported)}"]
+    if "read_bound_inputs" in body:
+        local.append("from .workbook import read_bound_inputs")
     lines = [
         *_generated_module_preamble(
             "Memoized evaluator and per-output input bundles.",
@@ -2388,6 +2463,7 @@ def emit_named_modules(
     export_runtime = Path(__file__).parents[1] / "export_runtime"
     tensor_source = (export_runtime / "tensor.py").read_text(encoding="utf-8")
     provenance_source = (export_runtime / "provenance.py").read_text(encoding="utf-8")
+    workbook_source = (export_runtime / "workbook.py").read_text(encoding="utf-8")
     return {
         "__init__.py": init_source
         + "\nfrom .tensor import Axis, Domain, Series, Tensor, TensorSchema\n"
@@ -2399,6 +2475,7 @@ def emit_named_modules(
         "data.py": data,
         "tensor.py": tensor_source,
         "provenance.py": provenance_source,
+        "workbook.py": workbook_source,
         **build_runtime_modules(runtime_source, excel_source),
     }
 

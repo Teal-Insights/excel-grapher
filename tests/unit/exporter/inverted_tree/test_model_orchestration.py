@@ -54,7 +54,7 @@ def test_every_formula_is_one_model_attribute(tmp_path: Path) -> None:
     modules = generate_inverted(_prefix_workbook(tmp_path), _prefix_bindings())
     model = modules["model.py"]
     api = modules["api.py"]
-    assert "class Model:" in model
+    assert "class Model(_BoundInputs):" in model
     assert "class Model:" not in api
     assert "def _shared_" not in model
     assert "def _run_" not in model
