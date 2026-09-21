@@ -1,4 +1,4 @@
-schema_version: 1.17.0
+schema_version: 1.19.0
 workbook: ../tiny-dsa-labelled.xlsx
 concept_scheme:
   id: tiny_dsa
@@ -33,6 +33,7 @@ series:
     data_range: Inputs!B5
     layout: scalar
     input: {}
+    domain: { enum: [Borvelia, Litellia, Aurelium] }
     structure:
       measure:
         concept: OBS_VALUE
@@ -56,6 +57,7 @@ series:
     data_range: Inputs!B3
     layout: scalar
     input: {}
+    domain: { between: { min: 1, max: 3000 } }
     structure:
       measure:
         concept: OBS_VALUE
@@ -79,6 +81,7 @@ series:
     data_range: Inputs!B10:B12
     layout: row_series
     input: {}
+    domain: { real_between: { min: 0.0, max: 200.0 } }
     structure:
       measure:
         concept: OBS_VALUE
@@ -119,6 +122,7 @@ series:
     data_range: Inputs!C16:G16
     layout: row_series
     input: {}
+    domain: { real_between: { min: -10.0, max: 15.0 } }
     structure:
       measure:
         concept: OBS_VALUE
@@ -158,6 +162,7 @@ series:
     data_range: Inputs!C17:G17
     layout: row_series
     input: {}
+    domain: { real_between: { min: 0.0, max: 20.0 } }
     structure:
       measure:
         concept: OBS_VALUE
@@ -197,6 +202,7 @@ series:
     data_range: Inputs!C18:G18
     layout: row_series
     input: {}
+    domain: { real_between: { min: -15.0, max: 15.0 } }
     structure:
       measure:
         concept: OBS_VALUE
@@ -259,6 +265,7 @@ series:
     data_range: Inputs!B22
     layout: scalar
     input: {}
+    domain: { enum: [1, 2, 3] }
     structure:
       measure:
         concept: OBS_VALUE
@@ -282,6 +289,7 @@ series:
     data_range: Inputs!B26:D26
     layout: row_series
     input: {}
+    domain: { real_between: { min: -30.0, max: 30.0 } }
     structure:
       measure:
         concept: OBS_VALUE

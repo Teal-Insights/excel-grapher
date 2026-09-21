@@ -146,11 +146,20 @@ def to_networkx(
     Accepts `DependencyGraph`, any graph-like object with node iteration,
     dependency lookup, and edge attributes (for example `ProjectionResult`),
     a `SheetGraph` from `to_sheet_graph`, or a `SeriesGraph` from
-    `to_series_graph`.
+    `to_series_graph`. Statement graphs and series drilldowns are converted
+    with `excel_grapher.exporter.statement_graph_to_networkx` and
+    `SeriesDrilldown.to_networkx`.
 
     NetworkX is an optional dependency. If not installed, raises ImportError with a
     helpful message.
     """
+    kind = type(graph).__name__
+    if kind in {"StatementGraph", "SeriesDrilldown"}:
+        raise TypeError(
+            "use excel_grapher.exporter.statement_graph_to_networkx() "
+            "or SeriesDrilldown.to_networkx() for statement-graph analysis; "
+            "grapher.to_networkx() accepts cell, sheet, and series graphs"
+        )
     if isinstance(graph, SheetGraph):
         return _sheet_graph_to_networkx(graph)
     if isinstance(graph, SeriesGraph):

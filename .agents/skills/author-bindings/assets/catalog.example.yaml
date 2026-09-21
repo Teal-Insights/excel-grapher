@@ -1,0 +1,89 @@
+# Pedagogical catalog fragment. Not an input to a generator.
+# Copy shapes into sidecar YAML; do not bulk-emit four files from this document.
+schema_version: 1.19.0
+workbook: workbook.xlsx
+
+concept_scheme:
+  id: synthetic_model
+  concepts:
+    - id: OBS_VALUE
+      name: Observation value
+      dtype: number
+    - id: TIME_PERIOD
+      name: Time period
+      dtype: int
+
+inputs:
+  series:
+    - id: input_rate
+      sheet: Inputs
+      data_range: Inputs!A1
+      layout: scalar
+      input: {}
+      structure:
+        measure:
+          concept: OBS_VALUE
+          dtype: float
+          bind:
+            kind: data_cell
+            read: float
+        dimensions: []
+      key: []
+      notes: Scalar input rate.
+
+outputs:
+  series:
+    - id: result_a
+      sheet: Outputs
+      data_range: Outputs!B1
+      layout: scalar
+      output:
+        compute:
+          name: compute_result_a
+          record_contract: records
+      structure:
+        measure:
+          concept: OBS_VALUE
+          dtype: float
+          bind:
+            kind: data_cell
+            read: float
+        dimensions: []
+      key: []
+      notes: First public output.
+
+internals:
+  series:
+    - id: engine_b2
+      sheet: Engine
+      data_range: Engine!B2
+      layout: scalar
+      internal: {}
+      structure:
+        measure:
+          concept: OBS_VALUE
+          dtype: float
+          bind:
+            kind: data_cell
+            read: float
+        dimensions: []
+      key: []
+      notes: Engine formula cell.
+
+constants:
+  series:
+    - id: input_bias
+      sheet: Inputs
+      data_range: Inputs!B1
+      layout: scalar
+      constant: {}
+      structure:
+        measure:
+          concept: OBS_VALUE
+          dtype: float
+          bind:
+            kind: data_cell
+            read: float
+        dimensions: []
+      key: []
+      notes: Reader-only leaf (not a public input).

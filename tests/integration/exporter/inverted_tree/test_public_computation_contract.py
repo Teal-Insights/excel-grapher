@@ -23,7 +23,6 @@ from excel_grapher.series_bindings.load import load_series_bindings
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.paths import INVERTED_TREE_TINY_DSA
 from tests.unit.exporter.inverted_tree.helpers import load_package
-from tests.unit.exporter.inverted_tree.local_corpus import load_constraints_module
 
 _WORKBOOK = INVERTED_TREE_TINY_DSA / "tiny-dsa.xlsx"
 _BINDINGS_DIR = INVERTED_TREE_TINY_DSA / "bindings"
@@ -77,15 +76,15 @@ def execution_witness(package_dir: Path) -> Iterator[list[tuple[str, str]]]:
 
 @pytest.fixture(scope="module")
 def tiny_dsa_modules() -> dict[str, str]:
-    constraints = load_constraints_module(INVERTED_TREE_TINY_DSA / "constraints.py")
-    assert constraints is not None
     bindings = load_series_bindings(_BINDINGS_DIR)
     targets = all_series_targets(bindings, workbook=_WORKBOOK)
     graph = create_dependency_graph(
         _WORKBOOK,
         targets,
         load_values=True,
-        dynamic_refs=DynamicRefConfig.from_constraints(constraints.CONSTRAINTS, {}),
+        dynamic_refs=DynamicRefConfig.from_bindings(
+            bindings, _WORKBOOK, bindings_path=_BINDINGS_DIR
+        ),
     )
     with CodeGenerator(graph) as generator:
         return generator.generate_modules(series_bindings=bindings, bindings_workbook=_WORKBOOK)

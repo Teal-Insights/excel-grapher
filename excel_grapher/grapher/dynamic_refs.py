@@ -224,7 +224,8 @@ class DynamicRefLimits:
 class DynamicRefConfig:
     """Configuration for resolving OFFSET/INDIRECT via constraint-based inference.
 
-    Prefer building via `from_constraints`; the constructor is for internal use.
+    Prefer building via `from_constraints` or `from_bindings`; the constructor
+    is for internal use.
     """
 
     cell_type_env: CellTypeEnv
@@ -259,6 +260,49 @@ class DynamicRefConfig:
             )
         env = constraints_to_cell_type_env(constraints_schema, constraints_data)
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
+
+    @classmethod
+    def from_bindings(
+        cls,
+        bindings: Mapping[str, Any],
+        workbook: str | Path,
+        *,
+        limits: DynamicRefLimits | None = None,
+        bindings_path: str | Path | None = None,
+    ) -> DynamicRefConfig:
+        """Build a config whose env is derived from a series binding manifest.
+
+        Args:
+            bindings: Loaded (merged) series binding manifest.
+            workbook: Workbook path; read for range expansion and `from_workbook`.
+            limits: Optional inference limits (defaults to `DynamicRefLimits()`).
+            bindings_path: Sidecar path stored on the domain-index pickle handle.
+        """
+        from excel_grapher.series_bindings.domains import SeriesDomainIndex
+
+        env = SeriesDomainIndex.from_bindings(
+            bindings, workbook=workbook, bindings_path=bindings_path
+        )
+        return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
+
+    def overlay(self, other: DynamicRefConfig) -> tuple[DynamicRefConfig, tuple[str, ...]]:
+        """Union this env with `other`; `other` wins per overlapping key.
+
+        Args:
+            other: Config whose cell types replace this env on shared addresses.
+
+        Returns:
+            The merged config (using `other.limits`) and the sorted keys present
+            in both envs.
+        """
+        base = dict(self.cell_type_env)
+        extra = dict(other.cell_type_env)
+        overrides = tuple(sorted(key for key in extra if key in base))
+        base.update(extra)
+        return (
+            DynamicRefConfig(cell_type_env=base, limits=other.limits),
+            overrides,
+        )
 
     @classmethod
     def from_constraints_and_workbook(

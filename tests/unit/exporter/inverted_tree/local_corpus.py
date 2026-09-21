@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import inspect
 import tomllib
+import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -29,6 +30,7 @@ from excel_grapher.grapher.constraints import (
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.load import load_series_bindings
+from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.paths import FIXTURES_ROOT, LOCAL_CORPUS
 from tests.unit.exporter.inverted_tree.helpers import (
@@ -95,13 +97,28 @@ def load_constraints_module(path: Path | None) -> ModuleType | None:
     return load_constraints_module_required(path)
 
 
-def _dynamic_refs(constraints: ModuleType | None) -> DynamicRefConfig | None:
+def _dynamic_refs(entry: CorpusEntry, bindings: WorkbookSeriesBindings) -> DynamicRefConfig | None:
+    """Derive domains from bindings, overlaying `constraints.py` when present."""
+    bindings_config = DynamicRefConfig.from_bindings(
+        bindings, entry.workbook, bindings_path=entry.bindings
+    )
+    constraints = load_constraints_module(entry.constraints)
     if constraints is None:
-        return None
+        return bindings_config if len(bindings_config.cell_type_env) else None
     table = constraints_table(constraints)
     if not table:
-        return None
-    return DynamicRefConfig.from_constraints(table, {})
+        return bindings_config if len(bindings_config.cell_type_env) else None
+    merged, overrides = bindings_config.overlay(DynamicRefConfig.from_constraints(table, {}))
+    if overrides:
+        preview = ", ".join(overrides[:20])
+        extra = "" if len(overrides) <= 20 else f" (+{len(overrides) - 20} more)"
+        warnings.warn(
+            "constraints.py overrides bindings domains for "
+            f"{len(overrides)} key(s): {preview}{extra}",
+            UserWarning,
+            stacklevel=2,
+        )
+    return merged
 
 
 def build_corpus_graph(
@@ -110,13 +127,11 @@ def build_corpus_graph(
     """Build catalog, deps, and graph for one corpus entry."""
     bindings = load_series_bindings(entry.bindings)
     targets = all_series_targets(bindings, workbook=entry.workbook)
-    constraints = load_constraints_module(entry.constraints)
     graph = create_dependency_graph(
         entry.workbook,
         targets,
         load_values=True,
-        use_cached_dynamic_refs=constraints is None,
-        dynamic_refs=_dynamic_refs(constraints),
+        dynamic_refs=_dynamic_refs(entry, bindings),
         capture_dependency_provenance=True,
     )
     catalog = build_catalog(bindings, workbook=entry.workbook, graph=graph)

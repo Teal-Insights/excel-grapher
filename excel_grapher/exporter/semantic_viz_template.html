@@ -420,12 +420,22 @@
     }
 
     function nodeTip(n) {
-      return [
+      var labels = n.labels || {};
+      var lines = [
         n.id,
         'series ' + n.series_id + '  direction ' + n.direction + '  sheet ' + (n.sheet || MIXED_SHEET),
-        'rank ' + n.rank + '  cells ' + n.cell_count,
-        (n.cells || []).slice(0, 8).join(', ')
-      ].join('\n');
+        'rank ' + n.rank + '  cells ' + n.cell_count
+      ];
+      if (n.shape_key) {
+        var shape = n.shape_key;
+        if (shape.length > 120) shape = shape.slice(0, 120) + '...';
+        lines.push('shape ' + shape);
+      }
+      if (labels.compute_name) lines.push('compute ' + labels.compute_name);
+      if (labels.measure_name) lines.push(labels.measure_name);
+      if (labels.notes) lines.push(labels.notes);
+      lines.push((n.cells || []).slice(0, 8).join(', '));
+      return lines.join('\n');
     }
 
     function inView(x0, y0, x1, y1) {
@@ -663,7 +673,11 @@
       nodes.forEach(function (n) {
         var dir = n.is_remainder ? 'internal' : (n.direction || 'internal');
         n._hidden = dirs[dir] === false;
-        n._match = !q || String(n.series_id).toLowerCase().indexOf(q) >= 0 || String(n.id).toLowerCase().indexOf(q) >= 0;
+        n._match = !q || String(n.series_id).toLowerCase().indexOf(q) >= 0 || String(n.id).toLowerCase().indexOf(q) >= 0
+          || String(n.shape_key || '').toLowerCase().indexOf(q) >= 0
+          || String((n.labels && n.labels.notes) || '').toLowerCase().indexOf(q) >= 0
+          || String((n.labels && n.labels.compute_name) || '').toLowerCase().indexOf(q) >= 0
+          || String((n.labels && n.labels.measure_name) || '').toLowerCase().indexOf(q) >= 0;
         n._cluster = clustering === 'none' ? '' : clusterKey(n);
       });
       var mode = layoutMode();

@@ -172,6 +172,20 @@ def _edge_meta_payload(
     return meta.guard_id, meta.prov_id, meta.guard_exprs[1:], meta.provenances[1:]
 
 
+def _domains_handle_payload(graph: Any) -> dict[str, str] | None:
+    handle = getattr(graph, "_domains_handle", None) or getattr(
+        getattr(graph, "domains", None), "handle", None
+    )
+    to_dict = getattr(handle, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return {str(key): str(value) for key, value in payload.items()}
+    if isinstance(handle, dict):
+        return {str(key): str(value) for key, value in handle.items()}
+    return None
+
+
 def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
     from .graph import _collect_graph_keys
 
@@ -196,6 +210,7 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
             "named_range_ranges": (
                 dict(graph.named_range_ranges) if graph.named_range_ranges else None
             ),
+            "domains_handle": _domains_handle_payload(graph),
         },
         buf,
         protocol=pickle.HIGHEST_PROTOCOL,
@@ -245,7 +260,10 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     graph.preparsed_formulas = None
     graph.formula_shapes = None
     graph.cell_type_env = None
+    graph.domains = None
+    graph._domains_handle = None
     graph._value_generation = 0
+    domains_handle = part1.get("domains_handle")
     graph._edges = {}
     graph._reverse_edges = {}
     graph._staging = True
@@ -282,6 +300,7 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
             graph._provenances.append(cast(EdgeProvenance, prov))
         graph._staging = False
         del part2
+        _hydrate_domains(graph, domains_handle)
         return graph
 
     graph._guards = {
@@ -302,6 +321,7 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
         graph._staging = False
         del part2
         _compact_loaded_edge_maps(graph)
+        _hydrate_domains(graph, domains_handle)
         return graph
 
     edge_src: array.array[int] = part2["edge_src"]
@@ -313,7 +333,22 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
         graph._reverse_edges.setdefault(dst, set()).add(src)
     del part2, edge_src, edge_dst
     graph.rebuild_adjacency()
+    _hydrate_domains(graph, domains_handle)
     return graph
+
+
+def _hydrate_domains(graph: Any, payload: object) -> None:
+    if not isinstance(payload, dict):
+        return
+    from excel_grapher.series_bindings.domains import SeriesDomainHandle, SeriesDomainIndex
+
+    handle = SeriesDomainHandle.from_dict({str(key): value for key, value in payload.items()})
+    graph._domains_handle = handle
+    index = SeriesDomainIndex.from_handle(handle, graph=graph)
+    if index is None:
+        return
+    graph.domains = index
+    graph.cell_type_env = index
 
 
 def _compact_loaded_edge_maps(graph: Any) -> None:

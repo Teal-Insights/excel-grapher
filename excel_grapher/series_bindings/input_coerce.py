@@ -440,16 +440,19 @@ def input_value_map_from_series(series: Mapping[str, Any]) -> dict[Any, Any] | N
 
 
 def measure_domain_from_series(series: Mapping[str, Any]) -> dict[str, Any] | None:
-    """Normalize `input.domain` for codegen and runtime checks.
+    """Normalize series-level or `input.domain` for codegen and runtime checks.
 
-    When `input.value_map` is present and `input.domain` is omitted, the domain
+    `from_workbook` is a cell-env pin, not a `compute_*` argument domain.
+    When `input.value_map` is present and `domain` is omitted, the domain
     is the map keys so callers are checked against public values.
     """
-    input_block = series.get("input")
-    if not isinstance(input_block, dict):
-        return None
-    domain = input_block.get("domain")
+    domain = series.get("domain")
+    if not isinstance(domain, dict):
+        input_block = series.get("input")
+        domain = input_block.get("domain") if isinstance(input_block, dict) else None
     if isinstance(domain, dict):
+        if "from_workbook" in domain:
+            return None
         if "enum" in domain:
             values = domain["enum"]
             if not isinstance(values, (list, tuple, set, frozenset)):

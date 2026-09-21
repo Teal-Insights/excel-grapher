@@ -148,13 +148,11 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
 
 
 def emit_init_module(catalog: SeriesCatalog) -> str:
-    """Emit package `__init__.py` re-exporting public `compute_*` functions."""
-    names = [s.compute_name or f"compute_{s.series_id}" for s in catalog.output_series()]
-    if names:
-        imported = ", ".join(names)
-        import_line = f"from .api import {imported}"
-    else:
-        import_line = ""
+    """Emit package `__init__.py` re-exporting `Model` and public `compute_*`."""
+    names = [
+        "Model",
+        *[s.compute_name or f"compute_{s.series_id}" for s in catalog.output_series()],
+    ]
     lines = [
         '"""Inverted-tree mechanical extraction."""',
         "",
@@ -163,13 +161,12 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
         "from . import data",
         "from .runtime import as_records",
         "",
+        f"from .api import {', '.join(names)}",
+        "",
+        "__all__ = [",
+        f"    {'as_records'!r},",
+        f"    {'data'!r},",
     ]
-    if import_line:
-        lines.append(import_line)
-        lines.append("")
-    lines.append("__all__ = [")
-    lines.append(f"    {'as_records'!r},")
-    lines.append(f"    {'data'!r},")
     for name in names:
         lines.append(f"    {name!r},")
     lines.append("]")

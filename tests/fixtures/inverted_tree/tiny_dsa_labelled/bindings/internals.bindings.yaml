@@ -1,4 +1,4 @@
-schema_version: 1.17.0
+schema_version: 1.19.0
 workbook: ../tiny-dsa-labelled.xlsx
 series:
   - id: engine_year_labels
@@ -6,6 +6,7 @@ series:
     data_range: Engine!C5:G5
     layout: row_series
     internal: {}
+    domain: { from_workbook: true }
     axis_labels: TIME_PERIOD
     structure:
       measure:

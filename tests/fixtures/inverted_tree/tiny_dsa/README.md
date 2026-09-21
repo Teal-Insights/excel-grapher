@@ -1,17 +1,19 @@
 # Tiny DSA fixture
 
-Committed inverted-tree canary workbook with `OFFSET` / `INDEX` / `INDIRECT`
-that need `DynamicRefConfig` constraints.
+Committed inverted-tree canary workbook with `OFFSET` / `INDEX` / `INDIRECT`.
+Series `domain` (and `constant` `from_workbook` pins) compile to the same
+`CellTypeEnv` as `constraints.py`.
 
-Smoke-check bindings with the colocated constraints module:
+Smoke-check bindings from the sidecar:
 
 ```bash
 uv run excel-grapher bindings validate \
   tests/fixtures/inverted_tree/tiny_dsa/tiny-dsa.xlsx \
   --bindings tests/fixtures/inverted_tree/tiny_dsa/bindings \
-  --constraints tests/fixtures/inverted_tree/tiny_dsa/constraints.py \
   --smoke-test
 ```
 
-`constraints.py` exposes `CONSTRAINTS: Mapping[str, type]`, the same contract
-as `tests/fixtures/local/corpus.toml` entries.
+`corpus.toml` omits `constraints` for this entry; graph building derives
+domains from the sidecar. `constraints.py` remains the low-level
+`CONSTRAINTS: Mapping[str, type]` overlay for `--constraints` and for corpus
+entries whose catalogs are not yet complete.

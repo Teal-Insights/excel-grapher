@@ -6,9 +6,10 @@ import package emission (`emit.py`, `ast_emit.py`, or rung/fusion planning).
 
 from __future__ import annotations
 
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
+from types import MappingProxyType
 
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
@@ -38,6 +39,7 @@ __all__ = [
     "Statement",
     "build_catalog",
     "collect_catalog_edges",
+    "concept_displays",
     "load_semantic_catalog",
 ]
 
@@ -52,10 +54,13 @@ class SemanticCatalogView:
 
     `catalog` is the statement-partitioned series table. `edges` are the
     instance-level `DependenceEdge`s walked from formula series.
+    `concepts` maps concept id to `(name, description)` from the bindings
+    `concept_scheme` (either field may be `None`).
     """
 
     catalog: SeriesCatalog
     edges: CatalogEdges
+    concepts: Mapping[str, tuple[str | None, str | None]]
 
 
 def load_semantic_catalog(
@@ -88,4 +93,35 @@ def load_semantic_catalog(
             raise SemanticCatalogError(str(exc)) from exc
     finally:
         reset_blank_rects(token)
-    return SemanticCatalogView(catalog=catalog, edges=edges)
+    return SemanticCatalogView(
+        catalog=catalog,
+        edges=edges,
+        concepts=concept_displays(bindings),
+    )
+
+
+def concept_displays(
+    bindings: WorkbookSeriesBindings,
+) -> Mapping[str, tuple[str | None, str | None]]:
+    """Return concept id to `(name, description)` from `concept_scheme`.
+
+    Missing names or descriptions are stored as `None`. Duplicate ids keep the
+    first occurrence.
+    """
+    scheme = bindings.get("concept_scheme")
+    if not isinstance(scheme, dict):
+        return MappingProxyType({})
+    found: dict[str, tuple[str | None, str | None]] = {}
+    for concept in scheme.get("concepts") or []:
+        if not isinstance(concept, dict) or not concept.get("id"):
+            continue
+        concept_id = str(concept["id"])
+        if concept_id in found:
+            continue
+        name = concept.get("name")
+        description = concept.get("description")
+        found[concept_id] = (
+            str(name) if isinstance(name, str) else None,
+            str(description) if isinstance(description, str) else None,
+        )
+    return MappingProxyType(found)

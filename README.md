@@ -70,6 +70,19 @@ The default install is correct without NumPy. Install the **`fast`** extra when
 evaluating large workbooks and you want vectorized operator / `SUMPRODUCT`
 acceleration. Exported standalone code stays NumPy-free either way.
 
+The author-bindings agent skill is **not** in the library wheel. Agents load a
+copied folder, not a Python extra. From a git clone or the `excel-grapher` sdist:
+
+```bash
+mkdir -p .agents/skills
+cp -R skills/author-bindings .agents/skills/author-bindings
+```
+
+Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
+`.claude/skills/author-bindings`. User-level installs go under
+`~/.agents/skills/author-bindings`. The optional
+`excel-grapher-author-bindings` package is only a file source for that copy.
+
 ---
 
 ### High-level usage
@@ -120,7 +133,9 @@ write_workbook(graph, Path("edited.xlsx"))
 Optional sidecar manifests (`.bindings.yaml`) declare structured input/output APIs for **exported**
 code — inverted-tree `compute_*` functions over named tensors and scalars (`as_records` for a Records
 view). Validate sidecars from the shell with
-`excel-grapher bindings validate`. See the
+`excel-grapher bindings validate`. Authoring agents should follow the
+[Authoring series bindings](https://teal-insights.github.io/excel-grapher/user-guide/binding-authoring.html)
+skill and the same `audit` / `burndown` / `upsert` CLI. See the
 [Series bindings guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html)
 and [Code export](https://teal-insights.github.io/excel-grapher/user-guide/export.html) guide.
 
@@ -135,6 +150,7 @@ Detailed documentation lives in the [User Guide](https://teal-insights.github.io
 | Formula evaluation | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/evaluator.html) |
 | End-to-end demo | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/end-to-end-demo.html) |
 | Series bindings | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/series-bindings.html) |
+| Authoring bindings | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/binding-authoring.html) |
 | Code export | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/export.html) |
 | Parity testing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/parity-testing.html) |
 | Contributing | [Read guide](https://teal-insights.github.io/excel-grapher/user-guide/contributing.html) |

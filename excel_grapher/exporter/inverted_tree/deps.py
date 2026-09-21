@@ -1017,11 +1017,13 @@ class CatalogEdges:
     """Instance-level edges for every formula series, walked once.
 
     `by_consumer` groups `edges` by `DependenceEdge.consumer_id` so later
-    planning steps do not re-walk formula ASTs.
+    planning steps do not re-walk formula ASTs. `by_producer` groups the same
+    edges by `DependenceEdge.producer_id` for incoming-adjacency lookups.
     """
 
     edges: tuple[DependenceEdge, ...]
     by_consumer: dict[str, tuple[DependenceEdge, ...]]
+    by_producer: dict[str, tuple[DependenceEdge, ...]]
 
 
 @dataclass
@@ -1604,7 +1606,14 @@ def collect_catalog_edges(
         )
         by_consumer[series.series_id] = series_edges
         collected.extend(series_edges)
-    return CatalogEdges(edges=tuple(collected), by_consumer=by_consumer)
+    by_producer: dict[str, list[DependenceEdge]] = {}
+    for edge in collected:
+        by_producer.setdefault(edge.producer_id, []).append(edge)
+    return CatalogEdges(
+        edges=tuple(collected),
+        by_consumer=by_consumer,
+        by_producer={producer_id: tuple(edges) for producer_id, edges in by_producer.items()},
+    )
 
 
 def _int_key(value: object) -> int | None:

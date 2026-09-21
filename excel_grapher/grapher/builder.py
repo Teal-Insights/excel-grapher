@@ -1885,7 +1885,14 @@ def create_dependency_graph(
         if warm_formula_shapes:
             graph.formula_shapes = intern_graph_formula_shapes(graph, parsed=parsed)
     if dynamic_refs is not None:
-        graph.cell_type_env = dict(dynamic_refs.cell_type_env)
+        env = dynamic_refs.cell_type_env
+        bind_graph = getattr(env, "bind_graph", None)
+        if callable(bind_graph):
+            graph.domains = bind_graph(graph)
+            graph.cell_type_env = graph.domains
+            graph._domains_handle = getattr(graph.domains, "handle", None)
+        else:
+            graph.cell_type_env = dict(env)
     graph.rebuild_adjacency()
     return graph
 
