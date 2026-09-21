@@ -15,7 +15,9 @@ from __future__ import annotations
 import ast
 import hashlib
 import json
+import re
 from collections.abc import Mapping, Sequence
+from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -39,6 +41,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.exporter.inverted_tree.input_annotations import public_input_annotations
 from excel_grapher.exporter.inverted_tree.named_axes import (
     NamedAxes,
     layout_keys_source,
@@ -71,6 +74,12 @@ _SKIP_INDEX_CALLS = frozenset(
         "xl_lookup_cell",
     }
 )
+_INPUT_ELEMENT_ANNOTATIONS: ContextVar[Mapping[str, str] | None] = ContextVar(
+    "inverted_tree_input_element_annotations",
+    default=None,
+)
+_BETWEEN_CALL = re.compile(r"(?<!Real)Between\(")
+
 _RESERVED_NAMES = frozenset(
     {
         "data",
@@ -173,13 +182,69 @@ def _inputs_class_name(series: BoundSeries) -> str:
     return f"{_facade(series)}Inputs"
 
 
+def _constraint_element(series: BoundSeries) -> str | None:
+    """Return the `cell_type_env` element annotation for a public input, if any."""
+    if series.direction != "input":
+        return None
+    overrides = _INPUT_ELEMENT_ANNOTATIONS.get()
+    if not overrides:
+        return None
+    return overrides.get(series.series_id)
+
+
 def _value_annotation(series: BoundSeries) -> str:
-    """Describe every permitted workbook value, including blanks and errors."""
+    """Describe every permitted workbook value, including blanks and errors.
+
+    A public input whose cells share a constraint domain uses that domain
+    (`Literal` or `Annotated`) instead of the measure dtype. Other series keep
+    the dtype, including Excel error strings.
+    """
+    element = _constraint_element(series)
+    if element is not None:
+        if series.single_valued:
+            return element
+        return f"{element} | None"
     types = python_measure_type(series).split(" | ")
     types.append("str")
     if not series.single_valued:
         types.append("None")
     return " | ".join(dict.fromkeys(types))
+
+
+def _runtime_domain_names(source: str) -> list[str]:
+    """Names from `runtime` that `source` constructs in an annotation."""
+    names: list[str] = []
+    if _BETWEEN_CALL.search(source):
+        names.append("Between")
+    if "RealBetween(" in source:
+        names.append("RealBetween")
+    return names
+
+
+def _typing_domain_names(source: str) -> list[str]:
+    """Typing constructors `source` uses in a generated annotation."""
+    names: list[str] = []
+    if "Annotated[" in source:
+        names.append("Annotated")
+    if "Literal[" in source:
+        names.append("Literal")
+    return names
+
+
+def _require_domain_lines(
+    value_expr: str, annotation: str, label_expr: str, *, indent: str
+) -> list[str]:
+    """Emit a `require_annotated_domain` call, wrapping past 100 columns."""
+    call = f"require_annotated_domain({value_expr}, {annotation}, series_id={label_expr})"
+    if len(indent + call) <= 100:
+        return [indent + call]
+    return [
+        indent + "require_annotated_domain(",
+        indent + f"    {value_expr},",
+        indent + f"    {annotation},",
+        indent + f"    series_id={label_expr},",
+        indent + ")",
+    ]
 
 
 def _has_public_type(series: BoundSeries) -> bool:
@@ -984,21 +1049,24 @@ def emit_named_internals(
                 ]
             )
         )
+    joined = "\n\n".join(functions)
     tensor_names = ["Domain", "Series"]
     if "label_axis" in used:
         tensor_names.append("label_axis")
         used.remove("label_axis")
+    used.update(_runtime_domain_names(joined))
+    typing_names = ", ".join(sorted({"cast", *_typing_domain_names(joined)}))
     lines = [
         '"""Named calculation functions for every bound formula series."""',
         "from __future__ import annotations",
         "from dataclasses import dataclass",
         "from datetime import datetime",
-        "from typing import cast",
+        f"from typing import {typing_names}",
         "from . import data",
         f"from .tensor import {', '.join(tensor_names)}",
         *_generated_helper_imports(used),
         "",
-        "\n\n".join(functions),
+        joined,
         "",
     ]
     return "\n".join(lines)
@@ -1280,7 +1348,28 @@ def _input_check(
         f"    {series_id} = coerce_input_measure("
         f"{series_id}, dtype={_python_literal(_binding_dtype(series))}, series_id={quoted_id})"
     )
-    domain = measure_domain_from_series(series.raw)
+    element = _constraint_element(series)
+    if element is not None:
+        used.add("require_annotated_domain")
+        used.update(_runtime_domain_names(element))
+        if series.single_valued:
+            lines.extend(_require_domain_lines(series_id, element, quoted_id, indent="    "))
+        else:
+            required = (
+                f"{_binding(series)}.required.bind({bind})"
+                if bind
+                else f"{_binding(series)}.required"
+            )
+            lines.append(f"    for coordinate in {required}:")
+            lines.extend(
+                _require_domain_lines(
+                    f"{series_id}[coordinate]",
+                    element,
+                    f"{quoted_id} + repr(coordinate)",
+                    indent="        ",
+                )
+            )
+    domain = None if element is not None else measure_domain_from_series(series.raw)
     if domain is not None:
         used.add("require_input_domain")
         domain_literal = _python_literal(domain)
@@ -1350,8 +1439,12 @@ def emit_named_validation(catalog: SeriesCatalog) -> str:
     ]
     stdlib: list[str] = []
     local: list[str] = []
+    blob = "\n".join(checks)
     if any("datetime" in _annotation(catalog.get(sid)) for sid in checked):
         stdlib.append("from datetime import datetime")
+    typing_names = _typing_domain_names(blob)
+    if typing_names:
+        stdlib.append(f"from typing import {', '.join(typing_names)}")
     if any(not catalog.get(sid).single_valued for sid in checked):
         local.append("from . import data")
     local.extend(_generated_helper_imports(used))
@@ -1739,7 +1832,8 @@ def emit_named_model(
         stdlib.append("from functools import cached_property")
     if "Path" in body:
         stdlib.append("from pathlib import Path")
-    stdlib.append("from typing import Any, ClassVar, Self")
+    typing_names = sorted({"Any", "ClassVar", "Self", *_typing_domain_names(body)})
+    stdlib.append(f"from typing import {', '.join(typing_names)}")
     imported = ["data"]
     imported.extend(
         name
@@ -1750,6 +1844,9 @@ def emit_named_model(
         if token in body and name not in imported
     )
     local = [f"from . import {', '.join(imported)}"]
+    domain_names = _runtime_domain_names(body)
+    if domain_names:
+        local.append(f"from .runtime import {', '.join(domain_names)}")
     if "read_bound_inputs" in body:
         local.append("from .workbook import read_bound_inputs")
     lines = [
@@ -2425,12 +2522,45 @@ def emit_named_data(
     )
     if not any("span(" in line for line in lines):
         lines.remove("from .runtime import span")
-    return "\n".join(lines)
+    return "\n".join(_patch_data_domain_imports(lines))
 
 
 # ---------------------------------------------------------------------------
 # Package assembly
 # ---------------------------------------------------------------------------
+
+
+def _patch_data_domain_imports(lines: list[str]) -> list[str]:
+    """Import `Literal` / `Between` when a data alias evaluates a constraint type."""
+    text = "\n".join(lines)
+    typing_names = _typing_domain_names(text)
+    runtime_extra = _runtime_domain_names(text)
+    if not typing_names and not runtime_extra:
+        return lines
+    patched: list[str] = []
+    typing_inserted = False
+    runtime_done = False
+    for line in lines:
+        if typing_names and not typing_inserted and line.startswith("from datetime import"):
+            patched.append(line)
+            patched.append(f"from typing import {', '.join(typing_names)}")
+            typing_inserted = True
+            continue
+        if runtime_extra and line.startswith("from .runtime import "):
+            existing = [
+                part.strip() for part in line.removeprefix("from .runtime import ").split(",")
+            ]
+            names = sorted({*existing, *runtime_extra})
+            patched.append(f"from .runtime import {', '.join(names)}")
+            runtime_done = True
+            continue
+        if runtime_extra and not runtime_done and line.startswith("from .tensor import"):
+            patched.append(f"from .runtime import {', '.join(runtime_extra)}")
+            runtime_done = True
+        patched.append(line)
+    if typing_names and not typing_inserted:
+        raise InvertedTreeExportError("data module is missing a datetime import for domain types")
+    return patched
 
 
 def emit_named_modules(
@@ -2445,6 +2575,34 @@ def emit_named_modules(
     excel_source: str,
 ) -> dict[str, str]:
     """Assemble the standalone named package."""
+    annotations = public_input_annotations(catalog, graph)
+    token = _INPUT_ELEMENT_ANNOTATIONS.set(annotations)
+    try:
+        return _emit_named_modules(
+            catalog,
+            deps,
+            scc_map,
+            graph,
+            workbook,
+            init_source=init_source,
+            runtime_source=runtime_source,
+            excel_source=excel_source,
+        )
+    finally:
+        _INPUT_ELEMENT_ANNOTATIONS.reset(token)
+
+
+def _emit_named_modules(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps],
+    scc_map: Mapping[str, tuple[str, ...]],
+    graph: DependencyGraph,
+    workbook: Path | str,
+    *,
+    init_source: str,
+    runtime_source: str,
+    excel_source: str,
+) -> dict[str, str]:
     named_axes = NamedAxes.plan(
         axis
         for series in _retained(catalog)
