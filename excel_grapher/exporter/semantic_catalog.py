@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from types import MappingProxyType
 
+from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
 from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
@@ -27,7 +28,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.grapher.graph import DependencyGraph
-from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+from excel_grapher.series_bindings.types import Scalar, WorkbookSeriesBindings
 
 __all__ = [
     "BoundSeries",
@@ -61,6 +62,10 @@ class SemanticCatalogView:
     catalog: SeriesCatalog
     edges: CatalogEdges
     concepts: Mapping[str, tuple[str | None, str | None]]
+
+    def partition_of(self, address: CanonicalAddress) -> tuple[Scalar, ...]:
+        """Return the instance-partition tuple for `address`, or `()` if none."""
+        return self.catalog.schedule.partition_of.get(as_canonical(address), ())
 
 
 def load_semantic_catalog(

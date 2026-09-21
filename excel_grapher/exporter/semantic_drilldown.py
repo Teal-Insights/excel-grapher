@@ -1,7 +1,8 @@
-"""Cell-level drilldown from a statement-graph series or statement."""
+"""Cell-level drilldown from a statement-graph series, statement, or bundle."""
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -20,12 +21,37 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.types import Scalar
 
 __all__ = [
+    "BundleDrilldown",
     "DrilldownCell",
     "DrilldownEdge",
+    "DrilldownStatement",
     "SeriesDrilldown",
+    "drilldown_bundle",
+    "drilldown_partition",
     "drilldown_series",
     "drilldown_statement",
 ]
+
+
+@dataclass(frozen=True, slots=True)
+class DrilldownStatement:
+    """Statement identity for a series drilldown, without catalog types."""
+
+    statement_id: str
+    shape_key: str | None
+    start: int
+    stop: int
+    cell_count: int
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable mapping of this statement."""
+        return {
+            "id": self.statement_id,
+            "shape_key": self.shape_key,
+            "start": self.start,
+            "stop": self.stop,
+            "cell_count": self.cell_count,
+        }
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,6 +67,7 @@ class DrilldownCell:
     value: object
     key: tuple[tuple[str, Scalar], ...]
     in_series: bool
+    partition: tuple[Scalar, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping of this cell."""
@@ -54,6 +81,7 @@ class DrilldownCell:
             "value": jsonable_cell_value(self.value),
             "key": {name: jsonable_scalar(value) for name, value in self.key},
             "in_series": self.in_series,
+            "partition": [jsonable_scalar(value) for value in self.partition],
         }
 
 
@@ -72,6 +100,7 @@ class DrilldownEdge:
     coeff: int | None = None
     offset: int | None = None
     guarded: bool = False
+    partition: tuple[Scalar, ...] = ()
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping of this edge."""
@@ -87,12 +116,13 @@ class DrilldownEdge:
             "coeff": self.coeff,
             "offset": self.offset,
             "guarded": self.guarded,
+            "partition": [jsonable_scalar(value) for value in self.partition],
         }
 
 
 @dataclass(frozen=True, slots=True)
 class SeriesDrilldown:
-    """Cells and classified adjacency for one series, or one statement inside it.
+    """Cells and classified adjacency for one series, statement, or partition.
 
     `cells` are the selected series members in catalog order. `neighbors` are
     one-hop producer/consumer cells outside that selection. `in_series` is True
@@ -105,26 +135,23 @@ class SeriesDrilldown:
 
     series_id: str
     statement_id: str | None
-    statements: tuple[Statement, ...]
+    statements: tuple[DrilldownStatement, ...]
     cells: tuple[DrilldownCell, ...]
     neighbors: tuple[DrilldownCell, ...]
     edges: tuple[DrilldownEdge, ...]
+    partition: tuple[Scalar, ...] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-serializable mapping of this drilldown."""
         return {
             "series_id": self.series_id,
             "statement_id": self.statement_id,
-            "statements": [
-                {
-                    "id": stmt.statement_id,
-                    "shape_key": stmt.shape_key,
-                    "start": stmt.start,
-                    "stop": stmt.stop,
-                    "cell_count": len(stmt.cells),
-                }
-                for stmt in self.statements
-            ],
+            "partition": (
+                None
+                if self.partition is None
+                else [jsonable_scalar(value) for value in self.partition]
+            ),
+            "statements": [stmt.to_dict() for stmt in self.statements],
             "cells": [cell.to_dict() for cell in self.cells],
             "neighbors": [cell.to_dict() for cell in self.neighbors],
             "edges": [edge.to_dict() for edge in self.edges],
@@ -133,6 +160,41 @@ class SeriesDrilldown:
     def to_networkx(self):
         """Return a NetworkX MultiDiGraph of drilldown cells and instance edges."""
         return _drilldown_to_networkx(self)
+
+
+@dataclass(frozen=True, slots=True)
+class BundleDrilldown:
+    """All classified instance edges that make up one statement-graph bundle."""
+
+    consumer_id: str
+    producer_id: str
+    access: AccessClass
+    distance: int
+    coeff: int | None
+    offset: int | None
+    guarded: bool
+    edges: tuple[DrilldownEdge, ...]
+    partitions: tuple[tuple[Scalar, ...], ...]
+
+    @property
+    def instance_edge_count(self) -> int:
+        """Number of canonical instance edges in this bundle."""
+        return len(self.edges)
+
+    def to_dict(self) -> dict[str, Any]:
+        """Return a JSON-serializable mapping of this bundle expansion."""
+        return {
+            "consumer_id": self.consumer_id,
+            "producer_id": self.producer_id,
+            "access": self.access,
+            "distance": self.distance,
+            "coeff": self.coeff,
+            "offset": self.offset,
+            "guarded": self.guarded,
+            "instance_edge_count": self.instance_edge_count,
+            "partitions": [[jsonable_scalar(value) for value in part] for part in self.partitions],
+            "edges": [edge.to_dict() for edge in self.edges],
+        }
 
 
 def drilldown_series(
@@ -185,6 +247,114 @@ def drilldown_statement(
     return _drilldown(view, graph, series, statement=statement)
 
 
+def drilldown_partition(
+    view: SemanticCatalogView,
+    graph: DependencyGraph,
+    series_id: str,
+    partition: Sequence[Scalar],
+) -> SeriesDrilldown:
+    """Return cells and adjacency for one instance partition of a series.
+
+    Args:
+        view: Statement-partitioned catalog and classified instance edges.
+        graph: Cell-level graph used for formula text and values.
+        series_id: Bound series whose outer-key block to expand.
+        partition: Instance-partition tuple (`schedule.partition_of`).
+
+    Raises:
+        SemanticCatalogError: `series_id` is missing, or `partition` matches
+            no members of that series.
+    """
+    series = _require_series(view.catalog, series_id)
+    want = tuple(partition)
+    selected = tuple(cell for cell in series.cells if view.partition_of(cell) == want)
+    if not selected:
+        raise SemanticCatalogError(f"unknown partition {want!r} for series {series_id!r}")
+    covering = tuple(
+        stmt
+        for stmt in series.statements
+        if any(view.partition_of(cell) == want for cell in stmt.cells)
+    )
+    return _drilldown(
+        view,
+        graph,
+        series,
+        statement=None,
+        cells=selected,
+        statements=covering,
+        partition=want,
+        edge_filter="consumer",
+    )
+
+
+def drilldown_bundle(
+    view: SemanticCatalogView,
+    graph: DependencyGraph,
+    *,
+    consumer_id: str,
+    producer_id: str,
+    access: AccessClass,
+    distance: int,
+    coeff: int | None = None,
+    offset: int | None = None,
+    guarded: bool = False,
+) -> BundleDrilldown:
+    """Return every classified instance edge in one statement-graph bundle.
+
+    Args:
+        view: Statement-partitioned catalog and classified instance edges.
+        graph: Cell-level graph used for formula text and values.
+        consumer_id: Statement id of the consuming node.
+        producer_id: Statement id of the producing node.
+        access: Access class of the bundle.
+        distance: Schedule distance of the bundle.
+        coeff: Affine coefficient, if the bundle is affine.
+        offset: Affine offset, if the bundle is affine.
+        guarded: Whether the bundle is a guarded residual.
+
+    Raises:
+        SemanticCatalogError: No classified edge matches this bundle key.
+    """
+    del graph
+    matched: list[DrilldownEdge] = []
+    partitions: list[tuple[Scalar, ...]] = []
+    seen_parts: set[tuple[Scalar, ...]] = set()
+    for edge in view.edges.edges:
+        consumer_stmt = _statement_id_for(view, edge.consumer_cell)
+        producer_stmt = _statement_id_for(view, edge.producer_cell)
+        if (
+            consumer_stmt != consumer_id
+            or producer_stmt != producer_id
+            or edge.access != access
+            or edge.distance != distance
+            or edge.coeff != coeff
+            or edge.offset != offset
+            or edge.guarded != guarded
+        ):
+            continue
+        record = _as_drilldown_edge(edge, view)
+        matched.append(record)
+        if record.partition not in seen_parts:
+            seen_parts.add(record.partition)
+            partitions.append(record.partition)
+    if not matched:
+        raise SemanticCatalogError(
+            f"unknown bundle {consumer_id!r} -> {producer_id!r} "
+            f"access={access!r} distance={distance}"
+        )
+    return BundleDrilldown(
+        consumer_id=consumer_id,
+        producer_id=producer_id,
+        access=access,
+        distance=distance,
+        coeff=coeff,
+        offset=offset,
+        guarded=guarded,
+        edges=tuple(matched),
+        partitions=tuple(partitions),
+    )
+
+
 def _require_series(catalog: SeriesCatalog, series_id: str) -> BoundSeries:
     try:
         return catalog.get(series_id)
@@ -216,6 +386,26 @@ def _covering_statement(catalog: SeriesCatalog, address: CanonicalAddress) -> St
     return None
 
 
+def _statement_id_for(view: SemanticCatalogView, address: CanonicalAddress) -> str:
+    covering = _covering_statement(view.catalog, address)
+    if covering is not None:
+        return covering.statement_id
+    owner = view.catalog.series_for(address)
+    if owner is not None:
+        return owner.series_id
+    return REMAINDER_STATEMENT_ID
+
+
+def _as_drilldown_statement(statement: Statement) -> DrilldownStatement:
+    return DrilldownStatement(
+        statement_id=statement.statement_id,
+        shape_key=statement.shape_key,
+        start=statement.start,
+        stop=statement.stop,
+        cell_count=len(statement.cells),
+    )
+
+
 def _unique_edges(
     outgoing: tuple[DependenceEdge, ...],
     incoming: tuple[DependenceEdge, ...],
@@ -230,6 +420,8 @@ def _series_touching_edges(
     view: SemanticCatalogView,
     series_id: str,
     selected: set[CanonicalAddress] | None,
+    *,
+    edge_filter: str,
 ) -> tuple[DependenceEdge, ...]:
     candidates = _unique_edges(
         view.edges.by_consumer.get(series_id, ()),
@@ -237,6 +429,8 @@ def _series_touching_edges(
     )
     if selected is None:
         return candidates
+    if edge_filter == "consumer":
+        return tuple(edge for edge in candidates if edge.consumer_cell in selected)
     return tuple(
         edge
         for edge in candidates
@@ -244,9 +438,9 @@ def _series_touching_edges(
     )
 
 
-def _as_drilldown_edge(edge: DependenceEdge, catalog: SeriesCatalog) -> DrilldownEdge:
-    consumer = _covering_statement(catalog, edge.consumer_cell)
-    producer = _covering_statement(catalog, edge.producer_cell)
+def _as_drilldown_edge(edge: DependenceEdge, view: SemanticCatalogView) -> DrilldownEdge:
+    consumer = _covering_statement(view.catalog, edge.consumer_cell)
+    producer = _covering_statement(view.catalog, edge.producer_cell)
     return DrilldownEdge(
         consumer_id=edge.consumer_id,
         producer_id=edge.producer_id,
@@ -259,6 +453,7 @@ def _as_drilldown_edge(edge: DependenceEdge, catalog: SeriesCatalog) -> Drilldow
         coeff=edge.coeff,
         offset=edge.offset,
         guarded=edge.guarded,
+        partition=view.partition_of(edge.consumer_cell),
     )
 
 
@@ -268,20 +463,31 @@ def _drilldown(
     series: BoundSeries,
     *,
     statement: Statement | None,
+    cells: tuple[CanonicalAddress, ...] | None = None,
+    statements: tuple[Statement, ...] | None = None,
+    partition: tuple[Scalar, ...] | None = None,
+    edge_filter: str = "touching",
 ) -> SeriesDrilldown:
-    selected_cells = statement.cells if statement is not None else series.cells
+    selected_cells = (
+        cells if cells is not None else (statement.cells if statement is not None else series.cells)
+    )
     selected = set(selected_cells)
-    statements = (statement,) if statement is not None else series.statements
+    raw_statements = (
+        statements
+        if statements is not None
+        else ((statement,) if statement is not None else series.statements)
+    )
     raw_edges = _series_touching_edges(
         view,
         series.series_id,
-        None if statement is None else selected,
+        None if statement is None and cells is None else selected,
+        edge_filter=edge_filter,
     )
-    edges = tuple(_as_drilldown_edge(edge, view.catalog) for edge in raw_edges)
-    cells = tuple(
+    edges = tuple(_as_drilldown_edge(edge, view) for edge in raw_edges)
+    cell_records = tuple(
         _cell_record(
             address,
-            view.catalog,
+            view,
             graph,
             drilled_series_id=series.series_id,
         )
@@ -298,7 +504,7 @@ def _drilldown(
     neighbors = tuple(
         _cell_record(
             address,
-            view.catalog,
+            view,
             graph,
             drilled_series_id=series.series_id,
         )
@@ -307,10 +513,11 @@ def _drilldown(
     return SeriesDrilldown(
         series_id=series.series_id,
         statement_id=None if statement is None else statement.statement_id,
-        statements=statements,
-        cells=cells,
+        statements=tuple(_as_drilldown_statement(stmt) for stmt in raw_statements),
+        cells=cell_records,
         neighbors=neighbors,
         edges=edges,
+        partition=partition,
     )
 
 
@@ -330,7 +537,7 @@ def _drilldown_remainder(view: SemanticCatalogView, graph: DependencyGraph) -> S
     cells = tuple(
         _cell_record(
             address,
-            view.catalog,
+            view,
             graph,
             drilled_series_id=REMAINDER_STATEMENT_ID,
             remainder=True,
@@ -349,12 +556,13 @@ def _drilldown_remainder(view: SemanticCatalogView, graph: DependencyGraph) -> S
 
 def _cell_record(
     address: CanonicalAddress,
-    catalog: SeriesCatalog,
+    view: SemanticCatalogView,
     graph: DependencyGraph,
     *,
     drilled_series_id: str,
     remainder: bool = False,
 ) -> DrilldownCell:
+    catalog = view.catalog
     owner = catalog.series_for(address)
     covering = _covering_statement(catalog, address)
     node = graph.get_node(address)
@@ -374,6 +582,7 @@ def _cell_record(
         value=None if node is None else node.value,
         key=() if point is None else point.items,
         in_series=owner is not None and owner.series_id == drilled_series_id,
+        partition=() if remainder else view.partition_of(address),
     )
 
 

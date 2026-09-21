@@ -53,6 +53,30 @@
     }
     #legend .box.series { background: hsl(13, 62%, 78%); }
     #legend code { font-size: 11px; }
+    #inspect {
+      position: absolute; top: 12px; right: 12px; z-index: 11;
+      width: min(360px, calc(100% - 24px)); max-height: calc(100% - 24px);
+      overflow: auto; background: rgba(255,255,255,.97);
+      border: 1px solid #d0d7de; border-radius: 8px; padding: 10px 12px;
+      font-size: 12px; line-height: 1.45; box-shadow: 0 4px 24px rgba(0,0,0,.12);
+      display: none;
+    }
+    #inspect.open { display: block; }
+    #inspect header {
+      display: flex; align-items: center; gap: 8px; margin-bottom: 8px;
+    }
+    #inspect header strong { flex: 1 1 auto; min-width: 0; }
+    #inspect h3 {
+      margin: 8px 0 4px; font-size: 11px; text-transform: uppercase;
+      letter-spacing: .04em; color: #656d76;
+    }
+    #inspect ul { margin: 0; padding: 0 0 0 16px; }
+    #inspect .chip {
+      display: inline-block; margin: 0 4px 4px 0; padding: 2px 8px;
+      border: 1px solid #d0d7de; border-radius: 999px; background: #fff; cursor: pointer;
+    }
+    #inspect .chip.active { border-color: #0969da; background: #ddf4ff; }
+    #inspect .muted { color: #656d76; }
   </style>
 </head>
 <body>
@@ -77,10 +101,10 @@
     </label>
     <label>Cluster by
       <select id="clusterBy">
-        <option value="none" selected>None</option>
-        <option value="series">Series</option>
+        <option value="series" selected>Series</option>
         <option value="role">Role</option>
         <option value="sheet">Sheet</option>
+        <option value="none">None</option>
       </select>
     </label>
     <input id="search" type="search" placeholder="Highlight series…" />
@@ -109,8 +133,15 @@
         <li><span class="box series"></span><span>fill is a per-series hue (hash of <code>series_id</code>), not direction</span></li>
         <li><span class="box"></span><span>unbound remainder</span></li>
       </ul>
-      <p class="note">Direction uses the Constants / Inputs / Internals / Outputs checkboxes. Rank layout is schedule residual. Clustered is a canvas-side clustered force (one hull per Cluster-by group); large dots views stay on rank.</p>
+      <p class="note">Direction uses the Constants / Inputs / Internals / Outputs checkboxes. Rank layout is schedule residual. Clustered is a canvas-side clustered force (one hull per Cluster-by group); large dots views stay on rank. Click a node or edge to inspect sampled cells and canonical instance edges.</p>
     </details>
+    <aside id="inspect" aria-label="Statement drilldown">
+      <header>
+        <strong id="inspectTitle">Inspect</strong>
+        <button type="button" id="inspectClose">Close</button>
+      </header>
+      <div id="inspectBody"></div>
+    </aside>
   </div>
   <div id="tip"></div>
   <script>
@@ -438,6 +469,141 @@
       return lines.join('\n');
     }
 
+    function formatPartition(part) {
+      if (!part || !part.length) return '(series)';
+      return part.map(function (v) { return String(v); }).join(', ');
+    }
+
+    function listItems(values) {
+      if (!values || !values.length) return '<p class="muted">None in this sample.</p>';
+      return '<ul>' + values.map(function (v) { return '<li>' + esc(String(v)) + '</li>'; }).join('') + '</ul>';
+    }
+
+    var inspectEl = document.getElementById('inspect');
+    var inspectTitle = document.getElementById('inspectTitle');
+    var inspectBody = document.getElementById('inspectBody');
+    var inspectFilter = null;
+
+    function showInspect(title, html) {
+      inspectTitle.textContent = title;
+      inspectBody.innerHTML = html;
+      inspectEl.classList.add('open');
+    }
+
+    function hideInspect() {
+      inspectEl.classList.remove('open');
+      inspectFilter = null;
+    }
+
+    function nodeInspectHtml(n, partitionFilter) {
+      var parts = n.partitions || [];
+      var cells = n.cells || [];
+      var cellParts = n.cell_partitions || [];
+      var filtered = [];
+      for (var i = 0; i < cells.length; i++) {
+        var part = cellParts[i] || [];
+        if (!partitionFilter || formatPartition(part) === partitionFilter) filtered.push(cells[i]);
+      }
+      var chips = parts.map(function (part) {
+        var label = formatPartition(part);
+        var active = partitionFilter === label ? ' active' : '';
+        return '<button type="button" class="chip' + active + '" data-partition="' + esc(label) + '">' + esc(label) + '</button>';
+      }).join('');
+      var sampledNote = n.cell_count > cells.length
+        ? '<p class="muted">Showing ' + cells.length + ' of ' + n.cell_count + ' cells.</p>'
+        : '';
+      return (
+        '<p>series <code>' + esc(n.series_id) + '</code> · statement <code>' + esc(n.id) + '</code></p>' +
+        '<p class="muted">direction ' + esc(n.direction) + ' · sheet ' + esc(n.sheet || MIXED_SHEET) +
+        ' · ' + n.cell_count + ' cells</p>' +
+        '<h3>Instance partitions</h3>' +
+        (chips || '<p class="muted">No outer-key nest.</p>') +
+        '<h3>Cells</h3>' + sampledNote + listItems(filtered)
+      );
+    }
+
+    function bundleInspectHtml(b) {
+      var edges = b.instance_edges || [];
+      var sampledNote = b.instance_edge_count > edges.length
+        ? '<p class="muted">Showing ' + edges.length + ' of ' + b.instance_edge_count + ' instance edges.</p>'
+        : '';
+      var edgeItems = edges.map(function (e) {
+        return (e.consumer_cell || '') + ' → ' + (e.producer_cell || '');
+      });
+      var parts = (b.partitions || []).map(formatPartition);
+      return (
+        '<p><code>' + esc(b.consumer_id) + '</code> → <code>' + esc(b.producer_id) + '</code></p>' +
+        '<p class="muted">' + esc(b.access || 'identity') +
+        ' · distance ' + (b.distance || 0) +
+        (b.coeff == null ? '' : ' · coeff ' + b.coeff) +
+        (b.offset == null ? '' : ' · offset ' + b.offset) +
+        (b.guarded ? ' · guarded' : '') +
+        ' · ' + (b.instance_edge_count || edges.length) + ' instance edges</p>' +
+        '<h3>Instance partitions</h3>' + listItems(parts) +
+        '<h3>Canonical edges</h3>' + sampledNote + listItems(edgeItems)
+      );
+    }
+
+    function showNodeInspect(n, partitionFilter) {
+      inspectFilter = partitionFilter || null;
+      showInspect(n.id, nodeInspectHtml(n, inspectFilter));
+      inspectBody.querySelectorAll('[data-partition]').forEach(function (el) {
+        el.addEventListener('click', function () {
+          var next = el.getAttribute('data-partition');
+          showNodeInspect(n, inspectFilter === next ? null : next);
+        });
+      });
+    }
+
+    function showBundleInspect(b) {
+      inspectFilter = null;
+      showInspect((b.consumer_id || '') + ' → ' + (b.producer_id || ''), bundleInspectHtml(b));
+    }
+
+    function worldPoint(ev) {
+      var rect = raster.getBoundingClientRect();
+      return {
+        x: vb.x + (ev.clientX - rect.left) * (vb.w / rect.width),
+        y: vb.y + (ev.clientY - rect.top) * (vb.h / rect.height),
+        pixel: vb.w / rect.width
+      };
+    }
+
+    function hitNode(wx, wy) {
+      var hitR = markStyle === 'dots' ? 6 : null;
+      for (var i = nodes.length - 1; i >= 0; i--) {
+        var n = nodes[i];
+        if (n._hidden) continue;
+        var rx = hitR != null ? hitR : n._w / 2;
+        var ry = hitR != null ? hitR : n._h / 2;
+        if (Math.abs(wx - n._x) <= rx && Math.abs(wy - n._y) <= ry) return n;
+      }
+      return null;
+    }
+
+    function distToSeg(px, py, x1, y1, x2, y2) {
+      var dx = x2 - x1, dy = y2 - y1;
+      var len2 = dx * dx + dy * dy;
+      var t = len2 === 0 ? 0 : Math.max(0, Math.min(1, ((px - x1) * dx + (py - y1) * dy) / len2));
+      return Math.hypot(px - (x1 + t * dx), py - (y1 + t * dy));
+    }
+
+    function hitBundle(wx, wy, pixel) {
+      var best = null;
+      var bestD = 8 * pixel;
+      bundles.forEach(function (b) {
+        var a = byId[b.consumer_id];
+        var c = byId[b.producer_id];
+        if (!a || !c || a._hidden || c._hidden) return;
+        var d = distToSeg(wx, wy, c._x, c._y, a._x, a._y);
+        if (d < bestD) {
+          bestD = d;
+          best = b;
+        }
+      });
+      return best;
+    }
+
     function inView(x0, y0, x1, y1) {
       return x1 >= vb.x && x0 <= vb.x + vb.w && y1 >= vb.y && y0 <= vb.y + vb.h;
     }
@@ -719,18 +885,33 @@
 
     var dragging = false;
     var last = null;
+    var pointerStart = null;
     raster.addEventListener('pointerdown', function (ev) {
       if (ev.button !== 0) return;
       dragging = true;
       last = {x: ev.clientX, y: ev.clientY};
+      pointerStart = {x: ev.clientX, y: ev.clientY};
       raster.classList.add('dragging');
       raster.setPointerCapture(ev.pointerId);
     });
-    raster.addEventListener('pointerup', function () {
+    raster.addEventListener('pointerup', function (ev) {
+      var start = pointerStart;
       dragging = false;
       last = null;
+      pointerStart = null;
       raster.classList.remove('dragging');
+      if (!start) return;
+      if (Math.hypot(ev.clientX - start.x, ev.clientY - start.y) > 4) return;
+      var world = worldPoint(ev);
+      var node = hitNode(world.x, world.y);
+      if (node) {
+        showNodeInspect(node);
+        return;
+      }
+      var bundle = hitBundle(world.x, world.y, world.pixel);
+      if (bundle) showBundleInspect(bundle);
     });
+    document.getElementById('inspectClose').addEventListener('click', hideInspect);
     raster.addEventListener('pointermove', function (ev) {
       if (!dragging || !last) return;
       var rect = raster.getBoundingClientRect();
@@ -761,17 +942,8 @@
       var wx = vb.x + (ev.clientX - rect.left) * (vb.w / rect.width);
       var wy = vb.y + (ev.clientY - rect.top) * (vb.h / rect.height);
       var hit = null;
-      var hitR = markStyle === 'dots' ? 6 : null;
-      for (var i = nodes.length - 1; i >= 0; i--) {
-        var n = nodes[i];
-        if (n._hidden) continue;
-        var rx = hitR != null ? hitR : n._w / 2;
-        var ry = hitR != null ? hitR : n._h / 2;
-        if (Math.abs(wx - n._x) <= rx && Math.abs(wy - n._y) <= ry) {
-          hit = nodeTip(n);
-          break;
-        }
-      }
+      var node = hitNode(wx, wy);
+      if (node) hit = nodeTip(node);
       if (!hit) { tip.style.display = 'none'; return; }
       tip.style.display = 'block';
       tip.style.left = (ev.clientX + 12) + 'px';

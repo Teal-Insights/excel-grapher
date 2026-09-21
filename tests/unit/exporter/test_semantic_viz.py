@@ -219,6 +219,57 @@ def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
         assert len(node["cells"]) <= SEMANTIC_VIZ_CELL_SAMPLE
 
 
+def test_payload_traces_nodes_and_bundles(tmp_path: Path) -> None:
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _zipper_bindings())
+    payload = to_semantic_viz_payload(
+        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    )
+    full = payload.to_dict()
+    sampled = payload.to_dict(cell_sample=1)
+    bound_nodes = [node for node in full["nodes"] if not node["is_remainder"]]
+    assert bound_nodes
+    for node in bound_nodes:
+        assert node["cells"]
+        assert node["cell_count"] == len(node["cells"])
+        assert "partitions" in node
+        assert node["cell_partitions"] == [[] for _ in node["cells"]]
+    for bundle in full["bundles"]:
+        assert bundle["instance_edges"]
+        assert len(bundle["instance_edges"]) == bundle["instance_edge_count"]
+        first = bundle["instance_edges"][0]
+        assert first["consumer_cell"] == bundle["representative_consumer_cell"]
+        assert first["producer_cell"] == bundle["representative_producer_cell"]
+    for full_bundle, sampled_bundle in zip(full["bundles"], sampled["bundles"], strict=True):
+        assert sampled_bundle["instance_edge_count"] == full_bundle["instance_edge_count"]
+        assert len(sampled_bundle["instance_edges"]) <= 1
+        if full_bundle["instance_edges"]:
+            assert sampled_bundle["instance_edges"] == full_bundle["instance_edges"][:1]
+    embedded = json.loads(serialize_semantic_viz_json(payload))
+    for bundle in embedded["bundles"]:
+        assert len(bundle["instance_edges"]) <= SEMANTIC_VIZ_CELL_SAMPLE
+
+
+def test_html_ships_inspect_panel(tmp_path: Path) -> None:
+    workbook = _zipper_workbook(tmp_path)
+    view, graph, _catalog = _view(workbook, _zipper_bindings())
+    payload = to_semantic_viz_payload(
+        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    )
+    html = tmp_path / "zipper.html"
+    write_semantic_viz_html(payload, html)
+    text = html.read_text(encoding="utf-8")
+    assert 'id="inspect"' in text
+    assert 'id="inspectTitle"' in text
+    assert 'id="inspectBody"' in text
+    assert "function showInspect" in text
+    assert "function hitNode" in text
+    assert "function hitBundle" in text
+    assert "instance_edges" in text
+    assert "cell_partitions" in text
+    assert "drilldown" in text.lower() or "Inspect" in text
+
+
 def test_semantic_catalog_honors_blank_ranges(tmp_path: Path) -> None:
     from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
     from excel_grapher.grapher import create_dependency_graph
@@ -358,7 +409,11 @@ def test_html_ships_color_and_cluster_controls(tmp_path: Path) -> None:
     assert 'value="none"' in text
     assert 'id="colorBy"' in text and "selected" in text
     assert 'option value="series" selected' in text or 'value="series" selected' in text
-    assert 'option value="none" selected' in text or 'value="none" selected' in text
+    assert 'value="none"' in text
+    assert 'id="clusterBy"' in text
+    cluster_block = text[text.index('id="clusterBy"') : text.index('id="clusterBy"') + 400]
+    assert 'value="series" selected' in cluster_block
+    assert 'value="none" selected' not in cluster_block
 
     assert "ROLE_COLORS" in text
     assert "constant:" in text

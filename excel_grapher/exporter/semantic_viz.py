@@ -78,8 +78,10 @@ class SemanticVizPayload:
 
         Args:
             cell_sample: If set, keep only the first `cell_sample` addresses on
-                each node. The HTML viewer uses this cap; omit it for a full
-                dump (`--json`). `cell_count` is always the true statement size.
+                each node and the first `cell_sample` instance edges on each
+                bundle. The HTML viewer uses this cap; omit it for a full dump
+                (`--json`). `cell_count` and `instance_edge_count` stay the
+                true sizes.
         """
         g = self.graph
         return {
@@ -105,6 +107,17 @@ class SemanticVizPayload:
                     "cells": (
                         list(node.cells) if cell_sample is None else list(node.cells[:cell_sample])
                     ),
+                    "cell_partitions": [
+                        [jsonable_scalar(value) for value in part]
+                        for part in (
+                            node.cell_partitions
+                            if cell_sample is None
+                            else node.cell_partitions[:cell_sample]
+                        )
+                    ],
+                    "partitions": [
+                        [jsonable_scalar(value) for value in part] for part in node.partitions
+                    ],
                     "direction": node.direction,
                     "sheet": node.sheet,
                     "is_remainder": node.is_remainder,
@@ -130,6 +143,17 @@ class SemanticVizPayload:
                     ],
                     "representative_consumer_cell": bundle.representative_consumer_cell,
                     "representative_producer_cell": bundle.representative_producer_cell,
+                    "instance_edges": [
+                        {
+                            "consumer_cell": consumer,
+                            "producer_cell": producer,
+                        }
+                        for consumer, producer in (
+                            bundle.instance_edges
+                            if cell_sample is None
+                            else bundle.instance_edges[:cell_sample]
+                        )
+                    ],
                     "discharged": bundle.distance > 0 or bundle.access == "shift",
                 }
                 for bundle in g.bundles
@@ -182,8 +206,9 @@ def serialize_semantic_viz_json(
 
     Args:
         payload: Statement-graph visualization to encode.
-        cell_sample: Address cap per node for the HTML viewer. Pass `None` to
-            keep every bound cell (same as `SemanticVizPayload.to_dict()`).
+        cell_sample: Address cap per node and per bundle for the HTML viewer.
+            Pass `None` to keep every bound cell and instance edge (same as
+            `SemanticVizPayload.to_dict()`).
     """
     return json.dumps(
         payload.to_dict(cell_sample=cell_sample),

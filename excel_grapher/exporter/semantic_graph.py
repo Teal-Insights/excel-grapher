@@ -140,6 +140,8 @@ class StatementNode:
     sheet: str
     is_remainder: bool = False
     labels: StatementLabels = EMPTY_STATEMENT_LABELS
+    cell_partitions: tuple[tuple[Scalar, ...], ...] = ()
+    partitions: tuple[tuple[Scalar, ...], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -157,6 +159,7 @@ class StatementBundle:
     partitions: tuple[tuple[Scalar, ...], ...]
     representative_consumer_cell: CanonicalAddress
     representative_producer_cell: CanonicalAddress
+    instance_edges: tuple[tuple[CanonicalAddress, CanonicalAddress], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -186,6 +189,25 @@ class StatementGraph:
     def to_networkx(self):
         """Return a NetworkX MultiDiGraph of statements and typed bundles."""
         return statement_graph_to_networkx(self)
+
+
+def _unique_partitions(
+    values: Sequence[tuple[Scalar, ...]],
+) -> tuple[tuple[Scalar, ...], ...]:
+    seen: set[tuple[Scalar, ...]] = set()
+    ordered: list[tuple[Scalar, ...]] = []
+    for part in values:
+        if part in seen:
+            continue
+        seen.add(part)
+        ordered.append(part)
+    return tuple(ordered)
+
+
+def _cell_partitions_for(
+    cells: Sequence[CanonicalAddress], catalog: SeriesCatalog
+) -> tuple[tuple[Scalar, ...], ...]:
+    return tuple(catalog.schedule.partition_of.get(cell, ()) for cell in cells)
 
 
 def statement_sheet(cells: Sequence[CanonicalAddress]) -> str:
@@ -226,6 +248,7 @@ def _statement_nodes(
         series = catalog.get(series_id)
         labels = series_labels.get(series_id, EMPTY_STATEMENT_LABELS)
         for stmt in series.statements:
+            cell_partitions = _cell_partitions_for(stmt.cells, catalog)
             nodes[stmt.statement_id] = StatementNode(
                 statement_id=stmt.statement_id,
                 series_id=series.series_id,
@@ -237,6 +260,8 @@ def _statement_nodes(
                 direction=series.direction,
                 sheet=statement_sheet(stmt.cells),
                 labels=labels,
+                cell_partitions=cell_partitions,
+                partitions=_unique_partitions(cell_partitions),
             )
     return nodes
 
@@ -246,9 +271,11 @@ def _ensure_statement_node(
     statement_id: str,
     series: BoundSeries,
     labels: StatementLabels,
+    catalog: SeriesCatalog,
 ) -> None:
     if statement_id in nodes:
         return
+    cell_partitions = _cell_partitions_for(series.cells, catalog)
     nodes[statement_id] = StatementNode(
         statement_id=statement_id,
         series_id=series.series_id,
@@ -260,6 +287,8 @@ def _ensure_statement_node(
         direction=series.direction,
         sheet=statement_sheet(series.cells),
         labels=labels,
+        cell_partitions=cell_partitions,
+        partitions=_unique_partitions(cell_partitions),
     )
 
 
@@ -360,6 +389,7 @@ def _bundles_from_edges(
                 partitions=part_set,
                 representative_consumer_cell=first.consumer_cell,
                 representative_producer_cell=first.producer_cell,
+                instance_edges=tuple((edge.consumer_cell, edge.producer_cell) for edge in group),
             )
         )
     return tuple(bundles)
@@ -457,6 +487,7 @@ def build_statement_graph(
                 cell_stmt.get(edge.consumer_cell, consumer_series.series_id),
                 consumer_series,
                 series_labels.get(consumer_series.series_id, EMPTY_STATEMENT_LABELS),
+                catalog,
             )
         if producer_series is not None:
             _ensure_statement_node(
@@ -464,6 +495,7 @@ def build_statement_graph(
                 cell_stmt.get(edge.producer_cell, producer_series.series_id),
                 producer_series,
                 series_labels.get(producer_series.series_id, EMPTY_STATEMENT_LABELS),
+                catalog,
             )
 
     remainder_sample, unbound_count, remainder_sheet = _unbound_cells(graph, catalog)
@@ -480,6 +512,8 @@ def build_statement_graph(
             sheet=remainder_sheet,
             is_remainder=True,
             labels=EMPTY_STATEMENT_LABELS,
+            cell_partitions=tuple(() for _ in remainder_sample),
+            partitions=(),
         )
 
     seen_ids: set[str] = set()
