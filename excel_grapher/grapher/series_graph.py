@@ -15,25 +15,14 @@ from __future__ import annotations
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
-from typing import Any, Protocol
+from typing import Any
 
-from excel_grapher.core.address_keys import CanonicalAddress, as_canonical, parse_address
+from excel_grapher.core.address_keys import as_canonical, parse_address
+from excel_grapher.semantic_model import CatalogOccupancy as SeriesGraphOccupancy
 
 from .graph import DependencyGraph, GraphReadView
 
 MIXED_SHEET = "mixed"
-
-
-class SeriesGraphOccupancy(Protocol):
-    """Duck type for `SeriesCatalog` occupancy without importing the exporter."""
-
-    def series_id_for(self, address: CanonicalAddress) -> str | None:
-        """Return the bound series owning `address`, if any."""
-        ...
-
-    def get(self, series_id: str) -> Any:
-        """Return series metadata for `series_id`."""
-        ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -121,7 +110,8 @@ def to_series_graph(
 
     Args:
         graph: Cell-level dependency graph or read view.
-        occupancy: Cell-to-series mapping. `SeriesCatalog` satisfies this.
+        occupancy: Cell-to-series mapping. A `SeriesCatalog` satisfies
+            `CatalogOccupancy` (`SeriesGraphOccupancy`).
         include_self_loops: If `True`, keep intra-series cell edges as a single
             self-loop per series. If `False` (default), drop them.
 

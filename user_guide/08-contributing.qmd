@@ -219,6 +219,27 @@ Deferred (no change needed yet):
 
 - Graph build hooks remain direct-only; a registry would add no value for one-off instrumentation.
 
+## Package dependency direction
+
+`excel_grapher.semantic_model` is the module owner for bound-series catalog
+topology (key points, statements, occupancy, schedule axes, classified
+instance edges). Visualization and inverted-tree export consume that contract.
+Construction still lives in `excel_grapher.exporter.inverted_tree` until
+catalog extraction; those implementations must satisfy the protocols.
+
+Allowed direction:
+
+- `semantic_model` imports `core` and `series_bindings` types only.
+- `grapher` may import `semantic_model` (series occupancy) but not `exporter`.
+- `series_bindings` does not import `semantic_model` (declarations vs derived catalog).
+- inverted-tree implements the contract and may import `semantic_model`.
+- statement-graph visualization (`exporter.semantic_*`) consumes the contract
+  and must not import inverted-tree emission (`emit`, `ast_emit`, rung/fusion
+  planning).
+
+The canonical cell graph remains `DependencyGraph`. A catalog is derived from
+graph + bindings + workbook. It is not a `ProjectionResult` and is not TACO.
+
 ## Roadmap
 
 - Continue expanding **three-way parity** coverage: evaluator ↔ export runtime, evaluator ↔ Excel (cache and live automation where available), especially for representation-sensitive areas such as `OFFSET`, `INDIRECT`, `LOOKUP`, `MATCH`, and `INDEX`.

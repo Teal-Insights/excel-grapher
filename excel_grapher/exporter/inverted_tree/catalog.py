@@ -36,6 +36,14 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     normalize_blank_range_specs,
 )
+from excel_grapher.semantic_model.types import (
+    SCHEDULE_AXIS as _SCHEDULE_AXIS,
+)
+from excel_grapher.semantic_model.types import (
+    Direction,
+    HoleKind,
+    Layout,
+)
 from excel_grapher.series_bindings.graph_predicates import (
     is_graph_formula_node,
     is_graph_leaf,
@@ -72,10 +80,6 @@ from excel_grapher.series_bindings.types import Scalar, WorkbookSeriesBindings
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
 
-Direction = Literal["input", "constant", "internal", "output"]
-Layout = Literal["scalar", "series", "matrix"]
-HoleKind = Literal["blank", "off_closure", "literal", "graph_leaf", "bound_leaf"]
-_SCHEDULE_AXIS = "TIME_PERIOD"
 _NONE_HOLE_KINDS = frozenset({"blank", "off_closure"})
 
 _DTYPE_READ = {

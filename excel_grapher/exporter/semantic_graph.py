@@ -19,10 +19,11 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     SeriesCatalog,
     schedule_partition,
 )
-from excel_grapher.exporter.inverted_tree.deps import AccessClass, DependenceEdge
+from excel_grapher.exporter.inverted_tree.deps import DependenceEdge
 from excel_grapher.exporter.semantic_catalog import SemanticCatalogView
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.lightweight_viz import unconditional_scc_ranks
+from excel_grapher.semantic_model import AccessClass
 from excel_grapher.series_bindings.types import Scalar
 
 REMAINDER_STATEMENT_ID = "__unbound__"
