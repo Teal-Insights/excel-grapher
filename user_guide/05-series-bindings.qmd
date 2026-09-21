@@ -981,6 +981,8 @@ else the values of `value_map` (workbook needles; map keys remain the public
 nothing unless `domain` is explicit.
 
 Build a `DynamicRefConfig` with `DynamicRefConfig.from_bindings(bindings, workbook)`.
+`cell_type_env_from_bindings` returns the same lazy `SeriesDomainIndex`: a
+lookup compiles one address, while iteration and `len` expand the whole domain.
 `bindings validate` and `bindings viz` derive that config from the sidecar.
 The local corpus manifest (`corpus.toml`) does the same: omit a Python
 constraint table when the sidecar covers every dynamic-ref leaf.

@@ -16,6 +16,7 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     RealBetween,
     constraints_to_cell_type_env,
+    normalize_cell_type_env_key,
 )
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
@@ -414,6 +415,52 @@ def test_series_domain_index_is_lazy_mapping(tmp_path: Path) -> None:
     assert shock.interval is not None
     assert index["Inputs!A10"].enum is not None
     assert set(index) == {"Inputs!B21", "Inputs!A10"}
+
+
+def test_cell_type_env_from_bindings_stays_lazy(tmp_path: Path) -> None:
+    workbook = tmp_path / "mcve.xlsx"
+    wb = xlsxwriter.Workbook(workbook)
+    ws = wb.add_worksheet("Engine")
+    for col in range(20):
+        for row in range(50):
+            ws.write_number(row, col, 0.0)
+    wb.close()
+    doc = {
+        "schema_version": "1.19.0",
+        "series": [
+            {
+                "id": "engine_grid",
+                "sheet": "Engine",
+                "data_range": "Engine!A1:T50",
+                "layout": "scalar",
+                "constant": {},
+                "structure": {
+                    "measure": {
+                        "concept": "OBS_VALUE",
+                        "dtype": "float",
+                        "bind": {"kind": "data_cell", "read": "float"},
+                    },
+                    "dimensions": [],
+                },
+                "key": [],
+            }
+        ],
+    }
+    bindings = validate_bindings_document(doc)
+    index = SeriesDomainIndex.from_bindings(bindings, workbook=workbook)
+    assert index._expanded is None
+    key = normalize_cell_type_env_key("Engine!A1")
+    _ = index[key]
+    assert index._expanded is None
+    assert len(index._memo) == 1
+
+    env = cell_type_env_from_bindings(bindings, workbook=workbook)
+    assert isinstance(env, SeriesDomainIndex)
+    assert env._expanded is None
+    _ = env[key]
+    assert env._expanded is None, "single lookup should stay lazy"
+    assert len(env._memo) == 1
+    assert env[key].enum is not None
 
 
 def test_attach_domains_and_undomained_leaves(tmp_path: Path) -> None:
