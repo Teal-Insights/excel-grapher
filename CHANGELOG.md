@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.6.0 (2026-09-21)
+
+### Bug Fixes
+
+- **bindings**: Bump author-bindings examples to schema 1.18.0
+  ([#928](https://github.com/Teal-Insights/excel-grapher/pull/928),
+  [`308056b`](https://github.com/Teal-Insights/excel-grapher/commit/308056bc96b3fa6c580bef280fd68e927d2ab252))
+
+- **bindings**: Fail-closed upsert and extract author-bindings extra
+  ([#928](https://github.com/Teal-Insights/excel-grapher/pull/928),
+  [`308056b`](https://github.com/Teal-Insights/excel-grapher/commit/308056bc96b3fa6c580bef280fd68e927d2ab252))
+
+### Documentation
+
+- **bindings**: Install author-bindings by copying into .agents/skills
+  ([#928](https://github.com/Teal-Insights/excel-grapher/pull/928),
+  [`308056b`](https://github.com/Teal-Insights/excel-grapher/commit/308056bc96b3fa6c580bef280fd68e927d2ab252))
+
+### Features
+
+- **bindings**: Ship an authoring agent skill with generic scripts
+  ([#928](https://github.com/Teal-Insights/excel-grapher/pull/928),
+  [`308056b`](https://github.com/Teal-Insights/excel-grapher/commit/308056bc96b3fa6c580bef280fd68e927d2ab252))
+
+
 ## v21.5.0 (2026-09-21)
 
 ### Features
