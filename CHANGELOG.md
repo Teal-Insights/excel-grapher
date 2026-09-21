@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.2.0 (2026-09-21)
+
+### Features
+
+- **series-bindings**: Allow extract-only series that skip the catalog
+  ([#954](https://github.com/Teal-Insights/excel-grapher/pull/954),
+  [`5f5f904`](https://github.com/Teal-Insights/excel-grapher/commit/5f5f90421206b402cf592704bbcc9f014ed912e3))
+
+
 ## v23.1.0 (2026-09-21)
 
 ### Bug Fixes
