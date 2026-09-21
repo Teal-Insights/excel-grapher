@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.10.0 (2026-09-21)
+
+### Bug Fixes
+
+- **exporter**: Type from_defaults inputs so generated api.py passes ty
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+- **exporter**: Validate Model constructor names and emit explicit from_defaults
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+### Code Style
+
+- Quote generated TypeError so ruff format is clean
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+### Documentation
+
+- Document Model constructor validation and from_defaults
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+- Document Model.from_defaults in the export guide
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+### Features
+
+- **exporter**: Add Model.from_defaults() to bind snapshot inputs
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+- **exporter**: Emit Model.from_defaults() to bind snapshot inputs
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+### Testing
+
+- Cover Model.from_defaults on labelled tiny-DSA inputs
+  ([#939](https://github.com/Teal-Insights/excel-grapher/pull/939),
+  [`875b7c2`](https://github.com/Teal-Insights/excel-grapher/commit/875b7c2da58002498f65267ccbb149f6244bdcfa))
+
+
 ## v21.9.0 (2026-09-21)
 
 ### Features
