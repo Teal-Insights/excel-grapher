@@ -17,6 +17,7 @@ from excel_grapher.series_bindings.normalize import (
     has_internal_direction,
     has_output_direction,
     input_mode,
+    is_cataloged_series,
     is_override_input,
 )
 from excel_grapher.series_bindings.occupancy import (
@@ -856,6 +857,8 @@ def _validate_implementation_support(series: dict[str, Any]) -> list[ValidationI
 
 def _validate_keyed_catalog_unique_key(series: dict[str, Any]) -> list[ValidationIssue]:
     """Refuse `require_unique_key: false` on keyed series inverted-tree will catalog."""
+    if not is_cataloged_series(series):
+        return []
     if not (series.get("key") or []):
         return []
     _, require_unique_key = _series_validation_flags(series)
@@ -869,6 +872,36 @@ def _validate_keyed_catalog_unique_key(series: dict[str, Any]) -> list[Validatio
             series_id=str(series.get("id") or "") or None,
         )
     ]
+
+
+def _validate_catalog_skipped_formula_owner(
+    graph: DependencyGraph,
+    occupancy_rows: Sequence[tuple[dict[str, Any], list[str]]],
+    skipped_rows: Sequence[tuple[dict[str, Any], list[str]]],
+) -> list[ValidationIssue]:
+    """Refuse catalog skip when the series uniquely owns an on-graph formula cell."""
+    cataloged_formulas: set[str] = set()
+    for series, addresses in occupancy_rows:
+        for address in occupancy_addresses(graph, series, addresses):
+            if is_graph_formula_node(graph, address):
+                cataloged_formulas.add(address)
+    issues: list[ValidationIssue] = []
+    for series, addresses in skipped_rows:
+        series_id = str(series.get("id") or "") or None
+        for address in addresses:
+            if is_graph_formula_node(graph, address) and address not in cataloged_formulas:
+                issues.append(
+                    _issue(
+                        "error",
+                        "catalog_skipped_formula_owner",
+                        "validation.catalog: false uniquely owns on-graph formula cell "
+                        f"{address}; catalog skip is only for extract-time domain pins",
+                        series_id=series_id,
+                        address=address,
+                    )
+                )
+                break
+    return issues
 
 
 def _concept_dtype_map(bindings: WorkbookSeriesBindings) -> dict[str, str]:
@@ -1073,7 +1106,9 @@ def validate_series_bindings(
     Document-level checks include `duplicate_series_id`, `invalid_python_id`,
     `geometry_in_id` (A1 cell or rectangle tokens in series ids and
     `series_context` values), `require_unique_key_incompatible` (keyed series
-    may not set `validation.require_unique_key: false`), and series-relation
+    may not set `validation.require_unique_key: false`),
+    `catalog_skipped_formula_owner` (`validation.catalog: false` uniquely owns
+    an on-graph formula cell), and series-relation
     codes (`unknown_relation_partner`, `incomparable_relation_dtype`,
     `incompatible_relation_key`, `reflexive_relation`, `cyclic_relation`,
     `unresolved_relation_key`, `ambiguous_relation_partner_key`,
@@ -1091,6 +1126,7 @@ def validate_series_bindings(
     shared_reader: _WorkbookValues | None = None
     seen_ranges: dict[str, str] = {}
     occupancy_rows: list[tuple[dict[str, Any], list[str]]] = []
+    skipped_rows: list[tuple[dict[str, Any], list[str]]] = []
     evaluate_addresses = (
         labeller_evaluate_addresses(bindings, workbook) if workbook is not None else set()
     )
@@ -1157,7 +1193,10 @@ def validate_series_bindings(
                 )
                 continue
 
-            occupancy_rows.append((series, addresses))
+            if is_cataloged_series(series):
+                occupancy_rows.append((series, addresses))
+            else:
+                skipped_rows.append((series, addresses))
             issues.extend(_validate_input_mode(series))
             issues.extend(_validate_input_binding_overlap(graph, series, addresses))
             issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
@@ -1227,6 +1266,7 @@ def validate_series_bindings(
             shared_reader.close()
 
     issues.extend(_validate_cell_occupancy(graph, occupancy_rows))
+    issues.extend(_validate_catalog_skipped_formula_owner(graph, occupancy_rows, skipped_rows))
     issues = _downgrade_bound_leaf_notices(graph, occupancy_rows, issues)
     if workbook is not None:
         issues.extend(relation_alignment_issues(bindings, workbook=workbook))

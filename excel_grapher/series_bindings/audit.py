@@ -25,6 +25,7 @@ from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.normalize import (
     has_input_direction,
     has_output_direction,
+    is_cataloged_series,
 )
 from excel_grapher.series_bindings.occupancy import binding_direction
 from excel_grapher.series_bindings.ranges import (
@@ -346,6 +347,8 @@ def _claim_formula_cells(
             continue
         direction = binding_direction(series)
         if direction not in _FORMULA_DIRECTIONS:
+            continue
+        if not is_cataloged_series(series):
             continue
         series_id = str(series.get("id", ""))
         if not series_id:
