@@ -66,6 +66,7 @@ def write_workbook(
     series_bindings: WorkbookSeriesBindings | None = None,
     bindings_workbook: Path | str | None = None,
     include_bound_labels: bool = True,
+    include_cell_validation: bool = True,
 ) -> None:
     """Write `graph` to a new `.xlsx` at `destination`.
 
@@ -84,7 +85,11 @@ def write_workbook(
     is already in the view or is itself a bound label; otherwise the
     writer fails closed rather than extracting a second dependency
     closure. The bindings workbook is opened read-only for those extra
-    cells; it is never overwritten.
+    cells; it is never overwritten. When `include_cell_validation` is
+    True (default), constrained inputs are also written as Excel data
+    validations: input-series domains and relations when
+    `series_bindings` is set, otherwise value cells in `cell_type_env`.
+    Constants, outputs, and formula cells are omitted.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -157,6 +162,16 @@ def write_workbook(
             attribute source cells that are missing from `graph`. Formula
             labels whose static deps are not already in the view or bound
             labels are refused. The original graph is not mutated.
+        include_cell_validation: If True (default), write Excel data
+            validations for constrained inputs. With `series_bindings`,
+            rules come from input-series `enum`, `between`,
+            `real_between`, `from_workbook`, `value_map` needles, and
+            `relations`. Constants, outputs, and internals are skipped.
+            Without bindings, value cells in `cell_type_env` (including
+            a projection's projected graph) are used. Inline lists cannot
+            contain commas. Formulas longer than 255 characters, relation
+            partners missing from the written view, and `from_workbook`
+            inputs with no cached value fail closed.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
@@ -168,8 +183,9 @@ def write_workbook(
             rectangle, `shared_formulas` is not a known mode,
             `shared_formulas='require'` and `formula_shapes` is missing, or
             `series_bindings` is set with `include_bound_labels` and without
-            `bindings_workbook`, or a bound formula label cannot be copied
-            as a static overlay.
+            `bindings_workbook`, a bound formula label cannot be copied
+            as a static overlay, or a constrained input cannot be written
+            as Excel data validation.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
@@ -219,6 +235,16 @@ def write_workbook(
         sheets = _create_sheets(wb, sheet_names)
         for sheet_name, coord, value in planned:
             sheets[sheet_name][coord] = value
+        if include_cell_validation:
+            from .cell_validation import apply_constrained_input_validations
+
+            apply_constrained_input_validations(
+                sheets,
+                graph,
+                planned=planned,
+                series_bindings=series_bindings,
+                bindings_workbook=bindings_workbook,
+            )
         for name, attr_text in planned_names:
             wb.defined_names.add(DefinedName(name=name, attr_text=attr_text))
         tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
