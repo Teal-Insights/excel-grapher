@@ -394,6 +394,16 @@ def test_require_input_domain_between_names_wrong_type() -> None:
         require_input_domain(2, domain, series_id="share")
 
 
+def test_require_input_domain_rejects_int_for_bool_enum() -> None:
+    domain = {"enum": frozenset({True, False})}
+    require_input_domain(True, domain, series_id="flag")
+    require_input_domain(False, domain, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        require_input_domain(1, domain, series_id="flag")
+    with pytest.raises(ValueError, match=r"flag out of domain"):
+        require_input_domain(0, domain, series_id="flag")
+
+
 def test_require_input_domain_scalar_and_sequence() -> None:
     enum_domain = {"enum": frozenset({0, 1})}
     require_input_domain(0, enum_domain, series_id="flag")

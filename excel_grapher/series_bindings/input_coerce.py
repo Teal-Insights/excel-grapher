@@ -291,7 +291,7 @@ def _is_real_number(value: object) -> TypeGuard[int | float]:
 def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
     """Return whether `value` is inside a measure domain declaration."""
     if "enum" in domain:
-        return value in domain["enum"]
+        return _enum_contains(value, domain["enum"])
     if "between" in domain:
         if not _is_between_int(value):
             return False
@@ -301,6 +301,17 @@ def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
             return False
         return _in_closed_bounds(value, domain["real_between"])
     return True
+
+
+def _enum_contains(value: object, allowed: object) -> bool:
+    """Return whether `value` is an enum member without bool/int confusion.
+
+    `1 in {True, False}` is true in Python because `bool` subclasses `int`.
+    Membership requires the same runtime type as the declared member.
+    """
+    if not isinstance(allowed, (set, frozenset, list, tuple)):
+        return False
+    return any(type(value) is type(item) and value == item for item in allowed)
 
 
 def _is_measure_sequence(value: object) -> TypeGuard[Sequence[object]]:
