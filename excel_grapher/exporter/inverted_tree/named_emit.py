@@ -1409,7 +1409,7 @@ def _model_init(catalog: SeriesCatalog) -> list[str]:
     )
     lines = [
         "",
-        "    def __init__(self, **inputs: object) -> None:",
+        "    def __init__(self, **inputs: Any) -> None:",
         "        for name, value in inputs.items():",
     ]
     if deferred:
@@ -1535,24 +1535,62 @@ def _model_class(
     return model
 
 
+def _generated_module_preamble(
+    docstring: str,
+    *,
+    stdlib: Sequence[str] = (),
+    local: Sequence[str] = (),
+) -> list[str]:
+    """Build a module header whose import blocks satisfy ruff `I001`."""
+    lines = [f'"""{docstring}"""', "", "from __future__ import annotations", ""]
+    if stdlib:
+        lines.extend(stdlib)
+        if local:
+            lines.append("")
+    if local:
+        lines.extend(local)
+    if stdlib or local:
+        lines.append("")
+        lines.append("")
+    return lines
+
+
 def emit_named_model(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
     """Emit the memoized `Model` session object."""
+    class_lines = _model_class(catalog, deps, scc_map)
+    body = "\n".join(class_lines)
+    stdlib: list[str] = []
+    if "datetime" in body:
+        stdlib.append("from datetime import datetime")
+    if "@cached_property" in body:
+        stdlib.append("from functools import cached_property")
+    if "Any" in body:
+        stdlib.append("from typing import Any")
+    imported = [
+        name
+        for name, token in (
+            ("data", "data."),
+            ("internals", "internals."),
+            ("validation", "validation."),
+        )
+        if token in body
+    ]
+    local = [f"from . import {', '.join(imported)}"] if imported else []
     lines = [
-        '"""Memoized evaluator for named formula series."""',
-        "from __future__ import annotations",
-        "from datetime import datetime",
-        "from functools import cached_property",
-        "from . import data, internals, validation",
+        *_generated_module_preamble(
+            "Memoized evaluator for named formula series.",
+            stdlib=stdlib,
+            local=local,
+        ),
+        body,
         "",
-        "",
-        "\n".join(_model_class(catalog, deps, scc_map)),
         "",
         "__all__ = [",
-        "    'Model',",
+        '    "Model",',
         "]",
         "",
     ]
@@ -1574,20 +1612,31 @@ def emit_named_api(
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
+    joined = "\n\n".join(functions)
+    stdlib: list[str] = []
+    if "datetime" in joined:
+        stdlib.append("from datetime import datetime")
+    local: list[str] = []
+    imported: list[str] = []
+    if "data." in joined:
+        imported.append("data")
+    if functions:
+        imported.append("model")
+    if imported:
+        local.append(f"from . import {', '.join(imported)}")
+    if aliases:
+        local.append(_constants_import(aliases))
+    if functions:
+        local.append("from .runtime import publish")
     lines = [
-        '"""Generated functions accepting and returning named-coordinate values."""',
-        "from __future__ import annotations",
-        "from datetime import datetime",
-        "from . import data",
-        *([_constants_import(aliases)] if aliases else []),
-        "from .model import Model",
-        "from .runtime import publish",
-        "",
-        "",
-        "\n\n".join(functions),
-        "",
+        *_generated_module_preamble(
+            "Generated functions accepting and returning named-coordinate values.",
+            stdlib=stdlib,
+            local=local,
+        ),
+        *([joined, "", ""] if functions else []),
         "__all__ = [",
-        *(f"    {name!r}," for name in compute_names),
+        *(f'    "{name}",' for name in compute_names),
         "]",
         "",
     ]
@@ -1672,7 +1721,7 @@ def _public_function(
             _publish_line(output, constants),
             _signature(name, inputs, _annotation(output)),
             *docstring,
-            f"    return Model(**locals()).{output.series_id}",
+            f"    return model.Model(**locals()).{output.series_id}",
         ]
     )
     return source, name

@@ -45,7 +45,8 @@ def test_generated_package_exports_model(tmp_path: Path) -> None:
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="model_export")
     assert "Model" in pkg.__all__
-    assert pkg.Model is pkg.api.Model
+    assert pkg.Model is pkg.model.Model
+    assert not hasattr(pkg.api, "Model")
 
 
 def test_every_formula_is_one_model_attribute(tmp_path: Path) -> None:
