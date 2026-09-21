@@ -2,8 +2,11 @@
 
 Input domains (`enum`, `between`, `real_between`, `from_workbook`,
 `value_map` needles, and series relations) become worksheet data
-validations. Constants, outputs, and internals are not inputs. Without
-series bindings, value cells in `cell_type_env` are the constraint source.
+validations. When `series_bindings` is set, input-series domains are
+applied and constant/output/internal cells are skipped; extract-time
+`cell_type_env` domains still apply to unbound value leaves, and matching
+cells must agree. Without bindings, value cells in `cell_type_env` are
+the sole constraint source.
 """
 
 from __future__ import annotations
@@ -64,8 +67,9 @@ def apply_constrained_input_validations(
         sheets: Worksheets already created for this write, keyed by name.
         graph: Read view being written.
         planned: Cells this write will persist, as `(sheet, coord, value)`.
-        series_bindings: Sidecar whose input domains are the constraint
-            source when set. Constants and non-input series are ignored.
+        series_bindings: Sidecar whose input domains contribute constraints
+            when set. Constants and non-input series are ignored; unbound
+            value leaves still take `cell_type_env` domains.
         bindings_workbook: Workbook the sidecar describes. Required when an
             input series declares relations.
 
@@ -119,14 +123,64 @@ def _constraint_cells(
     series_bindings: WorkbookSeriesBindings | None,
     bindings_workbook: Path | str | None,
 ) -> dict[str, CellType]:
-    if series_bindings is not None:
-        return _constraints_from_bindings(
-            graph,
-            written=written,
-            series_bindings=series_bindings,
-            bindings_workbook=bindings_workbook,
-        )
-    return _constraints_from_env(graph, written=written)
+    from_env = _constraints_from_env(graph, written=written)
+    if series_bindings is None:
+        return from_env
+    from_bindings = _constraints_from_bindings(
+        graph,
+        written=written,
+        series_bindings=series_bindings,
+        bindings_workbook=bindings_workbook,
+    )
+    # Bindings own series direction: do not decorate constant/output/internal
+    # cells from extract-time env. Unbound value leaves still take env domains
+    # (label-only sidecars must not drop CONSTRAINTS). Conflicts fail closed.
+    blocked = _non_input_bound_addresses(
+        graph,
+        series_bindings=series_bindings,
+        bindings_workbook=bindings_workbook,
+        written=written,
+    )
+    if blocked:
+        from_env = {address: cell for address, cell in from_env.items() if address not in blocked}
+    return _merge_constraint_maps(from_env, from_bindings)
+
+
+def _merge_constraint_maps(
+    base: Mapping[str, CellType],
+    overlay: Mapping[str, CellType],
+) -> dict[str, CellType]:
+    """Union two constraint maps; identical cells may overlap, conflicts fail."""
+    merged = dict(base)
+    for address, cell_type in overlay.items():
+        previous = merged.get(address)
+        if previous is not None and previous != cell_type:
+            raise _fail(address, "conflicting input constraints")
+        merged[address] = cell_type
+    return merged
+
+
+def _non_input_bound_addresses(
+    graph: GraphReadView,
+    *,
+    series_bindings: WorkbookSeriesBindings,
+    bindings_workbook: Path | str | None,
+    written: set[str],
+) -> set[str]:
+    blocked: set[str] = set()
+    for series in series_bindings["series"]:
+        if not isinstance(series, dict) or has_input_direction(series):
+            continue
+        for address in expand_bound_series_addresses(
+            series,
+            workbook=bindings_workbook,
+            named_ranges=graph.named_ranges,
+            named_range_ranges=graph.named_range_ranges,
+        ):
+            norm = normalize_cell_type_env_key(address)
+            if norm in written:
+                blocked.add(norm)
+    return blocked
 
 
 def _constraints_from_bindings(
@@ -272,14 +326,20 @@ def _rule_for(address: str, cell_type: CellType, *, written: set[str]) -> _Rule:
         if not present:
             rule = _Rule("custom", None, f'{coord}=""', None, True, _CUSTOM_ERROR)
             return _checked(address, rule)
+        terms = [_enum_term(address, coord, value) for value in present]
+        membership = _or(terms)
         if relation_clauses:
-            terms = [_enum_term(address, coord, value) for value in present]
-            clauses = [_or(terms), *relation_clauses]
-            rule = _Rule("custom", None, _and(clauses), None, allow_blank, _CUSTOM_ERROR)
+            rule = _Rule(
+                "custom",
+                None,
+                _and([membership, *relation_clauses]),
+                None,
+                allow_blank,
+                _CUSTOM_ERROR,
+            )
             return _checked(address, rule)
-        if _value_class(address, present) == "bool":
-            terms = [_enum_term(address, coord, value) for value in present]
-            rule = _Rule("custom", None, _or(terms), None, allow_blank, _CUSTOM_ERROR)
+        if _value_class(address, present) == "bool" or _needs_custom_enum(present):
+            rule = _Rule("custom", None, membership, None, allow_blank, _CUSTOM_ERROR)
             return _checked(address, rule)
         rule = _Rule("list", None, _inline_list(address, present), None, allow_blank, _LIST_ERROR)
         return _checked(address, rule)
@@ -287,9 +347,9 @@ def _rule_for(address: str, cell_type: CellType, *, written: set[str]) -> _Rule:
     if relation_clauses:
         bound_clauses: list[str] = []
         if has_interval and interval is not None:
-            bound_clauses = _bound_clauses(address, coord, interval.min, interval.max)
+            bound_clauses = _bound_clauses(address, coord, interval.min, interval.max, whole=True)
         elif has_real and real is not None:
-            bound_clauses = _bound_clauses(address, coord, real.min, real.max)
+            bound_clauses = _bound_clauses(address, coord, real.min, real.max, whole=False)
         rule = _Rule(
             "custom",
             None,
@@ -366,6 +426,8 @@ def _bound_clauses(
     coord: str,
     low: float | int | None,
     high: float | int | None,
+    *,
+    whole: bool,
 ) -> list[str]:
     if low is not None and high is not None and low > high:
         raise _fail(address, "interval minimum is greater than its maximum")
@@ -374,7 +436,19 @@ def _bound_clauses(
         clauses.append(f"{coord}>={_format_number(address, low)}")
     if high is not None:
         clauses.append(f"{coord}<={_format_number(address, high)}")
+    if whole:
+        # Native `whole` validation rejects non-integers; custom formulas that
+        # only compare bounds do not, so require integrality explicitly.
+        clauses.append(f"INT({coord})={coord}")
     return clauses
+
+
+def _needs_custom_enum(values: list[object]) -> bool:
+    return any(isinstance(value, str) and _has_list_delimiter(value) for value in values)
+
+
+def _has_list_delimiter(value: str) -> bool:
+    return "," in value or "\n" in value or "\r" in value
 
 
 def _split_blanks(values: frozenset[object]) -> tuple[list[object], bool]:
@@ -424,7 +498,12 @@ def _inline_list(address: str, values: list[object]) -> str:
     parts: list[str] = []
     for value in values:
         if isinstance(value, str):
-            _reject_list_delimiter(address, value)
+            if _has_list_delimiter(value):
+                raise _fail(
+                    address,
+                    f"enum value {value!r} contains a list delimiter and cannot be "
+                    "an inline Excel list",
+                )
             parts.append(value.replace('"', '""'))
         elif isinstance(value, bool):
             raise _fail(address, "boolean enums are written as custom formulas")
@@ -432,7 +511,12 @@ def _inline_list(address: str, values: list[object]) -> str:
             parts.append(str(value))
         elif isinstance(value, float):
             text = _format_number(address, value)
-            _reject_list_delimiter(address, text)
+            if _has_list_delimiter(text):
+                raise _fail(
+                    address,
+                    f"enum value {value!r} contains a list delimiter and cannot be "
+                    "an inline Excel list",
+                )
             parts.append(text)
         else:
             raise _fail(address, f"unsupported enum value type {type(value).__name__}")
@@ -444,21 +528,17 @@ def _enum_term(address: str, coord: str, value: object) -> str:
         literal = "TRUE" if value else "FALSE"
         return f"{coord}={literal}"
     if isinstance(value, str):
-        _reject_list_delimiter(address, value)
+        if "\n" in value or "\r" in value:
+            raise _fail(
+                address,
+                f"enum value {value!r} contains a newline and cannot be written",
+            )
         return f'{coord}="{value.replace(chr(34), chr(34) * 2)}"'
     if isinstance(value, int):
         return f"{coord}={value}"
     if isinstance(value, float):
         return f"{coord}={_format_number(address, value)}"
     raise _fail(address, f"unsupported enum value type {type(value).__name__}")
-
-
-def _reject_list_delimiter(address: str, value: str) -> None:
-    if "," in value or "\n" in value or "\r" in value:
-        raise _fail(
-            address,
-            f"enum value {value!r} contains a comma and cannot be an inline Excel list",
-        )
 
 
 def _or(terms: list[str]) -> str:

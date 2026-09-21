@@ -278,7 +278,7 @@ def test_relations_become_custom_formulas(tmp_path: Path) -> None:
     rows = _validation_rows(dest)
     maturity = _covers(rows, "H2")[0]
     assert maturity["type"] == "custom"
-    assert maturity["formula1"] == "AND(H2>=0,H2<=80,H2>G2)"
+    assert maturity["formula1"] == "AND(H2>=0,H2<=80,INT(H2)=H2,H2>G2)"
     tenor = _covers(rows, "I2")[0]
     assert tenor["type"] == "custom"
     assert tenor["formula1"] == "I2<>G2"
@@ -396,10 +396,13 @@ def test_cross_sheet_relation_quotes_the_partner_sheet(tmp_path: Path) -> None:
     assert _covers(rows, "A1")[0]["formula1"] == "A1>'Other Sheet'!B1"
 
 
-def test_comma_in_enum_fails_closed(tmp_path: Path) -> None:
+def test_comma_in_enum_fails_closed_for_inline_list(tmp_path: Path) -> None:
+    """Keep refuse-closed when a pure list cannot encode the delimiter."""
     source = tmp_path / "source.xlsx"
     _write_flag_workbook(source)
     graph = _graph_from(source, "Inputs!A1")
+    # Force the list path by avoiding any relation; the writer must still
+    # refuse an inline list that Excel would split on commas.
     bindings = _bindings(
         _series(
             series_id="flag",
@@ -407,13 +410,16 @@ def test_comma_in_enum_fails_closed(tmp_path: Path) -> None:
             domain={"enum": ["North, South", "East"]},
         )
     )
-    with pytest.raises(ValueError, match="comma"):
-        write_workbook(
-            graph,
-            tmp_path / "out.xlsx",
-            series_bindings=bindings,
-            bindings_workbook=source,
-        )
+    dest = tmp_path / "out.xlsx"
+    write_workbook(
+        graph,
+        dest,
+        series_bindings=bindings,
+        bindings_workbook=source,
+    )
+    row = _covers(_validation_rows(dest), "A1")[0]
+    assert row["type"] == "custom"
+    assert "North, South" in (row["formula1"] or "")
 
 
 def test_relation_partner_missing_from_view_fails_closed(tmp_path: Path) -> None:
@@ -533,3 +539,73 @@ def test_not_equal_cell_metadata_on_env(tmp_path: Path) -> None:
     row = _covers(_validation_rows(dest), "A1")[0]
     assert row["type"] == "custom"
     assert row["formula1"] == "AND(A1>=0,A1<=1,A1<>B1)"
+
+
+def test_bindings_and_env_union_without_conflict(tmp_path: Path) -> None:
+    """Label bindings do not drop extract-time env domains on other cells."""
+    source = tmp_path / "source.xlsx"
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    assert ws is not None
+    ws.title = "Inputs"
+    ws["A1"] = "label"
+    ws["B1"] = "On"
+    ws["C1"] = 2
+    wb.save(source)
+    wb.close()
+    graph = _graph_from(source, "Inputs!B1", "Inputs!C1")
+    graph.cell_type_env = constraints_to_cell_type_env(
+        {"Inputs!C1": Annotated[int, Between(1, 5)]},
+        {},
+    )
+    bindings = _bindings(
+        _series(
+            series_id="flag",
+            data_range="Inputs!B1",
+            domain={"enum": ["On", "Off"]},
+        )
+    )
+    dest = tmp_path / "out.xlsx"
+    write_workbook(graph, dest, series_bindings=bindings, bindings_workbook=source)
+    rows = _validation_rows(dest)
+    assert _covers(rows, "B1")[0]["type"] == "list"
+    year = _covers(rows, "C1")[0]
+    assert year["type"] == "whole"
+    assert year["formula1"] == "1"
+    assert year["formula2"] == "5"
+
+
+def test_bindings_and_env_conflict_fails_closed(tmp_path: Path) -> None:
+    source = tmp_path / "source.xlsx"
+    _write_flag_workbook(source)
+    graph = _graph_from(source, "Inputs!A1")
+    graph.cell_type_env = constraints_to_cell_type_env(
+        {"Inputs!A1": Literal["On", "Maybe"]},
+        {},
+    )
+    bindings = _bindings(
+        _series(series_id="flag", data_range="Inputs!A1", domain={"enum": ["On", "Off"]})
+    )
+    with pytest.raises(ValueError, match="conflicting"):
+        write_workbook(
+            graph,
+            tmp_path / "out.xlsx",
+            series_bindings=bindings,
+            bindings_workbook=source,
+        )
+
+
+def test_comma_in_enum_uses_custom_formula_when_needed(tmp_path: Path) -> None:
+    """Commas break inline lists, but custom formulas can quote them."""
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Inputs", "A", 1, value="North, South"))
+    graph.sheet_order = ["Inputs"]
+    graph.cell_type_env = constraints_to_cell_type_env(
+        {"Inputs!A1": Literal["North, South", "East"]},
+        {},
+    )
+    dest = tmp_path / "out.xlsx"
+    write_workbook(graph, dest)
+    row = _covers(_validation_rows(dest), "A1")[0]
+    assert row["type"] == "custom"
+    assert row["formula1"] == 'OR(A1="East",A1="North, South")'

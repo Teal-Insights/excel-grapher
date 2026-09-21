@@ -87,9 +87,11 @@ def write_workbook(
     closure. The bindings workbook is opened read-only for those extra
     cells; it is never overwritten. When `include_cell_validation` is
     True (default), constrained inputs are also written as Excel data
-    validations: input-series domains and relations when
-    `series_bindings` is set, otherwise value cells in `cell_type_env`.
-    Constants, outputs, and formula cells are omitted.
+    validations. Input-series domains and relations apply when
+    `series_bindings` is set; extract-time `cell_type_env` domains still
+    apply to unbound value leaves (conflicts fail closed). Constants,
+    outputs, and formula cells are omitted. Without bindings, value cells
+    in `cell_type_env` are used alone.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -153,10 +155,14 @@ def write_workbook(
             `ProjectionResult` if you want grouping. Stale shapes,
             non-contiguous or mixed-axis leftovers, array formulas, and
             `INDIRECT` emit per-cell rather than an invalid shared formula.
-        series_bindings: Optional sidecar used to locate bound labels.
-            Requires `bindings_workbook` when `include_bound_labels` is True.
+        series_bindings: Optional sidecar used to locate bound labels and
+            input domains for cell validation. Requires
+            `bindings_workbook` when `include_bound_labels` is True, or
+            when input series declare `relations` and cell validation is
+            enabled.
         bindings_workbook: Workbook the sidecar describes. Required when
-            `series_bindings` is set and `include_bound_labels` is True.
+            bound labels are included, or when cell validation needs
+            relation partners from the sidecar.
         include_bound_labels: If True (default) and `series_bindings` is
             set, write `row_label` / `column_header` / `kind: cell` /
             attribute source cells that are missing from `graph`. Formula
@@ -166,12 +172,14 @@ def write_workbook(
             validations for constrained inputs. With `series_bindings`,
             rules come from input-series `enum`, `between`,
             `real_between`, `from_workbook`, `value_map` needles, and
-            `relations`. Constants, outputs, and internals are skipped.
-            Without bindings, value cells in `cell_type_env` (including
-            a projection's projected graph) are used. Inline lists cannot
-            contain commas. Formulas longer than 255 characters, relation
-            partners missing from the written view, and `from_workbook`
-            inputs with no cached value fail closed.
+            `relations`, unioned with `cell_type_env` domains on unbound
+            value leaves (conflicts fail closed). Constants, outputs, and
+            internals are skipped. Without bindings, value cells in
+            `cell_type_env` (including a projection's projected graph)
+            are used. Enum members that cannot form an inline list fall
+            back to a custom formula. Formulas longer than 255
+            characters, relation partners missing from the written view,
+            and `from_workbook` inputs with no cached value fail closed.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
