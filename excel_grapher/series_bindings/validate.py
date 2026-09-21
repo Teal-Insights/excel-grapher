@@ -854,6 +854,23 @@ def _validate_implementation_support(series: dict[str, Any]) -> list[ValidationI
     return issues
 
 
+def _validate_keyed_catalog_unique_key(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Refuse `require_unique_key: false` on keyed series inverted-tree will catalog."""
+    if not (series.get("key") or []):
+        return []
+    _, require_unique_key = _series_validation_flags(series)
+    if require_unique_key:
+        return []
+    return [
+        _issue(
+            "error",
+            "require_unique_key_incompatible",
+            "validation.require_unique_key: false is incompatible with a keyed catalog series",
+            series_id=str(series.get("id") or "") or None,
+        )
+    ]
+
+
 def _concept_dtype_map(bindings: WorkbookSeriesBindings) -> dict[str, str]:
     scheme = bindings.get("concept_scheme") or {}
     concepts = scheme.get("concepts") or []
@@ -1055,8 +1072,9 @@ def validate_series_bindings(
 
     Document-level checks include `duplicate_series_id`, `invalid_python_id`,
     `geometry_in_id` (A1 cell or rectangle tokens in series ids and
-    `series_context` values), and series-relation codes
-    (`unknown_relation_partner`, `incomparable_relation_dtype`,
+    `series_context` values), `require_unique_key_incompatible` (keyed series
+    may not set `validation.require_unique_key: false`), and series-relation
+    codes (`unknown_relation_partner`, `incomparable_relation_dtype`,
     `incompatible_relation_key`, `reflexive_relation`, `cyclic_relation`,
     `unresolved_relation_key`, `ambiguous_relation_partner_key`,
     `missing_relation_partner_key`).
@@ -1100,6 +1118,7 @@ def validate_series_bindings(
                 seen_ranges[series_id] = data_range_text
             issues.extend(_validate_series_structure(series))
             issues.extend(_validate_layout_intent(series))
+            issues.extend(_validate_keyed_catalog_unique_key(series))
             issues.extend(_validate_input_value_map(series))
             issues.extend(_validate_implementation_support(series))
             issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))

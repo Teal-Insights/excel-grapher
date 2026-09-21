@@ -215,6 +215,7 @@ class BoundSeries:
 
     def _build_tensor_domain(self) -> Domain:
         """Construct the authored `Domain` without reading the instance cache."""
+        _refuse_unique_key_opt_out(self.series_id, self.raw, self.key_fields)
         points = self.domain if self.authored_domain is None else self.authored_domain
         if not self.key_fields:
             cells = self.cells if self.authored_cells is None else self.authored_cells
@@ -833,6 +834,23 @@ def _key_fields_of(entry: Mapping[str, Any]) -> tuple[str, ...]:
     return tuple(str(k) for k in keys)
 
 
+def _refuse_unique_key_opt_out(
+    series_id: str,
+    entry: Mapping[str, Any],
+    key_fields: Sequence[str],
+) -> None:
+    """Fail closed when a keyed catalog series opts out of unique coordinates."""
+    if not key_fields:
+        return
+    validation = effective_validation(cast(dict[str, Any], entry))
+    if bool(validation.get("require_unique_key", True)):
+        return
+    raise InvertedTreeExportError(
+        f"series {series_id!r}: validation.require_unique_key: false is incompatible "
+        "with a keyed catalog series"
+    )
+
+
 def _collect_dimension_binds(raw: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     """Return declared dimension/attribute bind mappings keyed by field id."""
     structure = raw.get("structure") or {}
@@ -1295,7 +1313,8 @@ def build_catalog(
     Raises:
         InvertedTreeExportError: A series is missing `id`, two series share an
             id (message names both `data_range`s), two series claim the same
-            cell without an allowed bound-leaf pairing, key-domain resolution
+            cell without an allowed bound-leaf pairing, a keyed series sets
+            `validation.require_unique_key: false`, key-domain resolution
             fails, a formula series has no graph formula cells, or a retained
             graph leaf has no cached value.
     """
@@ -1353,6 +1372,7 @@ def build_catalog(
                 evaluate_addresses.update(_structure_source_addresses(entry, labeller_cells))
         for series_id, entry, cell_tuple in pending:
             key_fields = _key_fields_of(entry)
+            _refuse_unique_key_opt_out(series_id, entry, key_fields)
             components = {
                 effective_dimension_id(component): component
                 for component in entry.get("structure", {}).get("dimensions", [])
