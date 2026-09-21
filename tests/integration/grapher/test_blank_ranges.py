@@ -69,11 +69,11 @@ def test_create_dependency_graph_skips_blank_range_nodes(tmp_path: Path) -> None
 
 
 def test_from_bindings_blank_range_offset_leaf_needs_no_cell_type(tmp_path: Path) -> None:
-    """Structural pads in `blank_ranges` must not require a `CellType` (#945).
+    """Structural pads in `blank_ranges` must not require a series `CellType` (#945).
 
-    `OFFSET(A1,F10,0)` puts the blank selector in the argument subgraph. The
-    builder already drops `blank_ranges` from `missing_leaves`; expansion must
-    match that and not raise in `_enter_cell`.
+    `OFFSET(A1,F10,0)` puts the blank selector in the argument subgraph. Excel
+    treats an empty numeric OFFSET argument as 0, so expansion must type that
+    leaf without a bindings domain and still resolve to `A1`.
     """
     path = tmp_path / "blank_offset.xlsx"
     wb = fastpyxl.Workbook()

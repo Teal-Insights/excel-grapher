@@ -340,8 +340,8 @@ def _sheet_from_addr(addr: str) -> str:
     return parse_address(addr)[0]
 
 
-_BLANK_RANGE_LEAF_TYPE = CellType(kind=CellKind.ANY, enum=EnumDomain(values=frozenset({None})))
-"""Cell type for declared `blank_ranges` leaves in OFFSET/INDEX/INDIRECT analysis."""
+_BLANK_RANGE_LEAF_TYPE = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0})))
+"""Excel blank used as an OFFSET/INDEX selector: numeric `0` (empty cell coerce)."""
 
 
 def expand_leaf_env_to_argument_env(
@@ -371,8 +371,8 @@ def expand_leaf_env_to_argument_env(
     refs are empty after masking), it is assigned CellType(ANY); enumeration may then
     require a constraint for that cell.
 
-    Leaves inside `blank_rects` are treated as unconstrained (`Literal[None]`)
-    so declared structural pads do not need a `CellType` (issue #945).
+    Leaves inside `blank_rects` are typed as a numeric `0` singleton (Excel
+    blank-as-zero) so declared structural pads do not need a series `CellType`.
 
     `max_range_cells` must match the graph builder's range expansion limit so static
     ranges collected from the AST align with
