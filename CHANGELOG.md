@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.9.0 (2026-09-21)
+
+### Features
+
+- **exporter**: Add Model.from_workbook() to bind vintage xlsx inputs
+  ([#943](https://github.com/Teal-Insights/excel-grapher/pull/943),
+  [`795fd29`](https://github.com/Teal-Insights/excel-grapher/commit/795fd29fa7532eaea551a9d00ca901bdd74943b6))
+
+
 ## v21.8.0 (2026-09-21)
 
 ### Features
