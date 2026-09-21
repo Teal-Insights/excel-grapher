@@ -16,8 +16,9 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -72,7 +73,7 @@ def test_model_evaluates_lazily_and_per_instance(tmp_path: Path) -> None:
         tmp_path,
         name="model_lazy",
     )
-    assert required_param_names(pkg.compute_first) == ("values",)
+    assert input_field_names(pkg, pkg.compute_first) == ("values",)
     values = (10.0, 20.0, 30.0)
     model = pkg.model.Model(values=_source(pkg, "values", values))
     assert "step_0" not in vars(model)
@@ -82,9 +83,9 @@ def test_model_evaluates_lazily_and_per_instance(tmp_path: Path) -> None:
     assert _observations(first) == pytest.approx(tuple(v + _PREFIX_LEN + 1 for v in values))
     other = pkg.model.Model(values=_source(pkg, "values", (11.0, 20.0, 30.0)))
     assert other.first[2020] == pytest.approx(first[2020] + 1.0)
-    assert _observations(pkg.compute_first(values=_source(pkg, "values", values))) == (
-        pytest.approx(_observations(first))
-    )
+    assert _observations(
+        invoke_public_compute(pkg, pkg.compute_first, dict(values=_source(pkg, "values", values)))
+    ) == (pytest.approx(_observations(first)))
 
 
 def test_recurrence_groups_use_short_scan_names(tmp_path: Path) -> None:

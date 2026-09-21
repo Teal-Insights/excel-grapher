@@ -141,9 +141,11 @@ def test_empty_input_exports_without_setters(tmp_path: Path) -> None:
             bindings_workbook=workbook,
         )
     api = modules["api.py"]
+    model = modules["model.py"]
     assert "def set_" not in api
     assert "def compute_result(" in api
-    assert "interest_rate" in api
+    assert "interest_rate" in model
+    assert "class ResultInputs" in model
 
 
 def test_public_api_does_not_export_removed_codegen() -> None:

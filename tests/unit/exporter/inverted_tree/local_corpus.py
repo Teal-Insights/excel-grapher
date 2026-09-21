@@ -5,7 +5,6 @@ See `plans/inverted-tree-scheduling.md` §12 and `tests/fixtures/local/corpus.to
 
 from __future__ import annotations
 
-import inspect
 import tomllib
 import warnings
 from collections.abc import Mapping, Sequence
@@ -34,6 +33,7 @@ from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.paths import FIXTURES_ROOT, LOCAL_CORPUS
 from tests.unit.exporter.inverted_tree.helpers import (
+    invoke_public_compute,
     named_input_kwargs,
 )
 
@@ -212,8 +212,7 @@ def compare_package_to_evaluator(
             function = getattr(internals, series.series_id, None)
         if function is None or not callable(function):
             continue
-        accepted = set(inspect.signature(function).parameters)
-        got = function(**{key: value for key, value in kwargs.items() if key in accepted})
+        got = invoke_public_compute(pkg, function, kwargs)
         kwargs[series.series_id] = got
         if series.layout == "scalar":
             got = (got,)

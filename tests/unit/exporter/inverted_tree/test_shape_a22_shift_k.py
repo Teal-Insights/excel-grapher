@@ -22,6 +22,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -117,7 +118,7 @@ def test_stride_k_self_lag_emits_fused_scan_and_matches_evaluator(
     pkg = load_package(modules, tmp_path, name=stem)
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_path()
+    got = invoke_public_compute(pkg, pkg.compute_path, {})
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )
@@ -139,7 +140,7 @@ def test_multi_lag_t1_t2_emits_fused_scan_and_matches_evaluator(tmp_path: Path) 
     pkg = load_package(modules, tmp_path, name="a22_dual")
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_path()
+    got = invoke_public_compute(pkg, pkg.compute_path, {})
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )

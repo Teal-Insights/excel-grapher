@@ -7,6 +7,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -46,7 +47,7 @@ def test_recursive_sum_selects_available_catalog_instances(
     )
     modules = generate_inverted(workbook, bindings)
     package = load_package(modules, tmp_path, name=f"recursive_{moving}")
-    assert dict(package.compute_totals().items()) == {
+    assert dict(invoke_public_compute(package, package.compute_totals, {}).items()) == {
         (2020,): 1.0,
         (2021,): 2.0,
         (2022,): 3.0,

@@ -6,6 +6,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     series_entry,
@@ -53,5 +54,5 @@ def test_projected_mixed_region_helper_keeps_full_argument_window(tmp_path: Path
     )
     catalog, _, graph = inverted_graph_parts(workbook, document)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="partial_window")
-    result = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    result = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert dict(result.items()) == {(2023,): 36.0, (2024,): 48.0, (2025,): 60.0}

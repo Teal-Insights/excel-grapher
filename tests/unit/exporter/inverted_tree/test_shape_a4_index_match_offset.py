@@ -12,6 +12,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -194,4 +195,4 @@ def test_index_keeps_off_catalog_blanks_in_selected_column(tmp_path: Path) -> No
     )
     modules = generate_inverted(workbook, document)
     pkg = load_package(modules, tmp_path, name="a4_blank_column")
-    assert pkg.compute_out(first=10.0) == 10.0
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(first=10.0)) == 10.0

@@ -16,9 +16,10 @@ from excel_grapher.evaluator import FormulaEvaluator
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    input_field_names,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -169,19 +170,27 @@ def test_windowed_shared_prefix_evaluates_without_double_take(tmp_path: Path) ->
     values = (1.0, 2.0, 3.0, 4.0, 5.0)
     extra = (10.0, 20.0, 30.0)
     other = (0.0, 0.0, 0.0, 0.0, 0.0)
-    assert required_param_names(pkg.compute_first) == ("values",)
-    assert set(required_param_names(pkg.compute_second)) == {"values", "extra"}
-    assert set(required_param_names(pkg.compute_emp_out)) == {"values", "other"}
+    assert input_field_names(pkg, pkg.compute_first) == ("values",)
+    assert set(input_field_names(pkg, pkg.compute_second)) == {"values", "extra"}
+    assert set(input_field_names(pkg, pkg.compute_emp_out)) == {"values", "other"}
 
-    first = pkg.compute_first(values=_source(pkg, "values", values))
-    second = pkg.compute_second(
-        values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+    first = invoke_public_compute(
+        pkg, pkg.compute_first, dict(values=_source(pkg, "values", values))
     )
-    second_b = pkg.compute_second_b(
-        values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)
+    second = invoke_public_compute(
+        pkg,
+        pkg.compute_second,
+        dict(values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)),
     )
-    emp_out = pkg.compute_emp_out(
-        values=_source(pkg, "values", values), other=_source(pkg, "other", other)
+    second_b = invoke_public_compute(
+        pkg,
+        pkg.compute_second_b,
+        dict(values=_source(pkg, "values", values), extra=_source(pkg, "extra", extra)),
+    )
+    emp_out = invoke_public_compute(
+        pkg,
+        pkg.compute_emp_out,
+        dict(values=_source(pkg, "values", values), other=_source(pkg, "other", other)),
     )
     window = (2012, 2013, 2014)
     full = (2010, 2011, 2012, 2013, 2014)

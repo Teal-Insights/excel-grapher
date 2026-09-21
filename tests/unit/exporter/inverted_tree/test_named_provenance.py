@@ -12,6 +12,7 @@ from excel_grapher.exporter.export_runtime.tensor import Axis
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -93,7 +94,7 @@ def test_series_facades_declare_their_schema_once(tmp_path: Path) -> None:
     assert "def __post_init__" not in data
     assert "def __getitem__" not in data
     pkg = load_package(modules, tmp_path, name="horizon_facades")
-    tensor = pkg.compute_twice(flow=pkg.data.FLOW_DEFAULT)
+    tensor = invoke_public_compute(pkg, pkg.compute_twice, dict(flow=pkg.data.FLOW_DEFAULT))
     assert isinstance(tensor, pkg.Series)
     assert tensor[2022] == 6.0
     try:

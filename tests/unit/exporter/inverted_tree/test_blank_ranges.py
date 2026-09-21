@@ -27,6 +27,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     call_compute,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     series_entry,
@@ -241,7 +242,7 @@ def test_sum_drops_blank_interior_from_ownership_check(tmp_path: Path) -> None:
     )
     with FormulaEvaluator(graph, blank_ranges=blank) as ev:
         expected = ev.evaluate(["Outputs!Z1"])["Outputs!Z1"]
-    got = pkg.compute_out(src=pkg.data.SRC_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_out, dict(src=pkg.data.SRC_DEFAULT))
     assert _scalar(got) == pytest.approx(expected)
 
 
@@ -485,4 +486,6 @@ def test_formula_region_stops_at_structural_blank_reference(tmp_path: Path) -> N
         tmp_path,
         name="blank_boundary",
     )
-    assert package.compute_result()["b", 2027] == pytest.approx(1 / 29)
+    assert invoke_public_compute(package, package.compute_result, {})["b", 2027] == pytest.approx(
+        1 / 29
+    )

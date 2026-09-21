@@ -116,7 +116,7 @@ def test_from_workbook_reads_case_workbook_and_overrides_win(tmp_path: Path) -> 
     assert Model.from_workbook(case).result == 12.0
     assert Model.from_workbook(extra).result == 12.0
     assert Model.from_workbook(case, seed=5.0).result == 15.0
-    assert pkg.compute_result(seed=Model.from_workbook(case).seed) == 12.0
+    assert pkg.compute_result(pkg.ResultInputs(seed=Model.from_workbook(case).seed)) == 12.0
 
 
 def test_from_workbook_missing_input_sheet_raises(tmp_path: Path) -> None:

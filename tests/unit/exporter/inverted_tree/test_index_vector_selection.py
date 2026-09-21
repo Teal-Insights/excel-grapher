@@ -7,6 +7,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -46,7 +47,7 @@ def test_index_header_row_is_not_reduced_to_first_cell(tmp_path: Path, column: s
         table, series_entry("result", "M!F1", direction="output", dtype="string")
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="index_vectors")
-    assert pkg.compute_result() == "Yes"
+    assert invoke_public_compute(pkg, pkg.compute_result, {}) == "Yes"
     assert pkg.internals.result(table=pkg.data.TABLE) == "Yes"
 
 
@@ -81,7 +82,14 @@ def test_reordered_indicator_references_use_the_producer_coordinate(tmp_path: Pa
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="reordered")
     expected = {(f"result {row}",): float(value) for row, value in enumerate((10, 20, 40, 30), 1)}
-    assert dict(pkg.compute_result(source=pkg.data.SOURCE_DEFAULT).items()) == expected
+    assert (
+        dict(
+            invoke_public_compute(
+                pkg, pkg.compute_result, dict(source=pkg.data.SOURCE_DEFAULT)
+            ).items()
+        )
+        == expected
+    )
     assert dict(pkg.internals.result(source=pkg.data.SOURCE_DEFAULT).items()) == expected
 
 
@@ -96,5 +104,5 @@ def test_offset_of_scalar_reads_the_cell_value(tmp_path: Path, value) -> None:
         series_entry("result", "M!B1", direction="output", dtype=dtype),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="scalar_offset")
-    assert pkg.compute_result(source=value) == value
+    assert invoke_public_compute(pkg, pkg.compute_result, dict(source=value)) == value
     assert pkg.internals.result(source=value) == value

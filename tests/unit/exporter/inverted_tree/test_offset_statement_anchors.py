@@ -16,6 +16,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -91,9 +92,11 @@ def test_offset_anchor_inference_stays_in_statement(
         _offset_blocks_bindings(),
     )
     pkg = load_package(modules, tmp_path, name="offset_stmt")
-    assert tuple(value for _, value in pkg.compute_labels(selector=0).items()) == pytest.approx(
-        (1.0, 10.0)
-    )
-    assert tuple(value for _, value in pkg.compute_labels(selector=1).items()) == pytest.approx(
-        (2.0, 20.0)
-    )
+    assert tuple(
+        value
+        for _, value in invoke_public_compute(pkg, pkg.compute_labels, dict(selector=0)).items()
+    ) == pytest.approx((1.0, 10.0))
+    assert tuple(
+        value
+        for _, value in invoke_public_compute(pkg, pkg.compute_labels, dict(selector=1)).items()
+    ) == pytest.approx((2.0, 20.0))

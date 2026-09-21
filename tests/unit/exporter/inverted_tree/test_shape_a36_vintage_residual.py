@@ -22,6 +22,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     write_workbook,
 )
@@ -196,10 +197,10 @@ def test_vintage_residual_export_matches_evaluator(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a36_vintage")
     stock_cells = ["V!D5", "V!E5", "V!D6", "V!E6"]
     expected = _evaluator_values(workbook, [*stock_cells, "V!A10"])
-    assert dict(pkg.compute_stock().items()) == pytest.approx(
+    assert dict(invoke_public_compute(pkg, pkg.compute_stock, {}).items()) == pytest.approx(
         {coordinate: expected[cell] for coordinate, cell in pkg.data.STOCK.cells.items()}
     )
-    result = pkg.compute_result()
+    result = invoke_public_compute(pkg, pkg.compute_result, {})
     if isinstance(result, tuple):
         assert len(result) == 1
         result = result[0]

@@ -15,6 +15,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -131,7 +132,11 @@ def test_decimate_emit_uses_strided_range_and_matches_evaluator(tmp_path: Path) 
     workbook = _decimate_workbook(tmp_path)
     modules = generate_inverted(workbook, _decimate_bindings())
     pkg = load_package(modules, tmp_path, name="affine_decimate")
-    got = pkg.compute_sampled(source=pkg.data.SOURCE.with_nested((10.0, 20.0, 30.0, 40.0, 50.0)))
+    got = invoke_public_compute(
+        pkg,
+        pkg.compute_sampled,
+        dict(source=pkg.data.SOURCE.with_nested((10.0, 20.0, 30.0, 40.0, 50.0))),
+    )
     assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx((10.0, 30.0, 50.0))
     graph = create_dependency_graph(
         workbook, ["Engine!A3", "Engine!B3", "Engine!C3"], load_values=True
@@ -146,7 +151,9 @@ def test_reverse_emit_preserves_decreasing_order_and_matches_evaluator(tmp_path:
     workbook = _reverse_workbook(tmp_path)
     modules = generate_inverted(workbook, _reverse_bindings())
     pkg = load_package(modules, tmp_path, name="affine_reverse")
-    got = pkg.compute_reversed(source=pkg.data.SOURCE.with_nested((10.0, 20.0, 30.0)))
+    got = invoke_public_compute(
+        pkg, pkg.compute_reversed, dict(source=pkg.data.SOURCE.with_nested((10.0, 20.0, 30.0)))
+    )
     assert [got[year] for year in (2009, 2010, 2011)] == pytest.approx((30.0, 20.0, 10.0))
     graph = create_dependency_graph(
         workbook, ["Engine!A3", "Engine!B3", "Engine!C3"], load_values=True

@@ -2,10 +2,10 @@
 
 Every formula series becomes one inspectable named function in `internals`
 whose body is the workbook formula family expressed over semantic
-coordinates. `Model` binds inputs once and evaluates those functions on
-demand. Public `compute_*` functions construct a `Model` and read one
-attribute. Input dtype coercion, schema, domain, and value-map checks live
-in `validation` so `api` stays the functional surface.
+coordinates. `Model` and per-output `{Output}Inputs` dataclasses live in
+`model.py`. Public `compute_*` functions take one Inputs bundle and read
+one `Model` attribute. Input dtype coercion, schema, domain, and value-map
+checks live in `validation` so `api` stays the functional surface.
 Shared `_CONSTANTS_*` aliases live in `data` and are imported by `api`.
 There is no private positional calculation path.
 """
@@ -166,6 +166,11 @@ def named_codegen_fingerprint(catalog: SeriesCatalog) -> str:
 
 def _facade(series: BoundSeries) -> str:
     return "".join(part.capitalize() for part in series.series_id.split("_"))
+
+
+def _inputs_class_name(series: BoundSeries) -> str:
+    """PascalCase `{series_id}` plus `Inputs` for the per-output bundle type."""
+    return f"{_facade(series)}Inputs"
 
 
 def _value_annotation(series: BoundSeries) -> str:
@@ -1412,14 +1417,59 @@ def _input_name_set(names: Sequence[str]) -> str:
     return "{" + ", ".join(_python_literal(name) for name in names) + "}"
 
 
-def _bind_model_input(series_id: str, extra: str = "") -> list[str]:
-    quoted = _python_literal(series_id)
-    return [
-        f"        if {quoted} in inputs:",
-        f"            value = inputs[{quoted}]",
-        f"            check = validation.CHECKS.get({quoted})",
-        f"            self.{series_id} = value if check is None else check(value{extra})",
+def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
+    """Emit `_bind_inputs`, the shared CHECKS path for Model and input bundles."""
+    deferred_ids = _deferred_runtime_inputs(catalog)
+    deferred = tuple(
+        series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
+    )
+    lines = [
+        "def _bind_inputs(target: object, inputs: dict[str, Any], *, validate: bool = True) -> None:",
+        "    if not validate:",
+        "        for name, value in inputs.items():",
+        "            setattr(target, name, value)",
+        "        return",
+        "    for name, value in inputs.items():",
     ]
+    if deferred:
+        names = ", ".join(repr(name) for name in deferred)
+        lines.append(f"        if name in {{{names}}}:")
+        lines.append("            continue")
+    lines.extend(
+        [
+            "        check = validation.CHECKS.get(name)",
+            "        setattr(target, name, value if check is None else check(value))",
+        ]
+    )
+    if not deferred:
+        return lines
+    labellers = tuple(
+        series.series_id for series in _retained(catalog) if _is_runtime_labeller(series)
+    )
+    quoted = ", ".join(repr(name) for name in labellers)
+    lines.append(f"    for name in ({quoted},):")
+    lines.append("        getattr(target, name)")
+    for series_id in deferred:
+        series = catalog.get(series_id)
+        extras = []
+        for axis in series.tensor_domain.axes:
+            labeller = catalog.runtime_labeller(axis.name, axis.keys)
+            if labeller is not None and labeller.series_id != series.series_id:
+                extras.append(f"{axis.name}=target.{labeller.series_id}")
+        extra = f", {', '.join(extras)}" if extras else ""
+        lines.extend(
+            [
+                f"    if {series_id!r} in inputs:",
+                f"        value = inputs[{series_id!r}]",
+                f"        check = validation.CHECKS.get({series_id!r})",
+                "        setattr(",
+                "            target,",
+                f"            {series_id!r},",
+                f"            value if check is None else check(value{extra}),",
+                "        )",
+            ]
+        )
+    return lines
 
 
 def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
@@ -1458,55 +1508,91 @@ def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
 
 
 _BOUND_INPUTS_MIXIN = '''class _BoundInputs:
-    """Shared workbook bind for Model and per-output input bundles."""
+    """Shared workbook bind and CHECKS validation for Model and input bundles."""
 
+    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
     _INPUT_IDS: tuple[str, ...] = ()
 
     @classmethod
-    def from_workbook(cls, workbook: Path | str, **overrides: object) -> _BoundInputs:
+    def from_workbook(cls, workbook: Path | str, **overrides: object) -> Self:
         """Bind input leaves from a populated workbook of this vintage."""
-        fields = getattr(cls, "__dataclass_fields__", None)
-        names = tuple(fields) if fields else cls._INPUT_IDS
+        declared = getattr(cls, "__dataclass_fields__", None)
+        names = tuple(declared) if declared else cls._INPUT_IDS
         unknown = overrides.keys() - set(names)
         if unknown:
             raise TypeError(f"unknown inputs: {sorted(unknown)}")
         values = read_bound_inputs(Path(workbook), names, data)
         values.update(overrides)
         return cls(**values)
-'''
+
+    def __post_init__(self) -> None:
+        self._validate()
+
+    def _validate(self) -> None:
+        holder = Model.__new__(Model)
+        names = {field.name for field in fields(self)}
+        values = {name: getattr(self, name) for name in names}
+        _bind_inputs(holder, values)
+        for name in names:
+            object.__setattr__(self, name, getattr(holder, name))
+
+
+class _SnapshotInputs(_BoundInputs):
+    """Per-output bundle factory over `data.*_DEFAULT` leaves."""
+
+    @classmethod
+    def from_defaults(cls, **overrides: object) -> Self:
+        names = {field.name for field in fields(cls)}
+        unexpected = overrides.keys() - names
+        if unexpected:
+            listed = ", ".join(sorted(unexpected))
+            raise TypeError(f"{cls.__name__}.from_defaults() got unknown argument(s): {listed}")
+        values = {
+            name: (
+                overrides[name] if name in overrides else getattr(data, f"{name.upper()}_DEFAULT")
+            )
+            for name in names
+        }
+        return cls(**values)'''
 
 
 def _model_init(catalog: SeriesCatalog) -> list[str]:
-    """Bind static inputs, evaluate labellers, then check runtime-axis inputs."""
+    """Install bound leaves; skip CHECKS when the bundle is already validated."""
     input_ids = _input_series_ids(catalog)
-    deferred_ids = _deferred_runtime_inputs(catalog)
-    deferred = tuple(sid for sid in input_ids if sid in deferred_ids)
-    immediate = tuple(sid for sid in input_ids if sid not in deferred_ids)
-    lines = [
+    return [
         "",
-        "    def __init__(self, **inputs: Any) -> None:",
+        "    def __init__(self, bundle: _BoundInputs | None = None, /, **inputs: Any) -> None:",
+        "        if bundle is not None:",
+        "            if not isinstance(bundle, _BoundInputs):",
+        "                raise TypeError(",
+        '                    f"Model() bundle must be a bound inputs instance, not {type(bundle).__name__}"',
+        "                )",
+        "            if inputs:",
+        '                raise TypeError("Model() does not accept keyword inputs with a bound bundle")',
+        "            values = {field.name: getattr(bundle, field.name) for field in fields(bundle)}",
+        "            _bind_inputs(self, values, validate=False)",
+        "            return",
         f"        unknown = inputs.keys() - {_input_name_set(input_ids)}",
         "        if unknown:",
         '            raise TypeError(f"unknown inputs: {sorted(unknown)}")',
+        "        _bind_inputs(self, inputs)",
     ]
-    for series_id in immediate:
-        lines.extend(_bind_model_input(series_id))
-    if not deferred:
-        return lines
-    labellers = tuple(
-        series.series_id for series in _retained(catalog) if _is_runtime_labeller(series)
-    )
-    lines.extend(f"        _ = self.{name}" for name in labellers)
-    for series_id in deferred:
-        series = catalog.get(series_id)
-        extras = []
-        for axis in series.tensor_domain.axes:
-            labeller = catalog.runtime_labeller(axis.name, axis.keys)
-            if labeller is not None and labeller.series_id != series.series_id:
-                extras.append(f"{axis.name}=self.{labeller.series_id}")
-        extra = f", {', '.join(extras)}" if extras else ""
-        lines.extend(_bind_model_input(series_id, extra))
-    return lines
+
+
+def _input_class(output: BoundSeries, leaves: Sequence[str], catalog: SeriesCatalog) -> str:
+    """Emit the frozen dataclass that documents one output's input leaf closure."""
+    inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
+    class_name = _inputs_class_name(output)
+    compute = output.compute_name or f"compute_{output.series_id}"
+    lines = [
+        "@dataclass(frozen=True, kw_only=True)",
+        f"class {class_name}(_SnapshotInputs):",
+        f'    """Bound input leaves for `{compute}`."""',
+        "",
+    ]
+    for series in inputs:
+        lines.append(f"    {series.series_id}: {_annotation(series)}")
+    return "\n".join(lines)
 
 
 def _model_cells_method() -> list[str]:
@@ -1617,40 +1703,58 @@ def _generated_module_preamble(
     return lines
 
 
+def _wrapped_from_import(module: str, names: Sequence[str]) -> str:
+    """Write `from .{module} import ...`, wrapping at 100 columns."""
+    one_line = f"from .{module} import {', '.join(names)}"
+    if len(one_line) <= 100:
+        return one_line
+    listed = ",\n    ".join(names)
+    return f"from .{module} import (\n    {listed},\n)"
+
+
 def emit_named_model(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> str:
-    """Emit the memoized `Model` session object."""
+    """Emit `Model`, `_BoundInputs`, and per-output Inputs dataclasses."""
     class_lines = _model_class(catalog, deps, scc_map)
-    body = _BOUND_INPUTS_MIXIN.rstrip() + "\n\n\n" + "\n".join(class_lines)
-    stdlib: list[str] = []
+    input_classes: list[str] = []
+    input_names: list[str] = []
+    for output in catalog.output_series():
+        leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
+        input_classes.append(_input_class(output, leaves, catalog))
+        input_names.append(_inputs_class_name(output))
+    sections = [
+        "\n".join(_bind_inputs_source(catalog)),
+        _BOUND_INPUTS_MIXIN,
+        "\n".join(class_lines),
+        *input_classes,
+    ]
+    body = "\n\n\n".join(section for section in sections if section)
+    stdlib = ["from dataclasses import Field, dataclass, fields"]
     if "datetime" in body:
         stdlib.append("from datetime import datetime")
     if "@cached_property" in body:
         stdlib.append("from functools import cached_property")
     if "Path" in body:
         stdlib.append("from pathlib import Path")
-    if "Any" in body:
-        stdlib.append("from typing import Any")
-    imported = [
+    stdlib.append("from typing import Any, ClassVar, Self")
+    imported = ["data"]
+    imported.extend(
         name
         for name, token in (
-            ("data", "data"),
             ("internals", "internals."),
             ("validation", "validation."),
         )
-        if token in body
-    ]
-    local: list[str] = []
-    if imported:
-        local.append(f"from . import {', '.join(imported)}")
+        if token in body and name not in imported
+    )
+    local = [f"from . import {', '.join(imported)}"]
     if "read_bound_inputs" in body:
         local.append("from .workbook import read_bound_inputs")
     lines = [
         *_generated_module_preamble(
-            "Memoized evaluator for named formula series.",
+            "Memoized evaluator and per-output input bundles.",
             stdlib=stdlib,
             local=local,
         ),
@@ -1659,6 +1763,7 @@ def emit_named_model(
         "",
         "__all__ = [",
         '    "Model",',
+        *(f'    "{name}",' for name in input_names),
         "]",
         "",
     ]
@@ -1673,28 +1778,30 @@ def emit_named_api(
     """Emit the public `compute_*` functions over `Model`."""
     functions: list[str] = []
     compute_names: list[str] = []
+    input_names: list[str] = []
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
-        source, name = _public_function(output, leaves, catalog, constant_sets[constants], deps)
+        input_names.append(_inputs_class_name(output))
+        source, name = _public_function(output, catalog, constant_sets[constants], deps)
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
-    joined = "\n\n".join(functions)
+    joined = "\n\n\n".join(functions)
     stdlib: list[str] = []
     if "datetime" in joined:
         stdlib.append("from datetime import datetime")
     local: list[str] = []
-    imported: list[str] = []
     if "data." in joined:
-        imported.append("data")
-    if functions:
-        imported.append("model")
-    if imported:
-        local.append(f"from . import {', '.join(imported)}")
+        local.append("from . import data")
     if aliases:
         local.append(_constants_import(aliases))
     if functions:
+        if "from . import data" in local:
+            local[local.index("from . import data")] = "from . import data, model"
+        else:
+            local.append("from . import model")
+        local.append(_wrapped_from_import("model", input_names))
         local.append("from .runtime import publish")
     lines = [
         *_generated_module_preamble(
@@ -1704,6 +1811,7 @@ def emit_named_api(
         ),
         *([joined, "", ""] if functions else []),
         "__all__ = [",
+        *(f'    "{name}",' for name in input_names),
         *(f'    "{name}",' for name in compute_names),
         "]",
         "",
@@ -1774,22 +1882,23 @@ def _constant_set_source(constants: frozenset[str], known: Mapping[frozenset[str
 
 def _public_function(
     output: BoundSeries,
-    leaves: Sequence[str],
     catalog: SeriesCatalog,
     constants: str,
     deps: Mapping[str, SeriesDeps] | None = None,
 ) -> tuple[str, str]:
-    inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
     name = output.compute_name or f"compute_{output.series_id}"
+    class_name = _inputs_class_name(output)
     summary = f"Compute `{output.series_id}` using authored coordinate identities."
     notes = _key_note(output, catalog, deps) if deps is not None else []
     docstring = [f'    """{summary}', "", *notes, '    """'] if notes else [f'    """{summary}"""']
     source = "\n".join(
         [
             _publish_line(output, constants),
-            _signature(name, inputs, _annotation(output)),
+            f"def {name}(inputs: {class_name}) -> {_annotation(output)}:",
             *docstring,
-            f"    return model.Model(**locals()).{output.series_id}",
+            f"    if not isinstance(inputs, {class_name}):",
+            f'        raise TypeError(f"{name}() expected {class_name}, got {{type(inputs).__name__}}")',
+            f"    return model.Model(inputs).{output.series_id}",
         ]
     )
     return source, name

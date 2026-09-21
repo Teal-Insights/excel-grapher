@@ -32,6 +32,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     call_compute,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     make_catalog,
     named_input_kwargs,
@@ -265,7 +266,7 @@ def test_off_sample_lockstep_remap_still_uses_the_dict(tmp_path: Path) -> None:
     assert "ALIAS" in internals
     assert not re.search(r"if instrument ==", internals)
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "off_sample_remap")
-    got = pkg.compute_result(values=pkg.data.VALUES_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_result, dict(values=pkg.data.VALUES_DEFAULT))
     assert got["ALIAS"] == 2.0
     assert got["COM7"] == 7.0
 
@@ -385,7 +386,7 @@ def test_off_sample_2d_lockstep_remap_uses_producer_keys(tmp_path: Path) -> None
     assert "terms[instrument, 'Interest rate']" not in internals
     assert "terms['Epsilon alias'" not in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "aliased_terms")
-    got = pkg.compute_pv_interest(terms=pkg.data.TERMS_DEFAULT)
+    got = invoke_public_compute(pkg, pkg.compute_pv_interest, dict(terms=pkg.data.TERMS_DEFAULT))
     assert got["Epsilon alias"] == pytest.approx(0.06)
     assert got["Zeta"] == pytest.approx(0.07)
 

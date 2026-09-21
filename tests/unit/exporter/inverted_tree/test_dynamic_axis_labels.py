@@ -16,10 +16,11 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    input_field_names,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -264,7 +265,7 @@ def test_labeller_is_an_implicit_dependency(tmp_path: Path) -> None:
         generate_inverted(workbook, _labelled_bindings()), tmp_path, name="impl_edge"
     )
     assert "year_labels" in all_param_names(pkg.internals.path)
-    assert "first_year" in required_param_names(pkg.compute_path)
+    assert "first_year" in input_field_names(pkg, pkg.compute_path)
 
 
 def test_labeller_compiles_positionally_and_publishes_identity(tmp_path: Path) -> None:
@@ -296,14 +297,18 @@ def test_shift_oracle_moves_keys_and_preserves_positional_values(tmp_path: Path)
     pkg = load_package(generate_inverted(workbook, _labelled_bindings()), tmp_path, name="shift")
     catalog, _deps, graph = inverted_graph_parts(workbook, _labelled_bindings())
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    path_kwargs = {key: kwargs[key] for key in required_param_names(pkg.compute_path)}
-    baseline = pkg.compute_path(**path_kwargs)
+    path_kwargs = {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_path)}
+    baseline = invoke_public_compute(pkg, pkg.compute_path, path_kwargs)
     assert tuple(baseline.domain.axes[0].keys) == _YEARS
     delta = 3
     shifted_growth = _shift_tensor(kwargs["growth"], delta)
-    shifted = pkg.compute_path(
-        first_year=kwargs["first_year"] + delta,
-        growth=shifted_growth,
+    shifted = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        dict(
+            first_year=kwargs["first_year"] + delta,
+            growth=shifted_growth,
+        ),
     )
     assert tuple(shifted.domain.axes[0].keys) == tuple(year + delta for year in _YEARS)
     for year in _YEARS:
@@ -324,23 +329,33 @@ def test_compute_result_is_a_series_and_rejects_snapshot_keys(tmp_path: Path) ->
     pkg = load_package(generate_inverted(workbook, _labelled_bindings()), tmp_path, name="contract")
     catalog, _deps, graph = inverted_graph_parts(workbook, _labelled_bindings())
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_path(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_path)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_path)},
     )
     assert isinstance(result, pkg.Series)
     assert result.sel(TIME_PERIOD=2025) == pytest.approx(result[2025])
     records = pkg.as_records(pkg.compute_path, result)
     assert [row["TIME_PERIOD"] for row in records] == list(_YEARS)
-    shifted = pkg.compute_path(
-        first_year=2027,
-        growth=_shift_tensor(kwargs["growth"], 3),
+    shifted = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        dict(
+            first_year=2027,
+            growth=_shift_tensor(kwargs["growth"], 3),
+        ),
     )
     with pytest.raises(
         Exception, match="unknown labels.*2024.*accepted labels are \\(2027, 2028, 2029\\)"
     ):
-        pkg.compute_path(
-            first_year=2027,
-            growth=kwargs["growth"],
+        invoke_public_compute(
+            pkg,
+            pkg.compute_path,
+            dict(
+                first_year=2027,
+                growth=kwargs["growth"],
+            ),
         )
     assert tuple(shifted.domain.axes[0].keys) == (2027, 2028, 2029)
 
@@ -352,7 +367,7 @@ def test_duplicate_header_raises_axis_error(tmp_path: Path) -> None:
         name="dup_headers",
     )
     with pytest.raises(Exception, match="TIME_PERIOD.*duplicate label 2024"):
-        pkg.compute_path(first_year=2024, third_year=2024)
+        invoke_public_compute(pkg, pkg.compute_path, dict(first_year=2024, third_year=2024))
 
 
 def test_package_matches_evaluator_at_snapshot_and_shifted_year(tmp_path: Path) -> None:
@@ -366,9 +381,13 @@ def test_package_matches_evaluator_at_snapshot_and_shifted_year(tmp_path: Path) 
     shifted = _labelled_workbook(tmp_path, first=2024 + delta, shock_year=2025 + delta)
     shifted_catalog, _shifted_deps, shifted_graph = inverted_graph_parts(shifted, document)
     expected = FormulaEvaluator(shifted_graph).evaluate(list(shifted_catalog.get("path").cells))
-    got = pkg.compute_path(
-        first_year=kwargs["first_year"] + delta,
-        growth=_shift_tensor(kwargs["growth"], delta),
+    got = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        dict(
+            first_year=kwargs["first_year"] + delta,
+            growth=_shift_tensor(kwargs["growth"], delta),
+        ),
     )
     for (runtime_coord, value), cell in zip(
         got.items(), shifted_catalog.get("path").cells, strict=True
@@ -548,13 +567,19 @@ def test_suffix_series_family_and_lag(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="suffix_axis")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_projection(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_projection)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_projection,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_projection)},
     )
     assert tuple(result.domain.axes[0].keys) == (2026, 2027, 2028)
     assert [value for _coord, value in result.items()] == pytest.approx([3.0, 7.0, 12.0])
     shifted_growth = _shift_tensor(kwargs["growth"], 10)
-    shifted = pkg.compute_projection(first_year=kwargs["first_year"] + 10, growth=shifted_growth)
+    shifted = invoke_public_compute(
+        pkg,
+        pkg.compute_projection,
+        dict(first_year=kwargs["first_year"] + 10, growth=shifted_growth),
+    )
     assert tuple(shifted.domain.axes[0].keys) == (2036, 2037, 2038)
     assert [value for _coord, value in shifted.items()] == pytest.approx([3.0, 7.0, 12.0])
 
@@ -565,8 +590,10 @@ def test_prefix_series_family_and_lag(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="prefix_axis")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_history(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_history)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_history,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_history)},
     )
     assert tuple(result.domain.axes[0].keys) == (2024, 2025, 2026)
     assert [value for _coord, value in result.items()] == pytest.approx([1.0, 3.0, 6.0])
@@ -631,8 +658,10 @@ def test_subset_input_default_import(tmp_path: Path) -> None:
     assert tuple(pkg.data.GROWTH.domain.axes[0].keys) == (2026, 2027, 2028)
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_path(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_path)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_path)},
     )
     assert tuple(result.domain.axes[0].keys) == (2026, 2027, 2028)
     assert [value for _coord, value in result.items()] == pytest.approx([1.0, 2.0, 3.0])
@@ -678,8 +707,10 @@ def test_labelled_offset_steps_on_the_labeller_axis(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="offset_axis")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_path(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_path)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_path)},
     )
     assert tuple(result.domain.axes[0].keys) == (2024, 2025, 2026)
     assert [value for _coord, value in result.items()] == pytest.approx([1.0, 2.0, 3.0])
@@ -733,8 +764,10 @@ def test_labelled_suffix_offset_walks_onto_history(tmp_path: Path) -> None:
     catalog, deps, graph = inverted_graph_parts(workbook, document)
     assert "history" in deps["projection"].param_ids
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_projection(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_projection)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_projection,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_projection)},
     )
     assert tuple(result.domain.axes[0].keys) == (2026, 2027, 2028)
     assert [value for _coord, value in result.items()] == pytest.approx([6.0, 10.0, 15.0])
@@ -785,14 +818,14 @@ def test_labelled_tensor_constant_overrides_without_identity_bind(tmp_path: Path
     pkg = load_package(modules, tmp_path, name="const_override")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    compute_kwargs = {key: kwargs[key] for key in required_param_names(pkg.compute_total)}
-    assert pkg.compute_total(**compute_kwargs) == pytest.approx(6.0)
+    compute_kwargs = {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_total)}
+    assert invoke_public_compute(pkg, pkg.compute_total, compute_kwargs) == pytest.approx(6.0)
     original = pkg.data.RATES
     zeros = original.with_values((0.0, 0.0, 0.0))
     with pkg.data.overrides(RATES=zeros):
-        assert pkg.compute_total(**compute_kwargs) == pytest.approx(0.0)
+        assert invoke_public_compute(pkg, pkg.compute_total, compute_kwargs) == pytest.approx(0.0)
     assert pkg.data.RATES is original
-    assert pkg.compute_total(**compute_kwargs) == pytest.approx(6.0)
+    assert invoke_public_compute(pkg, pkg.compute_total, compute_kwargs) == pytest.approx(6.0)
 
 
 def test_ragged_runtime_range_does_not_invent_keys(tmp_path: Path) -> None:
@@ -847,8 +880,10 @@ def test_ragged_runtime_range_does_not_invent_keys(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="ragged_axis")
     catalog, _deps, graph = inverted_graph_parts(workbook, document, blank_ranges=["Engine!B2"])
     kwargs = named_input_kwargs(pkg, catalog, graph)
-    result = pkg.compute_total(
-        **{key: kwargs[key] for key in required_param_names(pkg.compute_total)}
+    result = invoke_public_compute(
+        pkg,
+        pkg.compute_total,
+        {key: kwargs[key] for key in input_field_names(pkg, pkg.compute_total)},
     )
     assert result == pytest.approx(4.0)
 
@@ -970,9 +1005,13 @@ def test_evaluator_override_on_same_graph_matches_shifted_package(tmp_path: Path
     delta = 5
     graph.set_node_value("Inputs!A1", kwargs["first_year"] + delta)
     expected = FormulaEvaluator(graph).evaluate(list(catalog.get("path").cells))
-    got = pkg.compute_path(
-        first_year=kwargs["first_year"] + delta,
-        growth=_shift_tensor(kwargs["growth"], delta),
+    got = invoke_public_compute(
+        pkg,
+        pkg.compute_path,
+        dict(
+            first_year=kwargs["first_year"] + delta,
+            growth=_shift_tensor(kwargs["growth"], delta),
+        ),
     )
     for (_coord, value), cell in zip(got.items(), catalog.get("path").cells, strict=True):
         assert value == pytest.approx(expected[cell])

@@ -26,6 +26,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     series_entry,
     write_workbook,
 )
@@ -126,7 +127,9 @@ def test_triangular_range_end_follows_the_host_period(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _vintage_workbook(tmp_path), _vintage_bindings(), tmp_path, "vintage_triangle"
     )
-    outstanding = pkg.compute_outstanding(vintage=pkg.data.VINTAGE_DEFAULT)
+    outstanding = invoke_public_compute(
+        pkg, pkg.compute_outstanding, dict(vintage=pkg.data.VINTAGE_DEFAULT)
+    )
     assert outstanding[2026] == 22.0 + 32.0 + 42.0
 
 
@@ -221,7 +224,9 @@ def _assert_expanding_sum_is_one_span(tmp_path: Path, *, pin_start: bool, name: 
     assert internals.count("span(") == 1
     assert "if time_period ==" not in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
-    interest = pkg.compute_interest(vintage=pkg.data.VINTAGE_DEFAULT)
+    interest = invoke_public_compute(
+        pkg, pkg.compute_interest, dict(vintage=pkg.data.VINTAGE_DEFAULT)
+    )
     # 2027 = vintages 2024..2027 in column D (col 4): rows 2-5 -> 24+34+44+54.
     assert interest[2027] == 24.0 + 34.0 + 44.0 + 54.0
 
@@ -276,7 +281,9 @@ def test_rolling_vintage_window_keeps_a_moving_origin(tmp_path: Path) -> None:
     assert "span(data.ISSUANCE_YEAR_AXIS, 2024, time_period)" not in internals
     assert "if time_period ==" not in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "rolling_vintage")
-    interest = pkg.compute_interest(vintage=pkg.data.VINTAGE_DEFAULT)
+    interest = invoke_public_compute(
+        pkg, pkg.compute_interest, dict(vintage=pkg.data.VINTAGE_DEFAULT)
+    )
     assert interest[2027] == 2.0
 
 
@@ -321,7 +328,10 @@ def test_label_keys_built_from_the_host_key_are_templates(tmp_path: Path) -> Non
     pkg = assert_package_matches_evaluator(
         _terms_workbook(tmp_path), _terms_bindings(), tmp_path, "terms_template"
     )
-    assert pkg.compute_doubled(terms=pkg.data.TERMS_DEFAULT)["Kenya"] == 6.0
+    assert (
+        invoke_public_compute(pkg, pkg.compute_doubled, dict(terms=pkg.data.TERMS_DEFAULT))["Kenya"]
+        == 6.0
+    )
 
 
 def _aged_workbook(tmp_path: Path) -> Path:
@@ -378,7 +388,7 @@ def test_branch_conditions_name_axis_relations_not_coordinate_lists(tmp_path: Pa
     pkg = assert_package_matches_evaluator(
         _aged_workbook(tmp_path), _aged_bindings(), tmp_path, "aged_conditions"
     )
-    aged = pkg.compute_aged(vintage=pkg.data.VINTAGE_DEFAULT)
+    aged = invoke_public_compute(pkg, pkg.compute_aged, dict(vintage=pkg.data.VINTAGE_DEFAULT))
     assert aged[2025, 2027] == 2 * 33.0
     assert aged[2026, 2024] == 0.0
 
@@ -461,7 +471,7 @@ def test_unions_of_axis_families_stay_conditions(tmp_path: Path) -> None:
     pkg = assert_package_matches_evaluator(
         _ledger_workbook(tmp_path), _ledger_bindings(), tmp_path, "ledger_unions"
     )
-    ledger = pkg.compute_ledger(vintage=pkg.data.VINTAGE_DEFAULT)
+    ledger = invoke_public_compute(pkg, pkg.compute_ledger, dict(vintage=pkg.data.VINTAGE_DEFAULT))
     assert ledger["Kenya", "base", 2026] == 2 * 42.0
 
 
@@ -526,7 +536,7 @@ def _assert_string_passthrough_folds(
     for label in _STRING_LABELS:
         assert f"labels[{label!r}]" not in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
-    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    years = invoke_public_compute(pkg, pkg.compute_years, dict(labels=pkg.data.LABELS_DEFAULT))
     assert years["1 Year"] == 1
     assert years["2 Year"] == 2
     assert years["10 Year"] == 1
@@ -557,7 +567,7 @@ def test_string_key_left_width_split_keeps_two_families(tmp_path: Path) -> None:
     for label in _STRING_LABELS:
         assert f"labels[{label!r}]" not in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "string_left_split")
-    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    years = invoke_public_compute(pkg, pkg.compute_years, dict(labels=pkg.data.LABELS_DEFAULT))
     assert years["1 Year"] == 1
     assert years["2 Year"] == 2
     assert years["10 Year"] == 10
@@ -581,7 +591,7 @@ def test_string_key_unequal_to_host_stays_literal(tmp_path: Path) -> None:
     assert "labels['10 Year']" in internals
     assert "labels['1 Year']" in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "string_unequal")
-    years = pkg.compute_years(labels=pkg.data.LABELS_DEFAULT)
+    years = invoke_public_compute(pkg, pkg.compute_years, dict(labels=pkg.data.LABELS_DEFAULT))
     assert years["1 Year"] == 2
     assert years["2 Year"] == 1
     assert years["10 Year"] == 1
@@ -656,7 +666,9 @@ def _assert_iso3_remap_is_one_family(
         assert repr(code) in internals
         assert repr(country) in internals
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, name)
-    result = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    result = invoke_public_compute(
+        pkg, pkg.compute_trigger_ifs, dict(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    )
     for code, value in zip(_ISO3_CODES, _IFS_VALUES, strict=True):
         assert result[code] == value
 
@@ -686,7 +698,9 @@ def test_neighbor_string_key_is_not_a_host_key_remap(tmp_path: Path) -> None:
     assert "catalog_ifs['Bangladesh']" in internals
     assert re.search(r"catalog_ifs\[\w+\[ref_area\]\]", internals) is None
     pkg = assert_package_matches_evaluator(workbook, document, tmp_path, "iso3_neighbor")
-    result = pkg.compute_trigger_ifs(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    result = invoke_public_compute(
+        pkg, pkg.compute_trigger_ifs, dict(catalog_ifs=pkg.data.CATALOG_IFS_DEFAULT)
+    )
     assert result["BGD"] == 638.0
     assert result["BEN"] == 514.0
     assert result["BTN"] == 513.0

@@ -18,6 +18,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -116,12 +117,12 @@ def test_scalar_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
 
     modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_repro_pkg")
-    assert pkg.compute_x(flag=0) == 10.0
-    assert pkg.compute_y(flag=0) == 20.0
+    assert invoke_public_compute(pkg, pkg.compute_x, dict(flag=0)) == 10.0
+    assert invoke_public_compute(pkg, pkg.compute_y, dict(flag=0)) == 20.0
 
     # When the guarded branch is actually taken, InstanceCycleError is raised at runtime
     with pytest.raises(pkg.runtime.InstanceCycleError):
-        pkg.compute_x(flag=1)
+        invoke_public_compute(pkg, pkg.compute_x, dict(flag=1))
 
 
 def test_series_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Path) -> None:
@@ -146,15 +147,15 @@ def test_series_may_cycle_demotes_to_rung3_and_evaluates_at_runtime(tmp_path: Pa
 
     modules = generate_inverted(wb, bindings)
     pkg = load_package(modules, tmp_path, name="a22_series_pkg")
-    assert [pkg.compute_x(flag=0)[year] for year in (2020, 2021, 2022)] == pytest.approx(
-        (10.0, 11.0, 12.0)
-    )
-    assert [pkg.compute_y(flag=0)[year] for year in (2020, 2021, 2022)] == pytest.approx(
-        (20.0, 22.0, 24.0)
-    )
+    assert [
+        invoke_public_compute(pkg, pkg.compute_x, dict(flag=0))[year] for year in (2020, 2021, 2022)
+    ] == pytest.approx((10.0, 11.0, 12.0))
+    assert [
+        invoke_public_compute(pkg, pkg.compute_y, dict(flag=0))[year] for year in (2020, 2021, 2022)
+    ] == pytest.approx((20.0, 22.0, 24.0))
 
     with pytest.raises(pkg.runtime.InstanceCycleError):
-        pkg.compute_x(flag=1)
+        invoke_public_compute(pkg, pkg.compute_x, dict(flag=1))
 
 
 def test_must_cycle_fails_closed_at_plan_time(tmp_path: Path) -> None:

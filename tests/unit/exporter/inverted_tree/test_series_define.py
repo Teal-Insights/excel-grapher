@@ -10,7 +10,7 @@ from fastpyxl import Workbook
 from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import validate_bindings_document
-from tests.unit.exporter.inverted_tree.helpers import load_package
+from tests.unit.exporter.inverted_tree.helpers import invoke_public_compute, load_package
 
 
 def _series(
@@ -155,7 +155,10 @@ def test_mcve_bindings_compute_and_carry_schema(tmp_path: Path) -> None:
     assert full.schema.series_id == "prices_full"
     assert full.required is full.domain
     assert dict(full.cells)[("alpha", 2025)] == "Data!C2"
-    assert pkg.compute_total(prices_full=full, prices_short=short) == 27.0
+    assert (
+        invoke_public_compute(pkg, pkg.compute_total, dict(prices_full=full, prices_short=short))
+        == 27.0
+    )
     assert isinstance(full, pkg.Series)
     full.schema.validate(full)
     short.schema.validate(short)

@@ -14,7 +14,6 @@ Excel type as well; leaf `xl_lookup_cell` restore is not enough (#916).
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import Any
 
@@ -26,6 +25,8 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -364,7 +365,7 @@ def _kwargs(pkg: Any, **overrides: object) -> dict[str, object]:
         "mkt_fin_labels": getattr(pkg.data, "MKT_FIN_LABELS", None),
     }
     values.update(overrides)
-    accepted = inspect.signature(pkg.compute_yes_no).parameters
+    accepted = input_field_names(pkg, pkg.compute_yes_no)
     return {key: value for key, value in values.items() if key in accepted}
 
 
@@ -389,9 +390,9 @@ def _ghana_market_access_results(tmp_path: Path, *, computed_flag: bool) -> None
     name = "mkt_fin_computed_flag" if computed_flag else "mkt_fin_index"
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name=name)
     kwargs = _kwargs(pkg)
-    assert pkg.compute_yes_no(**kwargs) == "Yes"
-    assert pkg.compute_chart(**kwargs) == 67.17
-    assert pkg.compute_b2(**kwargs) == 76.13
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, kwargs) == "Yes"
+    assert invoke_public_compute(pkg, pkg.compute_chart, kwargs) == 67.17
+    assert invoke_public_compute(pkg, pkg.compute_b2, kwargs) == 76.13
     assert_package_matches_evaluator(workbook, document, tmp_path, f"{name}_parity")
 
 
@@ -406,20 +407,20 @@ def test_index_computed_string_flag_equals_one(tmp_path: Path) -> None:
 
 def test_index_named_range_off_and_other_country(tmp_path: Path) -> None:
     pkg = _load(tmp_path, name="mkt_fin_off")
-    assert pkg.compute_yes_no(**_kwargs(pkg, enabled="Off")) == "No"
-    assert pkg.compute_b2(**_kwargs(pkg, enabled="Off")) == 74.12
-    assert pkg.compute_yes_no(**_kwargs(pkg, country_code=668)) == "No"
-    assert pkg.compute_b2(**_kwargs(pkg, country_code=668)) == 74.12
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg, enabled="Off")) == "No"
+    assert invoke_public_compute(pkg, pkg.compute_b2, _kwargs(pkg, enabled="Off")) == 74.12
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg, country_code=668)) == "No"
+    assert invoke_public_compute(pkg, pkg.compute_b2, _kwargs(pkg, country_code=668)) == 74.12
 
 
 def test_index_computed_string_flag_off_and_other_country(tmp_path: Path) -> None:
     workbook = _mcve_workbook(tmp_path, computed_flag=True)
     document = _computed_flag_bindings()
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="mkt_fin_flag_off")
-    assert pkg.compute_yes_no(**_kwargs(pkg, enabled="Off")) == "No"
-    assert pkg.compute_b2(**_kwargs(pkg, enabled="Off")) == 74.12
-    assert pkg.compute_yes_no(**_kwargs(pkg, country_code=668)) == "No"
-    assert pkg.compute_b2(**_kwargs(pkg, country_code=668)) == 74.12
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg, enabled="Off")) == "No"
+    assert invoke_public_compute(pkg, pkg.compute_b2, _kwargs(pkg, enabled="Off")) == 74.12
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg, country_code=668)) == "No"
+    assert invoke_public_compute(pkg, pkg.compute_b2, _kwargs(pkg, country_code=668)) == 74.12
 
 
 def test_index_computed_string_flag_follows_label_overrides(tmp_path: Path) -> None:
@@ -433,8 +434,8 @@ def test_index_computed_string_flag_follows_label_overrides(tmp_path: Path) -> N
         (coord, "No" if coord == ("Ghana", "Eurobond") else table[coord]) for coord in table.domain
     ]
     with pkg.data.overrides(MKT_FIN_LABELS=table.with_records(records)):
-        assert pkg.compute_yes_no(**_kwargs(pkg)) == "No"
-    assert pkg.compute_yes_no(**_kwargs(pkg)) == "Yes"
+        assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg)) == "No"
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg)) == "Yes"
 
 
 def test_index_named_range_reads_bound_series_overrides(tmp_path: Path) -> None:
@@ -445,8 +446,8 @@ def test_index_named_range_reads_bound_series_overrides(tmp_path: Path) -> None:
     ]
     updated = table.with_records(records)
     with pkg.data.overrides(MKT_FIN=updated):
-        assert pkg.compute_yes_no(**_kwargs(pkg)) == "No"
-    assert pkg.compute_yes_no(**_kwargs(pkg)) == "Yes"
+        assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg)) == "No"
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, _kwargs(pkg)) == "Yes"
 
 
 def test_index_named_range_includes_row_label_column(tmp_path: Path) -> None:
@@ -454,9 +455,9 @@ def test_index_named_range_includes_row_label_column(tmp_path: Path) -> None:
     document = _stripped_label_bindings()
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="mkt_fin_stripped")
     kwargs = _kwargs(pkg)
-    assert pkg.compute_yes_no(**kwargs) == "Yes"
-    assert pkg.compute_chart(**kwargs) == 67.17
-    assert pkg.compute_b2(**kwargs) == 76.13
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, kwargs) == "Yes"
+    assert invoke_public_compute(pkg, pkg.compute_chart, kwargs) == 67.17
+    assert invoke_public_compute(pkg, pkg.compute_b2, kwargs) == 76.13
     assert_package_matches_evaluator(workbook, document, tmp_path, "mkt_fin_stripped_parity")
 
 
@@ -465,10 +466,15 @@ def test_index_named_range_input_matrix_keeps_excel_types(tmp_path: Path) -> Non
     document = _mcve_bindings(mkt_fin_direction="input")
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="mkt_fin_input")
     kwargs = _kwargs(pkg)
-    assert pkg.compute_yes_no(**kwargs) == "Yes"
-    assert pkg.compute_chart(**kwargs) == 67.17
+    assert invoke_public_compute(pkg, pkg.compute_yes_no, kwargs) == "Yes"
+    assert invoke_public_compute(pkg, pkg.compute_chart, kwargs) == 67.17
     table = pkg.data.MKT_FIN_DEFAULT
     records = [
         (coord, "0" if coord == ("Ghana", _FLAG) else table[coord]) for coord in table.domain
     ]
-    assert pkg.compute_yes_no(**_kwargs(pkg, mkt_fin=table.with_records(records))) == "No"
+    assert (
+        invoke_public_compute(
+            pkg, pkg.compute_yes_no, _kwargs(pkg, mkt_fin=table.with_records(records))
+        )
+        == "No"
+    )

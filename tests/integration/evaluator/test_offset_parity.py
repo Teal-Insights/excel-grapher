@@ -23,7 +23,7 @@ from tests.integration.utils.parity_harness import (
     _write_axis_keys,
     evaluate_targets,
 )
-from tests.unit.exporter.inverted_tree.helpers import load_package
+from tests.unit.exporter.inverted_tree.helpers import invoke_public_compute, load_package
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -129,7 +129,8 @@ def test_offset_past_sheet_bound_export_raises_value(tmp_path: Path) -> None:
     outputs = [series for series in document["series"] if "output" in series]
     assert len(outputs) == 1
     # Series-member emit stores the code rather than aborting the compute.
-    assert getattr(pkg, f"compute_{outputs[0]['id']}")() == "#VALUE!"
+    compute = getattr(pkg, f"compute_{outputs[0]['id']}")
+    assert invoke_public_compute(pkg, compute, {}) == "#VALUE!"
 
 
 def test_offset_height_width_evaluate_targets_is_fail_closed() -> None:

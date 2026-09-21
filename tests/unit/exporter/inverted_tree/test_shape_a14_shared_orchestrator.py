@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
-    required_param_names,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a1_leaf_closure import (
     _a1_bindings,
@@ -37,13 +37,13 @@ def test_disjoint_closures_keep_separate_bodies(tmp_path: Path) -> None:
     pkg = load_package(
         generate_inverted(_a5_workbook(tmp_path), _a5_bindings()), tmp_path, name="a14_a5"
     )
-    assert "shock_year" not in all_param_names(pkg.compute_output_baseline)
-    assert "shock_year" in required_param_names(pkg.compute_output_shocked)
+    assert "shock_year" not in input_field_names(pkg, pkg.compute_output_baseline)
+    assert "shock_year" in input_field_names(pkg, pkg.compute_output_shocked)
     baseline_src = inspect.getsource(pkg.compute_output_baseline)
     assert "shocked_path" not in baseline_src
     assert "shock_year" not in baseline_src
-    baseline = pkg.compute_output_baseline(value=10.0)
-    shocked = pkg.compute_output_shocked(value=10.0, shock_year=1)
+    baseline = invoke_public_compute(pkg, pkg.compute_output_baseline, dict(value=10.0))
+    shocked = invoke_public_compute(pkg, pkg.compute_output_shocked, dict(value=10.0, shock_year=1))
     assert (baseline[1], baseline[2]) == pytest.approx((10.0, 10.0))
     assert (shocked[1], shocked[2]) == pytest.approx((11.0, 11.0))
 
@@ -53,9 +53,9 @@ def test_identity_flip_outputs_share_one_scan_call(tmp_path: Path) -> None:
     model = modules["model.py"]
     assert model.count("internals.scan_") == 1
     pkg = load_package(modules, tmp_path, name="a14_qc")
-    emp = pkg.compute_employment_growth()
-    prod = pkg.compute_labour_productivity_growth()
-    growth = pkg.compute_real_gdp_growth()
+    emp = invoke_public_compute(pkg, pkg.compute_employment_growth, {})
+    prod = invoke_public_compute(pkg, pkg.compute_labour_productivity_growth, {})
+    growth = invoke_public_compute(pkg, pkg.compute_real_gdp_growth, {})
     years = (2009, 2010, 2011)
     assert tuple(emp[year] for year in years)
     assert tuple(prod[year] for year in years)

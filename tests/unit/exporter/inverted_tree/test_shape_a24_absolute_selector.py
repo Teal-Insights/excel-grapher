@@ -14,6 +14,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -131,18 +132,26 @@ def test_absolute_selector_other_branch_and_fallback(tmp_path: Path) -> None:
     )
     assert tuple(
         value
-        for _, value in pkg.compute_selected(
-            mode="Other",
-            nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
-            other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
+        for _, value in invoke_public_compute(
+            pkg,
+            pkg.compute_selected,
+            dict(
+                mode="Other",
+                nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
+                other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
+            ),
         ).items()
     ) == pytest.approx((1.0, 2.0, 3.0))
     assert tuple(
         value
-        for _, value in pkg.compute_selected(
-            mode="Neither",
-            nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
-            other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
+        for _, value in invoke_public_compute(
+            pkg,
+            pkg.compute_selected,
+            dict(
+                mode="Neither",
+                nominal=pkg.data.NOMINAL.with_nested((4.0, 5.0, 6.0)),
+                other=pkg.data.OTHER.with_nested((1.0, 2.0, 3.0)),
+            ),
         ).items()
     ) == ('"', '"', '"')
 
@@ -157,6 +166,6 @@ def test_year0_seed_read_only_by_first_member_is_still_a_scan(tmp_path: Path) ->
     assert path.seed_id == "year0"
     modules = generate_inverted(_recursive_seed_workbook(tmp_path), _recursive_seed_bindings())
     pkg = load_package(modules, tmp_path, name="a24_seed")
-    assert tuple(value for _, value in pkg.compute_path(year0=10.0).items()) == pytest.approx(
-        (11.0, 12.0)
-    )
+    assert tuple(
+        value for _, value in invoke_public_compute(pkg, pkg.compute_path, dict(year0=10.0)).items()
+    ) == pytest.approx((11.0, 12.0))

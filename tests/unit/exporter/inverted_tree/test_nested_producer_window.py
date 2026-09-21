@@ -7,6 +7,7 @@ import pytest
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     write_workbook,
 )
@@ -36,7 +37,7 @@ def test_nested_stock_does_not_compact_amortization_to_consumed_years(
         _matrix_entry("stock", "M!C2:E3", header_row=1, direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="nested_window")
-    result = pkg.compute_stock()
+    result = invoke_public_compute(pkg, pkg.compute_stock, {})
     assert dict(result.items()) == {
         (area, year): 100.0 - ((year - 2020) if pinned else sum(range(2, year - 2018))) * payment
         for area, payment in (("a", 1), ("b", 2))
@@ -81,7 +82,7 @@ def test_fused_resolver_keeps_external_producer_coordinate_origin(tmp_path: Path
     )
     catalog, _, graph = inverted_graph_parts(workbook, document)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="fused_origin")
-    result = pkg.compute_a(**named_input_kwargs(pkg, catalog, graph))
+    result = invoke_public_compute(pkg, pkg.compute_a, named_input_kwargs(pkg, catalog, graph))
     assert dict(result.items()) == {(2021,): 11.0, (2022,): 42.0, (2023,): 114.0}
 
 
@@ -111,7 +112,7 @@ def test_nested_scan_reads_area_only_parameter_without_advancing_year(tmp_path: 
         _matrix_entry("stock", "M!C2:G3", header_row=1, direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="area_only")
-    assert dict(pkg.compute_stock().items()) == {
+    assert dict(invoke_public_compute(pkg, pkg.compute_stock, {}).items()) == {
         (area, year): 10.0 - (year - 2020) * payment
         for area, payment in (("a", 1), ("b", -2))
         for year in range(2021, 2026)
@@ -143,7 +144,11 @@ def test_lookup_table_demands_in_scc_producer_before_materialization(tmp_path: P
         series_entry("result", "M!A3:C3", layout="series", direction="output", header_row=1),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="lookup_scc")
-    assert dict(pkg.compute_result().items()) == {(2020,): 2.0, (2021,): 1.0, (2022,): 0.0}
+    assert dict(invoke_public_compute(pkg, pkg.compute_result, {}).items()) == {
+        (2020,): 2.0,
+        (2021,): 1.0,
+        (2022,): 0.0,
+    }
     named = pkg.internals.scan_values(years=pkg.data.YEARS)
     assert dict(named.result.items()) == {(2020,): 2.0, (2021,): 1.0, (2022,): 0.0}
 
@@ -166,7 +171,7 @@ def test_nested_keyed_reads_use_host_catalog_origin(tmp_path: Path) -> None:
         _matrix_entry("result", "M!C2:G3", header_row=1, direction="output"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="keyed_origin")
-    assert dict(pkg.compute_result().items()) == {
+    assert dict(invoke_public_compute(pkg, pkg.compute_result, {}).items()) == {
         (area, year): 10 + sum(range(3, year - 2017))
         for area in ("a", "b")
         for year in range(2021, 2026)
@@ -197,7 +202,11 @@ def test_choose_does_not_request_unselected_recurrence(tmp_path: Path) -> None:
         series_entry("result", "M!A3:C3", layout="series", direction="output", header_row=1),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="choose_lazy")
-    assert dict(pkg.compute_result().items()) == {(2020,): 2.0, (2021,): 5.0, (2022,): 9.0}
+    assert dict(invoke_public_compute(pkg, pkg.compute_result, {}).items()) == {
+        (2020,): 2.0,
+        (2021,): 5.0,
+        (2022,): 9.0,
+    }
 
 
 def test_each_partition_uses_its_own_formula_regions(tmp_path: Path) -> None:
@@ -225,7 +234,7 @@ def test_each_partition_uses_its_own_formula_regions(tmp_path: Path) -> None:
         source, _matrix_entry("result", "M!B2:E3", header_row=1, direction="output")
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="regions")
-    assert dict(pkg.compute_result().items()) == {
+    assert dict(invoke_public_compute(pkg, pkg.compute_result, {}).items()) == {
         ("a", 2020): 9.0,
         ("a", 2021): 10.0,
         ("a", 2022): 11.0,

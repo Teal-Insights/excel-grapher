@@ -17,6 +17,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -119,7 +120,7 @@ def test_terminal_backward_recursion_emits_reversed_scan_and_matches_evaluator(
     pkg = load_package(modules, tmp_path, name=pkg_name)
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_value()
+    got = invoke_public_compute(pkg, pkg.compute_value, {})
     assert [value for _, value in got.items()] == pytest.approx(tuple(expected[c] for c in cells))
     assert [value for _, value in got.items()] == pytest.approx((81.0, 90.0, 100.0))
 
@@ -238,7 +239,7 @@ def test_lookahead_zipper_emits_fused_reversed_loop_and_matches_evaluator(
     all_cells = [*value_cells, *flow_cells]
     graph_full = create_dependency_graph(workbook, all_cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(all_cells)
-    got_value = pkg.compute_value()
+    got_value = invoke_public_compute(pkg, pkg.compute_value, {})
     assert [value for _, value in got_value.items()] == pytest.approx(
         tuple(expected[c] for c in value_cells)
     )
@@ -298,7 +299,7 @@ def test_descending_year_layout_fuses_and_matches_evaluator(tmp_path: Path) -> N
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_debt()
+    got = invoke_public_compute(pkg, pkg.compute_debt, {})
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[f"Engine!{col}2"] for col in ("A", "B", "C"))
     )
@@ -335,7 +336,7 @@ def test_mixed_signs_refuses_fused_plan(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, doc), tmp_path, name="a21_mixed")
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3", "Engine!C3"]
     expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_x()
+    got = invoke_public_compute(pkg, pkg.compute_x, {})
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[f"Engine!{col}2"] for col in ("A", "B", "C"))
     )

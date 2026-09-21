@@ -17,6 +17,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -118,7 +119,9 @@ def test_forward_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     cells = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     graph = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph).evaluate(cells)
-    got = pkg.compute_debt(seed=pkg.data.SEED.with_nested((100.0,)))
+    got = invoke_public_compute(
+        pkg, pkg.compute_debt, dict(seed=pkg.data.SEED.with_nested((100.0,)))
+    )
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[:2])
     )
@@ -136,7 +139,9 @@ def test_reversed_off_union_seed_matches_evaluator(tmp_path: Path) -> None:
     cells = ["Engine!A2", "Engine!B2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_value(seed=pkg.data.SEED.with_nested((100.0,)))
+    got = invoke_public_compute(
+        pkg, pkg.compute_value, dict(seed=pkg.data.SEED.with_nested((100.0,)))
+    )
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[:2])
     )
@@ -151,7 +156,7 @@ def test_reversed_aligned_external_rate_uses_catalog_index(tmp_path: Path) -> No
     cells = ["Engine!A2", "Engine!B2", "Engine!C2", "Engine!A3", "Engine!B3"]
     graph_full = create_dependency_graph(workbook, cells, load_values=True)
     expected = FormulaEvaluator(graph_full).evaluate(cells)
-    got = pkg.compute_value(rate=rate)
+    got = invoke_public_compute(pkg, pkg.compute_value, dict(rate=rate))
     assert [value for _, value in got.items()] == pytest.approx(
         tuple(expected[cell] for cell in cells[:3])
     )

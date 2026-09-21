@@ -19,6 +19,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     series_entry,
@@ -211,7 +212,7 @@ def test_keyed_dual_read_emits_and_matches_evaluator(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert tuple(value for _, value in got.items()) == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )
@@ -237,7 +238,7 @@ def test_adjacent_scenario_pack_is_not_a_lag(tmp_path: Path) -> None:
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert tuple(value for _, value in got.items()) == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )
@@ -256,7 +257,9 @@ def test_multi_scenario_host_keyed_dual_read_matches_evaluator(tmp_path: Path) -
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, cells, load_values=True)
     ).evaluate(cells)
-    got = pkg.compute_scaled_exports(**named_input_kwargs(pkg, catalog, graph))
+    got = invoke_public_compute(
+        pkg, pkg.compute_scaled_exports, named_input_kwargs(pkg, catalog, graph)
+    )
     assert tuple(value for _, value in got.items()) == pytest.approx(
         tuple(expected[cell] for cell in cells)
     )

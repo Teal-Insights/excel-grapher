@@ -13,11 +13,11 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import resolve_series_binding, validate_bindings_document
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -139,9 +139,11 @@ def test_interleaved_matrices_emit_and_match_evaluator(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _interleaved_row_bindings())
     assert "ctx" not in modules["api.py"]
     pkg = load_package(modules, tmp_path, name="a9_rows")
-    assert required_param_names(pkg.compute_output_cell) == ("revenue_shocks",)
-    assert "expenditure_shocks" not in all_param_names(pkg.compute_output_cell)
-    got = pkg.compute_output_cell(revenue_shocks=pkg.data.REVENUE_SHOCKS_DEFAULT)
+    assert input_field_names(pkg, pkg.compute_output_cell) == ("revenue_shocks",)
+    assert "expenditure_shocks" not in input_field_names(pkg, pkg.compute_output_cell)
+    got = invoke_public_compute(
+        pkg, pkg.compute_output_cell, dict(revenue_shocks=pkg.data.REVENUE_SHOCKS_DEFAULT)
+    )
     graph = create_dependency_graph(workbook, ["Outputs!A1"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1"])
     assert got == pytest.approx(expected["Outputs!A1"])

@@ -60,23 +60,25 @@ def test_model_is_emitted_in_model_module(tmp_path: Path) -> None:
     assert "model.py" in modules
     assert "class Model" in modules["model.py"]
     assert "class Model" not in modules["api.py"]
-    assert "from .model import Model" not in modules["api.py"]
+    assert "from .model import ResultInputs" in modules["api.py"]
+    assert "class ResultInputs" in modules["model.py"]
     assert "def compute_result" in modules["api.py"]
     assert "def compute_result" not in modules["model.py"]
-    assert "model.Model(**locals())" in modules["api.py"]
+    assert "model.Model(inputs)" in modules["api.py"]
 
     pkg = load_package(modules, tmp_path, name="model_module")
-    assert pkg.compute_result(seed=2.0) == 6.0
-    assert pkg.compute_result(seed=3.0) == 9.0
-    assert pkg.model.__all__ == ["Model"]
+    assert pkg.compute_result(pkg.ResultInputs(seed=2.0)) == 6.0
+    assert pkg.compute_result(pkg.ResultInputs(seed=3.0)) == 9.0
+    assert pkg.model.__all__ == ["Model", "ResultInputs"]
     assert "Model" not in pkg.api.__all__
+    assert "ResultInputs" in pkg.api.__all__
     assert not hasattr(pkg.api, "Model")
     assert "Model" in pkg.__all__
     assert pkg.Model is pkg.model.Model
     assert pkg.Model.__module__ == "model_module.model"
     assert not hasattr(pkg.Model, "compute_result")
     source = inspect.getsource(pkg.compute_result)
-    assert "model.Model(**locals())" in source
+    assert "model.Model(inputs)" in source
     first = pkg.Model(seed=2.0)
     second = pkg.Model(seed=2.0)
     assert first is not second

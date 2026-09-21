@@ -21,6 +21,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -147,7 +148,7 @@ def test_offset_index_mcve_emits_destination_lookup(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="offset_index_mcve")
     assert "code" in all_param_names(pkg.internals.offset_index)
     assert pkg.internals.offset_index(code=111.0) == pytest.approx(111.0)
-    assert pkg.compute_result(code=111.0) == pytest.approx(111.0)
+    assert invoke_public_compute(pkg, pkg.compute_result, dict(code=111.0)) == pytest.approx(111.0)
 
 
 def test_offset_index_steps_onto_adjacent_column_series(tmp_path: Path) -> None:
@@ -163,7 +164,9 @@ def test_offset_index_steps_onto_adjacent_column_series(tmp_path: Path) -> None:
     params = all_param_names(pkg.internals.imported)
     assert "codes" in params
     assert "names" not in params
-    result = pkg.compute_result(codes=pkg.data.CODES.with_nested((111.0, 222.0)))
+    result = invoke_public_compute(
+        pkg, pkg.compute_result, dict(codes=pkg.data.CODES.with_nested((111.0, 222.0)))
+    )
     assert (result["AF"], result["BR"]) == pytest.approx((111.0, 222.0))
 
 
@@ -180,7 +183,7 @@ def test_offset_index_zero_offset_stays_on_index_column(tmp_path: Path) -> None:
     params = all_param_names(pkg.internals.imported_names)
     assert "names" in params
     assert "codes" not in params
-    result = pkg.compute_result()
+    result = invoke_public_compute(pkg, pkg.compute_result, {})
     assert (result["AF"], result["BR"]) == ("Afghanistan", "Brazil")
 
 
@@ -198,7 +201,9 @@ def test_offset_index_named_range_array(tmp_path: Path) -> None:
         tmp_path,
         name="offset_index_named",
     )
-    result = pkg.compute_result(codes=pkg.data.CODES.with_nested((111.0, 222.0)))
+    result = invoke_public_compute(
+        pkg, pkg.compute_result, dict(codes=pkg.data.CODES.with_nested((111.0, 222.0)))
+    )
     assert (result["AF"], result["BR"]) == pytest.approx((111.0, 222.0))
 
 
@@ -278,7 +283,7 @@ def test_offset_index_zero_offset_constraint_extraction_uses_row_selector(
     internals = modules["internals.py"]
     assert "INDIRECT edge sets" not in internals
     pkg = load_package(modules, tmp_path, name="offset_index_row_sel")
-    result = pkg.compute_selected()
+    result = invoke_public_compute(pkg, pkg.compute_selected, {})
     assert (result[1], result[2]) == pytest.approx((10.0, 20.0))
 
 
@@ -298,7 +303,7 @@ def test_offset_index_constraint_shift_uses_index_row_not_graph_edges(
         tmp_path,
         name="offset_index_row_shift",
     )
-    result = pkg.compute_selected()
+    result = invoke_public_compute(pkg, pkg.compute_selected, {})
     assert (result[1], result[2]) == pytest.approx((1.0, 2.0))
 
 
@@ -317,7 +322,7 @@ def test_offset_index_provably_oob_emits_ref_under_constraint_extraction(
     )
     assert "xl_raise('#REF!')" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="offset_index_oob")
-    result = pkg.compute_selected()
+    result = invoke_public_compute(pkg, pkg.compute_selected, {})
     assert (result[1], result[2]) == ("#REF!", "#REF!")
 
 

@@ -31,6 +31,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     oriented_addresses,
     oriented_document,
@@ -192,7 +193,7 @@ def test_elementwise_matrix_matches_evaluator(tmp_path: Path) -> None:
     modules = generate_inverted(workbook, _elementwise_bindings())
     pkg = load_package(modules, tmp_path, name="a20_elementwise")
     catalog, _, _ = inverted_graph_parts(workbook, _elementwise_bindings())
-    got = pkg.compute_ratio()
+    got = invoke_public_compute(pkg, pkg.compute_ratio, {})
     addresses = ["Engine!B8", "Engine!C8", "Engine!B9", "Engine!C9"]
     expected = _evaluator_values(workbook, addresses)
     assert dict(got.items()) == pytest.approx(
@@ -217,7 +218,7 @@ def test_matrix_zipper_emits_rung_2_and_matches_evaluator(tmp_path: Path, orient
     pkg = load_package(modules, tmp_path, name=f"a20_zip_{orientation[:1]}")
     addresses = list(oriented_addresses(_zipper_debt_addresses(), orientation))
     expected = _evaluator_values(workbook, addresses)
-    assert dict(pkg.compute_debt().items()) == pytest.approx(
+    assert dict(invoke_public_compute(pkg, pkg.compute_debt, {}).items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("debt").coordinate_cells.items()}
     )
 
@@ -406,7 +407,11 @@ def test_per_country_seed_fuses_without_area_if_chain(tmp_path: Path, orientatio
         oriented_addresses(_country_seed_debt_addresses(n_areas, n_years), orientation)
     )
     expected = _evaluator_values(workbook, addresses)
-    got = pkg.compute_debt(initial=pkg.data.INITIAL.with_nested(_country_seed_initial(n_areas)))
+    got = invoke_public_compute(
+        pkg,
+        pkg.compute_debt,
+        dict(initial=pkg.data.INITIAL.with_nested(_country_seed_initial(n_areas))),
+    )
     assert dict(got.items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("debt").coordinate_cells.items()}
     )
@@ -496,7 +501,7 @@ def test_aligned_matrix_producer_uses_area_stride_index(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="a20_aligned_rate")
     addresses = _country_seed_debt_addresses(n_areas, n_years)
     expected = _evaluator_values(workbook, addresses)
-    assert dict(pkg.compute_debt().items()) == pytest.approx(
+    assert dict(invoke_public_compute(pkg, pkg.compute_debt, {}).items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("debt").coordinate_cells.items()}
     )
 
@@ -537,7 +542,7 @@ def test_legal_cross_country_read_fuses(tmp_path: Path) -> None:
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a20_cross_ok")
     addresses = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     expected = _evaluator_values(workbook, addresses)
-    assert dict(pkg.compute_path().items()) == pytest.approx(
+    assert dict(invoke_public_compute(pkg, pkg.compute_path, {}).items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("path").coordinate_cells.items()}
     )
 
@@ -599,11 +604,13 @@ def test_cross_year_partition_cycle_demotes_to_rung3_and_matches_evaluator(
     assert "path['France', time_period]" in internals
     pkg = load_package(modules, tmp_path, name="a20_cross_year_chain")
     assert [
-        pkg.compute_path()[area, year] for area in ("France", "Kenya") for year in (2020, 2021)
+        invoke_public_compute(pkg, pkg.compute_path, {})[area, year]
+        for area in ("France", "Kenya")
+        for year in (2020, 2021)
     ] == pytest.approx((100.0, 101.0, 100.0, 101.0))
     addresses = ["Engine!B2", "Engine!C2", "Engine!B3", "Engine!C3"]
     expected = _evaluator_values(workbook, addresses)
-    assert dict(pkg.compute_path().items()) == pytest.approx(
+    assert dict(invoke_public_compute(pkg, pkg.compute_path, {}).items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("path").coordinate_cells.items()}
     )
 
@@ -637,7 +644,7 @@ def test_cross_year_non_affine_demand_slots_match_evaluator(tmp_path: Path) -> N
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="a20_cross_year_slots")
     assert [
-        pkg.compute_path()[area, year]
+        invoke_public_compute(pkg, pkg.compute_path, {})[area, year]
         for area in ("France", "Kenya", "Spain")
         for year in (2020, 2021)
     ] == pytest.approx((100.0, 51.0, 100.0, 51.0, 50.0, 51.0))
@@ -650,6 +657,6 @@ def test_cross_year_non_affine_demand_slots_match_evaluator(tmp_path: Path) -> N
         "Engine!C4",
     ]
     expected = _evaluator_values(workbook, addresses)
-    assert dict(pkg.compute_path().items()) == pytest.approx(
+    assert dict(invoke_public_compute(pkg, pkg.compute_path, {}).items()) == pytest.approx(
         {coord: expected[cell] for coord, cell in catalog.get("path").coordinate_cells.items()}
     )

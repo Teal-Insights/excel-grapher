@@ -11,6 +11,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -128,7 +129,7 @@ def test_mixed_member_formulas_emit_correct_values(
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
     pkg = load_package(modules, tmp_path, name=pkg_name)
-    result = pkg.compute_path()
+    result = invoke_public_compute(pkg, pkg.compute_path, {})
     assert tuple(result[year] for year in (2009, 2010, 2011)) == pytest.approx((1.0, 2.0, 102.0))
     internal = pkg.internals.path()
     assert tuple(internal.items()) == tuple(result.items())
@@ -146,5 +147,5 @@ def test_mixed_elementwise_formulas_emit_correct_values(tmp_path: Path) -> None:
         tmp_path,
         name="a12_elem",
     )
-    result = pkg.compute_path(values=pkg.data.VALUES_DEFAULT)
+    result = invoke_public_compute(pkg, pkg.compute_path, dict(values=pkg.data.VALUES_DEFAULT))
     assert (result[1], result[2], result[3]) == pytest.approx((10.0, 40.0, 130.0))

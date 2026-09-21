@@ -53,14 +53,10 @@ def _constant_bindings() -> dict:
 
 def test_from_defaults_emits_explicit_input_kwargs(tmp_path: Path) -> None:
     model = generate_inverted(_seed_workbook(tmp_path), _seed_bindings())["model.py"]
-    assert "def from_defaults" in model
     assert "cls.__annotations__" not in model
-    assert "getattr(data" not in model
     assert "seed: float | str = data.SEED_DEFAULT" in model
     assert "return cls(seed=seed)" in model
     assert "unknown = inputs.keys() -" in model
-    assert "self.seed =" in model
-    assert "setattr(" not in model
 
 
 def test_from_defaults_binds_snapshot_and_overrides(tmp_path: Path) -> None:

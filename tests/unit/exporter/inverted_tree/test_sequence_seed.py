@@ -8,6 +8,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     series_entry,
@@ -50,7 +51,7 @@ def test_sequence_seed_selects_value_not_producer(
     )
     catalog, _, graph = inverted_graph_parts(workbook, document)
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="sequence_seed")
-    result = pkg.compute_result(**named_input_kwargs(pkg, catalog, graph))
+    result = invoke_public_compute(pkg, pkg.compute_result, named_input_kwargs(pkg, catalog, graph))
     assert dict(result.items()) == {
         (2021,): "#N/A" if first == "#N/A" else 11.0,
         (2022,): ("#N/A" if first == "#N/A" else 12.0) if recurrence else 21.0,

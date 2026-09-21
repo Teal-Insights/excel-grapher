@@ -24,6 +24,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     call_compute,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     series_entry,
@@ -243,7 +244,9 @@ def test_wrapped_off_axis_member_matches_evaluator_zero(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, document, blank_ranges=blanks)
     pkg = load_package(modules, tmp_path, name="wrapped_zero")
-    got = pkg.compute_schedule(principal=pkg.data.PRINCIPAL_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_schedule, dict(principal=pkg.data.PRINCIPAL_DEFAULT)
+    )
     tail_year = _ORIGIN + n_host - 1
     tail_cell = f"Host!{_letter(n_host - 1)}2"
     want = _evaluate_cell(workbook, tail_cell, blank_ranges=blanks)

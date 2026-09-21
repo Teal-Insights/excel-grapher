@@ -85,15 +85,15 @@ def _annotation_bindings() -> dict:
 def test_emit_data_module_uses_param_inner_types(tmp_path: Path) -> None:
     modules = generate_inverted(_annotation_workbook(tmp_path), _annotation_bindings())
     data = modules["data.py"]
-    api = modules["api.py"]
+    model = modules["model.py"]
     assert "GROWTH: Series[" in data
     assert "COUNT_DEFAULT = 3" in data
     assert "LABELS: Series[" in data
     assert "class Labels" not in data
-    assert "growth: data.Growth" in api
+    assert "growth: data.Growth" in model
     assert "class Growth" not in data
     assert "Growth = Series[float | str | None]" in data
-    assert "count: int | str" in api
+    assert "count: int | str" in model
 
 
 def _cached_text_workbook(tmp_path: Path) -> Path:

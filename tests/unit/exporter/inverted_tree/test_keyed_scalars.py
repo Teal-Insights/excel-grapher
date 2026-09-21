@@ -9,6 +9,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     write_workbook,
 )
 
@@ -86,14 +87,16 @@ def _sheets_bindings() -> dict[str, Any]:
 
 def test_scalar_layout_series_keyed_by_sheet_is_a_keyed_series(tmp_path: Path) -> None:
     modules = generate_inverted(_sheets_workbook(tmp_path), _sheets_bindings())
-    data, internals, api = modules["data.py"], modules["internals.py"], modules["api.py"]
+    data, internals, model = modules["data.py"], modules["internals.py"], modules["model.py"]
     assert "class Shock" not in data
     assert "SHOCK: Series[" in data
     assert "SHOCK_DEFAULT = SHOCK" in data
     assert "xl_mul(flow[scenario, time_period], shock[scenario])" in internals
-    assert "shock: data.Shock" in api
+    assert "shock: data.Shock" in model
     pkg = assert_package_matches_evaluator(
         _sheets_workbook(tmp_path), _sheets_bindings(), tmp_path, "keyed_scalars"
     )
-    shocked = pkg.compute_shocked(flow=pkg.data.FLOW_DEFAULT, shock=pkg.data.SHOCK_DEFAULT)
+    shocked = invoke_public_compute(
+        pkg, pkg.compute_shocked, dict(flow=pkg.data.FLOW_DEFAULT, shock=pkg.data.SHOCK_DEFAULT)
+    )
     assert shocked["s2", 2026] == 3.0 * 2.5

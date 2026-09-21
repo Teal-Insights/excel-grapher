@@ -4,7 +4,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from tests.unit.exporter.inverted_tree.helpers import generate_inverted, load_package
+from tests.unit.exporter.inverted_tree.helpers import (
+    generate_inverted,
+    invoke_public_compute,
+    load_package,
+)
 from tests.unit.exporter.inverted_tree.test_named_provenance import (
     _horizon_bindings,
     _horizon_workbook,
@@ -20,7 +24,7 @@ def test_facades_are_concrete_and_collect_their_own_records(tmp_path: Path) -> N
     assert "define_series(" in data
     assert "collect(evaluate(" in internals
     pkg = load_package(modules, tmp_path, name="concrete_facades")
-    twice = pkg.compute_twice(flow=pkg.data.FLOW_DEFAULT)
+    twice = invoke_public_compute(pkg, pkg.compute_twice, dict(flow=pkg.data.FLOW_DEFAULT))
     assert isinstance(twice, pkg.Series)
     assert pkg.compute_twice.__key__ == ("TIME_PERIOD",)
     assert pkg.compute_twice.__domain__ is pkg.data.TWICE.required
@@ -51,4 +55,4 @@ def test_internals_validate_public_inputs_but_trust_series_results(tmp_path: Pat
         domain=pkg.data.VALUES.domain,
         records=zip(((2020,), (2021,), (2022,)), (1.0, 2.0, 3.0), strict=True),
     )
-    assert pkg.compute_first(values=source)[2022] == 3.0 + 7
+    assert invoke_public_compute(pkg, pkg.compute_first, dict(values=source))[2022] == 3.0 + 7

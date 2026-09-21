@@ -11,6 +11,7 @@ from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -56,17 +57,25 @@ def test_public_compute_takes_named_series(tmp_path: Path) -> None:
     workbook = _a1_workbook(tmp_path)
     modules = generate_inverted(workbook, _a1_bindings())
     pkg = load_package(modules, tmp_path, name="a3_y1")
-    value = pkg.compute_output_year1(
-        initial_debt=60.0,
-        growth=pkg.data.GROWTH_DEFAULT,
-        interest=pkg.data.INTEREST_DEFAULT,
+    value = invoke_public_compute(
+        pkg,
+        pkg.compute_output_year1,
+        dict(
+            initial_debt=60.0,
+            growth=pkg.data.GROWTH_DEFAULT,
+            interest=pkg.data.INTEREST_DEFAULT,
+        ),
     )
-    full = pkg.compute_output_path(
-        initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT
+    full = invoke_public_compute(
+        pkg,
+        pkg.compute_output_path,
+        dict(initial_debt=60.0, growth=pkg.data.GROWTH_DEFAULT, interest=pkg.data.INTEREST_DEFAULT),
     )
     assert value == pytest.approx(full[1])
     with pytest.raises(pkg.tensor.SchemaError, match="expected Tensor"):
-        pkg.compute_output_year1(initial_debt=60.0, growth=(3.5,), interest=(4.0,))
+        invoke_public_compute(
+            pkg, pkg.compute_output_year1, dict(initial_debt=60.0, growth=(3.5,), interest=(4.0,))
+        )
 
 
 def _middle_workbook(tmp_path: Path) -> Path:
@@ -151,7 +160,9 @@ def test_middle_slice_scan_uses_predecessor_closure(tmp_path: Path) -> None:
     interest = pkg.data.INTEREST_DEFAULT
     year0 = pkg.internals.engine_year0(initial_debt=60.0)
     full = pkg.internals.engine_path(engine_year0=year0, growth=growth, interest=interest)
-    got = pkg.compute_output_mid(initial_debt=60.0, growth=growth, interest=interest)
+    got = invoke_public_compute(
+        pkg, pkg.compute_output_mid, dict(initial_debt=60.0, growth=growth, interest=interest)
+    )
     assert (got[2], got[3]) == pytest.approx((full[2], full[3]))
     graph = create_dependency_graph(workbook, ["Outputs!A1", "Outputs!B1"], load_values=True)
     expected = FormulaEvaluator(graph).evaluate(["Outputs!A1", "Outputs!B1"])
@@ -217,8 +228,10 @@ def _punched_bindings() -> dict:
 def test_punched_elementwise_gathers_holes(tmp_path: Path) -> None:
     workbook = _punched_workbook(tmp_path)
     pkg = load_package(generate_inverted(workbook, _punched_bindings()), tmp_path, name="a3_punch")
-    got = pkg.compute_output_punched(values=pkg.data.VALUES_DEFAULT)
+    got = invoke_public_compute(
+        pkg, pkg.compute_output_punched, dict(values=pkg.data.VALUES_DEFAULT)
+    )
     assert tuple(got.domain) == ((1,), (3,))
     assert (got[1], got[3]) == pytest.approx((11.0, 31.0))
     with pytest.raises(pkg.tensor.SchemaError, match="expected Tensor"):
-        pkg.compute_output_punched(values=(10.0, 30.0))
+        invoke_public_compute(pkg, pkg.compute_output_punched, dict(values=(10.0, 30.0)))

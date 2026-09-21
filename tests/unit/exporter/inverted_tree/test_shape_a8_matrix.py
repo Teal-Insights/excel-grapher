@@ -13,11 +13,11 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.series_bindings import validate_bindings_document
 from tests.unit.exporter.inverted_tree.helpers import (
-    all_param_names,
     bindings_document,
     generate_inverted,
+    input_field_names,
+    invoke_public_compute,
     load_package,
-    required_param_names,
     series_entry,
     write_workbook,
 )
@@ -143,20 +143,24 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     assert "PROFILE_TABLE" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a8_kw")
     params = inspect.signature(pkg.compute_output_cell).parameters
-    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
-    assert required_param_names(pkg.compute_output_cell) == ()
-    assert "profile_table" not in all_param_names(pkg.compute_output_cell)
+    assert list(params) == ["inputs"]
+    assert input_field_names(pkg, pkg.compute_output_cell) == ()
+    assert "profile_table" not in input_field_names(pkg, pkg.compute_output_cell)
     assert pkg.compute_output_cell.__constants__ == ("profile_table",)
-    assert "ctx" not in all_param_names(pkg.compute_output_cell)
-    assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
+    assert "ctx" not in input_field_names(pkg, pkg.compute_output_cell)
+    assert _measure(invoke_public_compute(pkg, pkg.compute_output_cell, {})) == pytest.approx(10.0)
     replacement = pkg.data.PROFILE_TABLE.with_nested(((99.0, 11.0), (20.0, 21.0)))
     with pkg.data.overrides(PROFILE_TABLE=replacement):
-        assert _measure(pkg.compute_output_cell()) == pytest.approx(99.0)
-    assert _measure(pkg.compute_output_cell()) == pytest.approx(10.0)
+        assert _measure(invoke_public_compute(pkg, pkg.compute_output_cell, {})) == pytest.approx(
+            99.0
+        )
+    assert _measure(invoke_public_compute(pkg, pkg.compute_output_cell, {})) == pytest.approx(10.0)
     expected = FormulaEvaluator(
         create_dependency_graph(workbook, ["Outputs!A1"], load_values=True)
     ).evaluate(["Outputs!A1"])
-    assert _measure(pkg.compute_output_cell()) == pytest.approx(expected["Outputs!A1"])
+    assert _measure(invoke_public_compute(pkg, pkg.compute_output_cell, {})) == pytest.approx(
+        expected["Outputs!A1"]
+    )
 
 
 def test_unknown_layout_still_fail_closed() -> None:

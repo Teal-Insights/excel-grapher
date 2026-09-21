@@ -13,6 +13,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     call_compute,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -61,7 +62,7 @@ def test_if_and_true_false_matches_mcve(tmp_path: Path) -> None:
     assert "xl_and(" in modules["internals.py"]
     assert "def xl_and" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="and_mcve")
-    assert pkg.compute_out() == pytest.approx(20.0)
+    assert invoke_public_compute(pkg, pkg.compute_out, {}) == pytest.approx(20.0)
     _package_matches_output(tmp_path, workbook, _scalar_bindings(), "and_mcve_eval", "Engine!A1")
 
 
@@ -87,9 +88,9 @@ def test_if_or_and_not_scalars_match_evaluator(tmp_path: Path) -> None:
     assert "def xl_or" in modules["excel.py"]
     assert "def xl_not" in modules["excel.py"]
     pkg = load_package(modules, tmp_path, name="or_not")
-    assert pkg.compute_or_out() == pytest.approx(10.0)
-    assert pkg.compute_not_true() == pytest.approx(20.0)
-    assert pkg.compute_not_false() == pytest.approx(10.0)
+    assert invoke_public_compute(pkg, pkg.compute_or_out, {}) == pytest.approx(10.0)
+    assert invoke_public_compute(pkg, pkg.compute_not_true, {}) == pytest.approx(20.0)
+    assert invoke_public_compute(pkg, pkg.compute_not_false, {}) == pytest.approx(10.0)
     for cell in ("Engine!A1", "Engine!A2", "Engine!A3"):
         _package_matches_output(tmp_path, workbook, document, f"or_not_{cell[-2:]}", cell)
 
@@ -121,8 +122,12 @@ def test_and_or_over_bound_series_match_evaluator(tmp_path: Path) -> None:
     assert "xl_and(" in modules["internals.py"]
     assert "xl_or(" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="and_or_range")
-    assert pkg.compute_and_out(flags=pkg.data.FLAGS_DEFAULT) is False
-    assert pkg.compute_or_out(flags=pkg.data.FLAGS_DEFAULT) is True
+    assert (
+        invoke_public_compute(pkg, pkg.compute_and_out, dict(flags=pkg.data.FLAGS_DEFAULT)) is False
+    )
+    assert (
+        invoke_public_compute(pkg, pkg.compute_or_out, dict(flags=pkg.data.FLAGS_DEFAULT)) is True
+    )
     _package_matches_output(tmp_path, workbook, document, "and_range_eval", "Outputs!Z1")
     _package_matches_output(tmp_path, workbook, document, "or_range_eval", "Outputs!Z2")
 
@@ -157,7 +162,7 @@ def test_and_range_window_takes_only_the_range(tmp_path: Path) -> None:
     assert "view(flags, cols=span(data.TIME_PERIOD_AXIS, 2024, 2025))" in modules["internals.py"]
     assert "2026" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="and_window")
-    assert pkg.compute_out(flags=pkg.data.FLAGS_DEFAULT) is True
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(flags=pkg.data.FLAGS_DEFAULT)) is True
     _package_matches_output(tmp_path, workbook, document, "and_window_eval", "Outputs!Z1")
 
 
@@ -181,5 +186,5 @@ def test_and_mixed_range_and_scalar_matches_evaluator(tmp_path: Path) -> None:
         series_entry("out", "Outputs!Z1", layout="scalar", direction="output", dtype="bool"),
     )
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="and_mixed")
-    assert pkg.compute_out(flags=pkg.data.FLAGS_DEFAULT) is True
+    assert invoke_public_compute(pkg, pkg.compute_out, dict(flags=pkg.data.FLAGS_DEFAULT)) is True
     _package_matches_output(tmp_path, workbook, document, "and_mixed_eval", "Outputs!Z1")

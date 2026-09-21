@@ -117,10 +117,10 @@ def test_scalar_enum_domain_accepts_and_rejects(tmp_path: Path) -> None:
         tmp_path,
         name="domain_enum",
     )
-    assert pkg.compute_out(flag=0) == 0
-    assert pkg.compute_out(flag=1) == 1
+    assert pkg.compute_out(pkg.OutInputs(flag=0)) == 0
+    assert pkg.compute_out(pkg.OutInputs(flag=1)) == 1
     with pytest.raises(ValueError, match=r"flag out of domain"):
-        pkg.compute_out(flag=2)
+        pkg.OutInputs(flag=2)
 
 
 def test_series_real_between_names_series_on_out_of_range_member(tmp_path: Path) -> None:
@@ -130,10 +130,10 @@ def test_series_real_between_names_series_on_out_of_range_member(tmp_path: Path)
         name="domain_rate",
     )
     rate = pkg.data.RATE.with_nested((0.0, 1.0))
-    result = pkg.compute_out(rate=rate)
+    result = pkg.compute_out(pkg.OutInputs(rate=rate))
     assert (result[1], result[2]) == pytest.approx((0.0, 1.0))
     with pytest.raises(ValueError, match=r"rate\(2,\) out of domain"):
-        pkg.compute_out(rate=pkg.data.RATE.with_nested((0.0, 1.1)))
+        pkg.OutInputs(rate=pkg.data.RATE.with_nested((0.0, 1.1)))
 
 
 def test_no_input_domain_does_not_emit_domain_guard(tmp_path: Path) -> None:
@@ -172,9 +172,9 @@ def test_shared_runner_checks_domain_before_evaluation(tmp_path: Path) -> None:
     assert "require_input_domain" not in modules["api.py"]
     assert "require_input_domain" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="domain_shared")
-    assert pkg.compute_out_a(flag=0) == 0
+    assert pkg.compute_out_a(pkg.OutAInputs(flag=0)) == 0
     with pytest.raises(ValueError, match=r"flag out of domain"):
-        pkg.compute_out_b(flag=2)
+        pkg.OutBInputs(flag=2)
 
 
 def test_compute_float_real_between_coerces_int_like_setters(tmp_path: Path) -> None:
@@ -204,13 +204,13 @@ def test_compute_float_real_between_coerces_int_like_setters(tmp_path: Path) -> 
     assert "coerce_input_measure" not in modules["api.py"]
     assert "coerce_input_measure" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="share_coerce")
-    zero = pkg.compute_result(share=0)
+    zero = pkg.compute_result(pkg.ResultInputs(share=0))
     assert zero == 0.0
     assert type(zero) is float
-    assert pkg.compute_result(share=0.0) == 0.0
-    assert pkg.compute_result(share=pkg.data.SHARE_DEFAULT) == 0.0
+    assert pkg.compute_result(pkg.ResultInputs(share=0.0)) == 0.0
+    assert pkg.compute_result(pkg.ResultInputs(share=pkg.data.SHARE_DEFAULT)) == 0.0
     with pytest.raises(ValueError, match=r"share out of domain"):
-        pkg.compute_result(share=1.1)
+        pkg.ResultInputs(share=1.1)
 
 
 def test_compute_series_float_coerces_int_members(tmp_path: Path) -> None:
@@ -223,5 +223,5 @@ def test_compute_series_float_coerces_int_members(tmp_path: Path) -> None:
     checked = import_module(f"{pkg.__name__}.validation").CHECKS["rate"](rate)
     assert type(checked[1]) is float
     assert type(checked[2]) is float
-    result = pkg.compute_out(rate=rate)
+    result = pkg.compute_out(pkg.OutInputs(rate=rate))
     assert (result[1], result[2]) == pytest.approx((0.0, 1.0))

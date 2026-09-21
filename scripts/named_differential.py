@@ -14,7 +14,9 @@ matched error counts as expected only inside the chart error contract.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import importlib
+import inspect
 import json
 import math
 import sys
@@ -68,6 +70,21 @@ def _published_cells(function: Any, value: Any) -> dict[tuple[object, ...], obje
     return {coord: value[coord] for coord in function.__domain__ if coord in function.__cells__}
 
 
+def _call_compute(package: Any, function: Any, data: Any) -> Any:
+    """Call a public `compute_*` on workbook defaults."""
+    annotation = function.__annotations__.get("inputs")
+    if isinstance(annotation, str):
+        annotation = getattr(package, annotation, None)
+    if annotation is not None and dataclasses.is_dataclass(annotation):
+        return function(annotation.from_defaults())
+    kwargs = {
+        parameter: getattr(data, parameter.upper() + "_DEFAULT")
+        for parameter in inspect.signature(function).parameters
+        if hasattr(data, parameter.upper() + "_DEFAULT")
+    }
+    return function(**kwargs)
+
+
 def run(
     package_dir: Path,
     graph_path: Path,
@@ -91,12 +108,8 @@ def run(
     failures: dict[str, str] = {}
     for name in sorted(n for n in dir(package) if n.startswith("compute_")):
         function = getattr(package, name)
-        kwargs = {
-            parameter: getattr(data, parameter.upper() + "_DEFAULT")
-            for parameter in function.__code__.co_varnames[: function.__code__.co_kwonlyargcount]
-        }
         try:
-            value = function(**kwargs)
+            value = _call_compute(package, function, data)
         except Exception as exc:  # noqa: BLE001 - reported, not raised
             failures[name] = f"{type(exc).__name__}: {exc}"[:300]
             continue

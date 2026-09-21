@@ -16,6 +16,8 @@ from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.paths import INVERTED_TREE_TINY_DSA
 from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
+    input_field_names,
+    invoke_public_compute,
     load_package,
     required_param_names,
 )
@@ -96,9 +98,9 @@ def test_helper_inventory_matches_bound_formula_series(tiny_dsa_pkg) -> None:
 
 
 def test_baseline_leaf_closure_excludes_shock_args(tiny_dsa_pkg) -> None:
-    required = _required(tiny_dsa_pkg.compute_output_baseline)
-    names = all_param_names(tiny_dsa_pkg.compute_output_baseline)
-    assert required == (
+    assert list(inspect.signature(tiny_dsa_pkg.compute_output_baseline).parameters) == ["inputs"]
+    names = input_field_names(tiny_dsa_pkg, tiny_dsa_pkg.compute_output_baseline)
+    assert names == (
         "country_name",
         "country_initial_debt",
         "growth_baseline",
@@ -115,9 +117,8 @@ def test_baseline_leaf_closure_excludes_shock_args(tiny_dsa_pkg) -> None:
 
 
 def test_shocked_leaf_closure_includes_shock_args(tiny_dsa_pkg) -> None:
-    required = _required(tiny_dsa_pkg.compute_output_shocked)
-    names = all_param_names(tiny_dsa_pkg.compute_output_shocked)
-    assert required == (
+    names = input_field_names(tiny_dsa_pkg, tiny_dsa_pkg.compute_output_shocked)
+    assert names == (
         "country_name",
         "country_initial_debt",
         "growth_baseline",
@@ -130,7 +131,7 @@ def test_shocked_leaf_closure_includes_shock_args(tiny_dsa_pkg) -> None:
     assert "engine_year_labels" not in names
     assert "country_profile_names" not in names
     assert "ctx" not in names
-    assert _required(tiny_dsa_pkg.compute_output_delta) == required
+    assert input_field_names(tiny_dsa_pkg, tiny_dsa_pkg.compute_output_delta) == names
     assert tiny_dsa_pkg.compute_output_shocked.__constants__ == (
         "country_profile_names",
         "engine_year_labels",
@@ -161,22 +162,30 @@ def test_shock_active_params(tiny_dsa_pkg) -> None:
 
 def test_default_borvelia_numeric_parity(tiny_dsa_pkg) -> None:
     data = tiny_dsa_pkg.data
-    baseline = tiny_dsa_pkg.compute_output_baseline(
-        country_name=data.COUNTRY_NAME_DEFAULT,
-        country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-        growth_baseline=data.GROWTH_BASELINE_DEFAULT,
-        interest_baseline=data.INTEREST_BASELINE_DEFAULT,
-        primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
+    baseline = invoke_public_compute(
+        tiny_dsa_pkg,
+        tiny_dsa_pkg.compute_output_baseline,
+        dict(
+            country_name=data.COUNTRY_NAME_DEFAULT,
+            country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
+            growth_baseline=data.GROWTH_BASELINE_DEFAULT,
+            interest_baseline=data.INTEREST_BASELINE_DEFAULT,
+            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
+        ),
     )
-    shocked = tiny_dsa_pkg.compute_output_shocked(
-        country_name=data.COUNTRY_NAME_DEFAULT,
-        country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-        growth_baseline=data.GROWTH_BASELINE_DEFAULT,
-        interest_baseline=data.INTEREST_BASELINE_DEFAULT,
-        primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
-        shock_year=data.SHOCK_YEAR_DEFAULT,
-        shock_type=data.SHOCK_TYPE_DEFAULT,
-        shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
+    shocked = invoke_public_compute(
+        tiny_dsa_pkg,
+        tiny_dsa_pkg.compute_output_shocked,
+        dict(
+            country_name=data.COUNTRY_NAME_DEFAULT,
+            country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
+            growth_baseline=data.GROWTH_BASELINE_DEFAULT,
+            interest_baseline=data.INTEREST_BASELINE_DEFAULT,
+            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
+            shock_year=data.SHOCK_YEAR_DEFAULT,
+            shock_type=data.SHOCK_TYPE_DEFAULT,
+            shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
+        ),
     )
     assert tuple(baseline[year] for year in range(1, 6)) == pytest.approx(
         _DEFAULT_BASELINE, abs=1e-9
@@ -224,7 +233,7 @@ def test_time_period_domain_matches_output_header(tiny_dsa_pkg) -> None:
         assert compute.__key__ == ("TIME_PERIOD",)
         assert compute.__domain__.axes[0].keys == header
         args = kwargs if compute is tiny_dsa_pkg.compute_output_baseline else {**kwargs, **shock}
-        result = compute(**args)
+        result = invoke_public_compute(tiny_dsa_pkg, compute, args)
         assert compute.__domain__ == result.domain
         last_year = header[-1]
         assert result[last_year] == result.isel(TIME_PERIOD=len(header) - 1)
@@ -254,15 +263,19 @@ def test_public_computes_require_semantic_coordinate_coverage(tiny_dsa_pkg) -> N
         values=(0.03,),
     )
     with pytest.raises(ValueError, match="growth_baseline.*required coordinate"):
-        tiny_dsa_pkg.compute_output_shocked(
-            country_name=data.COUNTRY_NAME_DEFAULT,
-            country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-            growth_baseline=short,
-            interest_baseline=data.INTEREST_BASELINE_DEFAULT,
-            primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
-            shock_year=data.SHOCK_YEAR_DEFAULT,
-            shock_type=data.SHOCK_TYPE_DEFAULT,
-            shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
+        invoke_public_compute(
+            tiny_dsa_pkg,
+            tiny_dsa_pkg.compute_output_shocked,
+            dict(
+                country_name=data.COUNTRY_NAME_DEFAULT,
+                country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
+                growth_baseline=short,
+                interest_baseline=data.INTEREST_BASELINE_DEFAULT,
+                primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
+                shock_year=data.SHOCK_YEAR_DEFAULT,
+                shock_type=data.SHOCK_TYPE_DEFAULT,
+                shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
+            ),
         )
 
 

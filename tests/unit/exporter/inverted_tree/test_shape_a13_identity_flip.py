@@ -16,6 +16,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     series_entry,
     write_workbook,
@@ -177,7 +178,10 @@ def test_identity_flip_emits_region_local_fused_scan(
     workbook = workbook_fn(tmp_path)
     modules = generate_inverted(workbook, bindings_fn())
     pkg = load_package(modules, tmp_path, name=pkg_name)
-    x, y = pkg.compute_x(), pkg.compute_y()
+    x, y = (
+        invoke_public_compute(pkg, pkg.compute_x, {}),
+        invoke_public_compute(pkg, pkg.compute_y, {}),
+    )
     assert (x[2009], x[2010]) == pytest.approx((2.0, 10.0))
     assert (y[2009], y[2010]) == pytest.approx((2.0, 10.0))
     targets = [*x_cells, *y_cells]
@@ -209,9 +213,9 @@ def test_qcraft_identity_flip_emits_and_matches_evaluator(tmp_path: Path) -> Non
     modules = generate_inverted(workbook, _qcraft_bindings())
     pkg = load_package(modules, tmp_path, name="a13_qc")
     expected = FormulaEvaluator(graph).evaluate(targets)
-    employment = pkg.compute_employment_growth()
-    productivity = pkg.compute_labour_productivity_growth()
-    growth = pkg.compute_real_gdp_growth()
+    employment = invoke_public_compute(pkg, pkg.compute_employment_growth, {})
+    productivity = invoke_public_compute(pkg, pkg.compute_labour_productivity_growth, {})
+    growth = invoke_public_compute(pkg, pkg.compute_real_gdp_growth, {})
     assert tuple(employment[year] for year in (2009, 2010, 2011)) == pytest.approx(
         (expected["Engine!A3"], expected["Engine!B3"], expected["Engine!C3"])
     )
@@ -243,7 +247,10 @@ def test_look_ahead_fuses_with_reversed_loop(tmp_path: Path) -> None:
     )
     modules = generate_inverted(workbook, _two_series_bindings())
     pkg = load_package(modules, tmp_path, name="a13_lookahead")
-    x, y = pkg.compute_x(), pkg.compute_y()
+    x, y = (
+        invoke_public_compute(pkg, pkg.compute_x, {}),
+        invoke_public_compute(pkg, pkg.compute_y, {}),
+    )
     assert (x[2009], x[2010]) == (10.0, 10.0)
     assert (y[2009], y[2010]) == (1.0, 10.0)
 

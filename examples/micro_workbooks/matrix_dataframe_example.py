@@ -133,7 +133,7 @@ def main() -> None:
         print()
 
         overlay = apply_tidy_updates(default, updates)
-        result = pkg.compute_macro_result(macro_matrix=overlay)
+        result = pkg.compute_macro_result(pkg.MacroResultInputs.from_defaults(macro_matrix=overlay))
         records = pkg.as_records(pkg.compute_macro_result, result)
         by_key = {(row["INDICATOR"], row["TIME_PERIOD"]): row["OBS_VALUE"] for row in records}
         print("After partial DataFrame overlay:")
@@ -161,7 +161,7 @@ def main() -> None:
         print(tidy_row.to_string(index=False))
         print()
         overlay = apply_tidy_updates(default, tidy_row)
-        result = pkg.compute_macro_result(macro_matrix=overlay)
+        result = pkg.compute_macro_result(pkg.MacroResultInputs.from_defaults(macro_matrix=overlay))
         records = pkg.as_records(pkg.compute_macro_result, result)
         by_key = {(row["INDICATOR"], row["TIME_PERIOD"]): row["OBS_VALUE"] for row in records}
         print("After row overlay for 'GDP growth':")

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import contextlib
 import copy
+import dataclasses
 import importlib
 import inspect
 import re
@@ -267,7 +268,7 @@ def load_package(
             if key == name or key.startswith(name + "."):
                 del sys.modules[key]
         imported = importlib.import_module(name)
-        for sub in ("api", "internals", "runtime", "data", "validation", "model"):
+        for sub in ("api", "model", "internals", "runtime", "data", "validation"):
             importlib.import_module(f"{name}.{sub}")
         return imported
     finally:
@@ -276,7 +277,29 @@ def load_package(
                 sys.path.remove(path_str)
 
 
+def inputs_class_for(pkg: Any, function: Callable[..., object]) -> type:
+    """Return the generated Inputs dataclass annotated on `function`."""
+    original = getattr(function, "__wrapped__", function)
+    annotation = original.__annotations__["inputs"]
+    if isinstance(annotation, str):
+        return getattr(pkg, annotation)
+    return annotation
+
+
+def bound_inputs(pkg: Any, function: Callable[..., object], **kwargs: object) -> Any:
+    """Build the Inputs bundle for `function` from leaf keyword arguments."""
+    cls = inputs_class_for(pkg, function)
+    accepted = {field.name for field in dataclasses.fields(cls)}
+    return cls(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
+def input_field_names(pkg: Any, function: Callable[..., object]) -> tuple[str, ...]:
+    """Leaf names declared on the generated Inputs class for `function`."""
+    return tuple(field.name for field in dataclasses.fields(inputs_class_for(pkg, function)))
+
+
 def required_param_names(function: Callable[..., object]) -> tuple[str, ...]:
+    """Required parameter names on `function`'s real signature."""
     names: list[str] = []
     for name, parameter in inspect.signature(function).parameters.items():
         if parameter.default is inspect.Parameter.empty:
@@ -285,6 +308,7 @@ def required_param_names(function: Callable[..., object]) -> tuple[str, ...]:
 
 
 def all_param_names(function: Callable[..., object]) -> tuple[str, ...]:
+    """All parameter names on `function`'s real signature."""
     return tuple(inspect.signature(function).parameters)
 
 
@@ -532,12 +556,21 @@ def _evaluator_pairs(series: BoundSeries, got: Any) -> list[tuple[str, Any]]:
     ]
 
 
+def invoke_public_compute(
+    pkg: types.ModuleType, function: Callable[..., object], kwargs: Mapping[str, object]
+) -> Any:
+    """Call a public `compute_*` or an internals helper with the accepted kwargs."""
+    original = getattr(function, "__wrapped__", function)
+    parameters = list(inspect.signature(original).parameters)
+    if parameters == ["inputs"]:
+        return function(bound_inputs(pkg, function, **dict(kwargs)))
+    accepted = set(parameters)
+    return function(**{key: value for key, value in kwargs.items() if key in accepted})
+
+
 def call_compute(pkg: types.ModuleType, series_id: str, kwargs: Mapping[str, object]) -> Any:
     """Call `pkg.compute_<series_id>` with the intersection of `kwargs`."""
-    name = f"compute_{series_id}"
-    function = getattr(pkg, name)
-    accepted = set(inspect.signature(function).parameters)
-    return function(**{key: value for key, value in kwargs.items() if key in accepted})
+    return invoke_public_compute(pkg, getattr(pkg, f"compute_{series_id}"), kwargs)
 
 
 def assert_package_matches_evaluator(
@@ -590,8 +623,7 @@ def assert_package_matches_evaluator(
             function = getattr(pkg.internals, series.series_id, None)
         if function is None:
             continue
-        accepted = set(inspect.signature(function).parameters)
-        got = function(**{key: value for key, value in kwargs.items() if key in accepted})
+        got = invoke_public_compute(pkg, function, kwargs)
         kwargs[series.series_id] = got
         pairs = [(series.cells[0], got)] if series.single_valued else _evaluator_pairs(series, got)
         for cell, value in pairs:

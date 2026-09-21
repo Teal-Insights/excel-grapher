@@ -12,7 +12,12 @@ from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.series_bindings.load import load_series_bindings
 from excel_grapher.series_bindings.workflow import all_series_targets
 from tests.paths import INVERTED_TREE_TINY_DSA_LABELLED
-from tests.unit.exporter.inverted_tree.helpers import load_package, required_param_names
+from tests.unit.exporter.inverted_tree.helpers import (
+    input_field_names,
+    invoke_public_compute,
+    load_package,
+    required_param_names,
+)
 from tests.unit.exporter.inverted_tree.local_corpus import load_constraints_module
 
 _WORKBOOK = INVERTED_TREE_TINY_DSA_LABELLED / "tiny-dsa-labelled.xlsx"
@@ -88,8 +93,12 @@ def test_labelled_package_exposes_runtime_axes(labelled_pkg) -> None:
 
 
 def test_labeller_reaches_every_time_period_output(labelled_pkg) -> None:
-    assert "first_projection_year" in required_param_names(labelled_pkg.compute_output_baseline)
-    assert "first_projection_year" in required_param_names(labelled_pkg.compute_output_shocked)
+    assert "first_projection_year" in input_field_names(
+        labelled_pkg, labelled_pkg.compute_output_baseline
+    )
+    assert "first_projection_year" in input_field_names(
+        labelled_pkg, labelled_pkg.compute_output_shocked
+    )
     assert "engine_year_labels" in required_param_names(labelled_pkg.internals.output_baseline)
     assert "engine_year_labels" in required_param_names(labelled_pkg.internals.shock_active)
 
@@ -119,19 +128,27 @@ def test_from_defaults_override_shifts_labelled_keys(labelled_pkg) -> None:
 
 
 def test_snapshot_numeric_parity_and_shift_oracle(labelled_pkg) -> None:
-    baseline = labelled_pkg.compute_output_baseline(**_baseline_kwargs(labelled_pkg))
+    baseline = invoke_public_compute(
+        labelled_pkg, labelled_pkg.compute_output_baseline, _baseline_kwargs(labelled_pkg)
+    )
     assert tuple(baseline.domain.axes[0].keys) == (1, 2, 3, 4, 5)
     assert tuple(baseline[year] for year in range(1, 6)) == pytest.approx(
         _DEFAULT_BASELINE, abs=1e-9
     )
     years = (2024, 2025, 2026, 2027, 2028)
-    shifted = labelled_pkg.compute_output_baseline(**_baseline_kwargs(labelled_pkg, years=years))
+    shifted = invoke_public_compute(
+        labelled_pkg,
+        labelled_pkg.compute_output_baseline,
+        _baseline_kwargs(labelled_pkg, years=years),
+    )
     assert tuple(shifted.domain.axes[0].keys) == years
     for index, year in enumerate(years):
         assert shifted[year] == pytest.approx(_DEFAULT_BASELINE[index])
     with pytest.raises(Exception, match="unknown labels"):
-        labelled_pkg.compute_output_baseline(
-            **{**_baseline_kwargs(labelled_pkg), "first_projection_year": 2024}
+        invoke_public_compute(
+            labelled_pkg,
+            labelled_pkg.compute_output_baseline,
+            {**_baseline_kwargs(labelled_pkg), "first_projection_year": 2024},
         )
 
 
