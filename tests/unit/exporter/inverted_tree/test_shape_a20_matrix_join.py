@@ -288,7 +288,7 @@ def test_matrix_zipper_code_size_independent_of_countries_and_years(tmp_path: Pa
     )
     small = generate_inverted(small_wb, _sized_zipper_bindings(2, 3))
     large = generate_inverted(large_wb, _sized_zipper_bindings(5, 8))
-    for filename in ("api.py", "internals.py"):
+    for filename in ("api.py", "model.py", "internals.py"):
         small_lines = small[filename].splitlines()
         large_lines = large[filename].splitlines()
         assert len(small_lines) == len(large_lines), (

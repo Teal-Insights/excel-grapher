@@ -154,6 +154,7 @@ def _run_ty(package: Path) -> subprocess.CompletedProcess[str]:
             str(package / "data.py"),
             str(package / "internals.py"),
             str(package / "api.py"),
+            str(package / "model.py"),
             str(package / "validation.py"),
         ],
         cwd=str(repo_root),

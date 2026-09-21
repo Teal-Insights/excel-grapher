@@ -229,9 +229,10 @@ def compare_package_to_evaluator(
 
 
 def package_byte_size(modules: Mapping[str, str]) -> int:
-    """Return generated package size in bytes (api + internals + runtime)."""
+    """Return generated package size in bytes (api + model + internals + runtime)."""
     return sum(
-        len(modules[name].encode("utf-8")) for name in ("api.py", "internals.py", "runtime.py")
+        len(modules[name].encode("utf-8"))
+        for name in ("api.py", "model.py", "internals.py", "runtime.py")
     )
 
 

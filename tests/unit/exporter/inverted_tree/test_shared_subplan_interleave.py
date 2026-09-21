@@ -93,7 +93,7 @@ def test_interleaved_consumer_groups_do_not_emit_unbound_helper_params(
     tmp_path: Path,
 ) -> None:
     modules = generate_inverted(_interleave_workbook(tmp_path), _interleave_bindings())
-    kernel = modules["api.py"]
+    kernel = modules["model.py"]
     assert _kwarg_uses_before_assign(kernel) == []
 
 
