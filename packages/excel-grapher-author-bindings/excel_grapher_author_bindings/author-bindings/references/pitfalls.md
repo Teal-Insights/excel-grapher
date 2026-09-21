@@ -48,6 +48,15 @@ A compact range map such as `2: "2:4"` stamps one key onto every row.
 Structural blanks (`INDEX`/`MATCH` padding, NPV window overflow, separator
 rows) belong in `BLANK_RANGES`, not constants.
 
+## Extract-only domain pins need `validation.catalog: false`
+
+`OFFSET` / `INDEX` / `INDIRECT` inference reads a `CellType` per cell. A
+constant that exists only for that extract-time pin is not a public tensor.
+Set `validation.catalog: false` so inverted-tree omits it from the catalog and
+`data.py`. Do not stamp identity `ROW`/`COL` keys just to satisfy catalog
+uniqueness. A catalog-skipped series that uniquely owns an on-graph formula
+cell fails closed.
+
 ## Anti-pattern: geometry-first YAML
 
 Do **not**:

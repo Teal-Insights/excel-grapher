@@ -47,6 +47,7 @@ from excel_grapher.series_bindings.normalize import (
     has_input_direction,
     has_internal_direction,
     has_output_direction,
+    is_cataloged_series,
 )
 from excel_grapher.series_bindings.occupancy import (
     BoundLeafPair,
@@ -851,6 +852,27 @@ def _refuse_unique_key_opt_out(
     )
 
 
+def _reject_uncataloged_formula_owners(
+    skipped: Sequence[tuple[str, Mapping[str, Any], tuple[CanonicalAddress, ...]]],
+    series_map: Mapping[str, BoundSeries],
+    graph: DependencyGraph,
+) -> None:
+    """Fail closed when a catalog-skipped series uniquely owns a formula cell."""
+    cataloged_formulas: set[CanonicalAddress] = set()
+    for bound in series_map.values():
+        for cell in (*bound.cells, *(bound.authored_cells or ())):
+            if is_graph_formula_node(graph, cell):
+                cataloged_formulas.add(cell)
+    for series_id, _entry, cells in skipped:
+        for cell in cells:
+            if is_graph_formula_node(graph, cell) and cell not in cataloged_formulas:
+                raise InvertedTreeExportError(
+                    f"series {series_id!r}: validation.catalog: false uniquely owns "
+                    f"on-graph formula cell {cell}; catalog skip is only for "
+                    "extract-time domain pins"
+                )
+
+
 def _collect_dimension_binds(raw: Mapping[str, Any]) -> dict[str, Mapping[str, Any]]:
     """Return declared dimension/attribute bind mappings keyed by field id."""
     structure = raw.get("structure") or {}
@@ -1308,13 +1330,17 @@ def build_catalog(
     Input and constant series stay unfiltered. `layout: matrix` keeps hole
     cells so the rectangle, stride, and key domain stay intact (issue #696).
     A retained graph leaf may also be named by one input or constant series
-    (issue #708); occupancy stays with the formula series.
+    (issue #708); occupancy stays with the formula series. Series with
+    `validation.catalog: false` are omitted (extract-time `CellTypeEnv` pins);
+    if such a series uniquely owns an on-graph formula cell, catalog
+    construction fails closed.
 
     Raises:
         InvertedTreeExportError: A series is missing `id`, two series share an
             id (message names both `data_range`s), two series claim the same
             cell without an allowed bound-leaf pairing, a keyed series sets
-            `validation.require_unique_key: false`, key-domain resolution
+            `validation.require_unique_key: false`, a catalog-skipped series
+            uniquely owns an on-graph formula cell, key-domain resolution
             fails, a formula series has no graph formula cells, or a retained
             graph leaf has no cached value.
     """
@@ -1323,6 +1349,7 @@ def build_catalog(
     order: list[str] = []
     concept_scheme = bindings.get("concept_scheme")
     pending: list[tuple[str, dict[str, Any], tuple[CanonicalAddress, ...]]] = []
+    skipped: list[tuple[str, dict[str, Any], tuple[CanonicalAddress, ...]]] = []
     authored_by_id: dict[str, tuple[CanonicalAddress, ...]] = {}
     seen_raw: dict[str, Mapping[str, Any]] = {}
     for entry in bindings.get("series", []):
@@ -1344,6 +1371,9 @@ def build_catalog(
                 canonical_address(addr) for addr in expand_data_range(data_range, workbook=workbook)
             )
         cells = [as_canonical(addr) for addr in apply_series_excludes(cells, entry)]
+        if not is_cataloged_series(entry):
+            skipped.append((series_id, entry, tuple(cells)))
+            continue
         authored_by_id[series_id] = tuple(cells)
         if graph is not None:
             cell_tuple = _filter_formula_series_cells(
@@ -1452,6 +1482,8 @@ def build_catalog(
             series_map[series_id] = bound
             order.append(series_id)
     address_to_id, series_map = _resolve_occupancy(series_map, graph)
+    if graph is not None:
+        _reject_uncataloged_formula_owners(skipped, series_map, graph)
     catalog = SeriesCatalog(
         series=series_map,
         order=tuple(order),

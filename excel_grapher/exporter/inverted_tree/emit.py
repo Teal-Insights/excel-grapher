@@ -183,6 +183,12 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
     return "\n".join(lines)
 
 
+_MESSAGE_BINDING_CODES = frozenset(
+    {
+        "require_unique_key_incompatible",
+        "catalog_skipped_formula_owner",
+    }
+)
 _REFUSE_BINDING_CODES = frozenset(
     {
         "non_leaf_input_overlap",
@@ -201,17 +207,19 @@ def _refuse_invalid_bindings(
 
     Other validator errors (`duplicate_key`, `bind_resolution_failed`, unbound
     ranges) stay with emit's own fail-closed checks so their messages remain
-    specific. `require_unique_key_incompatible` is raised with the validator
-    message so keyed catalog series cannot silently opt out of uniqueness.
+    specific. `require_unique_key_incompatible` and
+    `catalog_skipped_formula_owner` are raised with the validator message so
+    keyed catalog series cannot silently opt out of uniqueness and extract-only
+    series cannot uniquely own formula cells.
     """
     report = validate_series_bindings(graph, series_bindings, workbook=bindings_workbook)
-    unique_key_issues = [
+    message_issues = [
         issue
         for issue in report["issues"]
-        if issue["level"] == "error" and issue["code"] == "require_unique_key_incompatible"
+        if issue["level"] == "error" and issue["code"] in _MESSAGE_BINDING_CODES
     ]
-    if unique_key_issues:
-        issue = unique_key_issues[0]
+    if message_issues:
+        issue = message_issues[0]
         series_id = issue["series_id"]
         prefix = f"series {series_id!r}: " if series_id else ""
         raise InvertedTreeExportError(f"{prefix}{issue['message']}")

@@ -234,6 +234,10 @@ Constant bindings:
 - Default to **`validation.intersect_graph_leaves: true`**; non-leaf / formula cells in the
   range fail validation (`non_leaf_constant_overlap`), and a range with no leaf overlap fails
   with `no_leaf_constant_targets`.
+- Set **`validation.catalog: false`** for extract-time domain pins (`OFFSET`/`INDEX`/`INDIRECT`
+  `CellTypeEnv` coverage) that must not become inverted-tree tensors. Those series still
+  compile at extract and are omitted from the catalog / `data.py`. A catalog-skipped series
+  that uniquely owns an on-graph formula cell fails closed (`catalog_skipped_formula_owner`).
 - A single series entry cannot combine `constant` with `input`, `output`, or `internal`. A
   **separate** `constant` (or `input`) series may name a graph leaf that already sits inside
   an `internal`/`output` rectangle; see
@@ -831,6 +835,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.18.0** | Series-level `relations` name a partner series (`greater_than` / `not_equal`). The compiler emits `GreaterThanCell` / `NotEqualCell` on each declaring cell, aligned on the shared key. |
 | **1.19.0** | Series-level `domain` (`enum`, `between`, `real_between`, `from_workbook`). `input.domain` is accepted and normalized to that key. `constant` implies `from_workbook`. Compiles to the `CellTypeEnv` dynamic-ref inference consumes. |
 | **1.20.0** | `bind.kind: row_index` and `column_letter` key each observation by the data cell's own 1-based row index or column letter, without a `values` map. |
+| **1.21.0** | `validation.catalog: false` marks an extract-only series: it still compiles into `CellTypeEnv` / `DynamicRefConfig.from_bindings`, but inverted-tree omits it from the catalog and `data.py` tensors. Fail closed if that series uniquely owns an on-graph formula cell. |
 
 ## Runtime axis labels (1.17.0)
 
@@ -987,6 +992,49 @@ lookup compiles one address, while iteration and `len` expand the whole domain.
 The local corpus manifest (`corpus.toml`) does the same: omit a Python
 constraint table when the sidecar covers every dynamic-ref leaf.
 `bindings undomained` prints graph leaves that still have no domain.
+
+## Extract-only series (1.21.0)
+
+Some authored series exist only so extract-time `OFFSET` / `INDEX` / `INDIRECT`
+inference can read a `CellType` for a cell. They are not a public tensor.
+Set `validation.catalog: false`:
+
+```yaml
+schema_version: "1.21.0"
+series:
+  - id: engine_stock_pin
+    data_range: Engine!B2:C2
+    layout: series
+    constant: {}
+    validation:
+      intersect_graph_leaves: false
+      catalog: false
+    structure:
+      measure:
+        concept: OBS_VALUE
+        dtype: float
+        bind: {kind: data_cell, read: float}
+      dimensions:
+        - id: ROW
+          concept: ROW
+          role: key
+          scope: cell
+          bind: {kind: value_map, values: {2: 2}, read: int}
+        - id: COL
+          concept: COL
+          role: key
+          scope: cell
+          bind: {kind: value_map, values: {B: B, C: C}, read: string}
+    key: [ROW, COL]
+```
+
+The series still compiles into `CellTypeEnv` / `DynamicRefConfig.from_bindings`.
+Inverted-tree omits it from the catalog and `data.py`. Unique semantic keys are
+not required (extract-only defaults `require_unique_key` to false). A
+catalog-skipped series that uniquely owns an on-graph formula cell fails closed
+(`catalog_skipped_formula_owner`). Identity `ROW` / `COL` binds remain a
+separate authoring feature for series that *are* tensors keyed by sheet
+geometry.
 
 ## Input domains (1.13.0)
 

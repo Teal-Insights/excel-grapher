@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import copy
+from collections.abc import Mapping
 from typing import Any, Literal
 
 from excel_grapher.series_bindings.ranges import series_data_ranges, series_sheets
@@ -135,7 +136,18 @@ def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
         validation["intersect_graph_formulas"] = True
     if has_constant_direction(series) and "intersect_graph_leaves" not in validation:
         validation["intersect_graph_leaves"] = True
+    if validation.get("catalog") is False:
+        validation.setdefault("require_unique_key", False)
     return validation
+
+
+def is_cataloged_series(series: Mapping[str, Any]) -> bool:
+    """Return True when inverted-tree catalog/codegen includes this series.
+
+    `validation.catalog: false` marks an extract-only domain pin: it still
+    compiles into `CellTypeEnv` but is omitted from the catalog.
+    """
+    return bool(effective_validation(dict(series)).get("catalog", True))
 
 
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
