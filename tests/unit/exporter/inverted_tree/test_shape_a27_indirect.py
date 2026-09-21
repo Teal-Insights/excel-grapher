@@ -64,7 +64,7 @@ def _bound_cell_bindings() -> dict[str, Any]:
 
 
 def _bound_cell_dynamic_refs() -> DynamicRefConfig:
-    return DynamicRefConfig.from_constraints({"Inputs!B1": Literal["Inputs!A1"]}, {})
+    return DynamicRefConfig.from_constraints({"Inputs!B1": Literal["Inputs!A1"]})
 
 
 def _series_member_workbook(tmp_path: Path) -> Path:

@@ -13,6 +13,9 @@ import pytest
 
 from excel_grapher import DependencyGraph, FormulaEvaluator, Node, create_dependency_graph
 from excel_grapher.core.address_keys import parse_address
+from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
+from excel_grapher.series_bindings.schema import validate_bindings_document
+from tests.unit.exporter.inverted_tree.helpers import bindings_document, series_entry
 
 
 def _make_node(address: str, formula: str | None, value: object) -> Node:
@@ -63,6 +66,45 @@ def test_create_dependency_graph_skips_blank_range_nodes(tmp_path: Path) -> None
         results = ev.evaluate(["Sheet1!D1", "Sheet1!E1"])
     assert results["Sheet1!D1"] == 10
     assert results["Sheet1!E1"] == 0
+
+
+def test_from_bindings_blank_range_offset_leaf_needs_no_cell_type(tmp_path: Path) -> None:
+    """Structural pads in `blank_ranges` must not require a `CellType` (#945).
+
+    `OFFSET(A1,F10,0)` puts the blank selector in the argument subgraph. The
+    builder already drops `blank_ranges` from `missing_leaves`; expansion must
+    match that and not raise in `_enter_cell`.
+    """
+    path = tmp_path / "blank_offset.xlsx"
+    wb = fastpyxl.Workbook()
+    ws = wb.active
+    ws.title = "lookup"
+    ws["A1"] = 10
+    ws["F10"] = None
+    ws["C1"] = "=OFFSET(A1,F10,0)"
+    ws["D1"] = 1
+    wb.save(path)
+    wb.close()
+
+    bindings = validate_bindings_document(
+        bindings_document(
+            series_entry("anchor", "lookup!D1", layout="scalar", direction="constant"),
+            schema_version="1.19.0",
+        )
+    )
+    graph = create_dependency_graph(
+        path,
+        ["lookup!C1"],
+        load_values=True,
+        dynamic_refs=DynamicRefConfig.from_bindings(bindings, path),
+        blank_ranges=("lookup!F10",),
+        capture_dependency_provenance=True,
+    )
+    assert "lookup!C1" in graph
+    assert "lookup!A1" in graph
+    assert "lookup!F10" not in graph
+    with FormulaEvaluator(graph, blank_ranges=("lookup!F10",)) as ev:
+        assert ev.evaluate("lookup!C1") == 10
 
 
 def test_missing_cell_outside_declared_blank_still_keyerror() -> None:

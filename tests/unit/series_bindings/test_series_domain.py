@@ -12,11 +12,12 @@ import xlsxwriter
 from excel_grapher.core.cell_types import (
     Between,
     CellType,
+    EnumDomain,
     GreaterThanCell,
+    RealBetween,
     constraints_to_cell_type_env,
 )
 from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.grapher.constraints import load_constraints_module
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.grapher.graph_pickle import dump_graph, load_graph
 from excel_grapher.series_bindings import (
@@ -293,25 +294,31 @@ def test_series_level_domain_compiles_with_relations(tmp_path: Path) -> None:
     assert env == expected
 
 
-def test_tiny_dsa_bindings_compile_to_constraints_py_env() -> None:
+def test_tiny_dsa_bindings_compile_input_and_constant_domains() -> None:
     workbook = INVERTED_TREE_TINY_DSA / "tiny-dsa.xlsx"
     bindings = load_series_bindings(INVERTED_TREE_TINY_DSA / "bindings")
     compiled = cell_type_env_from_bindings(bindings, workbook=workbook)
-    table = load_constraints_module(INVERTED_TREE_TINY_DSA / "constraints.py").CONSTRAINTS
-    expected = constraints_to_cell_type_env(table, {})
-    assert compiled == expected
+    expected = constraints_to_cell_type_env(
+        {
+            "Inputs!B5": Literal["Borvelia", "Litellia", "Aurelium"],
+            "Inputs!B21": Annotated[int, Between(1, 5)],
+            "Inputs!B22": Literal[1, 2, 3],
+            "Inputs!B10": Annotated[float, RealBetween(0.0, 200.0)],
+        },
+        {},
+    )
+    for address, cell_type in expected.items():
+        assert compiled[address] == cell_type
+    names = compiled["Inputs!A10"].enum
+    assert names == EnumDomain(values=frozenset({"Borvelia"}))
 
 
-def test_tiny_dsa_labelled_bindings_compile_to_constraints_py_env() -> None:
+def test_tiny_dsa_labelled_bindings_omit_uncached_formula_pins() -> None:
     workbook = INVERTED_TREE_TINY_DSA_LABELLED / "tiny-dsa-labelled.xlsx"
     bindings = load_series_bindings(INVERTED_TREE_TINY_DSA_LABELLED / "bindings")
     compiled = cell_type_env_from_bindings(bindings, workbook=workbook)
-    table = load_constraints_module(INVERTED_TREE_TINY_DSA_LABELLED / "constraints.py").CONSTRAINTS
-    expected = constraints_to_cell_type_env(table, {})
-    # Engine!C5:G5 are formula pins (`from_workbook`) without cached values in
-    # this xlsx; constraints.py hardcodes Literal[1]..[5] instead. shock_year is
-    # an offset cell (1-5) whose public compute_* axis is calendar years, so it
-    # has no series-level domain.
+    # Engine!C5:G5 are formula pins (`from_workbook`) without cached values.
+    # shock_year has no series-level domain (public axis is calendar years).
     for address in (
         "Engine!C5",
         "Engine!D5",
@@ -320,8 +327,16 @@ def test_tiny_dsa_labelled_bindings_compile_to_constraints_py_env() -> None:
         "Engine!G5",
         "Inputs!B21",
     ):
-        expected.pop(address, None)
-    assert compiled == expected
+        assert address not in compiled
+    expected = constraints_to_cell_type_env(
+        {
+            "Inputs!B5": Literal["Borvelia", "Litellia", "Aurelium"],
+            "Inputs!B22": Literal[1, 2, 3],
+        },
+        {},
+    )
+    for address, cell_type in expected.items():
+        assert compiled[address] == cell_type
 
 
 def test_input_value_map_needles_compile_when_domain_omitted(tmp_path: Path) -> None:
@@ -347,7 +362,6 @@ def test_overlay_constraints_win_per_key(tmp_path: Path) -> None:
     base = DynamicRefConfig.from_bindings(bindings, workbook)
     overlay = DynamicRefConfig.from_constraints(
         {"Inputs!B21": Annotated[int, Between(0, 10)], "Inputs!B22": Literal[1, 2, 3]},
-        {},
     )
     merged, overrides = base.overlay(overlay)
     assert overrides == ("Inputs!B21",)

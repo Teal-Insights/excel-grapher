@@ -165,7 +165,7 @@ def test_offset_into_row_is_indexing(tmp_path: Path) -> None:
     modules = generate_inverted(
         workbook,
         _offset_bindings(),
-        dynamic_refs=DynamicRefConfig.from_constraints({"Inputs!A1": Literal[1, 2, 3]}, {}),
+        dynamic_refs=DynamicRefConfig.from_constraints({"Inputs!A1": Literal[1, 2, 3]}),
     )
     assert "xl_offset" not in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="a4_off")

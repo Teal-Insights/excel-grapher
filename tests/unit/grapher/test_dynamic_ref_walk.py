@@ -37,7 +37,7 @@ def _index_match_dynamic_refs() -> DynamicRefConfig:
         **{f"Sheet1!A{row}": Annotated[int, "leaf"] for row in range(1, 21)},
         **{f"Sheet1!B{row}": Annotated[int, "leaf"] for row in range(1, 21)},
     }
-    return DynamicRefConfig.from_constraints(schema, {})
+    return DynamicRefConfig.from_constraints(schema)
 
 
 def _count_parse_range_refs_with_spans(

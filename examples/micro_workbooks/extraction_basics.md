@@ -427,7 +427,7 @@ from excel_grapher import DynamicRefConfig
 
 
 constraints_schema: dict[str, type] = {"Sheet1!B8": Literal[0, 1]}
-config = DynamicRefConfig.from_constraints(constraints_schema, {})
+config = DynamicRefConfig.from_constraints(constraints_schema)
 
 graph: DependencyGraph = create_dependency_graph(
     workbook_path, ["Sheet1!C8"], load_values=False, dynamic_refs=config
@@ -575,7 +575,7 @@ from typing import Literal
 from excel_grapher import DynamicRefConfig
 
 constraints_schema = {"Sheet1!B10": Literal[0, 1]}
-config = DynamicRefConfig.from_constraints(constraints_schema, {})
+config = DynamicRefConfig.from_constraints(constraints_schema)
 graph: DependencyGraph = create_dependency_graph(
     workbook_path, ["Sheet1!E10"], load_values=False, dynamic_refs=config
 )

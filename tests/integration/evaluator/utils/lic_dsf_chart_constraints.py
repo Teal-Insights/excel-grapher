@@ -118,4 +118,4 @@ def chart_shortlist_constraints(workbook_path: Path) -> dict[str, Any]:
 
 def chart_shortlist_dynamic_refs(workbook_path: Path) -> DynamicRefConfig:
     """Build `DynamicRefConfig` covering `chart_parity_shortlist_keys()`."""
-    return DynamicRefConfig.from_constraints(chart_shortlist_constraints(workbook_path), {})
+    return DynamicRefConfig.from_constraints(chart_shortlist_constraints(workbook_path))

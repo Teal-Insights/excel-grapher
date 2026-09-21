@@ -38,7 +38,6 @@ def test_local_corpus_path_and_manifest() -> None:
     tiny = entries[0]
     assert tiny.workbook.is_file()
     assert tiny.source == "committed"
-    assert tiny.constraints is None
 
 
 def test_tiny_dsa_corpus_builds_from_bindings_without_constraints() -> None:

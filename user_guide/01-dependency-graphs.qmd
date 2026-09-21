@@ -309,7 +309,9 @@ from excel_grapher.grapher import create_dependency_graph, DynamicRefConfig, Dyn
 - **`use_cached_dynamic_refs=False` and `dynamic_refs is a DynamicRefConfig`**  
   Resolve dynamic refs using static constraints (cell types and limits). Missing or invalid domains still raise `DynamicRefError`.
 
-You typically build a `DynamicRefConfig` from a `dict[str, type]` constraints schema (sheet-qualified addresses mapped to typing annotations):
+You typically author domains on the series binding sidecar and build a
+`DynamicRefConfig` with `from_bindings`. The low-level `from_constraints`
+path still accepts a `dict[str, type]` of sheet-qualified addresses:
 
 ```python
 from typing import Annotated, Literal
@@ -322,9 +324,7 @@ constraints_schema = {
     "Sheet1!C1": Annotated[float, Between(0, 10)],
 }
 
-constraints_data: dict[str, object] = {}
-
-config = DynamicRefConfig.from_constraints(constraints_schema, constraints_data)
+config = DynamicRefConfig.from_constraints(constraints_schema)
 
 graph = create_dependency_graph(
     "model_with_dynamic_refs.xlsx",

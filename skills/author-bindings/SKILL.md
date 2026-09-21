@@ -76,7 +76,7 @@ an input to a generator**.
 ## Commands
 
 Same workbook wiring as `bindings validate`: `WORKBOOK`, `--bindings`,
-`--constraints`, `--use-cached-dynamic-refs`, `--blank-ranges`.
+`--use-cached-dynamic-refs`, `--blank-ranges`.
 
 ```bash
 uv run excel-grapher bindings validate WORKBOOK --bindings BINDINGS_DIR

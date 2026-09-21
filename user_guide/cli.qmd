@@ -47,7 +47,7 @@ Validate a workbook and its binding sidecar before export or CI.
 ```bash
 excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
   [--smoke-test] [--emit-dir DIR] [--package-name NAME]
-  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+  [--use-cached-dynamic-refs] [--blank-ranges PATH]
 ```
 
 ### Arguments
@@ -61,8 +61,7 @@ excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
 | `--smoke-test` | After a successful validation, generate binding modules and run `compute_*` smoke checks with workbook-default inputs. |
 | `--emit-dir DIR` | Write generated module files under `DIR` (see `--package-name`). Implied when combined with `--smoke-test` and an emit directory. |
 | `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
-| `--constraints PATH` | Optional path to a `constraints.py` module exposing `CONSTRAINTS: Mapping[str, type]`. When omitted, the CLI derives domains from the bindings sidecar (`domain` / `from_workbook`). When both are given, `constraints.py` wins per key and a warning lists the overlap. |
-| `--use-cached-dynamic-refs` | Resolve those dynamic refs from the workbook's cached values instead of a constraints module. |
+| `--use-cached-dynamic-refs` | Resolve those dynamic refs from the workbook's cached values instead of series domain. |
 | `--blank-ranges PATH` | Optional Python module exposing `BLANK_RANGES: Sequence[str]` (sheet-qualified rectangles omitted from the graph). |
 
 Validation-only is the default: no code is generated unless you pass `--smoke-test` or `--emit-dir`.
@@ -135,7 +134,8 @@ uv run excel-grapher bindings validate lic_inputs.xlsx \
 ```
 
 Workbooks that contain `OFFSET` / `INDEX` / `INDIRECT` with non-literal arguments need an
-explicit resolution strategy. Pass the same `constraints.py` the local corpus uses:
+explicit resolution strategy. The sidecar's series `domain` (and `constant` pins)
+is that strategy:
 
 ```bash
 uv run excel-grapher bindings validate \
@@ -144,12 +144,8 @@ uv run excel-grapher bindings validate \
   --smoke-test
 ```
 
-The sidecar declares series `domain` (and `constant` pins), so `--constraints` is
-optional. Pass it only to overlay a `constraints.py` table; overlapping keys
-warn and `constraints.py` wins.
-
 Without a bindings domain covering the `OFFSET` / `INDEX` / `INDIRECT` leaves,
-and without `--constraints` or `--use-cached-dynamic-refs`, graph building fails
+and without `--use-cached-dynamic-refs`, graph building fails
 with a message that names the cell and the flag to pass.
 
 To persist generated files:
@@ -217,12 +213,17 @@ The CLI wraps the same workflow as:
 ```python
 from pathlib import Path
 
-from excel_grapher.grapher import dynamic_refs_from_path
-from excel_grapher.series_bindings import validate_bindings_workbook, run_binding_checks
+from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
+from excel_grapher.series_bindings import (
+    load_series_bindings,
+    validate_bindings_workbook,
+    run_binding_checks,
+)
 
 workbook = Path("lic_inputs.xlsx")
 bindings_path = workbook.with_suffix(".bindings.yaml")
-dynamic_refs = dynamic_refs_from_path(Path("constraints.py"))
+bindings = load_series_bindings(bindings_path)
+dynamic_refs = DynamicRefConfig.from_bindings(bindings, workbook, bindings_path=bindings_path)
 
 result = validate_bindings_workbook(
     workbook,
@@ -256,7 +257,7 @@ Resolve input, output, internal, and constant series the same way codegen does.
 ```bash
 excel-grapher bindings audit WORKBOOK [--bindings PATH] [--json]
   [--direction DIRECTION] [--strict]
-  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+  [--use-cached-dynamic-refs] [--blank-ranges PATH]
 ```
 
 Exit `1` on error findings. `--strict` also fails on warnings such as
@@ -275,7 +276,7 @@ range as a series to emit.
 ```bash
 excel-grapher bindings burndown WORKBOOK [--bindings PATH] [--json]
   [--per-sheet SHEET] [--max-rows N] [--exempt FILE] [--strict]
-  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+  [--use-cached-dynamic-refs] [--blank-ranges PATH]
 ```
 
 `--exempt` is a text file of reviewed addresses (one per line; `#` comments
@@ -291,7 +292,7 @@ checks succeed. There is no catalog → four-file bulk emitter.
 ```bash
 excel-grapher bindings upsert WORKBOOK --series SERIES.yaml
   [--bindings PATH] [--replace]
-  [--constraints PATH] [--use-cached-dynamic-refs] [--blank-ranges PATH]
+  [--use-cached-dynamic-refs] [--blank-ranges PATH]
 ```
 
 `SERIES.yaml` is one series mapping, or a document with `series: [one entry]`.
@@ -309,7 +310,7 @@ This is a domain-completeness worklist, distinct from `bindings burndown`
 
 ```bash
 excel-grapher bindings undomained WORKBOOK [--bindings PATH] [--json]
-  [--constraints PATH] [--use-cached-dynamic-refs]
+  [--use-cached-dynamic-refs]
 ```
 
 When every leaf is covered, the command prints

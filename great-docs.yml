@@ -199,7 +199,6 @@ reference:
       - DynamicRefTraceEvent
       - ExcelRange  # 2 method(s)
       - FormulaEvaluator  # 4 method(s)
-      - FromWorkbook
       - GreaterThanCell
       - GuardCellRef  # 1 method(s)
       - GuardExpr

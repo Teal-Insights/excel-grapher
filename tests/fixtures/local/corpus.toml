@@ -1,9 +1,8 @@
 # Manifest for the uncommitted local inverted-tree workbook pool (#656).
 # Workbook paths with source = "committed" are relative to tests/fixtures/.
 # All other paths are relative to tests/fixtures/local/.
-# `constraints` is optional when the sidecar's series `domain` covers every
-# OFFSET / INDEX / INDIRECT leaf. Q-CRAFT and LIC-DSF still need constraints.py
-# until those catalogs bind the remaining keys (issue 924).
+# Graph building derives OFFSET / INDEX / INDIRECT domains from series
+# `domain` / `from_workbook` on the bindings sidecar.
 
 [[entry]]
 id = "tiny_dsa"
@@ -16,12 +15,10 @@ max_cells = 200
 id = "qcraft"
 workbook = "qcraft/qcraft-toolv10.xlsx"
 bindings = "qcraft/bindings"
-constraints = "qcraft/constraints.py"
 max_cells = 20000
 
 [[entry]]
 id = "lic_dsf"
 workbook = "lic_dsf/lic-dsf.xlsx"
 bindings = "lic_dsf/bindings"
-constraints = "lic_dsf/constraints.py"
 max_cells = 20000

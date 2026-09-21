@@ -6,11 +6,9 @@ See `plans/inverted-tree-scheduling.md` §12 and `tests/fixtures/local/corpus.to
 from __future__ import annotations
 
 import tomllib
-import warnings
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from types import ModuleType
 
 import pytest
 
@@ -20,12 +18,6 @@ from excel_grapher.exporter.inverted_tree.deps import SeriesDeps, collect_all_de
 from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.exporter.inverted_tree.schedule import tarjan_series_sccs
 from excel_grapher.grapher import create_dependency_graph
-from excel_grapher.grapher.constraints import (
-    constraints_table,
-)
-from excel_grapher.grapher.constraints import (
-    load_constraints_module as load_constraints_module_required,
-)
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings.load import load_series_bindings
@@ -47,7 +39,6 @@ class CorpusEntry:
     id: str
     workbook: Path
     bindings: Path
-    constraints: Path | None
     max_cells: int
     source: str
 
@@ -64,17 +55,11 @@ def load_corpus_manifest(path: Path | None = None) -> tuple[CorpusEntry, ...]:
     entries: list[CorpusEntry] = []
     for item in raw.get("entry", ()):
         source = str(item.get("source", "local"))
-        constraints_rel = item.get("constraints")
         entries.append(
             CorpusEntry(
                 id=str(item["id"]),
                 workbook=_resolve_entry_path(str(item["workbook"]), source=source),
                 bindings=_resolve_entry_path(str(item["bindings"]), source=source),
-                constraints=(
-                    None
-                    if constraints_rel is None
-                    else _resolve_entry_path(str(constraints_rel), source=source)
-                ),
                 max_cells=int(item.get("max_cells", 0)),
                 source=source,
             )
@@ -90,35 +75,12 @@ def require_workbook(entry: CorpusEntry) -> None:
         pytest.skip(f"local corpus bindings missing: {entry.bindings}")
 
 
-def load_constraints_module(path: Path | None) -> ModuleType | None:
-    """Import a constraints module from `path`, or return None."""
-    if path is None or not path.is_file():
-        return None
-    return load_constraints_module_required(path)
-
-
 def _dynamic_refs(entry: CorpusEntry, bindings: WorkbookSeriesBindings) -> DynamicRefConfig | None:
-    """Derive domains from bindings, overlaying `constraints.py` when present."""
+    """Derive domains from series bindings."""
     bindings_config = DynamicRefConfig.from_bindings(
         bindings, entry.workbook, bindings_path=entry.bindings
     )
-    constraints = load_constraints_module(entry.constraints)
-    if constraints is None:
-        return bindings_config if len(bindings_config.cell_type_env) else None
-    table = constraints_table(constraints)
-    if not table:
-        return bindings_config if len(bindings_config.cell_type_env) else None
-    merged, overrides = bindings_config.overlay(DynamicRefConfig.from_constraints(table, {}))
-    if overrides:
-        preview = ", ".join(overrides[:20])
-        extra = "" if len(overrides) <= 20 else f" (+{len(overrides) - 20} more)"
-        warnings.warn(
-            "constraints.py overrides bindings domains for "
-            f"{len(overrides)} key(s): {preview}{extra}",
-            UserWarning,
-            stacklevel=2,
-        )
-    return merged
+    return bindings_config if len(bindings_config.cell_type_env) else None
 
 
 def build_corpus_graph(

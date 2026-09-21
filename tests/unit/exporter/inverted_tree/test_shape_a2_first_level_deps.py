@@ -66,7 +66,7 @@ def _a2_bindings() -> dict:
 
 
 def _a2_dynamic_refs() -> DynamicRefConfig:
-    return DynamicRefConfig.from_constraints({"Inputs!A1": Literal[1, 2]}, {})
+    return DynamicRefConfig.from_constraints({"Inputs!A1": Literal[1, 2]})
 
 
 def test_choose_and_offset_live_on_the_series_that_owns_them(tmp_path: Path) -> None:

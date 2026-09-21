@@ -535,20 +535,20 @@ Two tiers:
 unit layer and it stays.
 
 **Tier 2 — the local pool (not committed).** Real workbooks with their
-bindings and constraint modules, under `tests/fixtures/local/`, gitignored:
+bindings under `tests/fixtures/local/`, gitignored:
 
 ```text
 tests/fixtures/local/
   corpus.toml                    # manifest, committed
   qcraft/qcraft-toolv10.xlsx     # workbook, NOT committed
   qcraft/bindings/*.bindings.yaml
-  qcraft/constraints.py          # DynamicRefConfig constraints + canonical inputs
   lic_dsf/...
   tiny_dsa/...                   # may symlink the committed fixture
 ```
 
 `corpus.toml` lists each entry's workbook path, bindings directory,
-constraints module, canonical `compute_*` inputs, and a `max_cells` hint.
+and a `max_cells` hint. Series `domain` on the sidecar compiles to the
+`CellTypeEnv` used at extract time.
 Tests carry `@pytest.mark.local_corpus` and `pytest.skip` with the missing
 path when a workbook is absent — the same run-if-available contract the live
 Excel parity tests use (`.cursor/rules/parity.mdc`). Opt in with

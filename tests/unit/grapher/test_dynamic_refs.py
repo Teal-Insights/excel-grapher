@@ -31,7 +31,6 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
-    FromWorkbook,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -1029,35 +1028,6 @@ def test_format_missing_leaves_splits_band_when_middle_column_differs() -> None:
     assert formatted == ["S!AA10", "S!AB99", "S!AC10"]
 
 
-def _build_simple_constant_workbook(path: Path) -> None:
-    wb = xlsxwriter.Workbook(path)
-    ws = wb.add_worksheet("Sheet1")
-    ws.write_number(0, 1, 10)  # B1
-    ws.write_string(1, 1, "Afghanistan")  # B2
-    wb.close()
-
-
-def test_from_constraints_and_workbook_uses_workbook_values_for_constants(tmp_path: Path) -> None:
-    from typing import Annotated
-
-    excel_path = tmp_path / "constants.xlsx"
-    _build_simple_constant_workbook(excel_path)
-
-    schema = {
-        "Sheet1!B1": Annotated[int, FromWorkbook()],
-        "Sheet1!B2": Annotated[str, FromWorkbook()],
-    }
-
-    config = DynamicRefConfig.from_constraints_and_workbook(schema, excel_path)
-    env = config.cell_type_env
-
-    assert env["Sheet1!B1"].kind is CellKind.NUMBER
-    assert env["Sheet1!B1"].enum == EnumDomain(values=frozenset({10}))
-
-    assert env["Sheet1!B2"].kind is CellKind.STRING
-    assert env["Sheet1!B2"].enum == EnumDomain(values=frozenset({"Afghanistan"}))
-
-
 def test_from_constraints_rejects_legacy_typeddict_schema() -> None:
     from typing import TypedDict
 
@@ -1065,7 +1035,7 @@ def test_from_constraints_rejects_legacy_typeddict_schema() -> None:
         pass
 
     with pytest.raises(TypeError, match="dict\\[str, type\\]"):
-        DynamicRefConfig.from_constraints(cast(Any, Legacy), {})
+        DynamicRefConfig.from_constraints(cast(Any, Legacy))
 
 
 # ── Standalone INDEX inference ──────────────────────────────────────────
@@ -1460,7 +1430,7 @@ def test_create_dependency_graph_index_literal_row_col_no_array_corner_edges_iss
     excel_path = tmp_path / "index_literal_2d_issue_156.xlsx"
     _build_index_literal_2d_workbook(excel_path)
 
-    config = DynamicRefConfig.from_constraints({}, {})
+    config = DynamicRefConfig.from_constraints({})
     graph = create_dependency_graph(
         excel_path,
         ["Inputs!A1"],
@@ -1604,7 +1574,7 @@ def test_index_match_nested_index_empty_arg_over_vlookup_column(tmp_path: Path) 
         "Trigger!AB2": Literal[20],
         "Trigger!AB3": Literal[30],
     }
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
 
     # Controls that already work without nested INDEX(range,,1).
     for target in ("Out!A1", "Out!A2"):
@@ -1710,7 +1680,7 @@ def test_index_match_first_nonzero_boolean_projection_builds_graph(tmp_path: Pat
         "B!N13": unit,
         "B!N14": Literal[None],
     }
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
     graph = create_dependency_graph(
         excel_path,
         ["B!O10"],
@@ -2812,7 +2782,7 @@ def test_repeated_identical_index_match_reuses_dynamic_ref_expansion(tmp_path: P
         formula_count=formula_count,
         country_count=country_count,
     )
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
 
     original_infer_match = dynamic_refs_mod._infer_exact_match_position_domain
     match_infer_calls = 0
@@ -2916,7 +2886,7 @@ def test_dynamic_dep_cache_masks_current_formula_text(
         excel_path,
         anchored_first=anchored_first,
     )
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
 
     graph = create_dependency_graph(
         excel_path,
@@ -3198,7 +3168,7 @@ def test_shifted_index_variants_reuse_identical_argument_env(tmp_path: Path) -> 
         formula_count=formula_count,
         country_count=country_count,
     )
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
 
     graph, call_count = _build_graph_counting_dynamic_expansion(
         excel_path,
@@ -3289,7 +3259,7 @@ def test_shifted_offset_variants_reuse_identical_argument_env(tmp_path: Path) ->
         formula_count=formula_count,
         country_count=country_count,
     )
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
 
     graph, call_count = _build_graph_counting_dynamic_expansion(
         excel_path,

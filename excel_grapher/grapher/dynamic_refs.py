@@ -4,14 +4,14 @@ import logging
 import math
 import re
 import time
-from collections.abc import Callable, Iterable, Iterator, Mapping
+from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import lru_cache
 from itertools import product
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast, get_args, get_origin
+from typing import TYPE_CHECKING, Any, cast
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.type_analysis_cache import TypeAnalysisCache
@@ -67,6 +67,7 @@ from excel_grapher.core.range_shorthand import (
 )
 from excel_grapher.core.types import ExcelRange, XlError
 
+from .blank_ranges import BlankRangeRect, address_in_blank_ranges
 from .parser import (
     DEFAULT_MAX_RANGE_CELLS,
     _find_function_calls_with_spans,
@@ -162,8 +163,9 @@ class DynamicRefError(ValueError):
     """Raised when dynamic reference analysis cannot proceed.
 
     When building a dependency graph, pass a `DynamicRefConfig` (e.g. via
-    `DynamicRefConfig.from_constraints`) or set `use_cached_dynamic_refs=True`
-    to resolve OFFSET/INDIRECT instead of raising.
+    `DynamicRefConfig.from_bindings` or `DynamicRefConfig.from_constraints`)
+    or set `use_cached_dynamic_refs=True` to resolve OFFSET/INDIRECT instead
+    of raising.
     """
 
 
@@ -190,8 +192,8 @@ class DynamicRefLimits:
     """Tuneable safety limits for dynamic-reference inference.
 
     Pass a custom instance via the `limits` parameter of
-    `DynamicRefConfig.from_constraints` or
-    `DynamicRefConfig.from_constraints_and_workbook` to override any of these defaults.
+    `DynamicRefConfig.from_bindings` or `DynamicRefConfig.from_constraints`
+    to override any of these defaults.
 
     Attributes:
         max_branches: Maximum number of discrete value assignments explored
@@ -224,8 +226,8 @@ class DynamicRefLimits:
 class DynamicRefConfig:
     """Configuration for resolving OFFSET/INDIRECT via constraint-based inference.
 
-    Prefer building via `from_constraints` or `from_bindings`; the constructor
-    is for internal use.
+    Prefer building via `from_bindings` (series `domain`) or `from_constraints`
+    (address -> annotation mapping); the constructor is for internal use.
     """
 
     cell_type_env: CellTypeEnv
@@ -235,16 +237,15 @@ class DynamicRefConfig:
     def from_constraints(
         cls,
         constraints_schema: Mapping[str, Any],
-        constraints_data: Mapping[str, Any],
         *,
         limits: DynamicRefLimits | None = None,
     ) -> DynamicRefConfig:
-        r"""Build a config from a constraints schema (address keys -> type annotations) and instance data.
+        r"""Build a config from a constraints schema (address keys -> type annotations).
 
         *constraints_schema* must be a mapping (typically `dict[str, type]`) whose keys are
-        sheet-qualified addresses (e.g. `\"Sheet1!B1\"`). Values are typing objects describing
-        domains (`Annotated`, `Literal`, etc.). *constraints_data* may mirror keys for runtime
-        validation elsewhere; it is not validated here.
+        sheet-qualified addresses (e.g. `Sheet1!B1`). Values are typing objects describing
+        domains (`Annotated`, `Literal`, etc.). Prefer `from_bindings` when domains live on
+        a series binding sidecar.
 
         Raises:
             TypeError: If *constraints_schema* is not a mapping (e.g. a legacy `TypedDict` class passed instead of a dict).
@@ -258,7 +259,7 @@ class DynamicRefConfig:
             raise TypeError(
                 f"constraints_schema must be a mapping, got {type(constraints_schema).__name__!r}"
             )
-        env = constraints_to_cell_type_env(constraints_schema, constraints_data)
+        env = constraints_to_cell_type_env(constraints_schema, {})
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
 
     @classmethod
@@ -304,122 +305,6 @@ class DynamicRefConfig:
             overrides,
         )
 
-    @classmethod
-    def from_constraints_and_workbook(
-        cls,
-        constraints_schema: Mapping[str, Any],
-        workbook_path: str | Path,
-        *,
-        limits: DynamicRefLimits | None = None,
-        data_only: bool = True,
-    ) -> DynamicRefConfig:
-        """Build config from constraints schema plus workbook values for constant cells.
-
-        Constraints whose annotations carry a `FromWorkbook` marker are
-        treated as singleton domains derived from the current cached value in the
-        workbook.  Other constraints are interpreted via
-        `constraints_to_cell_type_env` as usual.
-
-        **Performance note:** The workbook is opened once in `read_only` mode
-        and values are read via fastpyxl's streaming parser.  `FromWorkbook`
-        addresses are sorted by (sheet, row, column) before iteration so that
-        each sheet's XML is parsed in a single forward pass.  For large sheets
-        whose constrained cells sit far down (e.g. row 900+), the initial parse
-        to that row can take tens of seconds; subsequent sequential reads on the
-        same sheet are fast.  This is a deliberate tradeoff: `FromWorkbook`
-        eliminates the maintenance burden of hardcoded `Literal` values at
-        the cost of a longer config-build step.
-        """
-        if isinstance(constraints_schema, type):
-            raise TypeError(
-                "constraints_schema must be a dict[str, type] mapping addresses to annotations, "
-                "not a TypedDict/class object."
-            )
-        if not isinstance(constraints_schema, Mapping):
-            raise TypeError(
-                f"constraints_schema must be a mapping, got {type(constraints_schema).__name__!r}"
-            )
-
-        hints = dict(constraints_schema)
-        dummy_data: dict[str, Any] = {k: None for k in hints}
-        env = constraints_to_cell_type_env(hints, dummy_data)
-
-        from_wb_items: list[tuple[str, str, str]] = []
-        for addr, annotated_type in hints.items():
-            if not _has_from_workbook_marker(annotated_type):
-                continue
-            sheet_name, coord = _split_addr_sheet_coord(addr)
-            from_wb_items.append((addr, sheet_name, coord))
-
-        from_wb_items.sort(key=lambda item: (item[1], coordinate_to_tuple(item[2])))
-
-        wb = fastpyxl.load_workbook(Path(workbook_path), data_only=data_only, read_only=True)
-        try:
-            for addr, sheet_name, coord in from_wb_items:
-                if sheet_name not in wb.sheetnames:
-                    raise DynamicRefError(
-                        f"Sheet {sheet_name!r} (from constraint {addr!r}) not found in workbook"
-                    )
-                ws = wb[sheet_name]
-                value = ws[coord].value
-                if value is None:
-                    continue
-                kind = _infer_kind_from_value(value)
-                norm = normalize_cell_type_env_key(addr)
-                env[norm] = CellType(
-                    kind=kind,
-                    enum=EnumDomain(values=frozenset({value})),
-                )
-        finally:
-            wb.close()
-
-        return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
-
-
-@dataclass(frozen=True)
-class FromWorkbook:
-    """Metadata marker: resolve domain from the current cached workbook value.
-
-    Use `Annotated[T, FromWorkbook()]` in the constraints schema to derive a
-    singleton domain at config-build time instead of hardcoding a `Literal`.
-    This eliminates maintenance when the workbook template changes, at the cost
-    of a slower `DynamicRefConfig.from_constraints_and_workbook` call (the
-    workbook must be opened and each marked cell read via a streaming parser).
-    """
-
-
-def _has_from_workbook_marker(annotated_type: Any) -> bool:
-    try:
-        from typing import Annotated
-    except ImportError:  # pragma: no cover - Annotated always available in supported versions
-        return False
-
-    if get_origin(annotated_type) is not Annotated:
-        return False
-    args = get_args(annotated_type)
-    if len(args) < 2:
-        return False
-    metadata = args[1:]
-    return any(isinstance(m, FromWorkbook) for m in metadata)
-
-
-def _split_addr_sheet_coord(addr: str) -> tuple[str, str]:
-    """Split an address-style key into (sheet_name, coord) and normalize quoting."""
-    try:
-        return parse_address(addr)
-    except ValueError as exc:
-        raise DynamicRefError(str(exc)) from exc
-
-
-def _infer_kind_from_value(value: Any) -> CellKind:
-    if isinstance(value, (int, float)):
-        return CellKind.NUMBER
-    if isinstance(value, bool):
-        return CellKind.BOOL
-    if isinstance(value, str):
-        return CellKind.STRING
-    return CellKind.ANY
-
 
 @dataclass(frozen=True)
 class GlobalWorkbookBounds(WorkbookBoundsProtocol):
@@ -455,6 +340,10 @@ def _sheet_from_addr(addr: str) -> str:
     return parse_address(addr)[0]
 
 
+_BLANK_RANGE_LEAF_TYPE = CellType(kind=CellKind.ANY, enum=EnumDomain(values=frozenset({None})))
+"""Cell type for declared `blank_ranges` leaves in OFFSET/INDEX/INDIRECT analysis."""
+
+
 def expand_leaf_env_to_argument_env(
     argument_refs: set[str],
     get_cell_formula: Callable[[str], str | None],
@@ -469,6 +358,7 @@ def expand_leaf_env_to_argument_env(
     type_analysis_cache: TypeAnalysisCache | None = None,
     workbook_sha256: str | None = None,
     get_cell_ast: Callable[[str], AstNode | None] | None = None,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> dict[str, CellType]:
     """Build a CellTypeEnv for all refs in the argument chain from leaf constraints only.
 
@@ -480,6 +370,9 @@ def expand_leaf_env_to_argument_env(
     When an intermediate cannot be inferred (e.g. its formula is OFFSET/INDIRECT and
     refs are empty after masking), it is assigned CellType(ANY); enumeration may then
     require a constraint for that cell.
+
+    Leaves inside `blank_rects` are treated as unconstrained (`Literal[None]`)
+    so declared structural pads do not need a `CellType` (issue #945).
 
     `max_range_cells` must match the graph builder's range expansion limit so static
     ranges collected from the AST align with
@@ -855,6 +748,13 @@ def expand_leaf_env_to_argument_env(
         keep_open = False
         try:
             if formula is None:
+                if blank_rects and address_in_blank_ranges(addr, blank_rects):
+                    cache[addr] = _BLANK_RANGE_LEAF_TYPE
+                    if _track_consumed:
+                        norm_key = normalize_cell_type_env_key(addr)
+                        _consumed_leaves.setdefault(addr, set()).add(norm_key)
+                        _record_consumed_leaf(norm_key)
+                    return None
                 raise DynamicRefError(
                     f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
                     "Add constraints only for leaf cells (non-formula) in the argument subgraph."

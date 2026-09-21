@@ -18,7 +18,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     load_package,
     required_param_names,
 )
-from tests.unit.exporter.inverted_tree.local_corpus import load_constraints_module
 
 _WORKBOOK = INVERTED_TREE_TINY_DSA_LABELLED / "tiny-dsa-labelled.xlsx"
 _BINDINGS_DIR = INVERTED_TREE_TINY_DSA_LABELLED / "bindings"
@@ -31,11 +30,6 @@ _DEFAULT_BASELINE = (
     61.48767596259631,
 )
 
-_constraints_mod = load_constraints_module(INVERTED_TREE_TINY_DSA_LABELLED / "constraints.py")
-assert _constraints_mod is not None
-_CONSTRAINTS = _constraints_mod.CONSTRAINTS
-
-
 def _labelled_graph():
     bindings = load_series_bindings(_BINDINGS_DIR)
     targets = all_series_targets(bindings, workbook=_WORKBOOK)
@@ -43,7 +37,9 @@ def _labelled_graph():
         _WORKBOOK,
         targets,
         load_values=True,
-        dynamic_refs=DynamicRefConfig.from_constraints(_CONSTRAINTS, {}),
+        dynamic_refs=DynamicRefConfig.from_bindings(
+            bindings, _WORKBOOK, bindings_path=_BINDINGS_DIR
+        ),
     )
     return bindings, graph
 
