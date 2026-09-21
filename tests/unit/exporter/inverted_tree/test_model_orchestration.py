@@ -14,9 +14,12 @@ from pathlib import Path
 import pytest
 
 from tests.unit.exporter.inverted_tree.helpers import (
+    bindings_document,
     generate_inverted,
     load_package,
     required_param_names,
+    series_entry,
+    write_workbook,
 )
 from tests.unit.exporter.inverted_tree.test_shape_a13_identity_flip import (
     _qcraft_bindings,
@@ -29,6 +32,20 @@ from tests.unit.exporter.inverted_tree.test_shared_subplan import (
     _prefix_workbook,
     _source,
 )
+
+
+def test_generated_package_exports_model(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "model_export.xlsx",
+        {"Inputs": {"A1": 2.0, "B1": "=A1*3"}},
+    )
+    document = bindings_document(
+        series_entry("seed", "Inputs!A1"),
+        series_entry("result", "Inputs!B1", direction="output"),
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="model_export")
+    assert "Model" in pkg.__all__
+    assert pkg.Model is pkg.api.Model
 
 
 def test_every_formula_is_one_model_attribute(tmp_path: Path) -> None:
