@@ -1401,6 +1401,31 @@ def _model_recurrence_group(
     return lines
 
 
+def _input_series_ids(catalog: SeriesCatalog) -> tuple[str, ...]:
+    """Retained input series ids in catalog order."""
+    return tuple(series.series_id for series in _retained(catalog) if series.direction == "input")
+
+
+def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
+    """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
+    names = _python_literal(_input_series_ids(catalog))
+    return [
+        "",
+        "    @classmethod",
+        "    def from_defaults(cls, **overrides: object) -> Model:",
+        '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
+        "        inputs = {",
+        "            name: getattr(data, f'{name.upper()}_DEFAULT')",
+        f"            for name in {names}",
+        "        }",
+        "        unknown = overrides.keys() - inputs.keys()",
+        "        if unknown:",
+        "            raise TypeError(f'unknown inputs: {sorted(unknown)}')",
+        "        inputs.update(overrides)",
+        "        return cls(**inputs)",
+    ]
+
+
 def _model_init(catalog: SeriesCatalog) -> list[str]:
     """Bind static inputs, evaluate labellers, then check runtime-axis inputs."""
     deferred_ids = _deferred_runtime_inputs(catalog)
@@ -1505,20 +1530,22 @@ def emit_named_api(
     constant_sets: Mapping[frozenset[str], str],
 ) -> str:
     """Emit the memoized `Model` and the public `compute_*` functions over it."""
-    inputs = [s for s in _retained(catalog) if s.direction == "input"]
+    inputs = [catalog.get(sid) for sid in _input_series_ids(catalog)]
     model = [
         "class Model:",
         '    """Formula series of the workbook, evaluated on demand from bound inputs.',
         "",
         "    Each attribute evaluates its named formula once per model. Only the",
         "    inputs bound at construction are available, so a public function",
-        "    supplies exactly the leaves of its output.",
+        "    supplies exactly the leaves of its output. `from_defaults` binds",
+        "    every input from `data.*_DEFAULT` and applies keyword overrides.",
         '    """',
         "",
     ]
     for series in inputs:
         model.append(f"    {series.series_id}: {_annotation(series)}")
     model.extend(_model_init(catalog))
+    model.extend(_model_from_defaults(catalog))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
