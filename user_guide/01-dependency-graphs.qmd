@@ -310,7 +310,11 @@ from excel_grapher.grapher import create_dependency_graph, DynamicRefConfig, Dyn
   Resolve dynamic refs using static constraints (cell types and limits). Missing or invalid domains still raise `DynamicRefError`.
 
 You typically author domains on the series binding sidecar and build a
-`DynamicRefConfig` with `from_bindings`. The low-level `from_constraints`
+`DynamicRefConfig` with `from_bindings`. Before that graph exists,
+`list_dynamic_ref_constraint_candidates` (CLI: `bindings candidates`) lists
+leaves that feed dynamic-ref arguments and have no domain yet. Cells behind
+an unresolved dynamic ref are omitted until the first domains are in, so the
+scan is repeated after each selector domain. The low-level `from_constraints`
 path still accepts a `dict[str, type]` of sheet-qualified addresses:
 
 ```python

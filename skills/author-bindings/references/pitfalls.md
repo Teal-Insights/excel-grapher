@@ -48,6 +48,22 @@ A compact range map such as `2: "2:4"` stamps one key onto every row.
 Structural blanks (`INDEX`/`MATCH` padding, NPV window overflow, separator
 rows) belong in `BLANK_RANGES`, not constants.
 
+## Extract-time domains are iterative
+
+`bindings candidates` is a pre-extract worklist of A1 leaves, not a series
+generator. One scalar `input` with `domain` (or a non-blank `constant`) per
+address is enough to extract. Choosing `input` versus `constant` is the
+semantic commitment the address table did not force.
+
+Re-run candidates after widening a selector domain. A too-narrow domain can
+make extract succeed while omitting a later `INDIRECT` or `OFFSET`.
+`attach_domains` covers leaves that do not feed dynamic refs; it does not
+discover those hidden cells.
+
+`constant` does not type a blank cell. A `greater_than` / `not_equal`
+relation without its partner series fails closed (`SeriesRelationError`)
+instead of emitting a guard.
+
 ## Extract-only domain pins need `validation.catalog: false`
 
 `OFFSET` / `INDEX` / `INDIRECT` inference reads a `CellType` per cell. A
