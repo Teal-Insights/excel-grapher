@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.5.0 (2026-09-21)
+
+### Bug Fixes
+
+- **grapher**: Tighten write-back cell validation fidelity
+  ([#960](https://github.com/Teal-Insights/excel-grapher/pull/960),
+  [`6d29ff1`](https://github.com/Teal-Insights/excel-grapher/commit/6d29ff13f83e394f36088ed1c447369489c02872))
+
+### Features
+
+- **grapher**: Excel write-back data validation for constrained inputs
+  ([#960](https://github.com/Teal-Insights/excel-grapher/pull/960),
+  [`6d29ff1`](https://github.com/Teal-Insights/excel-grapher/commit/6d29ff13f83e394f36088ed1c447369489c02872))
+
+- **grapher**: Write Excel data validation for constrained inputs
+  ([#960](https://github.com/Teal-Insights/excel-grapher/pull/960),
+  [`6d29ff1`](https://github.com/Teal-Insights/excel-grapher/commit/6d29ff13f83e394f36088ed1c447369489c02872))
+
+
 ## v23.4.0 (2026-09-21)
 
 ### Features
