@@ -267,7 +267,7 @@ def load_package(
             if key == name or key.startswith(name + "."):
                 del sys.modules[key]
         imported = importlib.import_module(name)
-        for sub in ("api", "internals", "runtime", "data", "validation"):
+        for sub in ("api", "internals", "runtime", "data", "validation", "model"):
             importlib.import_module(f"{name}.{sub}")
         return imported
     finally:

@@ -148,29 +148,29 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
 
 
 def emit_init_module(catalog: SeriesCatalog) -> str:
-    """Emit package `__init__.py` re-exporting public `compute_*` functions."""
-    names = [s.compute_name or f"compute_{s.series_id}" for s in catalog.output_series()]
-    if names:
-        imported = ", ".join(names)
-        import_line = f"from .api import {imported}"
-    else:
-        import_line = ""
+    """Emit package `__init__.py` re-exporting `Model` and public `compute_*`."""
+    computes = [s.compute_name or f"compute_{s.series_id}" for s in catalog.output_series()]
     lines = [
         '"""Inverted-tree mechanical extraction."""',
         "",
         "from __future__ import annotations",
         "",
         "from . import data",
-        "from .runtime import as_records",
-        "",
     ]
-    if import_line:
-        lines.append(import_line)
-        lines.append("")
-    lines.append("__all__ = [")
-    lines.append(f"    {'as_records'!r},")
-    lines.append(f"    {'data'!r},")
-    for name in names:
+    if computes:
+        lines.append(f"from .api import {', '.join(computes)}")
+    lines.extend(
+        [
+            "from .model import Model",
+            "from .runtime import as_records",
+            "",
+            "__all__ = [",
+            f"    {'as_records'!r},",
+            f"    {'data'!r},",
+            f"    {'Model'!r},",
+        ]
+    )
+    for name in computes:
         lines.append(f"    {name!r},")
     lines.append("]")
     lines.append("")
@@ -325,7 +325,7 @@ def generate_inverted_tree_modules(
     bindings_workbook: Path | str,
     blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
-    """Generate api/internals/runtime/data modules for inverted-tree export.
+    """Generate api/model/internals/runtime/data modules for inverted-tree export.
 
     Args:
         graph: Dependency graph covering the binding closure.

@@ -161,21 +161,21 @@ def run_internals(
 
     sys.path.insert(0, str(package_dir.parent))
     package = importlib.import_module(package_dir.name)
-    data, internals, api = package.data, package.internals, package.api
+    data, internals, session = package.data, package.internals, package.model
     graph = load_graph(graph_path)
     blanks = None if blank_ranges is None else load_blank_ranges_module(blank_ranges)
     evaluator = FormulaEvaluator(graph, blank_ranges=blanks)
     inputs = {
         name: getattr(data, name.upper() + "_DEFAULT")
-        for name in api.Model.__annotations__
+        for name in session.Model.__annotations__
         if hasattr(data, name.upper() + "_DEFAULT")
     }
-    model = api.Model(**inputs)
+    model = session.Model(**inputs)
     from functools import cached_property
 
     series = [
         name
-        for name, attribute in vars(api.Model).items()
+        for name, attribute in vars(session.Model).items()
         if isinstance(attribute, cached_property) and not name.startswith("_")
     ]
     group_params: dict[str, tuple[str, ...]] = {}

@@ -45,6 +45,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[1]
 _GENERATED_MODULES = (
     "__init__.py",
     "api.py",
+    "model.py",
     "validation.py",
     "internals.py",
     "data.py",

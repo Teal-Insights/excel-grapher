@@ -85,12 +85,14 @@ def _rate_bindings() -> dict:
 
 def test_from_workbook_emits_mixin_and_catalog_input_ids(tmp_path: Path) -> None:
     modules = generate_inverted(_seed_workbook(tmp_path / "template.xlsx", 2.0), _seed_bindings())
+    model = modules["model.py"]
     api = modules["api.py"]
-    assert "class _BoundInputs:" in api
-    assert "def from_workbook" in api
-    assert "cls.__annotations__" not in api
-    assert '_INPUT_IDS: tuple[str, ...] = ("seed",)' in api
-    assert "class Model(_BoundInputs):" in api
+    assert "class _BoundInputs:" in model
+    assert "def from_workbook" in model
+    assert "cls.__annotations__" not in model
+    assert '_INPUT_IDS: tuple[str, ...] = ("seed",)' in model
+    assert "class Model(_BoundInputs):" in model
+    assert "class Model" not in api
     assert "workbook.py" in modules
     assert "def compute_result" in api
     assert "workbook" not in api[api.index("def compute_result") :]
@@ -103,7 +105,7 @@ def test_from_workbook_reads_case_workbook_and_overrides_win(tmp_path: Path) -> 
         tmp_path,
         name="from_workbook_seed",
     )
-    Model = pkg.api.Model
+    Model = pkg.Model
     case = _seed_workbook(tmp_path / "case.xlsx", 4.0)
     extra = write_workbook(
         tmp_path / "extra_sheets.xlsx",
@@ -125,7 +127,7 @@ def test_from_workbook_missing_input_sheet_raises(tmp_path: Path) -> None:
     )
     missing = write_workbook(tmp_path / "missing.xlsx", {"Other": {"A1": 4.0}})
     with pytest.raises(KeyError, match="Inputs!A1"):
-        pkg.api.Model.from_workbook(missing)
+        pkg.Model.from_workbook(missing)
 
 
 def test_from_workbook_rejects_unknown_overrides(tmp_path: Path) -> None:
@@ -136,7 +138,7 @@ def test_from_workbook_rejects_unknown_overrides(tmp_path: Path) -> None:
     )
     case = _seed_workbook(tmp_path / "case.xlsx", 4.0)
     with pytest.raises(TypeError, match="unknown inputs"):
-        pkg.api.Model.from_workbook(case, discount_rate=0.04)
+        pkg.Model.from_workbook(case, discount_rate=0.04)
 
 
 def test_from_workbook_leaves_constants_on_codegen_snapshot(tmp_path: Path) -> None:
@@ -146,7 +148,7 @@ def test_from_workbook_leaves_constants_on_codegen_snapshot(tmp_path: Path) -> N
         tmp_path,
         name="from_workbook_const",
     )
-    Model = pkg.api.Model
+    Model = pkg.Model
     case = _constant_workbook(tmp_path / "case.xlsx", seed=4.0, factor=9.0)
     assert pkg.data.FACTOR == 3.0
     assert Model.from_workbook(case).result == 12.0
@@ -164,10 +166,10 @@ def test_from_workbook_builds_tensors_with_records(tmp_path: Path) -> None:
         name="from_workbook_rate",
     )
     case = _rate_workbook(tmp_path / "case.xlsx", 1.5, 2.5)
-    model = pkg.api.Model.from_workbook(case)
+    model = pkg.Model.from_workbook(case)
     assert model.out == pytest.approx(4.0)
     overlay = pkg.data.RATE.with_records((((1,), 3.0), ((2,), 4.0)))
-    assert pkg.api.Model.from_workbook(case, rate=overlay).out == pytest.approx(7.0)
+    assert pkg.Model.from_workbook(case, rate=overlay).out == pytest.approx(7.0)
 
 
 def test_from_workbook_uses_init_validation_checks(tmp_path: Path) -> None:
@@ -176,7 +178,7 @@ def test_from_workbook_uses_init_validation_checks(tmp_path: Path) -> None:
         tmp_path,
         name="from_workbook_flag",
     )
-    Model = pkg.api.Model
+    Model = pkg.Model
     valid = write_workbook(
         tmp_path / "flag_case.xlsx",
         {"Inputs": {"A1": 1}, "Outputs": {"A1": "=Inputs!A1"}},
@@ -199,8 +201,8 @@ def test_from_workbook_reuses_deferred_runtime_labeller_init(tmp_path: Path) -> 
     )
     catalog, _deps, graph = inverted_graph_parts(workbook, _labelled_bindings())
     expected = call_compute(pkg, "path", named_input_kwargs(pkg, catalog, graph))
-    model = pkg.api.Model.from_workbook(workbook)
+    model = pkg.Model.from_workbook(workbook)
     assert list(model.path.items()) == list(expected.items())
     shifted = _labelled_workbook(tmp_path, first=2025, shock_year=2026)
     with pytest.raises(pkg.tensor.SchemaError):
-        pkg.api.Model.from_workbook(shifted)
+        pkg.Model.from_workbook(shifted)

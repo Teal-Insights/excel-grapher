@@ -158,6 +158,7 @@ def test_load_package_pops_sys_path(tmp_path) -> None:
     modules = {
         "__init__.py": "",
         "api.py": "",
+        "model.py": "",
         "internals.py": "",
         "runtime.py": "",
         "data.py": "",

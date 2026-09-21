@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.8.0 (2026-09-21)
+
+### Features
+
+- **export**: Emit Model in model.py and keep compute_* in api.py
+  ([#940](https://github.com/Teal-Insights/excel-grapher/pull/940),
+  [`71b762d`](https://github.com/Teal-Insights/excel-grapher/commit/71b762ddb8e9577816e7a5d826762d30c93903bf))
+
+- **export**: Keep Model off the functional api surface
+  ([#940](https://github.com/Teal-Insights/excel-grapher/pull/940),
+  [`71b762d`](https://github.com/Teal-Insights/excel-grapher/commit/71b762ddb8e9577816e7a5d826762d30c93903bf))
+
+### Testing
+
+- **export**: Include model.py in load_package path stub
+  ([#940](https://github.com/Teal-Insights/excel-grapher/pull/940),
+  [`71b762d`](https://github.com/Teal-Insights/excel-grapher/commit/71b762ddb8e9577816e7a5d826762d30c93903bf))
+
+- **export**: Narrow getmodule before comparing Model identity
+  ([#940](https://github.com/Teal-Insights/excel-grapher/pull/940),
+  [`71b762d`](https://github.com/Teal-Insights/excel-grapher/commit/71b762ddb8e9577816e7a5d826762d30c93903bf))
+
+
+## v21.7.0 (2026-09-21)
+
+### Features
+
+- **export**: Re-export Model from generated package __all__
+  ([#938](https://github.com/Teal-Insights/excel-grapher/pull/938),
+  [`4632342`](https://github.com/Teal-Insights/excel-grapher/commit/4632342067e5522b4364ab2d22e3b60c5e247631))
+
+
 ## v21.6.0 (2026-09-21)
 
 ### Bug Fixes
