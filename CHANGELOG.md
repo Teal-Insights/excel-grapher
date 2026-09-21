@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.3.1 (2026-09-21)
+
+### Bug Fixes
+
+- **grapher**: Resolve OFFSET defined names whose base is another name
+  ([#958](https://github.com/Teal-Insights/excel-grapher/pull/958),
+  [`a737cf4`](https://github.com/Teal-Insights/excel-grapher/commit/a737cf45c0526260fe962c816842cfa84c387e01))
+
+
 ## v23.3.0 (2026-09-21)
 
 ### Features
