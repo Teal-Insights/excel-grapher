@@ -9,6 +9,7 @@ import tomllib
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 

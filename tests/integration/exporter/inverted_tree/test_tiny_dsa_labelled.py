@@ -30,6 +30,7 @@ _DEFAULT_BASELINE = (
     61.48767596259631,
 )
 
+
 def _labelled_graph():
     bindings = load_series_bindings(_BINDINGS_DIR)
     targets = all_series_targets(bindings, workbook=_WORKBOOK)

@@ -16,7 +16,6 @@ from typing import TYPE_CHECKING, Any, cast
 if TYPE_CHECKING:
     from excel_grapher.grapher.type_analysis_cache import TypeAnalysisCache
 
-import fastpyxl
 from fastpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
 
 from excel_grapher.core.address_keys import parse_address
