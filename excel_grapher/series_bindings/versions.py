@@ -27,6 +27,11 @@ SUPPORTED_SCHEMA_VERSIONS: frozenset[str] = frozenset(
     }
 )
 
+CURRENT_SCHEMA_VERSION: str = max(
+    SUPPORTED_SCHEMA_VERSIONS,
+    key=lambda version: tuple(int(part) for part in version.split(".")),
+)
+
 IMPLEMENTED_BIND_KINDS: frozenset[str] = frozenset(
     {
         "data_cell",

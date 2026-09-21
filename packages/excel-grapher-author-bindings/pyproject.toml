@@ -1,0 +1,24 @@
+[project]
+name = "excel-grapher-author-bindings"
+version = "21.2.0"
+description = "Agent skill for authoring excel-grapher series-binding sidecars"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+authors = [
+    { name = "Teal Insights", email = "info@tealinsights.com" },
+]
+
+[project.urls]
+Homepage = "https://github.com/Teal-Insights/excel-grapher"
+Repository = "https://github.com/Teal-Insights/excel-grapher"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["excel_grapher_author_bindings"]
+artifacts = [
+    "excel_grapher_author_bindings/author-bindings/**",
+]

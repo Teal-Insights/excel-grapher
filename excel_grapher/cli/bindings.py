@@ -9,7 +9,9 @@ import tempfile
 import warnings
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
+
+import yaml
 
 from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
@@ -21,11 +23,26 @@ from excel_grapher.grapher.constraints import (
     resolve_constraints_path,
 )
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefError
+from excel_grapher.series_bindings.audit import (
+    DIRECTIONS,
+    audit_binding_resolutions,
+    format_audit_findings,
+)
+from excel_grapher.series_bindings.burndown import (
+    format_burndown_report,
+    internal_binding_burndown,
+    load_exempt_addresses,
+)
 from excel_grapher.series_bindings.domains import undomained_leaves
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
+from excel_grapher.series_bindings.resolve import BindingDirection
 from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
 from excel_grapher.series_bindings.smoke import BindingsSmokeError
 from excel_grapher.series_bindings.types import ValidationIssue, ValidationReport
+from excel_grapher.series_bindings.upsert import (
+    BindingUpsertError,
+    upsert_series_binding,
+)
 from excel_grapher.series_bindings.workflow import (
     generate_bindings_modules,
     resolve_bindings_path,
@@ -99,6 +116,13 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
         "a constraints module.",
     )
+    validate_parser.add_argument(
+        "--blank-ranges",
+        type=Path,
+        default=None,
+        help="Python module exposing BLANK_RANGES: Sequence[str] "
+        "(sheet-qualified rectangles omitted from the graph)",
+    )
     viz_parser = bindings_sub.add_parser(
         "viz",
         help="Write a statement-graph HTML visualization from series bindings",
@@ -170,6 +194,109 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Print the undomained leaf list as JSON",
     )
 
+    audit_parser = bindings_sub.add_parser(
+        "audit",
+        help="Fail if series resolution would fail codegen",
+    )
+    _add_workbook_wiring_args(audit_parser)
+    audit_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the audit report as JSON",
+    )
+    audit_parser.add_argument(
+        "--direction",
+        action="append",
+        choices=list(DIRECTIONS),
+        help="Limit to one direction (repeatable). Default: all.",
+    )
+    audit_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Treat warnings as fatal (exit 1 when any warning is present)",
+    )
+
+    burndown_parser = bindings_sub.add_parser(
+        "burndown",
+        help="Print unbound formula cells as a coverage worklist",
+    )
+    _add_workbook_wiring_args(burndown_parser)
+    burndown_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the coverage worklist as JSON",
+    )
+    burndown_parser.add_argument(
+        "--per-sheet",
+        default=None,
+        help="Only print row detail for this sheet (summary always prints)",
+    )
+    burndown_parser.add_argument(
+        "--max-rows",
+        type=int,
+        default=None,
+        help="Limit row detail lines per sheet",
+    )
+    burndown_parser.add_argument(
+        "--exempt",
+        type=Path,
+        default=None,
+        help="Text file of reviewed sheet-qualified addresses to omit from the worklist",
+    )
+    burndown_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 when any unbound internal formula cells remain",
+    )
+
+    upsert_parser = bindings_sub.add_parser(
+        "upsert",
+        help="Insert or replace one series after fail-closed checks",
+    )
+    _add_workbook_wiring_args(upsert_parser)
+    upsert_parser.add_argument(
+        "--series",
+        type=Path,
+        required=True,
+        help="YAML file with one series mapping (or a document with series: [one entry])",
+    )
+    upsert_parser.add_argument(
+        "--replace",
+        action="store_true",
+        help="Replace an existing series with the same id",
+    )
+
+
+def _add_workbook_wiring_args(parser: argparse.ArgumentParser) -> None:
+    """Add workbook / sidecar / constraints arguments shared by bindings commands."""
+    parser.add_argument("workbook", type=Path, help="Path to the .xlsx workbook")
+    parser.add_argument(
+        "--bindings",
+        type=Path,
+        default=None,
+        help="Binding sidecar file or shard directory (default: colocated sidecar)",
+    )
+    parser.add_argument(
+        "--constraints",
+        type=Path,
+        default=None,
+        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type] "
+        "(same contract as corpus.toml entries). Used to resolve OFFSET/INDEX/INDIRECT.",
+    )
+    parser.add_argument(
+        "--use-cached-dynamic-refs",
+        action="store_true",
+        help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
+        "a constraints module.",
+    )
+    parser.add_argument(
+        "--blank-ranges",
+        type=Path,
+        default=None,
+        help="Python module exposing BLANK_RANGES: Sequence[str] "
+        "(sheet-qualified rectangles omitted from the graph)",
+    )
+
 
 def dispatch(args: argparse.Namespace) -> int:
     """Dispatch a ``bindings`` subcommand."""
@@ -179,6 +306,12 @@ def dispatch(args: argparse.Namespace) -> int:
         return cmd_viz(args)
     if args.bindings_command == "undomained":
         return cmd_undomained(args)
+    if args.bindings_command == "audit":
+        return cmd_audit(args)
+    if args.bindings_command == "burndown":
+        return cmd_burndown(args)
+    if args.bindings_command == "upsert":
+        return cmd_upsert(args)
     print(f"Unknown bindings command: {args.bindings_command}", file=sys.stderr)
     return 2
 
@@ -270,6 +403,11 @@ def cmd_validate(args: argparse.Namespace) -> int:
             bindings_path,
             dynamic_refs=dynamic_refs,
             use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+            blank_ranges=(
+                load_blank_ranges_module(args.blank_ranges)
+                if getattr(args, "blank_ranges", None) is not None
+                else None
+            ),
         )
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)
@@ -278,6 +416,9 @@ def cmd_validate(args: argparse.Namespace) -> int:
         print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
         return 1
     except ConstraintsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except BlankRangesLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
     except (DynamicRefError, ValueError) as exc:
@@ -383,6 +524,177 @@ def cmd_undomained(args: argparse.Namespace) -> int:
         print("\n".join(leaves))
     else:
         print("ok: every graph leaf has a bindings domain")
+    return 0
+
+
+def _parse_audit_directions(raw: list[str] | None) -> tuple[BindingDirection, ...]:
+    if not raw:
+        return DIRECTIONS
+    parsed: list[BindingDirection] = []
+    allowed = set(DIRECTIONS)
+    for item in raw:
+        if item not in allowed:
+            raise SystemExit(f"Unknown direction {item!r}; expected one of {sorted(allowed)}")
+        direction = cast(BindingDirection, item)
+        if direction not in parsed:
+            parsed.append(direction)
+    return tuple(parsed)
+
+
+def _load_series_document(path: Path) -> dict[str, Any]:
+    if not path.is_file():
+        raise BindingUpsertError(f"Series file not found: {path}")
+    loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(loaded, dict):
+        raise BindingUpsertError(f"Series file root must be a mapping: {path}")
+    if "series" in loaded:
+        series = loaded["series"]
+        if not isinstance(series, list) or len(series) != 1 or not isinstance(series[0], dict):
+            raise BindingUpsertError(
+                f"Series file {path} must contain exactly one series entry when using "
+                "a bindings document shape"
+            )
+        return series[0]
+    return loaded
+
+
+def _bindings_context(args: argparse.Namespace):
+    workbook = args.workbook
+    if not workbook.is_file():
+        print(f"Workbook not found: {workbook}", file=sys.stderr)
+        return None
+    try:
+        bindings_path = resolve_bindings_path(workbook, args.bindings)
+        bindings_doc = load_series_bindings(bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        blank_ranges = (
+            load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
+        )
+        result = validate_bindings_workbook(
+            workbook,
+            bindings_path,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+            blank_ranges=blank_ranges,
+        )
+    except SeriesBindingsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return None
+    except SeriesBindingsSchemaError as exc:
+        print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
+        return None
+    except ConstraintsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return None
+    except BlankRangesLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return None
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
+        return None
+    return workbook, bindings_path, result
+
+
+def cmd_audit(args: argparse.Namespace) -> int:
+    """Run ``excel-grapher bindings audit``."""
+    loaded = _bindings_context(args)
+    if loaded is None:
+        return 1
+    workbook, _bindings_path, result = loaded
+    directions = _parse_audit_directions(args.direction)
+    report = audit_binding_resolutions(
+        result["graph"],
+        result["bindings"],
+        workbook=workbook,
+        directions=directions,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2, default=str))
+    else:
+        print(
+            f"Binding resolution audit: {report.error_count} error(s), "
+            f"{report.warning_count} warning(s) "
+            f"(directions={','.join(directions)})"
+        )
+        lines = format_audit_findings(report.findings)
+        if lines:
+            print()
+            print("\n".join(lines))
+        else:
+            print("No resolution issues found.")
+    if not report.ok:
+        return 1
+    if args.strict and report.warning_count > 0:
+        return 1
+    return 0
+
+
+def cmd_burndown(args: argparse.Namespace) -> int:
+    """Run ``excel-grapher bindings burndown``."""
+    loaded = _bindings_context(args)
+    if loaded is None:
+        return 1
+    workbook, _bindings_path, result = loaded
+    exempt = load_exempt_addresses(args.exempt) if args.exempt is not None else frozenset()
+    report = internal_binding_burndown(
+        result["graph"],
+        result["bindings"],
+        exempt_cells=exempt,
+        workbook=workbook,
+        per_sheet=args.per_sheet,
+        max_rows=args.max_rows,
+    )
+    if args.json:
+        print(json.dumps(report.to_dict(), indent=2, default=str))
+    else:
+        print("\n".join(format_burndown_report(report)))
+    if args.strict and report.unbound_count > 0:
+        return 1
+    return 0
+
+
+def cmd_upsert(args: argparse.Namespace) -> int:
+    """Run ``excel-grapher bindings upsert``."""
+    workbook = args.workbook
+    if not workbook.is_file():
+        print(f"Workbook not found: {workbook}", file=sys.stderr)
+        return 1
+    try:
+        series = _load_series_document(args.series)
+        bindings_path = resolve_bindings_path(workbook, args.bindings, create_if_missing=True)
+        if bindings_path.is_file() or bindings_path.is_dir():
+            bindings_doc = load_series_bindings(bindings_path)
+        else:
+            bindings_doc = {}
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        blank_ranges = (
+            load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
+        )
+        result = upsert_series_binding(
+            workbook,
+            bindings_path,
+            series,
+            replace=args.replace,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+            blank_ranges=blank_ranges,
+        )
+    except BindingUpsertError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except SeriesBindingsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except ConstraintsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except BlankRangesLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
+        return 1
+    print(f"{result.action} {result.series_id} -> {result.shard_path}")
     return 0
 
 

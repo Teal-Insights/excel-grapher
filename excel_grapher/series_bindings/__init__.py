@@ -2,6 +2,33 @@
 
 from __future__ import annotations
 
+from excel_grapher.series_bindings.audit import (
+    DIRECTIONS,
+    AuditFinding,
+    BindingResolutionAuditReport,
+    audit_binding_resolutions,
+    find_duplicate_formula_cell_bindings,
+    find_duplicate_internal_formula_cell_bindings,
+    find_sparse_label_bind_issues,
+    findings_from_resolution,
+    format_audit_findings,
+    unfilled_label_binds,
+)
+from excel_grapher.series_bindings.burndown import (
+    BindingBurndownReport,
+    collapse_unbound_cells_to_ranges,
+    contiguous_column_ranges,
+    find_unbound_internal_formula_cells,
+    format_burndown_report,
+    format_row_column_spans,
+    group_unbound_cells_by_sheet_row,
+    internal_binding_burndown,
+    layout_hint_for_range,
+    layout_hint_for_span,
+    load_exempt_addresses,
+    manifest_binding_addresses,
+    required_internal_formula_cells,
+)
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.constant_series import derive_constant_series
 from excel_grapher.series_bindings.domains import (
@@ -75,8 +102,16 @@ from excel_grapher.series_bindings.types import (
     ValidationReport,
     WorkbookSeriesBindings,
 )
+from excel_grapher.series_bindings.upsert import (
+    SHARD_FILENAMES,
+    BindingUpsertError,
+    BindingUpsertResult,
+    bootstrap_binding_shards,
+    upsert_series_binding,
+)
 from excel_grapher.series_bindings.validate import validate_series_bindings
 from excel_grapher.series_bindings.versions import (
+    CURRENT_SCHEMA_VERSION,
     IMPLEMENTED_BIND_KINDS,
     IMPLEMENTED_LAYOUTS,
     SUPPORTED_SCHEMA_VERSIONS,
@@ -101,8 +136,16 @@ __all__ = [
     "OutputSeriesCell",
     "Record",
     "Records",
+    "AuditFinding",
+    "BindingBurndownReport",
+    "BindingResolutionAuditReport",
+    "BindingUpsertError",
+    "BindingUpsertResult",
+    "CURRENT_SCHEMA_VERSION",
+    "DIRECTIONS",
     "IMPLEMENTED_BIND_KINDS",
     "IMPLEMENTED_LAYOUTS",
+    "SHARD_FILENAMES",
     "SUPPORTED_SCHEMA_VERSIONS",
     "LeafResolution",
     "ResolutionIssue",
@@ -158,6 +201,27 @@ __all__ = [
     "validate_bindings_document",
     "validate_bindings_workbook",
     "validate_series_bindings",
+    "audit_binding_resolutions",
+    "bootstrap_binding_shards",
+    "collapse_unbound_cells_to_ranges",
+    "contiguous_column_ranges",
+    "find_duplicate_formula_cell_bindings",
+    "find_duplicate_internal_formula_cell_bindings",
+    "find_sparse_label_bind_issues",
+    "find_unbound_internal_formula_cells",
+    "findings_from_resolution",
+    "format_audit_findings",
+    "format_burndown_report",
+    "format_row_column_spans",
+    "group_unbound_cells_by_sheet_row",
+    "internal_binding_burndown",
+    "layout_hint_for_range",
+    "layout_hint_for_span",
+    "load_exempt_addresses",
+    "manifest_binding_addresses",
+    "required_internal_formula_cells",
+    "unfilled_label_binds",
+    "upsert_series_binding",
     "is_bind_implemented",
     "is_layout_implemented",
 ]

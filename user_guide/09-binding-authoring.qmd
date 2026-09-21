@@ -1,0 +1,84 @@
+---
+title: "Authoring series bindings"
+guide-section: "Export & quality"
+---
+
+Agents and humans share one fail-closed loop: declare sidecar YAML, then run
+`excel-grapher bindings validate` and `bindings audit` until codegen would
+succeed. `bindings burndown` is a **coverage worklist** for leftover formula
+cells **inside the current bound graph closure** (not a full workbook walk),
+not a generator of candidate series.
+
+The author-bindings skill is a **separate distribution artifact**. It is not
+inside the `excel-grapher` wheel. Agents load a copied folder, not a Python
+extra. Canonical files live at `skills/author-bindings/` (tests copy that tree
+to `.agents/skills/author-bindings/` and `.cursor/skills/author-bindings/` in
+this repository). From a git clone or the `excel-grapher` sdist:
+
+```bash
+mkdir -p .agents/skills
+cp -R skills/author-bindings .agents/skills/author-bindings
+```
+
+Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
+`.claude/skills/author-bindings`. User-level installs go under
+`~/.agents/skills/author-bindings`.
+
+The optional `excel-grapher-author-bindings` package is a **file source** for
+that copy, not how agents discover skills:
+
+```python
+from excel_grapher.skills import author_bindings_skill_dir
+
+with author_bindings_skill_dir() as skill_dir:
+    print(skill_dir)
+```
+
+Schema version for new sidecars comes from the package, not a prompt string:
+
+```python
+from excel_grapher.series_bindings import CURRENT_SCHEMA_VERSION
+```
+
+## What to author
+
+Write four shards (empty `series: []` is fine while bootstrapping):
+
+- `inputs.bindings.yaml` — editable leaves (`input: {}`)
+- `outputs.bindings.yaml` — public `compute_*` functions
+- `internals.bindings.yaml` — formula-cell triangulation (`internal: {}`)
+- `constants.bindings.yaml` — reader-only leaves (`constant: {}`)
+
+Prefer one series per **semantic family**. If rows share a label dimension and
+headers share a key (usually `TIME_PERIOD`), use `layout: matrix`. Do not stamp
+one series per burndown row.
+
+`validate_series_bindings` can look fine while resolution `ok=False`. Codegen
+requires `ok=True`. Sparse `column_header` / `row_label` binds without
+`fill: true` are the usual cause.
+
+Empty shards yield an empty graph. `bindings burndown` reporting zero unbound
+cells in that case is **not** full workbook coverage.
+
+## CLI
+
+```bash
+uv run excel-grapher bindings validate WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings audit WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings burndown WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings upsert WORKBOOK --bindings BINDINGS --series one.yaml
+```
+
+- **audit** — codegen-fatal worklist (`bind_resolution_failed`,
+  `partial_bind_failure`, `sparse_label_without_fill`, duplicate formula
+  ownership, empty public series). `--strict` also fails on warnings.
+- **burndown** — unbound formula cells in the bound graph closure, collapsed to
+  A1 rectangles, with weak layout hints. `--strict` fails when anything remains
+  unbound. `--max-rows` prints `... (truncated)` when row detail is cut off.
+- **upsert** — write **one** series after schema, occupancy, and resolution
+  checks against a temporary copy. `--replace` updates an existing id. There is
+  no catalog → four-file bulk emitter. Library `use_cached_dynamic_refs`
+  defaults to True; the CLI flag `--use-cached-dynamic-refs` defaults to False.
+
+Full flag reference: [Command-line interface](cli.qmd). Schema and field
+reference: [Series bindings](05-series-bindings.qmd).

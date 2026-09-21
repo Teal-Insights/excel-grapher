@@ -1165,6 +1165,7 @@ Package discovery is `api.__all__` (compute names). `list_groups()` is not emitt
 ## Command-line validation
 
 Full CLI reference: [Command-line interface](cli.qmd).
+Authoring loop (skill, audit, burndown, upsert): [Authoring series bindings](binding-authoring.qmd).
 
 Quick examples:
 
@@ -1173,6 +1174,8 @@ excel-grapher bindings validate lic_inputs.xlsx
 excel-grapher bindings validate lic_inputs.xlsx --json
 excel-grapher bindings validate lic_inputs.xlsx --smoke-test
 excel-grapher bindings validate lic_inputs.xlsx --smoke-test --emit-dir ./generated
+excel-grapher bindings audit lic_inputs.xlsx
+excel-grapher bindings burndown lic_inputs.xlsx
 ```
 
 By default the command resolves `lic_inputs.bindings.yaml` or a `lic_inputs.bindings/` shard

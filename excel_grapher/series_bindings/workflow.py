@@ -118,33 +118,50 @@ def _explicit_bindings_candidates(workbook: Path, bindings: Path) -> list[Path]:
     return candidates
 
 
-def resolve_bindings_path(workbook: Path, bindings: Path | None = None) -> Path:
+def resolve_bindings_path(
+    workbook: Path,
+    bindings: Path | None = None,
+    *,
+    create_if_missing: bool = False,
+) -> Path:
     """Resolve a binding sidecar path from an explicit path or workbook conventions.
 
     Args:
-        workbook: Path to the ``.xlsx`` workbook.
+        workbook: Path to the `.xlsx` workbook.
         bindings: Optional explicit sidecar file or shard directory.
+        create_if_missing: When True, return the path that should be created
+            instead of raising if no sidecar exists yet. Relative `--bindings`
+            values resolve next to the workbook. This does not create files.
 
     Returns:
-        Existing binding sidecar file or directory path.
+        Binding sidecar file or directory path. Existing paths are preferred;
+        with `create_if_missing` the returned path may not exist yet.
 
     Raises:
-        SeriesBindingsLoadError: When no sidecar can be resolved.
+        SeriesBindingsLoadError: When no sidecar can be resolved and
+            `create_if_missing` is False.
     """
     if bindings is not None:
-        for candidate in _explicit_bindings_candidates(workbook, bindings):
+        candidates = _explicit_bindings_candidates(workbook, bindings)
+        for candidate in candidates:
             if candidate.is_file() or candidate.is_dir():
                 return candidate
-        tried = ", ".join(str(path) for path in _explicit_bindings_candidates(workbook, bindings))
+        if create_if_missing:
+            if not bindings.is_absolute():
+                return workbook.parent / bindings
+            return bindings
+        tried = ", ".join(str(path) for path in candidates)
         raise SeriesBindingsLoadError(f"Binding path does not exist: {bindings} (tried: {tried})")
 
-    candidates: list[Path] = [
+    candidates = [
         workbook.with_suffix(".bindings.yaml"),
         workbook.parent / f"{workbook.stem}.bindings",
     ]
     for candidate in candidates:
         if candidate.is_file() or candidate.is_dir():
             return candidate
+    if create_if_missing:
+        return workbook.parent / f"{workbook.stem}.bindings"
 
     tried = ", ".join(str(path) for path in candidates)
     raise SeriesBindingsLoadError(
