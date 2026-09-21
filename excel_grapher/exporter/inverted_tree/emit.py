@@ -325,7 +325,7 @@ def generate_inverted_tree_modules(
     bindings_workbook: Path | str,
     blank_ranges: Sequence[str] | None = None,
 ) -> dict[str, str]:
-    """Generate api/internals/runtime/data modules for inverted-tree export.
+    """Generate api/model/internals/runtime/data modules for inverted-tree export.
 
     Args:
         graph: Dependency graph covering the binding closure.

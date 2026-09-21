@@ -154,6 +154,7 @@ def test_stride_k_code_size_independent_of_series_length(tmp_path: Path) -> None
     large = generate_inverted(large_wb, _stride_k_bindings(large_n))
     assert len(small["internals.py"].splitlines()) == len(large["internals.py"].splitlines())
     assert len(small["api.py"].splitlines()) == len(large["api.py"].splitlines())
+    assert len(small["model.py"].splitlines()) == len(large["model.py"].splitlines())
 
 
 def test_dual_lag_code_size_independent_of_series_length(tmp_path: Path) -> None:
@@ -164,3 +165,4 @@ def test_dual_lag_code_size_independent_of_series_length(tmp_path: Path) -> None
     large = generate_inverted(large_wb, _stride_k_bindings(large_n))
     assert len(small["internals.py"].splitlines()) == len(large["internals.py"].splitlines())
     assert len(small["api.py"].splitlines()) == len(large["api.py"].splitlines())
+    assert len(small["model.py"].splitlines()) == len(large["model.py"].splitlines())

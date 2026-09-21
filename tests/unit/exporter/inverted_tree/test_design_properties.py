@@ -472,7 +472,7 @@ def test_code_size_independent_of_period_count(
     )
     small = generate_inverted(small_wb, bindings_fn(small_n))
     large = generate_inverted(large_wb, bindings_fn(large_n))
-    for filename in ("api.py", "internals.py"):
+    for filename in ("api.py", "model.py", "internals.py"):
         small_lines = small[filename].splitlines()
         large_lines = large[filename].splitlines()
         assert len(small_lines) == len(large_lines), (

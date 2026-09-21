@@ -1,11 +1,11 @@
-"""Emit the public named tensor contract: `data`, `internals`, `validation`, and `api`.
+"""Emit the public named tensor contract: `data`, `internals`, `validation`, `model`, and `api`.
 
 Every formula series becomes one inspectable named function in `internals`
 whose body is the workbook formula family expressed over semantic
-coordinates. Public `compute_*` functions orchestrate those functions in
-dependency order, sharing intermediate results. Input dtype coercion, schema,
-domain, and value-map checks live in `validation` so `api` stays the
-user-facing surface.
+coordinates. `Model` binds inputs once and evaluates those functions on
+demand. Public `compute_*` functions construct a `Model` and read one
+attribute. Input dtype coercion, schema, domain, and value-map checks live
+in `validation` so `api` stays the functional surface.
 Shared `_CONSTANTS_*` aliases live in `data` and are imported by `api`.
 There is no private positional calculation path.
 """
@@ -1193,7 +1193,7 @@ def _emit_recurrence_group(
 
 
 # ---------------------------------------------------------------------------
-# api.py
+# model.py
 # ---------------------------------------------------------------------------
 
 
@@ -1498,13 +1498,12 @@ def _key_note(
     return notes
 
 
-def emit_named_api(
+def _model_class(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
-    constant_sets: Mapping[frozenset[str], str],
-) -> str:
-    """Emit the memoized `Model` and the public `compute_*` functions over it."""
+) -> list[str]:
+    """Lines of the memoized `Model` class."""
     inputs = [s for s in _retained(catalog) if s.direction == "input"]
     model = [
         "class Model:",
@@ -1533,6 +1532,39 @@ def emit_named_api(
             model.extend(_model_recurrence_group(scc, deps, catalog))
             continue
         model.extend(_model_attribute(series, deps, catalog))
+    return model
+
+
+def emit_named_model(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps],
+    scc_map: Mapping[str, tuple[str, ...]],
+) -> str:
+    """Emit the memoized `Model` session object."""
+    lines = [
+        '"""Memoized evaluator for named formula series."""',
+        "from __future__ import annotations",
+        "from datetime import datetime",
+        "from functools import cached_property",
+        "from . import data, internals, validation",
+        "",
+        "",
+        "\n".join(_model_class(catalog, deps, scc_map)),
+        "",
+        "__all__ = [",
+        "    'Model',",
+        "]",
+        "",
+    ]
+    return "\n".join(lines)
+
+
+def emit_named_api(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps],
+    constant_sets: Mapping[frozenset[str], str],
+) -> str:
+    """Emit the public `compute_*` functions over `Model`."""
     functions: list[str] = []
     compute_names: list[str] = []
     for output in catalog.output_series():
@@ -1546,18 +1578,15 @@ def emit_named_api(
         '"""Generated functions accepting and returning named-coordinate values."""',
         "from __future__ import annotations",
         "from datetime import datetime",
-        "from functools import cached_property",
-        "from . import data, internals, validation",
+        "from . import data",
         *([_constants_import(aliases)] if aliases else []),
+        "from .model import Model",
         "from .runtime import publish",
         "",
-        "",
-        "\n".join(model),
         "",
         "\n\n".join(functions),
         "",
         "__all__ = [",
-        "    'Model',",
         *(f"    {name!r}," for name in compute_names),
         "]",
         "",
@@ -2200,7 +2229,8 @@ def emit_named_modules(
     internals = emit_named_internals(catalog, deps, scc_map, graph, named_axes, literal_tables)
     validation = emit_named_validation(catalog)
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
-    api = emit_named_api(catalog, deps, scc_map, constant_sets)
+    model = emit_named_model(catalog, deps, scc_map)
+    api = emit_named_api(catalog, deps, constant_sets)
     data = emit_named_data(catalog, workbook, named_axes, literal_tables, constant_lines)
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
 
@@ -2212,6 +2242,7 @@ def emit_named_modules(
         + "\nfrom .tensor import Axis, Domain, Series, Tensor, TensorSchema\n"
         + "__all__ += ['Axis', 'Domain', 'Series', 'Tensor', 'TensorSchema']\n",
         "api.py": api,
+        "model.py": model,
         "validation.py": validation,
         "internals.py": internals,
         "data.py": data,
