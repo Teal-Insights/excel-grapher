@@ -1923,6 +1923,7 @@ def list_dynamic_ref_constraint_candidates(
     max_depth: int = 50,
     max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
     type_analysis_cache: TypeAnalysisCache | None = None,
+    blank_ranges: Iterable[str] | None = None,
 ) -> list[str]:
     """Return sorted leaf cells missing dynamic-ref constraint entries.
 
@@ -1935,7 +1936,7 @@ def list_dynamic_ref_constraint_candidates(
 
     When `dynamic_refs` is `None` the function treats it as an empty constraint
     environment: all leaf cells that feed dynamic-ref arguments are returned as
-    candidates.
+    candidates. Leaves inside `blank_ranges` are omitted (same as graph build).
 
     **Completeness caveat**: Cells reachable only through unresolvable dynamic refs
     will not be visited, so their constraint candidates won't appear in the output.
@@ -1993,6 +1994,7 @@ def list_dynamic_ref_constraint_candidates(
         named_range_ranges = named_range_maps.range_map
         normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
         cell_type_env = {} if dynamic_refs is None else dynamic_refs.cell_type_env
+        blank_rects = normalize_blank_range_specs(blank_ranges)
         sheetnames = list(wb_formulas.sheetnames)
         sheetname_set = set(sheetnames)
         _NAME_TOKEN_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b(?!\s*!)")
@@ -2230,6 +2232,8 @@ def list_dynamic_ref_constraint_candidates(
                     )
 
                 missing = leaves_missing_cell_type_constraints(leaves, cell_type_env)
+                if blank_rects:
+                    missing = {a for a in missing if not address_in_blank_ranges(a, blank_rects)}
                 if missing:
                     collected.update(missing)
                     # Skip infer — dynamic targets unknown without full constraints.
@@ -2285,6 +2289,7 @@ def list_dynamic_ref_constraint_candidates(
                                 type_analysis_cache=type_analysis_cache,
                                 workbook_sha256=_wb_sha256_cand,
                                 get_cell_ast=_get_cell_ast,
+                                blank_rects=blank_rects or None,
                             )
 
                     dyn_targets: set[str] = set()

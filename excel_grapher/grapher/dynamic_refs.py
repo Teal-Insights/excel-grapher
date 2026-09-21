@@ -258,7 +258,7 @@ class DynamicRefConfig:
             raise TypeError(
                 f"constraints_schema must be a mapping, got {type(constraints_schema).__name__!r}"
             )
-        env = constraints_to_cell_type_env(constraints_schema, {})
+        env = constraints_to_cell_type_env(constraints_schema)
         return cls(cell_type_env=env, limits=limits or DynamicRefLimits())
 
     @classmethod

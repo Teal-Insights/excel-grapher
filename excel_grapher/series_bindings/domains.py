@@ -422,11 +422,10 @@ class SeriesDomainIndex(Mapping[str, CellType]):
             if value is None:
                 if relations:
                     annotation = _with_relation_metadata(_python_type_for_series(series), relations)
-                    return constraints_to_cell_type_env({address: annotation}, {})[address]
+                    return constraints_to_cell_type_env({address: annotation})[address]
                 return None
             env = constraints_to_cell_type_env(
                 {address: _with_relation_metadata(_RuntimeLiteral[tuple([value])], relations)},
-                {},
             )
             return env[address]
         base = _input_domain_annotation(series)
@@ -435,7 +434,6 @@ class SeriesDomainIndex(Mapping[str, CellType]):
         annotation = base if base is not None else _python_type_for_series(series)
         env = constraints_to_cell_type_env(
             {address: _with_relation_metadata(annotation, relations)},
-            {},
         )
         return env[address]
 

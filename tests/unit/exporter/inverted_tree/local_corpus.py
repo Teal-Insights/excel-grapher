@@ -76,12 +76,9 @@ def require_workbook(entry: CorpusEntry) -> None:
         pytest.skip(f"local corpus bindings missing: {entry.bindings}")
 
 
-def _dynamic_refs(entry: CorpusEntry, bindings: WorkbookSeriesBindings) -> DynamicRefConfig | None:
+def _dynamic_refs(entry: CorpusEntry, bindings: WorkbookSeriesBindings) -> DynamicRefConfig:
     """Derive domains from series bindings."""
-    bindings_config = DynamicRefConfig.from_bindings(
-        bindings, entry.workbook, bindings_path=entry.bindings
-    )
-    return bindings_config if len(bindings_config.cell_type_env) else None
+    return DynamicRefConfig.from_bindings(bindings, entry.workbook, bindings_path=entry.bindings)
 
 
 def build_corpus_graph(

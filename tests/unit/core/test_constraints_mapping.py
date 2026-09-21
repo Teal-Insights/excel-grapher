@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 from typing import Annotated, Any, Literal
 
 from excel_grapher.core.cell_types import (
@@ -24,13 +25,8 @@ def test_constraints_mapping_builds_expected_cell_type_env() -> None:
         "Sheet1!C1": Literal[1, 2, 3],
         "Sheet1!D1": Literal["NORTH", "SOUTH"],
     }
-    constraints = {
-        "Sheet1!B1": 5,
-        "Sheet1!C1": 2,
-        "Sheet1!D1": "NORTH",
-    }
 
-    env: CellTypeEnv = constraints_to_cell_type_env(schema, constraints)
+    env: CellTypeEnv = constraints_to_cell_type_env(schema)
 
     b1 = env["Sheet1!B1"]
     assert b1.kind is CellKind.NUMBER
@@ -53,12 +49,8 @@ def test_constraints_mapping_supports_float_between() -> None:
         "Sheet1!E1": Annotated[float, RealBetween(0.0, 1.0)],
         "Sheet1!F1": Annotated[float, RealBetween(-0.5, 0.5)],
     }
-    constraints = {
-        "Sheet1!E1": 0.5,
-        "Sheet1!F1": -0.1,
-    }
 
-    env: CellTypeEnv = constraints_to_cell_type_env(schema, constraints)
+    env: CellTypeEnv = constraints_to_cell_type_env(schema)
 
     e1 = env["Sheet1!E1"]
     assert e1.kind is CellKind.NUMBER
@@ -76,8 +68,7 @@ def test_constraints_mapping_supports_float_between() -> None:
 def test_expand_leaf_env_widens_formula_when_dependency_has_real_interval_only() -> None:
     """Real intervals are not enumerable; type expansion falls back to ANY (issue #40)."""
     schema: dict[str, Any] = {"Sheet1!B1": Annotated[float, RealBetween(0.0, 1.0)]}
-    constraints = {"Sheet1!B1": 0.5}
-    leaf_env = constraints_to_cell_type_env(schema, constraints)
+    leaf_env = constraints_to_cell_type_env(schema)
     out = expand_leaf_env_to_argument_env(
         {"Sheet1!A1"},
         lambda addr: "=Sheet1!B1+1" if addr == "Sheet1!A1" else None,
@@ -101,13 +92,8 @@ def test_constraints_mapping_preserves_relational_metadata() -> None:
         ],
         "Sheet1!C1": Annotated[int, Between(0, 20)],
     }
-    constraints = {
-        "Sheet1!A1": 5,
-        "Sheet1!B1": 9,
-        "Sheet1!C1": 8,
-    }
 
-    env: CellTypeEnv = constraints_to_cell_type_env(schema, constraints)
+    env: CellTypeEnv = constraints_to_cell_type_env(schema)
 
     b1 = env["Sheet1!B1"]
     assert b1.relations == (
@@ -133,12 +119,8 @@ def test_constraints_mapping_normalizes_quoted_sheet_keys_in_env() -> None:
             GreaterThanCell(_QS_QUOTED_A1),
         ],
     }
-    constraints = {
-        _QS_QUOTED_A1: 1,
-        _QS_QUOTED_B1: 5,
-    }
 
-    env: CellTypeEnv = constraints_to_cell_type_env(schema, constraints)
+    env: CellTypeEnv = constraints_to_cell_type_env(schema)
 
     assert _QS_QUOTED_A1 not in env
     assert _QS_QUOTED_B1 not in env
@@ -169,3 +151,7 @@ def test_expand_leaf_env_resolves_format_key_addr_against_normalized_env() -> No
     )
     assert quoted in out
     assert out[quoted].interval == IntervalDomain(min=1, max=1)
+
+
+def test_constraints_to_cell_type_env_has_no_instance_data_argument() -> None:
+    assert "constraints_data" not in inspect.signature(constraints_to_cell_type_env).parameters

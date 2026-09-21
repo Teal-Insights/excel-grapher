@@ -174,7 +174,6 @@ def test_constant_series_compile_from_workbook_values(tmp_path: Path) -> None:
     env = cell_type_env_from_bindings(bindings, workbook=workbook)
     expected = constraints_to_cell_type_env(
         {"Inputs!A10": Literal["Borvelia"], "Inputs!A11": Literal["Litellia"]},
-        {},
     )
     assert env == expected
 
@@ -205,7 +204,7 @@ def test_internal_from_workbook_pins_formula_cells(tmp_path: Path) -> None:
     )
     bindings = validate_bindings_document(doc)
     env = cell_type_env_from_bindings(bindings, workbook=workbook)
-    expected = constraints_to_cell_type_env({"Inputs!C5": Literal[2026]}, {})
+    expected = constraints_to_cell_type_env({"Inputs!C5": Literal[2026]})
     assert env == expected
 
 
@@ -289,7 +288,6 @@ def test_series_level_domain_compiles_with_relations(tmp_path: Path) -> None:
             "Inputs!G2": Annotated[int, Between(0, 50)],
             "Inputs!H2": Annotated[int, Between(0, 80), GreaterThanCell("Inputs!G2")],
         },
-        {},
     )
     assert env == expected
 
@@ -305,7 +303,6 @@ def test_tiny_dsa_bindings_compile_input_and_constant_domains() -> None:
             "Inputs!B22": Literal[1, 2, 3],
             "Inputs!B10": Annotated[float, RealBetween(0.0, 200.0)],
         },
-        {},
     )
     for address, cell_type in expected.items():
         assert compiled[address] == cell_type
@@ -333,7 +330,6 @@ def test_tiny_dsa_labelled_bindings_omit_uncached_formula_pins() -> None:
             "Inputs!B5": Literal["Borvelia", "Litellia", "Aurelium"],
             "Inputs!B22": Literal[1, 2, 3],
         },
-        {},
     )
     for address, cell_type in expected.items():
         assert compiled[address] == cell_type
@@ -349,7 +345,7 @@ def test_input_value_map_needles_compile_when_domain_omitted(tmp_path: Path) -> 
     series["input"] = {"value_map": {"Borvelia": "B", "Litellia": "L"}}
     bindings = validate_bindings_document({"schema_version": "1.19.0", "series": [series]})
     env = cell_type_env_from_bindings(bindings, workbook=workbook)
-    expected = constraints_to_cell_type_env({"Inputs!B5": Literal["B", "L"]}, {})
+    expected = constraints_to_cell_type_env({"Inputs!B5": Literal["B", "L"]})
     assert env == expected
     assert measure_domain_from_series(bindings["series"][0]) == {
         "enum": frozenset({"Borvelia", "Litellia"})

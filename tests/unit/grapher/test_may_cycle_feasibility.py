@@ -55,7 +55,7 @@ def test_leaf_enum_domain_makes_complementary_if_guards_infeasible() -> None:
         b_to_a=Not(Compare(left=CellRef("Sheet1!B8"), op="=", right=Literal(1))),
         extra_nodes=[make_cell_node("Sheet1", "B", 8, value=0, is_leaf=True)],
     )
-    env = constraints_to_cell_type_env({"Sheet1!B8": TypingLiteral[0, 1]}, {})
+    env = constraints_to_cell_type_env({"Sheet1!B8": TypingLiteral[0, 1]})
     without = graph.cycle_report()
     with_arg = graph.cycle_report(cell_type_env=env)
     graph.cell_type_env = env
@@ -96,7 +96,6 @@ def test_identity_alias_plus_singleton_domain_kills_mismatched_equality() -> Non
     graph.add_edge("Sheet1!B1", "Sheet1!A1", guard=mismatch)
     env = constraints_to_cell_type_env(
         {"Translation!C90": TypingLiteral["Residency-based"]},
-        {},
     )
     assert graph.cycle_report().has_may_cycles is True
     assert graph.cycle_report(cell_type_env=env).has_may_cycles is False

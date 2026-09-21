@@ -456,7 +456,6 @@ def test_fixture_compiles_greater_than_cell_for_cell(tmp_path: Path) -> None:
             "Inputs!H2": Annotated[int, Between(0, 80), GreaterThanCell("Inputs!G2")],
             "Inputs!H3": Annotated[int, Between(0, 80), GreaterThanCell("Inputs!G3")],
         },
-        {},
     )
     assert env == expected
 
@@ -512,7 +511,6 @@ def test_compiler_emits_not_equal_relations(tmp_path: Path) -> None:
             "Inputs!H2": Annotated[int, Between(1, 40), NotEqualCell("Inputs!G2")],
             "Inputs!H3": Annotated[int, Between(1, 40), NotEqualCell("Inputs!G3")],
         },
-        {},
     )
     assert env == expected
 

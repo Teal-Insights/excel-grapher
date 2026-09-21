@@ -421,6 +421,72 @@ def test_main_use_cached_dynamic_refs_resolves_offset(
     assert "ok=True" in captured_with.out
 
 
+def test_main_empty_bindings_domain_resolves_blank_range_offset(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """CLI still passes an empty from_bindings config so blank pads can type."""
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "blank_offset.xlsx",
+        {
+            "Inputs": {"A1": 10},
+            "Pad": {"F10": None},
+            "Engine": {"A1": "=OFFSET(Inputs!A1,Pad!F10,0)"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "result",
+            "Engine!A1",
+            layout="scalar",
+            direction="output",
+            compute_name="compute_result",
+        ),
+        schema_version="1.19.0",
+    )
+    document["workbook"] = "blank_offset.xlsx"
+    bindings = tmp_path / "blank_offset.bindings.yaml"
+    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+    blanks = tmp_path / "blanks.py"
+    blanks.write_text('BLANK_RANGES = ("Pad!F10",)\n', encoding="utf-8")
+
+    without_blanks = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            str(bindings),
+        ]
+    )
+    captured_without = capsys.readouterr()
+    assert without_blanks != 0
+    assert "Pad!F10" in captured_without.err or "no constraint" in captured_without.err
+
+    exit_code = main(
+        [
+            "bindings",
+            "validate",
+            str(workbook),
+            "--bindings",
+            str(bindings),
+            "--blank-ranges",
+            str(blanks),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "ok=True" in captured.out
+
+
 def test_main_undomained_lists_uncovered_leaves(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],

@@ -126,14 +126,12 @@ def _cell_type_from_annotation(annotated_type: Any) -> CellType:
 
 
 def constraints_to_cell_type_env(
-    constraints_schema: Mapping[str, Any], constraints_data: Mapping[str, Any]
+    constraints_schema: Mapping[str, Any],
 ) -> dict[str, CellType]:
-    r"""Derive a `CellTypeEnv` from a constraints schema and optional instance data.
+    r"""Derive a `CellTypeEnv` from a constraints schema.
 
-    *constraints_schema* maps sheet-qualified addresses (e.g. `\"Sheet1!B1\"`) to
+    *constraints_schema* maps sheet-qualified addresses (e.g. `Sheet1!B1`) to
     type objects describing domains (`Annotated`, `Literal`, plain `int` / `str`, etc.).
-    *constraints_data* may hold runtime values for validation elsewhere; this function
-    only inspects type metadata.
 
     Env dict keys are `normalize_cell_type_env_key` of each schema key so they
     align with `format_key` addresses from the grapher after normalization.
@@ -141,8 +139,6 @@ def constraints_to_cell_type_env(
     env: dict[str, CellType] = {}
     for key, annotated_type in constraints_schema.items():
         env[normalize_cell_type_env_key(key)] = _cell_type_from_annotation(annotated_type)
-
-    _ = constraints_data
 
     return env
 

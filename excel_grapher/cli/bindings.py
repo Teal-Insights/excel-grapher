@@ -652,12 +652,9 @@ def _derive_dynamic_refs(
     workbook: Path,
     bindings: Mapping[str, Any],
     bindings_path: Path,
-) -> DynamicRefConfig | None:
+) -> DynamicRefConfig:
     """Derive a dynamic-ref config from bindings series `domain`."""
-    bindings_config = DynamicRefConfig.from_bindings(
-        bindings, workbook, bindings_path=bindings_path
-    )
-    return bindings_config if len(bindings_config.cell_type_env) else None
+    return DynamicRefConfig.from_bindings(bindings, workbook, bindings_path=bindings_path)
 
 
 def _format_cli_dynamic_ref_error(exc: BaseException) -> str:

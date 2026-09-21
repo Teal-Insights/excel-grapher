@@ -232,6 +232,39 @@ def test_partially_constrained_returns_only_missing(tmp_path: Path) -> None:
     assert result == ["Sheet1!D1"]
 
 
+def _build_offset_blank_selector(path: Path) -> None:
+    """A1 = OFFSET(B1, C1, 0). C1 is an empty structural pad."""
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_number(0, 1, 10)  # B1 base
+    ws.write_formula(0, 0, "=OFFSET(Sheet1!B1,Sheet1!C1,0)", None, 10)  # A1
+    wb.close()
+
+
+def test_blank_range_offset_leaf_is_not_a_candidate(tmp_path: Path) -> None:
+    """Declared blank pads must not appear as missing-constraint candidates."""
+    path = tmp_path / "blank_offset.xlsx"
+    _build_offset_blank_selector(path)
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+    without = list_dynamic_ref_constraint_candidates(path, ["Sheet1!A1"], dynamic_refs=config)
+    assert without == ["Sheet1!C1"]
+    result = list_dynamic_ref_constraint_candidates(
+        path, ["Sheet1!A1"], dynamic_refs=config, blank_ranges=("Sheet1!C1",)
+    )
+    assert result == []
+
+
+def test_blank_range_filter_still_reports_other_missing_leaves(tmp_path: Path) -> None:
+    """Blank pads are omitted; unconstrained numeric selectors still surface."""
+    path = tmp_path / "mixed.xlsx"
+    _build_two_offsets_missing_leaves(path)
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+    result = list_dynamic_ref_constraint_candidates(
+        path, ["Sheet1!A1"], dynamic_refs=config, blank_ranges=("Sheet1!E1",)
+    )
+    assert result == ["Sheet1!G1"]
+
+
 def test_static_index_only_no_candidates(tmp_path: Path) -> None:
     """INDEX with only literal row/column args does not produce candidates."""
     path = tmp_path / "static_index.xlsx"
