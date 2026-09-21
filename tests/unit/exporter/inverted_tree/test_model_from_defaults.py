@@ -51,12 +51,16 @@ def _constant_bindings() -> dict:
     )
 
 
-def test_from_defaults_emits_catalog_input_ids_not_annotations(tmp_path: Path) -> None:
+def test_from_defaults_emits_explicit_input_kwargs(tmp_path: Path) -> None:
     api = generate_inverted(_seed_workbook(tmp_path), _seed_bindings())["api.py"]
     assert "def from_defaults" in api
     assert "cls.__annotations__" not in api
-    assert 'for name in ("seed",)' in api
-    assert "inputs: dict[str, object] = {" in api
+    assert "getattr(data" not in api
+    assert "seed: float | str = data.SEED_DEFAULT" in api
+    assert "return cls(seed=seed)" in api
+    assert "unknown = inputs.keys() -" in api
+    assert "self.seed =" in api
+    assert "setattr(" not in api
 
 
 def test_from_defaults_binds_snapshot_and_overrides(tmp_path: Path) -> None:
@@ -74,14 +78,17 @@ def test_from_defaults_binds_snapshot_and_overrides(tmp_path: Path) -> None:
     assert Model.from_defaults(seed=4.0).result == 12.0
 
 
-def test_from_defaults_rejects_unknown_overrides(tmp_path: Path) -> None:
+def test_model_constructor_rejects_unknown_inputs(tmp_path: Path) -> None:
     pkg = load_package(
         generate_inverted(_seed_workbook(tmp_path), _seed_bindings()),
         tmp_path,
         name="from_defaults_unknown",
     )
+    Model = pkg.api.Model
     with pytest.raises(TypeError, match="unknown inputs"):
-        pkg.api.Model.from_defaults(discount_rate=0.04)
+        Model(discount_rate=0.04)
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        Model.from_defaults(discount_rate=0.04)
 
 
 def test_from_defaults_leaves_constants_on_data(tmp_path: Path) -> None:
@@ -96,6 +103,8 @@ def test_from_defaults_leaves_constants_on_data(tmp_path: Path) -> None:
     assert Model.from_defaults().result == 6.0
     assert Model.from_defaults(seed=4.0).result == 12.0
     with pytest.raises(TypeError, match="unknown inputs"):
+        Model(factor=5.0)
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
         Model.from_defaults(factor=5.0)
     with pkg.data.overrides(FACTOR=5.0):
         assert Model.from_defaults(seed=4.0).result == 20.0
@@ -112,3 +121,5 @@ def test_from_defaults_uses_init_validation_checks(tmp_path: Path) -> None:
     assert Model.from_defaults(flag=1).out == 1
     with pytest.raises(ValueError, match="flag out of domain"):
         Model.from_defaults(flag=2)
+    with pytest.raises(ValueError, match="flag out of domain"):
+        Model(flag=2)

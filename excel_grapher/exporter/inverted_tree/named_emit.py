@@ -1406,55 +1406,78 @@ def _input_series_ids(catalog: SeriesCatalog) -> tuple[str, ...]:
     return tuple(series.series_id for series in _retained(catalog) if series.direction == "input")
 
 
+def _input_name_set(names: Sequence[str]) -> str:
+    if not names:
+        return "set()"
+    return "{" + ", ".join(_python_literal(name) for name in names) + "}"
+
+
+def _bind_model_input(series_id: str, extra: str = "") -> list[str]:
+    quoted = _python_literal(series_id)
+    return [
+        f"        if {quoted} in inputs:",
+        f"            value = inputs[{quoted}]",
+        f"            check = validation.CHECKS.get({quoted})",
+        f"            self.{series_id} = value if check is None else check(value{extra})",
+    ]
+
+
 def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
     """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
-    names = _python_literal(_input_series_ids(catalog))
-    return [
-        "",
-        "    @classmethod",
-        "    def from_defaults(cls, **overrides: object) -> Model:",
-        '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
-        "        inputs: dict[str, object] = {",
-        "            name: getattr(data, f'{name.upper()}_DEFAULT')",
-        f"            for name in {names}",
-        "        }",
-        "        unknown = overrides.keys() - inputs.keys()",
-        "        if unknown:",
-        "            raise TypeError(f'unknown inputs: {sorted(unknown)}')",
-        "        inputs.update(overrides)",
-        "        return cls(**inputs)",
-    ]
+    inputs = [catalog.get(sid) for sid in _input_series_ids(catalog)]
+    lines = ["", "    @classmethod"]
+    if not inputs:
+        lines.extend(
+            [
+                "    def from_defaults(cls) -> Model:",
+                '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
+                "        return cls()",
+            ]
+        )
+        return lines
+    lines.append("    def from_defaults(")
+    lines.append("        cls,")
+    lines.append("        *,")
+    for series in inputs:
+        default = f"data.{series.series_id.upper()}_DEFAULT"
+        lines.append(f"        {series.series_id}: {_annotation(series)} = {default},")
+    lines.extend(
+        [
+            "    ) -> Model:",
+            '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
+        ]
+    )
+    if len(inputs) == 1:
+        sid = inputs[0].series_id
+        lines.append(f"        return cls({sid}={sid})")
+        return lines
+    lines.append("        return cls(")
+    lines.extend(f"            {series.series_id}={series.series_id}," for series in inputs)
+    lines.append("        )")
+    return lines
 
 
 def _model_init(catalog: SeriesCatalog) -> list[str]:
     """Bind static inputs, evaluate labellers, then check runtime-axis inputs."""
+    input_ids = _input_series_ids(catalog)
     deferred_ids = _deferred_runtime_inputs(catalog)
-    deferred = tuple(
-        series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
-    )
+    deferred = tuple(sid for sid in input_ids if sid in deferred_ids)
+    immediate = tuple(sid for sid in input_ids if sid not in deferred_ids)
     lines = [
         "",
         "    def __init__(self, **inputs: object) -> None:",
-        "        for name, value in inputs.items():",
+        f"        unknown = inputs.keys() - {_input_name_set(input_ids)}",
+        "        if unknown:",
+        "            raise TypeError(f'unknown inputs: {sorted(unknown)}')",
     ]
-    if deferred:
-        names = ", ".join(repr(name) for name in deferred)
-        lines.append(f"            if name in {{{names}}}:")
-        lines.append("                continue")
-    lines.extend(
-        [
-            "            check = validation.CHECKS.get(name)",
-            "            setattr(self, name, value if check is None else check(value))",
-        ]
-    )
+    for series_id in immediate:
+        lines.extend(_bind_model_input(series_id))
     if not deferred:
         return lines
     labellers = tuple(
         series.series_id for series in _retained(catalog) if _is_runtime_labeller(series)
     )
-    quoted = ", ".join(repr(name) for name in labellers)
-    lines.append(f"        for name in ({quoted},):")
-    lines.append("            getattr(self, name)")
+    lines.extend(f"        _ = self.{name}" for name in labellers)
     for series_id in deferred:
         series = catalog.get(series_id)
         extras = []
@@ -1463,18 +1486,7 @@ def _model_init(catalog: SeriesCatalog) -> list[str]:
             if labeller is not None and labeller.series_id != series.series_id:
                 extras.append(f"{axis.name}=self.{labeller.series_id}")
         extra = f", {', '.join(extras)}" if extras else ""
-        lines.extend(
-            [
-                f"        if {series_id!r} in inputs:",
-                f"            value = inputs[{series_id!r}]",
-                f"            check = validation.CHECKS.get({series_id!r})",
-                "            setattr(",
-                "                self,",
-                f"                {series_id!r},",
-                f"                value if check is None else check(value{extra}),",
-                "            )",
-            ]
-        )
+        lines.extend(_bind_model_input(series_id, extra))
     return lines
 
 
@@ -1537,8 +1549,9 @@ def emit_named_api(
         "",
         "    Each attribute evaluates its named formula once per model. Only the",
         "    inputs bound at construction are available, so a public function",
-        "    supplies exactly the leaves of its output. `from_defaults` binds",
-        "    every input from `data.*_DEFAULT` and applies keyword overrides.",
+        "    supplies exactly the leaves of its output. Unknown constructor",
+        "    names fail closed. `from_defaults` binds every input from",
+        "    `data.*_DEFAULT` and applies keyword overrides.",
         '    """',
         "",
     ]

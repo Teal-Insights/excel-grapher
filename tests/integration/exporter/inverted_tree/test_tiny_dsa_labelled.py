@@ -103,6 +103,21 @@ def test_from_defaults_binds_snapshot_inputs(labelled_pkg) -> None:
     )
 
 
+def test_from_defaults_override_shifts_labelled_keys(labelled_pkg) -> None:
+    years = (2024, 2025, 2026, 2027, 2028)
+    kwargs = _baseline_kwargs(labelled_pkg, years=years)
+    model = labelled_pkg.api.Model.from_defaults(
+        first_projection_year=kwargs["first_projection_year"],
+        growth_baseline=kwargs["growth_baseline"],
+        interest_baseline=kwargs["interest_baseline"],
+        primary_balance_baseline=kwargs["primary_balance_baseline"],
+    )
+    baseline = model.output_baseline
+    assert tuple(baseline.domain.axes[0].keys) == years
+    for index, year in enumerate(years):
+        assert baseline[year] == pytest.approx(_DEFAULT_BASELINE[index])
+
+
 def test_snapshot_numeric_parity_and_shift_oracle(labelled_pkg) -> None:
     baseline = labelled_pkg.compute_output_baseline(**_baseline_kwargs(labelled_pkg))
     assert tuple(baseline.domain.axes[0].keys) == (1, 2, 3, 4, 5)

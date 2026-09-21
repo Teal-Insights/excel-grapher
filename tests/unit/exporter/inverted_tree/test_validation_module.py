@@ -70,7 +70,7 @@ def test_input_checks_are_emitted_in_validation_not_api(tmp_path: Path) -> None:
     assert "CHECKS = {" in modules["validation.py"]
     assert "def _check_" not in modules["api.py"]
     assert "require_input_domain" not in modules["api.py"]
-    assert "validation.CHECKS.get(name)" in modules["api.py"]
+    assert "validation.CHECKS.get(" in modules["api.py"]
     assert "require_input_domain" not in modules["internals.py"]
 
 
