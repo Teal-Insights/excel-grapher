@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.1.0 (2026-09-21)
+
+### Bug Fixes
+
+- **bindings**: Keep cell_type_env_from_bindings lazy
+  ([#953](https://github.com/Teal-Insights/excel-grapher/pull/953),
+  [`5b3930f`](https://github.com/Teal-Insights/excel-grapher/commit/5b3930f14adafdb1df355efc759b4c91419cc8fb))
+
+### Code Style
+
+- Use ternaries in address-bind catalog tests
+  ([#952](https://github.com/Teal-Insights/excel-grapher/pull/952),
+  [`f845dfb`](https://github.com/Teal-Insights/excel-grapher/commit/f845dfbe78d39e2f38adc45d413d390cde60f3e0))
+
+### Features
+
+- Add row_index and column_letter bind kinds
+  ([#952](https://github.com/Teal-Insights/excel-grapher/pull/952),
+  [`f845dfb`](https://github.com/Teal-Insights/excel-grapher/commit/f845dfbe78d39e2f38adc45d413d390cde60f3e0))
+
+
 ## v23.0.1 (2026-09-21)
 
 ### Bug Fixes
