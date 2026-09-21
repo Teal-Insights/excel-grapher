@@ -54,5 +54,7 @@ def test_model_is_emitted_in_model_module(tmp_path: Path) -> None:
     assert "Model" not in pkg.__all__
     assert not hasattr(pkg.model.Model, "compute_result")
     assert pkg.model.Model.__module__ == "model_module.model"
-    assert inspect.getmodule(pkg.compute_result).Model is pkg.model.Model
+    api_module = inspect.getmodule(pkg.compute_result)
+    assert api_module is not None
+    assert api_module.Model is pkg.model.Model
     assert pkg.model.Model(seed=2.0).result == 6.0
