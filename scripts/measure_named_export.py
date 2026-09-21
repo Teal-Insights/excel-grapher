@@ -52,6 +52,7 @@ _GENERATED_MODULES = (
     "runtime.py",
     "tensor.py",
     "provenance.py",
+    "workbook.py",
     "excel.py",
 )
 

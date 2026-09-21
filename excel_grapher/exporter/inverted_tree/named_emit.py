@@ -1457,6 +1457,25 @@ def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
     return lines
 
 
+_BOUND_INPUTS_MIXIN = '''class _BoundInputs:
+    """Shared workbook bind for Model and per-output input bundles."""
+
+    _INPUT_IDS: tuple[str, ...] = ()
+
+    @classmethod
+    def from_workbook(cls, workbook: Path | str, **overrides: object) -> _BoundInputs:
+        """Bind input leaves from a populated workbook of this vintage."""
+        fields = getattr(cls, "__dataclass_fields__", None)
+        names = tuple(fields) if fields else cls._INPUT_IDS
+        unknown = overrides.keys() - set(names)
+        if unknown:
+            raise TypeError(f"unknown inputs: {sorted(unknown)}")
+        values = read_bound_inputs(Path(workbook), names, data)
+        values.update(overrides)
+        return cls(**values)
+'''
+
+
 def _model_init(catalog: SeriesCatalog) -> list[str]:
     """Bind static inputs, evaluate labellers, then check runtime-axis inputs."""
     input_ids = _input_series_ids(catalog)
@@ -1541,21 +1560,24 @@ def _model_class(
     scc_map: Mapping[str, tuple[str, ...]],
 ) -> list[str]:
     """Lines of the memoized `Model` class."""
-    inputs = [catalog.get(sid) for sid in _input_series_ids(catalog)]
+    input_ids = _input_series_ids(catalog)
+    inputs = [catalog.get(sid) for sid in input_ids]
     model = [
-        "class Model:",
+        "class Model(_BoundInputs):",
         '    """Formula series of the workbook, evaluated on demand from bound inputs.',
         "",
         "    Each attribute evaluates its named formula once per model. Only the",
         "    inputs bound at construction are available, so a public function",
         "    supplies exactly the leaves of its output. Unknown constructor",
         "    names fail closed. `from_defaults` binds every input from",
-        "    `data.*_DEFAULT` and applies keyword overrides.",
+        "    `data.*_DEFAULT`. `from_workbook` reads those input cells from a",
+        "    populated workbook of this vintage.",
         '    """',
         "",
     ]
     for series in inputs:
         model.append(f"    {series.series_id}: {_annotation(series)}")
+    model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog))
     model.extend(_model_from_defaults(catalog))
     if _labelled_axes_map(catalog):
@@ -1602,24 +1624,30 @@ def emit_named_model(
 ) -> str:
     """Emit the memoized `Model` session object."""
     class_lines = _model_class(catalog, deps, scc_map)
-    body = "\n".join(class_lines)
+    body = _BOUND_INPUTS_MIXIN.rstrip() + "\n\n\n" + "\n".join(class_lines)
     stdlib: list[str] = []
     if "datetime" in body:
         stdlib.append("from datetime import datetime")
     if "@cached_property" in body:
         stdlib.append("from functools import cached_property")
+    if "Path" in body:
+        stdlib.append("from pathlib import Path")
     if "Any" in body:
         stdlib.append("from typing import Any")
     imported = [
         name
         for name, token in (
-            ("data", "data."),
+            ("data", "data"),
             ("internals", "internals."),
             ("validation", "validation."),
         )
         if token in body
     ]
-    local = [f"from . import {', '.join(imported)}"] if imported else []
+    local: list[str] = []
+    if imported:
+        local.append(f"from . import {', '.join(imported)}")
+    if "read_bound_inputs" in body:
+        local.append("from .workbook import read_bound_inputs")
     lines = [
         *_generated_module_preamble(
             "Memoized evaluator for named formula series.",
@@ -2326,6 +2354,7 @@ def emit_named_modules(
     export_runtime = Path(__file__).parents[1] / "export_runtime"
     tensor_source = (export_runtime / "tensor.py").read_text(encoding="utf-8")
     provenance_source = (export_runtime / "provenance.py").read_text(encoding="utf-8")
+    workbook_source = (export_runtime / "workbook.py").read_text(encoding="utf-8")
     return {
         "__init__.py": init_source
         + "\nfrom .tensor import Axis, Domain, Series, Tensor, TensorSchema\n"
@@ -2337,6 +2366,7 @@ def emit_named_modules(
         "data.py": data,
         "tensor.py": tensor_source,
         "provenance.py": provenance_source,
+        "workbook.py": workbook_source,
         **build_runtime_modules(runtime_source, excel_source),
     }
 
