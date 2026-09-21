@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.3.0 (2026-09-21)
+
+### Features
+
+- **semantic_model**: Add catalog topology contract
+  ([#956](https://github.com/Teal-Insights/excel-grapher/pull/956),
+  [`2548d5b`](https://github.com/Teal-Insights/excel-grapher/commit/2548d5bd141d723f713f3d770aaa92a6e7cec192))
+
+- **viz**: Add partition and bundle drilldown for statement graphs
+  ([#955](https://github.com/Teal-Insights/excel-grapher/pull/955),
+  [`42a300c`](https://github.com/Teal-Insights/excel-grapher/commit/42a300c17986d2dc44cd9beb1d902d391023be56))
+
+
 ## v23.2.0 (2026-09-21)
 
 ### Features
