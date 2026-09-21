@@ -1468,7 +1468,7 @@ def _model_init(catalog: SeriesCatalog) -> list[str]:
         "    def __init__(self, **inputs: Any) -> None:",
         f"        unknown = inputs.keys() - {_input_name_set(input_ids)}",
         "        if unknown:",
-        "            raise TypeError(f\"unknown inputs: {sorted(unknown)}\")",
+        '            raise TypeError(f"unknown inputs: {sorted(unknown)}")',
     ]
     for series_id in immediate:
         lines.extend(_bind_model_input(series_id))
