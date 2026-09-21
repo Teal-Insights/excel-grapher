@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.5.0 (2026-09-21)
+
+### Features
+
+- **series-bindings**: Compile series-level domain from bindings
+  ([#930](https://github.com/Teal-Insights/excel-grapher/pull/930),
+  [`0f94c7e`](https://github.com/Teal-Insights/excel-grapher/commit/0f94c7e0d3cc29cd1910a13b4771b7eed0135563))
+
+- **series-bindings**: Derive corpus graphs from bindings domains
+  ([#930](https://github.com/Teal-Insights/excel-grapher/pull/930),
+  [`0f94c7e`](https://github.com/Teal-Insights/excel-grapher/commit/0f94c7e0d3cc29cd1910a13b4771b7eed0135563))
+
+
 ## v21.4.0 (2026-09-21)
 
 ### Bug Fixes
