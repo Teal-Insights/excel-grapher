@@ -1321,7 +1321,7 @@
         "require_unique_key": {
           "type": "boolean",
           "default": true,
-          "description": "When true, resolved key tuples must be unique across leaves in data_range."
+          "description": "When true, resolved key tuples must be unique across leaves in data_range. Keyed inverted-tree catalog series require unique keys; false is incompatible with a keyed catalog series."
         },
         "fail_on_empty_leaf": {
           "type": "boolean",

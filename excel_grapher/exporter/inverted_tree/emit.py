@@ -201,9 +201,20 @@ def _refuse_invalid_bindings(
 
     Other validator errors (`duplicate_key`, `bind_resolution_failed`, unbound
     ranges) stay with emit's own fail-closed checks so their messages remain
-    specific.
+    specific. `require_unique_key_incompatible` is raised with the validator
+    message so keyed catalog series cannot silently opt out of uniqueness.
     """
     report = validate_series_bindings(graph, series_bindings, workbook=bindings_workbook)
+    unique_key_issues = [
+        issue
+        for issue in report["issues"]
+        if issue["level"] == "error" and issue["code"] == "require_unique_key_incompatible"
+    ]
+    if unique_key_issues:
+        issue = unique_key_issues[0]
+        series_id = issue["series_id"]
+        prefix = f"series {series_id!r}: " if series_id else ""
+        raise InvertedTreeExportError(f"{prefix}{issue['message']}")
     codes = sorted(
         {
             issue["code"]
