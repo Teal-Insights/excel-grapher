@@ -19,7 +19,6 @@ from tests.unit.exporter.inverted_tree.helpers import (
     load_package,
     required_param_names,
 )
-from tests.unit.exporter.inverted_tree.local_corpus import load_constraints_module
 
 _WORKBOOK = INVERTED_TREE_TINY_DSA / "tiny-dsa.xlsx"
 _BINDINGS_DIR = INVERTED_TREE_TINY_DSA / "bindings"
@@ -44,11 +43,6 @@ def _required(function: Callable[..., object]) -> tuple[str, ...]:
     return required_param_names(function)
 
 
-_tiny_dsa_constraints_mod = load_constraints_module(INVERTED_TREE_TINY_DSA / "constraints.py")
-assert _tiny_dsa_constraints_mod is not None
-_TINY_DSA_CONSTRAINTS = _tiny_dsa_constraints_mod.CONSTRAINTS
-
-
 def _tiny_dsa_graph():
     bindings = load_series_bindings(_BINDINGS_DIR)
     targets = all_series_targets(bindings, workbook=_WORKBOOK)
@@ -56,7 +50,9 @@ def _tiny_dsa_graph():
         _WORKBOOK,
         targets,
         load_values=True,
-        dynamic_refs=DynamicRefConfig.from_constraints(_TINY_DSA_CONSTRAINTS, {}),
+        dynamic_refs=DynamicRefConfig.from_bindings(
+            bindings, _WORKBOOK, bindings_path=_BINDINGS_DIR
+        ),
     )
     return bindings, targets, graph
 

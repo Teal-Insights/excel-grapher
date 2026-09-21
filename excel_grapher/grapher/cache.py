@@ -385,6 +385,20 @@ def _formula_ast_from_node_payload(
     return pool[intern_id]
 
 
+def _json_domains_handle(graph: DependencyGraph) -> dict[str, str] | None:
+    handle = getattr(graph, "_domains_handle", None) or getattr(
+        getattr(graph, "domains", None), "handle", None
+    )
+    to_dict = getattr(handle, "to_dict", None)
+    if callable(to_dict):
+        payload = to_dict()
+        if isinstance(payload, dict):
+            return {str(key): str(value) for key, value in payload.items()}
+    if isinstance(handle, dict):
+        return {str(key): str(value) for key, value in handle.items()}
+    return None
+
+
 def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
     formula_asts, formula_ast_ids = _formula_ast_pool_to_json(graph)
     nodes: list[dict[str, Any]] = []
@@ -439,6 +453,7 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
         "edges": edges,
         "leaf_classification": graph.leaf_classification,
         "formula_asts": formula_asts,
+        "domains_handle": _json_domains_handle(graph),
     }
 
 
@@ -538,4 +553,16 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         g.add_edge(from_key, to_key, guard=guard, provenance=provenance)
 
     g.rebuild_adjacency()
+    handle_payload = payload.get("domains_handle")
+    if isinstance(handle_payload, dict):
+        from excel_grapher.series_bindings.domains import SeriesDomainHandle, SeriesDomainIndex
+
+        handle = SeriesDomainHandle.from_dict(
+            {str(key): value for key, value in handle_payload.items()}
+        )
+        g._domains_handle = handle
+        index = SeriesDomainIndex.from_handle(handle, graph=g)
+        if index is not None:
+            g.domains = index
+            g.cell_type_env = index
     return g

@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.series_bindings.domains import compile_domain_spec, declared_domain
 from excel_grapher.series_bindings.graph_predicates import is_graph_formula_node, is_graph_leaf
 from excel_grapher.series_bindings.normalize import (
     effective_dimension_id,
@@ -254,7 +255,7 @@ def _validate_input_value_map(series: dict[str, Any]) -> list[ValidationIssue]:
                 series_id=series_id,
             )
         )
-    domain = input_block.get("domain")
+    domain = declared_domain(series)
     if isinstance(domain, dict) and "enum" in domain:
         values = domain["enum"]
         if isinstance(values, (list, tuple, set, frozenset)):
@@ -865,12 +866,7 @@ def _concept_dtype_map(bindings: WorkbookSeriesBindings) -> dict[str, str]:
 
 def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue]:
     """Reject `between` / `real_between` when the kind does not match measure dtype."""
-    if not has_input_direction(series):
-        return []
-    input_block = series.get("input")
-    if not isinstance(input_block, dict):
-        return []
-    domain = input_block.get("domain")
+    domain = declared_domain(series)
     if not isinstance(domain, dict):
         return []
     series_id = str(series.get("id", "")) or None
@@ -883,7 +879,7 @@ def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue
             _issue(
                 "error",
                 "domain_dtype_mismatch",
-                "input.domain between requires integer measure dtype 'int'; "
+                "domain between requires integer measure dtype 'int'; "
                 f"got {got} (use real_between for float/number)",
                 series_id=series_id,
             )
@@ -895,12 +891,71 @@ def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue
             _issue(
                 "error",
                 "domain_dtype_mismatch",
-                "input.domain real_between requires measure dtype 'float' or "
+                "domain real_between requires measure dtype 'float' or "
                 f"'number'; got {dtype!r} (use between for int)",
                 series_id=series_id,
             )
         ]
     return []
+
+
+def _validate_conflicting_domain(series: dict[str, Any]) -> list[ValidationIssue]:
+    """Reject series-level `domain` that disagrees with `input.domain`."""
+    top = series.get("domain")
+    input_block = series.get("input")
+    nested = input_block.get("domain") if isinstance(input_block, dict) else None
+    if isinstance(top, dict) and isinstance(nested, dict) and top != nested:
+        return [
+            _issue(
+                "error",
+                "conflicting_domain",
+                "series-level domain disagrees with input.domain",
+                series_id=str(series.get("id", "")) or None,
+            )
+        ]
+    return []
+
+
+def _validate_compiled_domain(
+    graph: DependencyGraph,
+    series: dict[str, Any],
+    addresses: list[str],
+) -> list[ValidationIssue]:
+    """Warn when a domain cell is missing from the graph; error on empty pins."""
+    spec = compile_domain_spec(series)
+    if spec is None and not series.get("relations"):
+        return []
+    series_id = str(series.get("id", "")) or None
+    issues: list[ValidationIssue] = []
+    missing_graph = [address for address in addresses if address not in graph]
+    if spec is not None and missing_graph:
+        issues.append(
+            _issue(
+                "warning",
+                "domain_cell_not_in_graph",
+                "domain names cells that are not in the extracted graph: "
+                + ", ".join(missing_graph[:8]),
+                series_id=series_id,
+                address=missing_graph[0],
+            )
+        )
+    if not isinstance(spec, dict) or spec.get("from_workbook") is not True:
+        return issues
+    for address in addresses:
+        if address not in graph:
+            continue
+        node = graph.get_node(address)
+        if node is None or node.value is None:
+            issues.append(
+                _issue(
+                    "error",
+                    "from_workbook_missing_value",
+                    "from_workbook cell has no cached workbook value",
+                    series_id=series_id,
+                    address=address,
+                )
+            )
+    return issues
 
 
 def _read_matches_dtype(read: str, dtype: str) -> bool:
@@ -1049,6 +1104,7 @@ def validate_series_bindings(
             issues.extend(_validate_implementation_support(series))
             issues.extend(_validate_dtype_read_consistency(series, concept_dtypes=concept_dtypes))
             issues.extend(_validate_input_domain_dtype(series))
+            issues.extend(_validate_conflicting_domain(series))
 
             if not series_data_ranges(series):
                 continue
@@ -1087,6 +1143,7 @@ def validate_series_bindings(
             issues.extend(_validate_input_binding_overlap(graph, series, addresses))
             issues.extend(_validate_internal_binding_overlap(graph, series, addresses))
             issues.extend(_validate_constant_binding_overlap(graph, series, addresses))
+            issues.extend(_validate_compiled_domain(graph, series, addresses))
 
             graph_input_addresses = _input_binding_addresses(graph, series, addresses)
             graph_internal_addresses = _internal_binding_addresses(graph, series, addresses)

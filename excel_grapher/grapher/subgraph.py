@@ -286,7 +286,15 @@ def _induced_dependency_subgraph(
         sub.sheet_order = list(graph.sheet_order)
     if graph.leaf_classification is not None:
         sub.leaf_classification = dict(graph.leaf_classification)
-    if graph.cell_type_env is not None:
+    if graph.domains is not None:
+        sub.domains = graph.domains
+        sub.cell_type_env = graph.domains
+        sub._domains_handle = graph._domains_handle
+    elif graph.cell_type_env is not None and hasattr(graph.cell_type_env, "domain_for"):
+        sub.cell_type_env = graph.cell_type_env
+        sub.domains = getattr(graph, "domains", None)
+        sub._domains_handle = graph._domains_handle
+    elif graph.cell_type_env is not None:
         sub.cell_type_env = dict(graph.cell_type_env)
 
     for key in graph.keys(order="workbook", source=keep_keys):
