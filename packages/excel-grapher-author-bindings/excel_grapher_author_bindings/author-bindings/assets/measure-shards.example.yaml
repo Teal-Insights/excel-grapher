@@ -18,7 +18,7 @@
 # - Uniquify per shard when each shard is a distinct scenario/engine path.
 #   Sharing a name/id across those paths merges definitions at export and can
 #   leave most scenario paths unreachable in the exported library.
-schema_version: 1.20.0
+schema_version: 1.21.0
 workbook: workbook.xlsx
 
 concept_scheme:

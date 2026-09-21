@@ -497,8 +497,8 @@ class SeriesDomainIndex(Mapping[str, CellType]):
 
 def cell_type_env_from_bindings(
     bindings: Mapping[str, Any], *, workbook: Path | str
-) -> dict[str, CellType]:
-    """Compile a binding manifest into a `CellTypeEnv`.
+) -> SeriesDomainIndex:
+    """Compile a binding manifest into a lazy `CellTypeEnv`.
 
     Args:
         bindings: Loaded (merged) series binding manifest.
@@ -506,14 +506,15 @@ def cell_type_env_from_bindings(
             and `from_workbook` cached values.
 
     Returns:
-        Normalized-address to `CellType` mapping, keyed like
-        `constraints_to_cell_type_env` output.
+        A `SeriesDomainIndex` keyed like `constraints_to_cell_type_env` output.
+        Address lookup compiles one cell; iteration and `len` expand the whole
+        domain. Callers that need a fully expanded dict can write `dict(index)`.
 
     Raises:
         SeriesRelationError: A relation partner is missing, incomparable,
             cyclic, reflexive, or has no cell at the declaring key.
     """
-    return dict(SeriesDomainIndex.from_bindings(bindings, workbook=workbook))
+    return SeriesDomainIndex.from_bindings(bindings, workbook=workbook)
 
 
 def undomained_leaves(

@@ -422,12 +422,21 @@ def _transpose_bind(bind: dict[str, Any]) -> dict[str, Any]:
             "kind": "column_header",
             "header_row": column_index_from_string(label_column),
         }
+    if kind == "row_index":
+        return {**bind, "kind": "column_letter"}
+    if kind == "column_letter":
+        return {**bind, "kind": "row_index"}
     return bind
 
 
 def _walk_transpose_binds(node: Any) -> Any:
     if isinstance(node, dict):
-        if "kind" in node and node["kind"] in {"column_header", "row_label"}:
+        if "kind" in node and node["kind"] in {
+            "column_header",
+            "row_label",
+            "row_index",
+            "column_letter",
+        }:
             return _transpose_bind(
                 {key: _walk_transpose_binds(value) for key, value in node.items()}
             )
@@ -438,7 +447,7 @@ def _walk_transpose_binds(node: Any) -> Any:
 
 
 def transpose_bindings(document: Mapping[str, Any]) -> dict[str, Any]:
-    """Swap `column_header`/`row_label` binds and transpose `data_range`s."""
+    """Swap row/column binds and transpose `data_range`s."""
     doc = copy.deepcopy(dict(document))
     for series in doc.get("series", []):
         if "data_range" in series:

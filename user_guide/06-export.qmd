@@ -174,8 +174,9 @@ records = as_records(compute_output_baseline, result)
 | `list_setters()` / `list_computes()` | Package `__all__`, filtered to names starting with `compute_`. |
 
 Bindings features that already apply before codegen — complementary shards / list `data_range`,
-`sheet_name` and `value_map` keys, `exclude_rows` / `exclude_columns`, `layout: matrix`, named
-ranges in `data_range` — work with inverted-tree because the catalog consumes the merged sidecar.
+`sheet_name`, `value_map`, `row_index`, and `column_letter` keys, `exclude_rows` /
+`exclude_columns`, `layout: matrix`, named ranges in `data_range` — work with inverted-tree
+because the catalog consumes the merged sidecar.
 
 Shapes that **fail closed** (export error, not a silent wrong answer): `INDIRECT` still in the
 formula AST ([issue 668](https://github.com/Teal-Insights/excel-grapher/issues/668)), and any `xl_<name>` with no inverted-tree runtime helper. `SUM` /

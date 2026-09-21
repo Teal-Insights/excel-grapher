@@ -24,7 +24,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     write_workbook,
 )
 
-_SCHEMA = "1.20.0"
+_SCHEMA = "1.21.0"
 _SKIPPED_OWNER = "validation.catalog: false uniquely owns on-graph formula cell"
 
 

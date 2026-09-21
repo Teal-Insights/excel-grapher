@@ -227,7 +227,7 @@ def _bind_source_addresses(bind: dict[str, Any], data_address: str) -> list[str]
         return [data_address]
     if kind == "cell":
         return [str(bind["address"])]
-    if kind in {"constant", "value_map", "sheet_name"}:
+    if kind in {"constant", "value_map", "sheet_name", "row_index", "column_letter"}:
         return []
     if kind not in {"column_header", "row_label"}:
         return []
@@ -711,6 +711,14 @@ def _execute_bind(
         if read_as in {"auto", "string"} and isinstance(raw, str):
             return _normalize_string(raw, normalize)
         return coerce_constant(raw, read_as=read_as)
+
+    if kind == "row_index":
+        return coerce_constant(row, read_as=read_as)
+
+    if kind == "column_letter":
+        if read_as in {"auto", "string"}:
+            return _normalize_string(col, normalize)
+        return coerce_constant(col, read_as=read_as)
 
     raise UnknownBindKindError(kind)
 

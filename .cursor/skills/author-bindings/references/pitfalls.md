@@ -32,6 +32,14 @@ Uniquify distinct scenario / engine paths. Sharing a name across those paths
 merges definitions at export and can leave most paths **unreachable** in the
 exported library even though every shard still looks valid in YAML.
 
+## Grab-bag pins need both address axes
+
+A non-rectangular `data_range` with no year header or row label is unique
+only as `(row, column)`. Prefer `bind.kind: row_index` plus
+`bind.kind: column_letter` over identity `value_map`s (`2: 2`, `B: B`).
+One axis alone still collides when two cells share a row or a column.
+A compact range map such as `2: "2:4"` stamps one key onto every row.
+
 ## Do not confuse `constant: {}` with `bind.kind: constant`
 
 - `constant: {}` names a reader-only **leaf**.
