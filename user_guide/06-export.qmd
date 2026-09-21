@@ -69,6 +69,18 @@ emitted in `data.py` (`SERIES_DEFAULT`). Smoke checks call the generated compute
 | `runtime.py` | Lazy views over named coordinates, recurrence readers, and the `publish` metadata decorator. |
 | `excel.py` | Excel value semantics and inverted-tree adapters (`xl_add`, `XlError`, `as_measure`, lookups, aggregates) embedded from the shared core so the package runs standalone. |
 
+`Model.from_defaults()` binds every **input** leaf from `data.{SERIES_ID}_DEFAULT`
+and applies keyword overrides through the same `validation.CHECKS` path as
+`Model(**inputs)`. Bare `Model()` still binds nothing, so a missing input on
+`compute_*` (`Model(**locals())`) fails closed. Constants stay on `data`.
+
+```python
+from generated.api import Model
+
+model = Model.from_defaults()
+model = Model.from_defaults(discount_rate=0.04)
+```
+
 These two files are complementary, not duplicates. Generated `internals.py` imports Excel operators from `excel.py` and named-axis helpers from `runtime.py`; `runtime.py` imports value semantics from `excel.py`.
 
 Construct inputs from coordinate/value records. The generated schema validates axis names,
