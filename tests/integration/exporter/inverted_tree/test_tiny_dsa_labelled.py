@@ -94,6 +94,15 @@ def test_labeller_reaches_every_time_period_output(labelled_pkg) -> None:
     assert "engine_year_labels" in required_param_names(labelled_pkg.internals.shock_active)
 
 
+def test_from_defaults_binds_snapshot_inputs(labelled_pkg) -> None:
+    model = labelled_pkg.api.Model.from_defaults()
+    baseline = model.output_baseline
+    assert tuple(baseline.domain.axes[0].keys) == (1, 2, 3, 4, 5)
+    assert tuple(baseline[year] for year in range(1, 6)) == pytest.approx(
+        _DEFAULT_BASELINE, abs=1e-9
+    )
+
+
 def test_snapshot_numeric_parity_and_shift_oracle(labelled_pkg) -> None:
     baseline = labelled_pkg.compute_output_baseline(**_baseline_kwargs(labelled_pkg))
     assert tuple(baseline.domain.axes[0].keys) == (1, 2, 3, 4, 5)
