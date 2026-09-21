@@ -32,8 +32,11 @@ from excel_grapher.series_bindings.burndown import (
 from excel_grapher.series_bindings.canonical import bindings_canonical_sha256
 from excel_grapher.series_bindings.constant_series import derive_constant_series
 from excel_grapher.series_bindings.domains import (
+    SeriesDomainHandle,
+    SeriesDomainIndex,
     SeriesRelationError,
     cell_type_env_from_bindings,
+    undomained_leaves,
 )
 from excel_grapher.series_bindings.groups import (
     GroupMember,
@@ -152,6 +155,8 @@ __all__ = [
     "SeriesBindingsLoadError",
     "SeriesBindingsSchemaError",
     "SeriesRelationError",
+    "SeriesDomainHandle",
+    "SeriesDomainIndex",
     "ValidationIssue",
     "ValidationLevel",
     "ValidationReport",
@@ -163,6 +168,7 @@ __all__ = [
     "bound_label_addresses",
     "bindings_canonical_sha256",
     "cell_type_env_from_bindings",
+    "undomained_leaves",
     "bindings_export_order",
     "bindings_have_groups",
     "group_manifest",

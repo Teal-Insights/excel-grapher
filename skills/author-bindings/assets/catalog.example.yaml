@@ -1,6 +1,6 @@
 # Pedagogical catalog fragment. Not an input to a generator.
 # Copy shapes into sidecar YAML; do not bulk-emit four files from this document.
-schema_version: 1.18.0
+schema_version: 1.19.0
 workbook: workbook.xlsx
 
 concept_scheme:

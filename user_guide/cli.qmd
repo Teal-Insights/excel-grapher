@@ -18,6 +18,8 @@ uv run excel-grapher bindings validate --help
 uv run excel-grapher bindings audit --help
 uv run excel-grapher bindings burndown --help
 uv run excel-grapher bindings upsert --help
+uv run excel-grapher bindings viz --help
+uv run excel-grapher bindings undomained --help
 ```
 
 When the package is installed, `excel-grapher` is also available as a console script.
@@ -31,6 +33,7 @@ When the package is installed, `excel-grapher` is also available as a console sc
 | `bindings burndown` | Print unbound formula cells in the current bound graph closure as a coverage worklist (not a full workbook walk; not candidate bindings) |
 | `bindings upsert` | Insert or replace one series after fail-closed schema, occupancy, and resolution checks |
 | `bindings viz` | Write a statement-graph HTML visualization from series bindings |
+| `bindings undomained` | Print graph leaves that have no bindings domain |
 
 More subcommands may be added over time; `excel-grapher --help` lists what is available in your
 installed version.
@@ -58,7 +61,7 @@ excel-grapher bindings validate WORKBOOK [--bindings PATH] [--json] [-v]
 | `--smoke-test` | After a successful validation, generate binding modules and run `compute_*` smoke checks with workbook-default inputs. |
 | `--emit-dir DIR` | Write generated module files under `DIR` (see `--package-name`). Implied when combined with `--smoke-test` and an emit directory. |
 | `--package-name NAME` | Package directory name for smoke tests and emitted files (default: `bindings_module`). |
-| `--constraints PATH` | Path to a `constraints.py` module exposing `CONSTRAINTS: Mapping[str, type]` (the same shape `corpus.toml` entries point at). Required for workbooks whose `OFFSET` / `INDEX` / `INDIRECT` arguments are not integer literals. |
+| `--constraints PATH` | Optional path to a `constraints.py` module exposing `CONSTRAINTS: Mapping[str, type]`. When omitted, the CLI derives domains from the bindings sidecar (`domain` / `from_workbook`). When both are given, `constraints.py` wins per key and a warning lists the overlap. |
 | `--use-cached-dynamic-refs` | Resolve those dynamic refs from the workbook's cached values instead of a constraints module. |
 | `--blank-ranges PATH` | Optional Python module exposing `BLANK_RANGES: Sequence[str]` (sheet-qualified rectangles omitted from the graph). |
 
@@ -138,12 +141,16 @@ explicit resolution strategy. Pass the same `constraints.py` the local corpus us
 uv run excel-grapher bindings validate \
   tests/fixtures/inverted_tree/tiny_dsa/tiny-dsa.xlsx \
   --bindings tests/fixtures/inverted_tree/tiny_dsa/bindings \
-  --constraints tests/fixtures/inverted_tree/tiny_dsa/constraints.py \
   --smoke-test
 ```
 
-Without `--constraints` or `--use-cached-dynamic-refs`, graph building fails with a message that
-names the cell and the flag to pass.
+The sidecar declares series `domain` (and `constant` pins), so `--constraints` is
+optional. Pass it only to overlay a `constraints.py` table; overlapping keys
+warn and `constraints.py` wins.
+
+Without a bindings domain covering the `OFFSET` / `INDEX` / `INDIRECT` leaves,
+and without `--constraints` or `--use-cached-dynamic-refs`, graph building fails
+with a message that names the cell and the flag to pass.
 
 To persist generated files:
 
@@ -293,4 +300,18 @@ colocated sidecar exists, a successful upsert creates `{stem}.bindings/` with
 four-file shards. A failed upsert leaves the destination unchanged.
 `--use-cached-dynamic-refs` defaults to off on the CLI (same as `validate`);
 the Python helper `upsert_series_binding` defaults it to on.
+
+## `bindings undomained`
+
+Print graph leaves that have no bindings `domain` / `from_workbook` coverage.
+This is a domain-completeness worklist, distinct from `bindings burndown`
+(unbound formula cells in the bound closure).
+
+```bash
+excel-grapher bindings undomained WORKBOOK [--bindings PATH] [--json]
+  [--constraints PATH] [--use-cached-dynamic-refs]
+```
+
+When every leaf is covered, the command prints
+`ok: every graph leaf has a bindings domain`.
 

@@ -141,11 +141,16 @@ def effective_validation(series: dict[str, Any]) -> dict[str, Any]:
 def normalize_series_entry(series: dict[str, Any]) -> dict[str, Any]:
     """Return a copy with legacy aliases normalized for schema validation.
 
-    `layout: row_series` is renamed to `series`.
+    `layout: row_series` is renamed to `series`. `input.domain` is copied to
+    series-level `domain` when the series-level key is omitted.
     """
     out = dict(series)
     if out.get("layout") == "row_series":
         out["layout"] = "series"
+    input_block = out.get("input")
+    nested = input_block.get("domain") if isinstance(input_block, dict) else None
+    if isinstance(nested, dict) and nested and not isinstance(out.get("domain"), dict):
+        out["domain"] = copy.deepcopy(nested)
     return out
 
 
@@ -388,6 +393,13 @@ def _compose_direction_blocks(
     for field in ("sdmx_notes", "notes"):
         if field in right and field not in merged:
             merged[field] = right[field]
+    if "domain" in right:
+        if "domain" not in merged:
+            merged["domain"] = copy.deepcopy(right["domain"])
+        elif merged["domain"] != right["domain"]:
+            raise ValueError(
+                f"Cannot merge series {series_id!r}: conflicting domain (shard {shard_index})"
+            )
     return merged
 
 

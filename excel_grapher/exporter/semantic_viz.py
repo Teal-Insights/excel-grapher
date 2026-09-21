@@ -108,6 +108,7 @@ class SemanticVizPayload:
                     "direction": node.direction,
                     "sheet": node.sheet,
                     "is_remainder": node.is_remainder,
+                    "labels": node.labels.to_dict(),
                     "rank": g.ranks[i],
                     "x": g.positions[i][0],
                     "y": g.positions[i][1],

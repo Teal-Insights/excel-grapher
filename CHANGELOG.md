@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v21.5.0 (2026-09-21)
+
+### Features
+
+- **series-bindings**: Compile series-level domain from bindings
+  ([#930](https://github.com/Teal-Insights/excel-grapher/pull/930),
+  [`0f94c7e`](https://github.com/Teal-Insights/excel-grapher/commit/0f94c7e0d3cc29cd1910a13b4771b7eed0135563))
+
+- **series-bindings**: Derive corpus graphs from bindings domains
+  ([#930](https://github.com/Teal-Insights/excel-grapher/pull/930),
+  [`0f94c7e`](https://github.com/Teal-Insights/excel-grapher/commit/0f94c7e0d3cc29cd1910a13b4771b7eed0135563))
+
+
+## v21.4.0 (2026-09-21)
+
+### Bug Fixes
+
+- **exporter**: Join drilldown edges to statement ids
+  ([#929](https://github.com/Teal-Insights/excel-grapher/pull/929),
+  [`6aa2fbd`](https://github.com/Teal-Insights/excel-grapher/commit/6aa2fbd496667ffc927ac60a37e07115ea67568c))
+
+### Features
+
+- **exporter**: Add statement-graph labels, series drilldown, and NetworkX export
+  ([#929](https://github.com/Teal-Insights/excel-grapher/pull/929),
+  [`6aa2fbd`](https://github.com/Teal-Insights/excel-grapher/commit/6aa2fbd496667ffc927ac60a37e07115ea67568c))
+
+- **exporter**: Statement-graph labels, series drilldown, and NetworkX export
+  ([#929](https://github.com/Teal-Insights/excel-grapher/pull/929),
+  [`6aa2fbd`](https://github.com/Teal-Insights/excel-grapher/commit/6aa2fbd496667ffc927ac60a37e07115ea67568c))
+
+
 ## v21.3.0 (2026-09-20)
 
 ### Bug Fixes

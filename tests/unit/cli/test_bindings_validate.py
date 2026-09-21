@@ -190,6 +190,17 @@ def test_console_script_is_registered() -> None:
     assert "--use-cached-dynamic-refs" in result.stdout
 
 
+def test_undomained_subcommand_is_registered() -> None:
+    result = subprocess.run(
+        [sys.executable, "-m", "excel_grapher.cli", "bindings", "--help"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0
+    assert "undomained" in result.stdout
+
+
 def test_main_schema_error_is_human_readable(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
@@ -328,7 +339,7 @@ _TINY_DSA_BINDINGS = INVERTED_TREE_TINY_DSA / "bindings"
 _TINY_DSA_CONSTRAINTS = INVERTED_TREE_TINY_DSA / "constraints.py"
 
 
-def test_main_tiny_dsa_without_constraints_is_actionable(
+def test_main_tiny_dsa_without_constraints_derives_bindings_domains(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     exit_code = main(
@@ -343,12 +354,8 @@ def test_main_tiny_dsa_without_constraints_is_actionable(
     )
 
     captured = capsys.readouterr()
-    assert exit_code != 0
-    combined = f"{captured.out}\n{captured.err}"
-    assert "OFFSET rows/cols must be integer literals or cached numeric refs" not in combined
-    assert "Engine!" in combined
-    assert "--constraints" in captured.err
-    assert "--use-cached-dynamic-refs" in captured.err
+    assert exit_code == 0, captured.err
+    assert "compute functions passed smoke checks" in captured.out
 
 
 def test_main_tiny_dsa_constraints_smoke_test(capsys: pytest.CaptureFixture[str]) -> None:
@@ -458,3 +465,68 @@ def test_main_use_cached_dynamic_refs_resolves_offset(
     captured_with = capsys.readouterr()
     assert with_flag == 0, captured_with.err
     assert "ok=True" in captured_with.out
+
+
+def test_main_undomained_lists_uncovered_leaves(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    import yaml
+
+    from tests.unit.exporter.inverted_tree.helpers import (
+        bindings_document,
+        series_entry,
+        write_workbook,
+    )
+
+    workbook = write_workbook(
+        tmp_path / "plain.xlsx",
+        {"Inputs": {"A1": 1, "B1": 2}},
+    )
+    document = bindings_document(
+        series_entry(
+            "covered",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            domain={"real_between": {"min": 0, "max": 10}},
+        ),
+        series_entry("uncovered", "Inputs!B1", layout="scalar", direction="input"),
+        schema_version="1.19.0",
+    )
+    document["workbook"] = "plain.xlsx"
+    bindings = tmp_path / "plain.bindings.yaml"
+    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    exit_code = main(
+        [
+            "bindings",
+            "undomained",
+            str(workbook),
+            "--bindings",
+            str(bindings),
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "Inputs!B1" in captured.out
+    assert "Inputs!A1" not in captured.out
+
+
+def test_constraints_overlay_warns_on_overlap(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.warns(UserWarning, match="constraints.py overrides bindings domains"):
+        exit_code = main(
+            [
+                "bindings",
+                "validate",
+                str(_TINY_DSA_WORKBOOK),
+                "--bindings",
+                str(_TINY_DSA_BINDINGS),
+                "--constraints",
+                str(_TINY_DSA_CONSTRAINTS),
+            ]
+        )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err

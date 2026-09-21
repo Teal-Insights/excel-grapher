@@ -6,6 +6,7 @@ import argparse
 import json
 import sys
 import tempfile
+import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -32,7 +33,8 @@ from excel_grapher.series_bindings.burndown import (
     internal_binding_burndown,
     load_exempt_addresses,
 )
-from excel_grapher.series_bindings.load import SeriesBindingsLoadError
+from excel_grapher.series_bindings.domains import undomained_leaves
+from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
 from excel_grapher.series_bindings.resolve import BindingDirection
 from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
 from excel_grapher.series_bindings.smoke import BindingsSmokeError
@@ -49,9 +51,13 @@ from excel_grapher.series_bindings.workflow import (
 )
 
 _PY_DYNAMIC_REF_HINT = (
-    "Pass dynamic_refs=DynamicRefConfig.from_constraints(...) or set use_cached_dynamic_refs=True."
+    "Pass dynamic_refs=DynamicRefConfig.from_bindings(...) / "
+    "DynamicRefConfig.from_constraints(...) or set use_cached_dynamic_refs=True."
 )
-_CLI_DYNAMIC_REF_HINT = "Pass --constraints path/to/constraints.py or --use-cached-dynamic-refs."
+_CLI_DYNAMIC_REF_HINT = (
+    "Declare series domain in the bindings sidecar, pass --constraints "
+    "path/to/constraints.py, or set --use-cached-dynamic-refs."
+)
 
 
 def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
@@ -101,7 +107,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         type=Path,
         default=None,
         help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type] "
-        "(same contract as corpus.toml entries). Used to resolve OFFSET/INDEX/INDIRECT.",
+        "(same contract as corpus.toml entries). Optional when the sidecar declares "
+        "series domain. When both are given, constraints.py wins per key.",
     )
     validate_parser.add_argument(
         "--use-cached-dynamic-refs",
@@ -137,7 +144,8 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--constraints",
         type=Path,
         default=None,
-        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type]",
+        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type]. "
+        "Optional when the sidecar declares series domain.",
     )
     viz_parser.add_argument(
         "--use-cached-dynamic-refs",
@@ -156,6 +164,34 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         default=None,
         help="Python module exposing BLANK_RANGES: Sequence[str] "
         "(sheet-qualified rectangles omitted from the graph)",
+    )
+    undomained_parser = bindings_sub.add_parser(
+        "undomained",
+        help="List graph leaves that have no bindings domain",
+    )
+    undomained_parser.add_argument("workbook", type=Path, help="Path to the .xlsx workbook")
+    undomained_parser.add_argument(
+        "--bindings",
+        type=Path,
+        default=None,
+        help="Binding sidecar file or shard directory (default: colocated sidecar)",
+    )
+    undomained_parser.add_argument(
+        "--constraints",
+        type=Path,
+        default=None,
+        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type]",
+    )
+    undomained_parser.add_argument(
+        "--use-cached-dynamic-refs",
+        action="store_true",
+        help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
+        "bindings domains or a constraints module.",
+    )
+    undomained_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the undomained leaf list as JSON",
     )
 
     audit_parser = bindings_sub.add_parser(
@@ -268,6 +304,8 @@ def dispatch(args: argparse.Namespace) -> int:
         return cmd_validate(args)
     if args.bindings_command == "viz":
         return cmd_viz(args)
+    if args.bindings_command == "undomained":
+        return cmd_undomained(args)
     if args.bindings_command == "audit":
         return cmd_audit(args)
     if args.bindings_command == "burndown":
@@ -290,7 +328,8 @@ def cmd_viz(args: argparse.Namespace) -> int:
         print(str(exc), file=sys.stderr)
         return 1
     try:
-        dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
+        bindings_doc = load_series_bindings(bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
         )
@@ -357,7 +396,8 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
 
     try:
-        dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
+        bindings_doc = load_series_bindings(bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
         result = validate_bindings_workbook(
             workbook,
             bindings_path,
@@ -445,6 +485,48 @@ def cmd_validate(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_undomained(args: argparse.Namespace) -> int:
+    """Run ``excel-grapher bindings undomained``."""
+    workbook = args.workbook
+    if not workbook.is_file():
+        print(f"Workbook not found: {workbook}", file=sys.stderr)
+        return 1
+    try:
+        bindings_path = resolve_bindings_path(workbook, args.bindings)
+    except SeriesBindingsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    try:
+        bindings_doc = load_series_bindings(bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        result = validate_bindings_workbook(
+            workbook,
+            bindings_path,
+            dynamic_refs=dynamic_refs,
+            use_cached_dynamic_refs=args.use_cached_dynamic_refs,
+        )
+        leaves = undomained_leaves(result["graph"], result["bindings"], workbook=workbook)
+    except SeriesBindingsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except SeriesBindingsSchemaError as exc:
+        print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
+        return 1
+    except ConstraintsLoadError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
+        return 1
+    if args.json:
+        print(json.dumps(leaves, indent=2))
+    elif leaves:
+        print("\n".join(leaves))
+    else:
+        print("ok: every graph leaf has a bindings domain")
+    return 0
+
+
 def _parse_audit_directions(raw: list[str] | None) -> tuple[BindingDirection, ...]:
     if not raw:
         return DIRECTIONS
@@ -483,7 +565,8 @@ def _bindings_context(args: argparse.Namespace):
         return None
     try:
         bindings_path = resolve_bindings_path(workbook, args.bindings)
-        dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
+        bindings_doc = load_series_bindings(bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
         )
@@ -579,7 +662,11 @@ def cmd_upsert(args: argparse.Namespace) -> int:
     try:
         series = _load_series_document(args.series)
         bindings_path = resolve_bindings_path(workbook, args.bindings, create_if_missing=True)
-        dynamic_refs = _load_dynamic_refs(workbook, args.constraints)
+        if bindings_path.is_file() or bindings_path.is_dir():
+            bindings_doc = load_series_bindings(bindings_path)
+        else:
+            bindings_doc = {}
+        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
         )
@@ -611,10 +698,30 @@ def cmd_upsert(args: argparse.Namespace) -> int:
     return 0
 
 
-def _load_dynamic_refs(workbook: Path, constraints: Path | None) -> DynamicRefConfig | None:
+def _derive_dynamic_refs(
+    workbook: Path,
+    constraints: Path | None,
+    bindings: Mapping[str, Any],
+    bindings_path: Path,
+) -> DynamicRefConfig | None:
+    """Derive a dynamic-ref config from bindings, with optional constraints overlay."""
+    bindings_config = DynamicRefConfig.from_bindings(
+        bindings, workbook, bindings_path=bindings_path
+    )
     if constraints is None:
-        return None
-    return dynamic_refs_from_path(resolve_constraints_path(workbook, constraints))
+        return bindings_config if len(bindings_config.cell_type_env) else None
+    constraints_config = dynamic_refs_from_path(resolve_constraints_path(workbook, constraints))
+    merged, overrides = bindings_config.overlay(constraints_config)
+    if overrides:
+        preview = ", ".join(overrides[:20])
+        extra = "" if len(overrides) <= 20 else f" (+{len(overrides) - 20} more)"
+        warnings.warn(
+            "constraints.py overrides bindings domains for "
+            f"{len(overrides)} key(s): {preview}{extra}",
+            UserWarning,
+            stacklevel=2,
+        )
+    return merged
 
 
 def _format_cli_dynamic_ref_error(exc: BaseException) -> str:

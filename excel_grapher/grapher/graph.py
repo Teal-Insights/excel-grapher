@@ -11,6 +11,9 @@ from typing import TYPE_CHECKING, Any, Literal, Protocol, SupportsIndex, runtime
 if TYPE_CHECKING:
     from pathlib import Path
 
+    from excel_grapher.core.cell_types import CellType
+    from excel_grapher.series_bindings.domains import SeriesDomainIndex
+
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
     from .dynamic_refs import DynamicRefConfig
     from .graph_consistency import GraphConsistencyIssue
@@ -261,8 +264,12 @@ class DependencyGraph:
     # compression and formula rewrite drop it. Callers must rewarm.
     formula_shapes: FormulaShapeTable | None = None
     # Optional leaf domains used by `cycle_report` when the caller does not pass
-    # `cell_type_env`. Not pickled (same as `formula_shapes`).
+    # `cell_type_env`. A `SeriesDomainIndex` is stored as both `domains` and
+    # `cell_type_env` so Mapping lookups stay lazy. Pickle/JSON persist a handle
+    # (`SeriesDomainHandle`) rather than the expanded table.
     cell_type_env: CellTypeEnv | None = None
+    domains: SeriesDomainIndex | None = field(default=None, repr=False, compare=False)
+    _domains_handle: Any = field(default=None, repr=False, compare=False)
     # Bumped by `set_node_value` so FormulaEvaluator can skip a full leaf poll
     # when no durable value write has happened since the last eager scan.
     _value_generation: int = field(default=0, repr=False, compare=False)
@@ -323,7 +330,18 @@ class DependencyGraph:
         cloned.formula_shapes = (
             self.formula_shapes.copy() if self.formula_shapes is not None else None
         )
-        cloned.cell_type_env = dict(self.cell_type_env) if self.cell_type_env is not None else None
+        if self.domains is not None:
+            cloned.domains = self.domains
+            cloned.cell_type_env = self.domains
+        elif self.cell_type_env is not None and hasattr(self.cell_type_env, "domain_for"):
+            cloned.cell_type_env = self.cell_type_env
+            cloned.domains = getattr(self, "domains", None)
+        else:
+            cloned.cell_type_env = (
+                dict(self.cell_type_env) if self.cell_type_env is not None else None
+            )
+            cloned.domains = None
+        cloned._domains_handle = self._domains_handle
         cloned._value_generation = self._value_generation
         return cloned
 
@@ -1265,6 +1283,44 @@ class DependencyGraph:
         return self.keys(
             order="workbook", source=(k for k, node in self._nodes.items() if node.is_leaf)
         )
+
+    def domain_for(self, key: NodeKey) -> CellType | None:
+        """Return the bindings-owned domain for `key`, if one is attached."""
+        if self.domains is not None:
+            return self.domains.domain_for(str(key))
+        if self.cell_type_env is None:
+            return None
+        getter = getattr(self.cell_type_env, "get", None)
+        if getter is None:
+            return None
+        return getter(str(key))
+
+    def attach_domains(
+        self,
+        bindings: Mapping[str, Any],
+        *,
+        workbook: Path | str | None = None,
+        bindings_path: Path | str | None = None,
+    ) -> SeriesDomainIndex:
+        """Attach a lazy series-domain index without rebuilding the graph.
+
+        Args:
+            bindings: Loaded (merged) series binding manifest.
+            workbook: Workbook path for range expansion and `from_workbook` reads.
+            bindings_path: Sidecar path stored on the pickle/JSON handle.
+
+        Returns:
+            The attached `SeriesDomainIndex` (also exposed as `cell_type_env`).
+        """
+        from excel_grapher.series_bindings.domains import SeriesDomainIndex
+
+        index = SeriesDomainIndex.from_bindings(
+            bindings, workbook=workbook, graph=self, bindings_path=bindings_path
+        )
+        self.domains = index
+        self.cell_type_env = index
+        self._domains_handle = index.handle
+        return index
 
     def target_keys(self) -> list[NodeKey]:
         """Return sorted list of keys marked as original build targets."""
