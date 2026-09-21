@@ -34,7 +34,7 @@ from tests.unit.exporter.inverted_tree.test_shared_subplan import (
 def test_every_formula_is_one_model_attribute(tmp_path: Path) -> None:
     modules = generate_inverted(_prefix_workbook(tmp_path), _prefix_bindings())
     api = modules["api.py"]
-    assert "class Model:" in api
+    assert "class Model(_BoundInputs):" in api
     assert "def _shared_" not in api
     assert "def _run_" not in api
     for index in range(_PREFIX_LEN):

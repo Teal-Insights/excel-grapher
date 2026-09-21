@@ -1401,6 +1401,30 @@ def _model_recurrence_group(
     return lines
 
 
+def _input_series_ids(catalog: SeriesCatalog) -> tuple[str, ...]:
+    """Retained input series ids in catalog order."""
+    return tuple(series.series_id for series in _retained(catalog) if series.direction == "input")
+
+
+_BOUND_INPUTS_MIXIN = '''class _BoundInputs:
+    """Shared workbook bind for Model and per-output input bundles."""
+
+    _INPUT_IDS: tuple[str, ...] = ()
+
+    @classmethod
+    def from_workbook(cls, workbook: Path | str, **overrides: object) -> _BoundInputs:
+        """Bind input leaves from a populated workbook of this vintage."""
+        fields = getattr(cls, "__dataclass_fields__", None)
+        names = tuple(fields) if fields else cls._INPUT_IDS
+        unknown = overrides.keys() - set(names)
+        if unknown:
+            raise TypeError(f"unknown inputs: {sorted(unknown)}")
+        values = read_bound_inputs(Path(workbook), names, data)
+        values.update(overrides)
+        return cls(**values)
+'''
+
+
 def _model_init(catalog: SeriesCatalog) -> list[str]:
     """Bind static inputs, evaluate labellers, then check runtime-axis inputs."""
     deferred_ids = _deferred_runtime_inputs(catalog)
@@ -1505,19 +1529,22 @@ def emit_named_api(
     constant_sets: Mapping[frozenset[str], str],
 ) -> str:
     """Emit the memoized `Model` and the public `compute_*` functions over it."""
-    inputs = [s for s in _retained(catalog) if s.direction == "input"]
+    input_ids = _input_series_ids(catalog)
+    inputs = [catalog.get(sid) for sid in input_ids]
     model = [
-        "class Model:",
+        "class Model(_BoundInputs):",
         '    """Formula series of the workbook, evaluated on demand from bound inputs.',
         "",
         "    Each attribute evaluates its named formula once per model. Only the",
         "    inputs bound at construction are available, so a public function",
-        "    supplies exactly the leaves of its output.",
+        "    supplies exactly the leaves of its output. `from_workbook` reads",
+        "    those input cells from a populated workbook of this vintage.",
         '    """',
         "",
     ]
     for series in inputs:
         model.append(f"    {series.series_id}: {_annotation(series)}")
+    model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
@@ -1545,12 +1572,18 @@ def emit_named_api(
     lines = [
         '"""Generated functions accepting and returning named-coordinate values."""',
         "from __future__ import annotations",
+        "",
         "from datetime import datetime",
         "from functools import cached_property",
+        "from pathlib import Path",
+        "",
         "from . import data, internals, validation",
         *([_constants_import(aliases)] if aliases else []),
         "from .runtime import publish",
+        "from .workbook import read_bound_inputs",
         "",
+        "",
+        _BOUND_INPUTS_MIXIN,
         "",
         "\n".join(model),
         "",
@@ -2207,6 +2240,7 @@ def emit_named_modules(
     export_runtime = Path(__file__).parents[1] / "export_runtime"
     tensor_source = (export_runtime / "tensor.py").read_text(encoding="utf-8")
     provenance_source = (export_runtime / "provenance.py").read_text(encoding="utf-8")
+    workbook_source = (export_runtime / "workbook.py").read_text(encoding="utf-8")
     return {
         "__init__.py": init_source
         + "\nfrom .tensor import Axis, Domain, Series, Tensor, TensorSchema\n"
@@ -2217,6 +2251,7 @@ def emit_named_modules(
         "data.py": data,
         "tensor.py": tensor_source,
         "provenance.py": provenance_source,
+        "workbook.py": workbook_source,
         **build_runtime_modules(runtime_source, excel_source),
     }
 
