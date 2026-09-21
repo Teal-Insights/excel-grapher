@@ -16,6 +16,7 @@ from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
 from excel_grapher.exporter.semantic_viz import to_semantic_viz_payload, write_semantic_viz_html
 from excel_grapher.grapher.blank_ranges import BlankRangesLoadError, load_blank_ranges_module
+from excel_grapher.grapher.builder import list_dynamic_ref_constraint_candidates
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefError
 from excel_grapher.series_bindings.audit import (
     DIRECTIONS,
@@ -27,17 +28,23 @@ from excel_grapher.series_bindings.burndown import (
     internal_binding_burndown,
     load_exempt_addresses,
 )
-from excel_grapher.series_bindings.domains import undomained_leaves
+from excel_grapher.series_bindings.domains import SeriesRelationError, undomained_leaves
 from excel_grapher.series_bindings.load import SeriesBindingsLoadError, load_series_bindings
 from excel_grapher.series_bindings.resolve import BindingDirection
 from excel_grapher.series_bindings.schema import SeriesBindingsSchemaError
 from excel_grapher.series_bindings.smoke import BindingsSmokeError
-from excel_grapher.series_bindings.types import ValidationIssue, ValidationReport
+from excel_grapher.series_bindings.types import (
+    ValidationIssue,
+    ValidationReport,
+    WorkbookSeriesBindings,
+)
 from excel_grapher.series_bindings.upsert import (
     BindingUpsertError,
     upsert_series_binding,
 )
+from excel_grapher.series_bindings.versions import CURRENT_SCHEMA_VERSION
 from excel_grapher.series_bindings.workflow import (
+    all_series_targets,
     generate_bindings_modules,
     resolve_bindings_path,
     run_binding_checks,
@@ -165,6 +172,34 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         action="store_true",
         help="Print the undomained leaf list as JSON",
     )
+    candidates_parser = bindings_sub.add_parser(
+        "candidates",
+        help="List dynamic-ref leaves that still need a bindings domain",
+    )
+    candidates_parser.add_argument("workbook", type=Path, help="Path to the .xlsx workbook")
+    candidates_parser.add_argument(
+        "--bindings",
+        type=Path,
+        default=None,
+        help="Binding sidecar file or shard directory (default: colocated sidecar)",
+    )
+    candidates_parser.add_argument(
+        "--target",
+        action="append",
+        default=None,
+        help="Extraction root (sheet-qualified address, range, or defined name). "
+        "Repeatable. Unioned with series data_range cells.",
+    )
+    candidates_parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Print the candidate address list as JSON",
+    )
+    candidates_parser.add_argument(
+        "--strict",
+        action="store_true",
+        help="Exit 1 when any dynamic-ref leaf is still missing a domain",
+    )
 
     audit_parser = bindings_sub.add_parser(
         "audit",
@@ -271,6 +306,8 @@ def dispatch(args: argparse.Namespace) -> int:
         return cmd_viz(args)
     if args.bindings_command == "undomained":
         return cmd_undomained(args)
+    if args.bindings_command == "candidates":
+        return cmd_candidates(args)
     if args.bindings_command == "audit":
         return cmd_audit(args)
     if args.bindings_command == "burndown":
@@ -480,6 +517,83 @@ def cmd_undomained(args: argparse.Namespace) -> int:
         print("\n".join(leaves))
     else:
         print("ok: every graph leaf has a bindings domain")
+    return 0
+
+
+def cmd_candidates(args: argparse.Namespace) -> int:
+    """Run ``excel-grapher bindings candidates``.
+
+    Lists leaf addresses that feed OFFSET / INDEX / INDIRECT and have no
+    bindings domain yet. Does not build the dependency graph and does not
+    resolve dynamic refs from cached values.
+
+    Cells reachable only through an unresolved dynamic ref are omitted until
+    the controlling domain is declared. Re-run after each domain edit on a
+    dynamic-ref argument.
+    """
+    workbook = args.workbook
+    if not workbook.is_file():
+        print(f"Workbook not found: {workbook}", file=sys.stderr)
+        return 1
+
+    bindings_doc: WorkbookSeriesBindings = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "series": [],
+    }
+    bindings_path: Path | None = None
+    try:
+        bindings_path = resolve_bindings_path(workbook, args.bindings)
+    except SeriesBindingsLoadError as exc:
+        if not args.target:
+            print(
+                f"{exc}\n"
+                "Author an output (or other) series, or pass --target with an extraction root.",
+                file=sys.stderr,
+            )
+            return 1
+    else:
+        try:
+            bindings_doc = load_series_bindings(bindings_path)
+        except SeriesBindingsLoadError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
+        except SeriesBindingsSchemaError as exc:
+            print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
+            return 1
+
+    targets = list(args.target or [])
+    if bindings_path is not None:
+        targets.extend(all_series_targets(bindings_doc, workbook=workbook))
+    targets = sorted(set(targets))
+    if not targets:
+        print(
+            "No extraction targets. Author a series data_range or pass --target.",
+            file=sys.stderr,
+        )
+        return 1
+
+    try:
+        dynamic_refs = DynamicRefConfig.from_bindings(
+            bindings_doc, workbook, bindings_path=bindings_path
+        )
+        leaves = list_dynamic_ref_constraint_candidates(
+            workbook, targets, dynamic_refs=dynamic_refs
+        )
+    except SeriesRelationError as exc:
+        print(str(exc), file=sys.stderr)
+        return 1
+    except (DynamicRefError, ValueError) as exc:
+        print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
+        return 1
+
+    if args.json:
+        print(json.dumps(leaves, indent=2))
+    elif leaves:
+        print("\n".join(leaves))
+    else:
+        print("ok: no dynamic-ref leaves are missing a bindings domain")
+    if args.strict and leaves:
+        return 1
     return 0
 
 

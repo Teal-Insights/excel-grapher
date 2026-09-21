@@ -60,10 +60,35 @@ requires `ok=True`. Sparse `column_header` / `row_label` binds without
 Empty shards yield an empty graph. `bindings burndown` reporting zero unbound
 cells in that case is **not** full workbook coverage.
 
+## Extract-time domains
+
+Workbooks with `OFFSET`, `INDEX`, or `INDIRECT` need series domains **before**
+`bindings validate` can build the graph, unless you pass
+`--use-cached-dynamic-refs`. Cached resolution is a separate path. The
+declared-domain path is:
+
+1. Author an output (or pass `--target`). Placeholder shards alone have no
+   extraction root.
+2. `bindings candidates` until the list is empty. Each address becomes a
+   series (`input` with `domain`, or `constant` when the cached value is
+   non-blank), not a Python `CONSTRAINTS` entry.
+3. Re-run candidates after widening a selector. A domain that does not cover
+   the cached value can hide the next dynamic ref and still let extract
+   succeed.
+4. `bindings validate` without `--use-cached-dynamic-refs`.
+5. `bindings undomained` for leaves that do not feed dynamic refs. Domain-only
+   edits on those leaves do not need another extract (`graph.attach_domains`).
+
+`greater_than` / `not_equal` require the partner series to be in the sidecar
+first. Details and the gaps (blanks, defined names, geometric `INDEX`/`MATCH`,
+`BLANK_RANGES`) are in the [CLI reference](cli.qmd).
+
 ## CLI
 
 ```bash
+uv run excel-grapher bindings candidates WORKBOOK --bindings BINDINGS
 uv run excel-grapher bindings validate WORKBOOK --bindings BINDINGS
+uv run excel-grapher bindings undomained WORKBOOK --bindings BINDINGS
 uv run excel-grapher bindings audit WORKBOOK --bindings BINDINGS
 uv run excel-grapher bindings burndown WORKBOOK --bindings BINDINGS
 uv run excel-grapher bindings upsert WORKBOOK --bindings BINDINGS --series one.yaml

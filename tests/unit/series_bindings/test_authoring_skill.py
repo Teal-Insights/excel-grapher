@@ -101,6 +101,11 @@ def test_skill_documents_authoring_loop_without_tiny_dsa() -> None:
     assert "tiny-dsa" not in lowered
     assert "workbook_config" not in lowered
     assert "load_pipeline_config" not in lowered
+    assert "bindings candidates" in joined
+    assert "undomained" in lowered
+    assert "use_cached_dynamic_refs=False" in joined
+    assert "SeriesRelationError" in joined
+    assert "BLANK_RANGES" in joined
     assert "bindings emit" not in lowered
     assert "author_bindings" not in lowered
 

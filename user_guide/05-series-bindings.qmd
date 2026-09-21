@@ -992,6 +992,12 @@ lookup compiles one address, while iteration and `len` expand the whole domain.
 The local corpus manifest (`corpus.toml`) does the same: omit a Python
 constraint table when the sidecar covers every dynamic-ref leaf.
 `bindings undomained` prints graph leaves that still have no domain.
+`bindings candidates` prints the pre-extract worklist
+(`list_dynamic_ref_constraint_candidates` with `DynamicRefConfig.from_bindings`)
+without building the graph and without cached dynamic refs. The list grows
+only as selector domains get wide enough to reach the next `OFFSET` / `INDEX` /
+`INDIRECT`. After extract, non-dynamic leaves are an `undomained` /
+`attach_domains` pass. See [Command-line interface](cli.qmd).
 
 ## Extract-only series (1.21.0)
 

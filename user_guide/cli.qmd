@@ -20,6 +20,7 @@ uv run excel-grapher bindings burndown --help
 uv run excel-grapher bindings upsert --help
 uv run excel-grapher bindings viz --help
 uv run excel-grapher bindings undomained --help
+uv run excel-grapher bindings candidates --help
 ```
 
 When the package is installed, `excel-grapher` is also available as a console script.
@@ -34,6 +35,7 @@ When the package is installed, `excel-grapher` is also available as a console sc
 | `bindings upsert` | Insert or replace one series after fail-closed schema, occupancy, and resolution checks |
 | `bindings viz` | Write a statement-graph HTML visualization from series bindings |
 | `bindings undomained` | Print graph leaves that have no bindings domain |
+| `bindings candidates` | Print dynamic-ref leaves that still need a domain, before extract |
 
 More subcommands may be added over time; `excel-grapher --help` lists what is available in your
 installed version.
@@ -315,4 +317,46 @@ excel-grapher bindings undomained WORKBOOK [--bindings PATH] [--json]
 
 When every leaf is covered, the command prints
 `ok: every graph leaf has a bindings domain`.
+
+## `bindings candidates`
+
+Print the pre-extract worklist: leaf addresses that feed `OFFSET` / `INDEX` /
+`INDIRECT` and have no bindings domain yet. This does **not** build the
+dependency graph and does **not** accept `--use-cached-dynamic-refs`.
+
+```bash
+excel-grapher bindings candidates WORKBOOK [--bindings PATH]
+  [--target ADDR] [--json] [--strict]
+```
+
+| Argument | Description |
+|----------|-------------|
+| `WORKBOOK` | Path to the `.xlsx` workbook (required). |
+| `--bindings PATH` | Sidecar file or shard directory. When omitted, the CLI looks for a colocated sidecar. |
+| `--target ADDR` | Extraction root (sheet-qualified address, range, or defined name). Repeatable. Unioned with every series `data_range`. |
+| `--json` | Print the address list as JSON. |
+| `--strict` | Exit 1 while any candidate remains. |
+
+Empty shards have no roots. Author an output series first, or pass `--target`
+before a sidecar exists. The command prints one A1 address per line, or
+`ok: no dynamic-ref leaves are missing a bindings domain`.
+
+The list is incomplete until controlling domains are wide enough to reach the
+next dynamic ref. Re-run after every domain edit on a dynamic-ref argument.
+`INDEX`/`MATCH` over a static rectangle is often typed from range geometry and
+does not appear. Defined names are resolved to addresses. `BLANK_RANGES` is
+not applied; subtract those cells yourself. A blank cell pinned only with
+`constant` stays on the list. A `greater_than` / `not_equal` whose partner
+series is missing fails with `SeriesRelationError` before any list is printed.
+
+Walked end to end (bindings domains only, no Python constraint table, no
+cached dynamic refs) in
+`tests/integration/grapher/test_extract_time_domain_loop.py`: a micro
+workbook whose `OFFSET` uses a defined name and whose row domain must be
+widened before the downstream `INDIRECT` appears, then tiny-DSA output roots,
+which need only `Inputs!B22` (`shock_type`) before extract. Remaining leaves
+are an `undomained` / `attach_domains` pass, not a second extract.
+Q-CRAFT `Macrofiscal!C3` (`INDEX`/`MATCH` on a static country column) and
+`Discrete Risks!C2:BT13` return an empty candidate list for the same reason:
+those selectors do not need a leaf domain.
 
