@@ -13,7 +13,6 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefLimits,
     _ast_address_to_ref_key,
     _sheet_from_addr,
-    _split_addr_sheet_coord,
     _split_qualified_to_sheet_a1,
     expand_leaf_env_to_argument_env,
 )
@@ -66,10 +65,6 @@ def test_split_sheet_qualified_address_soft_wrapper_handles_apostrophe_sheet_nam
     assert split_sheet_qualified_address(_APOSTROPHE_KEY) == (_APOSTROPHE_SHEET, "A1")
     assert split_sheet_qualified_address("A1") is None
     assert split_sheet_qualified_address("'Broken Sheet'") is None
-
-
-def test_split_addr_sheet_coord_handles_apostrophe_sheet_names() -> None:
-    assert _split_addr_sheet_coord(_APOSTROPHE_KEY) == (_APOSTROPHE_SHEET, "A1")
 
 
 def test_sheet_from_addr_handles_apostrophe_sheet_names() -> None:

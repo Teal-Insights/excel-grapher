@@ -387,7 +387,7 @@ def test_cross_sheet_offset_dynamic_dependencies_include_possible_columns_issue_
         excel_path,
         ["Engine!B9"],
         load_values=True,
-        dynamic_refs=DynamicRefConfig.from_constraints(constraints, {}),
+        dynamic_refs=DynamicRefConfig.from_constraints(constraints),
     )
 
     assert set(graph.leaf_keys()) >= {

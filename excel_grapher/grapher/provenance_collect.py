@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -12,6 +12,7 @@ import fastpyxl.utils.cell
 
 from excel_grapher.core.cell_types import leaves_missing_cell_type_constraints
 
+from .blank_ranges import BlankRangeRect, address_in_blank_ranges
 from .dependency_provenance import DependencyCause, EdgeProvenance, merge_provenance_maps
 from .dynamic_ref_walk import DynamicRefWalkContext
 from .dynamic_refs import (
@@ -135,6 +136,7 @@ def _flat_provenance_one_string(
     workbook_sha256: str | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
     sheet_bounds: dict[str, tuple[int, int]] | None = None,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Mirror extract_expr_deps masking pipeline; accumulate provenance for one formula string starting with '='."""
     if normalizer is None:
@@ -267,6 +269,12 @@ def _flat_provenance_one_string(
                         missing_leaves = leaves_missing_cell_type_constraints(
                             leaves, dynamic_refs.cell_type_env
                         )
+                        if blank_rects:
+                            missing_leaves = {
+                                a
+                                for a in missing_leaves
+                                if not address_in_blank_ranges(a, blank_rects)
+                            }
                         if missing_leaves:
                             raise DynamicRefError(
                                 "Provenance: leaf cells feeding OFFSET/INDIRECT/INDEX have no "
@@ -285,6 +293,7 @@ def _flat_provenance_one_string(
                             type_analysis_cache=type_analysis_cache,
                             workbook_sha256=workbook_sha256,
                             get_cell_ast=walk.cell_ast,
+                            blank_rects=blank_rects,
                         )
                     offset_targets = infer_dynamic_offset_targets(
                         formula_for_infer,
@@ -432,6 +441,7 @@ def _flat_provenance_formula_and_normalized(
     | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
     sheet_bounds: dict[str, tuple[int, int]] | None = None,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> dict[str, EdgeProvenance]:
     # When the extraction string already is the `normalized_formula` dialect
     # (AST render, or regex fallback when the AST parser failed), the single
@@ -460,6 +470,7 @@ def _flat_provenance_formula_and_normalized(
         workbook_sha256=workbook_sha256,
         ref_walk=ref_walk,
         sheet_bounds=sheet_bounds,
+        blank_rects=blank_rects,
     )
     if not normalized or normalized_matches_raw:
         return raw_map
@@ -484,6 +495,7 @@ def _flat_provenance_formula_and_normalized(
         workbook_sha256=workbook_sha256,
         ref_walk=ref_walk,
         sheet_bounds=sheet_bounds,
+        blank_rects=blank_rects,
     )
     out: dict[str, EdgeProvenance] = {}
     all_keys = set(raw_map) | set(norm_map)
@@ -533,6 +545,7 @@ def collect_provenance_for_formula(
     workbook_sha256: str | None = None,
     ref_walk: DynamicRefWalkContext | None = None,
     sheet_bounds: dict[str, tuple[int, int]] | None = None,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> dict[str, EdgeProvenance]:
     """Build a dependency-key to `EdgeProvenance` map for one formula.
 
@@ -581,6 +594,7 @@ def collect_provenance_for_formula(
             workbook_sha256=workbook_sha256,
             ref_walk=ref_walk,
             sheet_bounds=sheet_bounds,
+            blank_rects=blank_rects,
         )
 
     if_parts = split_top_level_if(f)
@@ -650,4 +664,5 @@ def collect_provenance_for_formula(
         workbook_sha256=workbook_sha256,
         ref_walk=ref_walk,
         sheet_bounds=sheet_bounds,
+        blank_rects=blank_rects,
     )

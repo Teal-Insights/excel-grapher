@@ -6,7 +6,6 @@ import argparse
 import json
 import sys
 import tempfile
-import warnings
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
@@ -17,11 +16,6 @@ from excel_grapher.exporter.inverted_tree import InvertedTreeExportError
 from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
 from excel_grapher.exporter.semantic_viz import to_semantic_viz_payload, write_semantic_viz_html
 from excel_grapher.grapher.blank_ranges import BlankRangesLoadError, load_blank_ranges_module
-from excel_grapher.grapher.constraints import (
-    ConstraintsLoadError,
-    dynamic_refs_from_path,
-    resolve_constraints_path,
-)
 from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefError
 from excel_grapher.series_bindings.audit import (
     DIRECTIONS,
@@ -55,8 +49,7 @@ _PY_DYNAMIC_REF_HINT = (
     "DynamicRefConfig.from_constraints(...) or set use_cached_dynamic_refs=True."
 )
 _CLI_DYNAMIC_REF_HINT = (
-    "Declare series domain in the bindings sidecar, pass --constraints "
-    "path/to/constraints.py, or set --use-cached-dynamic-refs."
+    "Declare series domain in the bindings sidecar, or set --use-cached-dynamic-refs."
 )
 
 
@@ -103,18 +96,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Package directory name for smoke tests (default: bindings_module)",
     )
     validate_parser.add_argument(
-        "--constraints",
-        type=Path,
-        default=None,
-        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type] "
-        "(same contract as corpus.toml entries). Optional when the sidecar declares "
-        "series domain. When both are given, constraints.py wins per key.",
-    )
-    validate_parser.add_argument(
         "--use-cached-dynamic-refs",
         action="store_true",
         help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
-        "a constraints module.",
+        "series domain.",
     )
     validate_parser.add_argument(
         "--blank-ranges",
@@ -141,17 +126,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Path to write the HTML viewer",
     )
     viz_parser.add_argument(
-        "--constraints",
-        type=Path,
-        default=None,
-        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type]. "
-        "Optional when the sidecar declares series domain.",
-    )
-    viz_parser.add_argument(
         "--use-cached-dynamic-refs",
         action="store_true",
         help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
-        "a constraints module.",
+        "series domain.",
     )
     viz_parser.add_argument(
         "--json",
@@ -177,16 +155,10 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Binding sidecar file or shard directory (default: colocated sidecar)",
     )
     undomained_parser.add_argument(
-        "--constraints",
-        type=Path,
-        default=None,
-        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type]",
-    )
-    undomained_parser.add_argument(
         "--use-cached-dynamic-refs",
         action="store_true",
         help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
-        "bindings domains or a constraints module.",
+        "bindings domains.",
     )
     undomained_parser.add_argument(
         "--json",
@@ -268,7 +240,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
 
 
 def _add_workbook_wiring_args(parser: argparse.ArgumentParser) -> None:
-    """Add workbook / sidecar / constraints arguments shared by bindings commands."""
+    """Add workbook / sidecar arguments shared by bindings commands."""
     parser.add_argument("workbook", type=Path, help="Path to the .xlsx workbook")
     parser.add_argument(
         "--bindings",
@@ -277,17 +249,10 @@ def _add_workbook_wiring_args(parser: argparse.ArgumentParser) -> None:
         help="Binding sidecar file or shard directory (default: colocated sidecar)",
     )
     parser.add_argument(
-        "--constraints",
-        type=Path,
-        default=None,
-        help="Path to a constraints.py module exposing CONSTRAINTS: Mapping[str, type] "
-        "(same contract as corpus.toml entries). Used to resolve OFFSET/INDEX/INDIRECT.",
-    )
-    parser.add_argument(
         "--use-cached-dynamic-refs",
         action="store_true",
         help="Resolve OFFSET/INDEX/INDIRECT from the workbook's cached values instead of "
-        "a constraints module.",
+        "series domain.",
     )
     parser.add_argument(
         "--blank-ranges",
@@ -329,7 +294,7 @@ def cmd_viz(args: argparse.Namespace) -> int:
         return 1
     try:
         bindings_doc = load_series_bindings(bindings_path)
-        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, bindings_doc, bindings_path)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
         )
@@ -368,9 +333,6 @@ def cmd_viz(args: argparse.Namespace) -> int:
     except SeriesBindingsSchemaError as exc:
         print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
         return 1
-    except ConstraintsLoadError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
     except BlankRangesLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -397,7 +359,7 @@ def cmd_validate(args: argparse.Namespace) -> int:
 
     try:
         bindings_doc = load_series_bindings(bindings_path)
-        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, bindings_doc, bindings_path)
         result = validate_bindings_workbook(
             workbook,
             bindings_path,
@@ -414,9 +376,6 @@ def cmd_validate(args: argparse.Namespace) -> int:
         return 1
     except SeriesBindingsSchemaError as exc:
         print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
-        return 1
-    except ConstraintsLoadError as exc:
-        print(str(exc), file=sys.stderr)
         return 1
     except BlankRangesLoadError as exc:
         print(str(exc), file=sys.stderr)
@@ -498,7 +457,7 @@ def cmd_undomained(args: argparse.Namespace) -> int:
         return 1
     try:
         bindings_doc = load_series_bindings(bindings_path)
-        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, bindings_doc, bindings_path)
         result = validate_bindings_workbook(
             workbook,
             bindings_path,
@@ -511,9 +470,6 @@ def cmd_undomained(args: argparse.Namespace) -> int:
         return 1
     except SeriesBindingsSchemaError as exc:
         print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
-        return 1
-    except ConstraintsLoadError as exc:
-        print(str(exc), file=sys.stderr)
         return 1
     except (DynamicRefError, ValueError) as exc:
         print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
@@ -566,7 +522,7 @@ def _bindings_context(args: argparse.Namespace):
     try:
         bindings_path = resolve_bindings_path(workbook, args.bindings)
         bindings_doc = load_series_bindings(bindings_path)
-        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, bindings_doc, bindings_path)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
         )
@@ -582,9 +538,6 @@ def _bindings_context(args: argparse.Namespace):
         return None
     except SeriesBindingsSchemaError as exc:
         print(f"Binding sidecar schema error:\n  {exc}", file=sys.stderr)
-        return None
-    except ConstraintsLoadError as exc:
-        print(str(exc), file=sys.stderr)
         return None
     except BlankRangesLoadError as exc:
         print(str(exc), file=sys.stderr)
@@ -666,7 +619,7 @@ def cmd_upsert(args: argparse.Namespace) -> int:
             bindings_doc = load_series_bindings(bindings_path)
         else:
             bindings_doc = {}
-        dynamic_refs = _derive_dynamic_refs(workbook, args.constraints, bindings_doc, bindings_path)
+        dynamic_refs = _derive_dynamic_refs(workbook, bindings_doc, bindings_path)
         blank_ranges = (
             load_blank_ranges_module(args.blank_ranges) if args.blank_ranges is not None else None
         )
@@ -685,9 +638,6 @@ def cmd_upsert(args: argparse.Namespace) -> int:
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
-    except ConstraintsLoadError as exc:
-        print(str(exc), file=sys.stderr)
-        return 1
     except BlankRangesLoadError as exc:
         print(str(exc), file=sys.stderr)
         return 1
@@ -700,28 +650,14 @@ def cmd_upsert(args: argparse.Namespace) -> int:
 
 def _derive_dynamic_refs(
     workbook: Path,
-    constraints: Path | None,
     bindings: Mapping[str, Any],
     bindings_path: Path,
 ) -> DynamicRefConfig | None:
-    """Derive a dynamic-ref config from bindings, with optional constraints overlay."""
+    """Derive a dynamic-ref config from bindings series `domain`."""
     bindings_config = DynamicRefConfig.from_bindings(
         bindings, workbook, bindings_path=bindings_path
     )
-    if constraints is None:
-        return bindings_config if len(bindings_config.cell_type_env) else None
-    constraints_config = dynamic_refs_from_path(resolve_constraints_path(workbook, constraints))
-    merged, overrides = bindings_config.overlay(constraints_config)
-    if overrides:
-        preview = ", ".join(overrides[:20])
-        extra = "" if len(overrides) <= 20 else f" (+{len(overrides) - 20} more)"
-        warnings.warn(
-            "constraints.py overrides bindings domains for "
-            f"{len(overrides)} key(s): {preview}{extra}",
-            UserWarning,
-            stacklevel=2,
-        )
-    return merged
+    return bindings_config if len(bindings_config.cell_type_env) else None
 
 
 def _format_cli_dynamic_ref_error(exc: BaseException) -> str:

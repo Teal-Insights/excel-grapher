@@ -2,9 +2,9 @@
 r"""Measure a named-axis standalone export: size, structure, lowering, timing.
 
 The sandbox layout is a directory holding `workbook.xlsm` (or `.xlsx`), a
-`bindings/` shard directory, a constraints module, a blank-ranges module, and
-`targets.json`. Every input and generated file is hashed so a report can be
-reproduced from the recorded revision.
+`bindings/` shard directory, a blank-ranges module, and `targets.json`. Every
+input and generated file is hashed so a report can be reproduced from the
+recorded revision.
 
 Usage:
     uv run python scripts/measure_named_export.py sandbox/lic-dsf \\
@@ -14,7 +14,7 @@ Usage:
         --package-dir build/lic_dsf_named --report build/lic_dsf_named.json
 
 Without `--graph` the dependency graph is extracted from the workbook with the
-constraints, blank ranges, and targets found in the sandbox. `--package-dir`
+bindings domains, blank ranges, and targets found in the sandbox. `--package-dir`
 skips generation and measures an existing package. `--reconcile-bindings`
 drops output bindings that only cover constant target cells and the later of
 two formula-direction bindings claiming one cell; every drop is reported.
@@ -94,15 +94,12 @@ def _sandbox_paths(args: argparse.Namespace) -> dict[str, Path]:
     )
     if workbook is None:
         raise SystemExit(f"no workbook.xlsm or workbook.xlsx in {root}")
-    constraints = args.constraints or next(iter(sorted(root.glob("*constraints.py"))), None)
     blank_ranges = args.blank_ranges or next(iter(sorted(root.glob("*blank_ranges.py"))), None)
     paths = {
         "workbook": Path(workbook),
         "bindings": Path(args.bindings or root / "bindings"),
         "targets": Path(args.targets or root / "targets.json"),
     }
-    if constraints is not None:
-        paths["constraints"] = Path(constraints)
     if blank_ranges is not None:
         paths["blank_ranges"] = Path(blank_ranges)
     if args.graph is not None:
@@ -132,20 +129,22 @@ def _load_graph(paths: Mapping[str, Path], timings: dict[str, float]) -> Any:
         return graph
     from excel_grapher.grapher import create_dependency_graph
     from excel_grapher.grapher.blank_ranges import load_blank_ranges_module
-    from excel_grapher.grapher.constraints import dynamic_refs_from_path
+    from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
+    from excel_grapher.series_bindings.load import load_series_bindings
+    from excel_grapher.series_bindings.workflow import all_series_targets
 
     sys.path.insert(0, str(paths["workbook"].resolve().parent))
-    dynamic_refs = dynamic_refs_from_path(paths["constraints"]) if "constraints" in paths else None
+    bindings = load_series_bindings(paths["bindings"])
+    dynamic_refs = DynamicRefConfig.from_bindings(
+        bindings, paths["workbook"], bindings_path=paths["bindings"]
+    )
+    if not len(dynamic_refs.cell_type_env):
+        dynamic_refs = None
     blank = load_blank_ranges_module(paths["blank_ranges"]) if "blank_ranges" in paths else None
     if paths["targets"].is_file():
         targets = json.loads(paths["targets"].read_text(encoding="utf-8"))
     else:
-        from excel_grapher.series_bindings.load import load_series_bindings
-        from excel_grapher.series_bindings.workflow import all_series_targets
-
-        targets = all_series_targets(
-            load_series_bindings(paths["bindings"]), workbook=paths["workbook"]
-        )
+        targets = all_series_targets(bindings, workbook=paths["workbook"])
     started = time.perf_counter()
     graph = create_dependency_graph(
         paths["workbook"],
@@ -763,7 +762,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("sandbox", nargs="?", help="Sandbox directory")
     parser.add_argument("--workbook", type=Path)
     parser.add_argument("--bindings", type=Path)
-    parser.add_argument("--constraints", type=Path)
     parser.add_argument("--blank-ranges", type=Path)
     parser.add_argument("--targets", type=Path)
     parser.add_argument("--graph", type=Path, help="Saved dependency graph (skips extraction)")

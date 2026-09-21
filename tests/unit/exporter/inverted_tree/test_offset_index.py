@@ -208,7 +208,7 @@ def test_offset_index_named_range_array(tmp_path: Path) -> None:
 
 
 def _constraint_refs() -> DynamicRefConfig:
-    return DynamicRefConfig.from_constraints({}, {})
+    return DynamicRefConfig.from_constraints({})
 
 
 def _row_select_sheets(*, formula: str) -> dict[str, dict[str, object]]:

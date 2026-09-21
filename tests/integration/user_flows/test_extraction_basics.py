@@ -619,7 +619,7 @@ def test_may_cycle_drops_when_leaf_domain_makes_guards_unsatisfiable(
     path = workbook_factory(
         lambda ws, _wb: write_single_row(ws, ("May cycle", 0, "=IF(B1=0,1,D1)", "=IF(B1=1,2,C1)"))
     )
-    config = DynamicRefConfig.from_constraints({"Sheet1!B1": TypingLiteral[0, 1]}, {})
+    config = DynamicRefConfig.from_constraints({"Sheet1!B1": TypingLiteral[0, 1]})
     graph: DependencyGraph = create_dependency_graph(
         path, ["Sheet1!C1"], load_values=False, dynamic_refs=config
     )
@@ -670,7 +670,7 @@ def test_offset_with_dynamic_arguments_can_expand_with_constraints() -> None:
         / "micro_workbooks"
         / "extraction_basics.xlsx"
     )
-    config = DynamicRefConfig.from_constraints({"Sheet1!B10": TypingLiteral[0, 1]}, {})
+    config = DynamicRefConfig.from_constraints({"Sheet1!B10": TypingLiteral[0, 1]})
     graph: DependencyGraph = create_dependency_graph(
         path,
         ["Sheet1!E10"],

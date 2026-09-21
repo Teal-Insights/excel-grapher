@@ -16,9 +16,9 @@ Empty `input: {}` marks an editable leaf.
 Do not confuse the `constant` **direction** with `bind.kind: constant` (a fixed
 structure scalar that does not read a cell).
 
-`CONSTRAINTS` `Literal[...]` classifies leaves; a constant binding is what
-*names* them. Fail closed: constant leaves in `constants.bindings.yaml`,
-mutable leaves in `inputs.bindings.yaml`.
+`domain` / `from_workbook` classifies leaves for dynamic-ref inference; a
+constant binding is what *names* them. Fail closed: constant leaves in
+`constants.bindings.yaml`, mutable leaves in `inputs.bindings.yaml`.
 
 ## Layouts
 

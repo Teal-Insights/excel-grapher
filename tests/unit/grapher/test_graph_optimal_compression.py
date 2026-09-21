@@ -179,7 +179,7 @@ def test_optimal_inline_local_ref_after_identity_transit(tmp_path: Path) -> None
         "Inputs!C17": Annotated[float, RealBetween(0.0, 20.0)],
         "Inputs!C18": Annotated[float, RealBetween(-15.0, 15.0)],
     }
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
     graph = create_dependency_graph(
         path,
         ["Engine!C20"],

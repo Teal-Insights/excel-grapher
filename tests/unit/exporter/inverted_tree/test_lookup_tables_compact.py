@@ -294,7 +294,7 @@ def _catalog_bindings() -> dict[str, Any]:
 
 
 def _catalog_dynamic_refs() -> DynamicRefConfig:
-    return DynamicRefConfig.from_constraints({}, {})
+    return DynamicRefConfig.from_constraints({})
 
 
 def test_multi_column_index_match_catalog_is_views_not_per_key_lambdas(tmp_path: Path) -> None:

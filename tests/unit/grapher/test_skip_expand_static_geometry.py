@@ -115,7 +115,7 @@ def test_index_match_skips_expand_and_argument_subgraph(tmp_path: Path) -> None:
     excel_path = tmp_path / "index-match-skip.xlsx"
     _build_index_match_closure_workbook(excel_path, n=n)
     constraints = _index_match_constraints()
-    config = DynamicRefConfig.from_constraints(constraints, {})
+    config = DynamicRefConfig.from_constraints(constraints)
 
     expand_calls = 0
     subgraph_calls = 0

@@ -186,7 +186,7 @@ def test_console_script_is_registered() -> None:
     assert "--smoke-test" in result.stdout
     assert "--paradigm" not in result.stdout
     assert "--verbose" in result.stdout
-    assert "--constraints" in result.stdout
+    assert "--constraints" not in result.stdout
     assert "--use-cached-dynamic-refs" in result.stdout
 
 
@@ -336,10 +336,9 @@ def test_main_emit_writes_compute_package(
 
 _TINY_DSA_WORKBOOK = INVERTED_TREE_TINY_DSA / "tiny-dsa.xlsx"
 _TINY_DSA_BINDINGS = INVERTED_TREE_TINY_DSA / "bindings"
-_TINY_DSA_CONSTRAINTS = INVERTED_TREE_TINY_DSA / "constraints.py"
 
 
-def test_main_tiny_dsa_without_constraints_derives_bindings_domains(
+def test_main_tiny_dsa_derives_bindings_domains(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     exit_code = main(
@@ -356,51 +355,6 @@ def test_main_tiny_dsa_without_constraints_derives_bindings_domains(
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
     assert "compute functions passed smoke checks" in captured.out
-
-
-def test_main_tiny_dsa_constraints_smoke_test(capsys: pytest.CaptureFixture[str]) -> None:
-    exit_code = main(
-        [
-            "bindings",
-            "validate",
-            str(_TINY_DSA_WORKBOOK),
-            "--bindings",
-            str(_TINY_DSA_BINDINGS),
-            "--constraints",
-            str(_TINY_DSA_CONSTRAINTS),
-            "--smoke-test",
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 0, captured.err
-    assert "compute functions passed smoke checks" in captured.out
-
-
-def test_main_missing_constraints_file_is_actionable(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    workbook = tmp_path / "ffv2.xlsx"
-    write_ffv2_workbook(workbook)
-    missing = tmp_path / "missing_constraints.py"
-
-    exit_code = main(
-        [
-            "bindings",
-            "validate",
-            str(workbook),
-            "--bindings",
-            str(FIXTURES / "ffv2.yaml"),
-            "--constraints",
-            str(missing),
-        ]
-    )
-
-    captured = capsys.readouterr()
-    assert exit_code == 1
-    assert "Constraints module not found" in captured.err
-    assert str(missing) in captured.err
 
 
 def test_main_use_cached_dynamic_refs_resolves_offset(
@@ -449,7 +403,7 @@ def test_main_use_cached_dynamic_refs_resolves_offset(
     )
     captured_without = capsys.readouterr()
     assert without_flag != 0
-    assert "--constraints" in captured_without.err
+    assert "series domain" in captured_without.err
     assert "--use-cached-dynamic-refs" in captured_without.err
 
     with_flag = main(
@@ -511,22 +465,3 @@ def test_main_undomained_lists_uncovered_leaves(
     assert exit_code == 0, captured.err
     assert "Inputs!B1" in captured.out
     assert "Inputs!A1" not in captured.out
-
-
-def test_constraints_overlay_warns_on_overlap(
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    with pytest.warns(UserWarning, match="constraints.py overrides bindings domains"):
-        exit_code = main(
-            [
-                "bindings",
-                "validate",
-                str(_TINY_DSA_WORKBOOK),
-                "--bindings",
-                str(_TINY_DSA_BINDINGS),
-                "--constraints",
-                str(_TINY_DSA_CONSTRAINTS),
-            ]
-        )
-    captured = capsys.readouterr()
-    assert exit_code == 0, captured.err

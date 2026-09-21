@@ -1083,7 +1083,8 @@ def create_dependency_graph(
                         fn_names = sorted({fn for fn, _, _ in calls})
                         raise DynamicRefError(
                             f"Formula at {cell_key} contains {'/'.join(fn_names)} that require resolution. "
-                            "Pass dynamic_refs=DynamicRefConfig.from_constraints(...) or set "
+                            "Pass dynamic_refs=DynamicRefConfig.from_bindings(...) / "
+                            "DynamicRefConfig.from_constraints(...) or set "
                             "use_cached_dynamic_refs=True."
                         )
                 else:
@@ -1271,6 +1272,7 @@ def create_dependency_graph(
                                         type_analysis_cache=type_analysis_cache,
                                         workbook_sha256=_wb_sha256,
                                         get_cell_ast=ref_walk.cell_ast,
+                                        blank_rects=blank_rects or None,
                                     )
                             try:
                                 offset_targets = infer_dynamic_offset_targets(
@@ -1822,6 +1824,7 @@ def create_dependency_graph(
                             workbook_sha256=_wb_sha256,
                             ref_walk=ref_walk,
                             sheet_bounds=sheet_bounds,
+                            blank_rects=blank_rects,
                         )
                     _provenance_cache[provenance_cache_key] = prov_map
 
