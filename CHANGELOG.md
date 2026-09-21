@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v22.0.0 (2026-09-21)
+
+### Bug Fixes
+
+- Fail closed on per-compute Inputs and drop keyword adapter
+  ([#941](https://github.com/Teal-Insights/excel-grapher/pull/941),
+  [`34b8793`](https://github.com/Teal-Insights/excel-grapher/commit/34b8793f6f66daae1d65538979cc0c4d3d7eb4d1))
+
+- Pass Inputs bundle in OFFSET past-bound parity test
+  ([#941](https://github.com/Teal-Insights/excel-grapher/pull/941),
+  [`34b8793`](https://github.com/Teal-Insights/excel-grapher/commit/34b8793f6f66daae1d65538979cc0c4d3d7eb4d1))
+
+### Features
+
+- Emit per-compute typed Inputs classes with from_defaults()
+  ([#941](https://github.com/Teal-Insights/excel-grapher/pull/941),
+  [`34b8793`](https://github.com/Teal-Insights/excel-grapher/commit/34b8793f6f66daae1d65538979cc0c4d3d7eb4d1))
+
+
 ## v21.10.0 (2026-09-21)
 
 ### Bug Fixes
