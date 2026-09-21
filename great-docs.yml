@@ -76,6 +76,7 @@ reference:
     contents:
       - exporter
       - grapher
+      - semantic_model
       - series_bindings
 
   - title: Exporter API

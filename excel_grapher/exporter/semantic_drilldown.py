@@ -7,7 +7,7 @@ from typing import Any
 
 from excel_grapher.core.address_keys import CanonicalAddress, as_canonical
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog, Statement
-from excel_grapher.exporter.inverted_tree.deps import AccessClass, DependenceEdge
+from excel_grapher.exporter.inverted_tree.deps import DependenceEdge
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.semantic_catalog import SemanticCatalogError, SemanticCatalogView
 from excel_grapher.exporter.semantic_graph import (
@@ -17,6 +17,7 @@ from excel_grapher.exporter.semantic_graph import (
 )
 from excel_grapher.grapher.formula_label import display_formula
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.semantic_model import AccessClass
 from excel_grapher.series_bindings.types import Scalar
 
 __all__ = [

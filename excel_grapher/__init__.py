@@ -4,7 +4,7 @@ Public API is namespaced by role: excel_grapher.grapher, excel_grapher.evaluator
 Convenience re-exports below keep existing call patterns working.
 """
 
-from . import exporter, grapher, series_bindings
+from . import exporter, grapher, semantic_model, series_bindings
 from .evaluator import (
     CellValue,
     ExcelRange,
@@ -95,6 +95,7 @@ from .series_bindings import (
 __all__ = [
     "exporter",
     "grapher",
+    "semantic_model",
     "series_bindings",
     "GreaterThanCell",
     "NotEqualCell",

@@ -71,6 +71,7 @@ from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     blank_rects_for_addresses,
 )
+from excel_grapher.semantic_model.types import AccessClass
 from excel_grapher.series_bindings.geometry import parse_value_map
 from excel_grapher.series_bindings.normalize import is_override_input
 from excel_grapher.series_bindings.resolve import _bind_source_addresses
@@ -293,11 +294,6 @@ def range_ref_label(node: AstNode, host_cell: CanonicalAddress) -> str:
         end = resolve_cell_ref(node.end_ref, host_cell)
         return f"{start}:{end}"
     return type(node).__name__
-
-
-AccessClass = Literal[
-    "identity", "shift", "affine", "gather", "whole", "dynamic", "cross_partition"
-]
 
 
 def _layout_distance(
