@@ -397,24 +397,26 @@ Offset projection years (1..5) vs calendar years (1999..2000) are distinguished 
 1. Extract a dependency graph whose targets include the cells you need (targets seed extraction; output bindings may also cover intermediate formula cells present in the graph).
 2. Declare `data_range`, `layout`, `structure.measure`, `structure.dimensions`, and `key` (input matching uses `key` only).
 3. Add dimension binds (`column_header`, `row_label`, `cell`, `constant`, …). Use `bind.kind: constant` for fixed dimensions such as `FREQUENCY: A`.
-4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take named tensors or scalars and return tensors or scalars; use `as_records` for a Records view.
+4. Add `output.compute.name` (e.g. `compute_borvelia_primary_balance`). Package `compute_*` functions take a frozen `{Output}Inputs` bundle and return tensors or scalars; use `as_records` for a Records view.
 5. Mark editable series with `input: {}` (plus optional `domain` / `value_map` / `mode`). Generated packages validate input tensors against their declared schemas.
-6. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Call `compute_*` with keyword tensor/scalar arguments and use `as_records` afterward when records are needed.
+6. Pass `series_bindings` and `bindings_workbook` to `generate_modules()`. Build `{Output}Inputs.from_defaults(**overrides)` (or pass every field) and use `as_records` afterward when records are needed.
 
 ## Records contract
 
-Package `compute_*` functions take named tensors (or scalars) and return tensors
-or scalars. Use `as_records(compute, result)` for a tidy `list[dict]` view.
-Build or overlay input tensors with `with_records` on the `data.py` binding (or
-use the workbook defaults). See `examples/micro_workbooks/setter_dataframe_example.py`
-(single-key updates) and `examples/micro_workbooks/matrix_dataframe_example.py`
-(matrix).
+Package `compute_*` functions take a frozen `{Output}Inputs` bundle and return
+tensors or scalars. Use `as_records(compute, result)` for a tidy `list[dict]`
+view. Build or overlay input tensors with `with_records` on the `data.py`
+binding, then pass them through `from_defaults`. See
+`examples/micro_workbooks/setter_dataframe_example.py` (single-key updates) and
+`examples/micro_workbooks/matrix_dataframe_example.py` (matrix).
 
 ```python
 result = compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
-        (((1,), -2.0), ((2,), -1.0), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
-    ),
+    BorveliaPrimaryBalanceOutInputs.from_defaults(
+        borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
+            (((1,), -2.0), ((2,), -1.0), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+        ),
+    )
 )
 records = as_records(compute_borvelia_primary_balance_out, result)
 ```
@@ -1011,7 +1013,7 @@ input:
 ```
 
 When `domain` is omitted, the implied enum domain is the map keys, so
-`compute_x(selector="High")` works and `"High "` / `"Nope"` raise
+`compute_x(XInputs(selector="High"))` works and `"High "` / `"Nope"` raise
 `ValueError` naming the accepted keys. Internals still compare the literal
 needle; Excel parity is unchanged because the mapped value is what the
 workbook cell would have held.
@@ -1150,15 +1152,15 @@ Unbound cells return `None`. Bind mappings are series-level; key points are per-
 After export:
 
 ```python
-from generated import as_records, compute_borvelia_primary_balance
+from generated import BorveliaPrimaryBalanceInputs, as_records, compute_borvelia_primary_balance
 
 result = compute_borvelia_primary_balance(
-    borvelia_primary_balance=(-0.5, -0.5, -0.5, -0.5, -0.5),
+    BorveliaPrimaryBalanceInputs(borvelia_primary_balance=(-0.5, -0.5, -0.5, -0.5, -0.5)),
 )
 records = as_records(compute_borvelia_primary_balance, result)
 ```
 
-Package discovery is `api.__all__` (compute names). `list_groups()` is not emitted.
+Package discovery is `api.__all__` (Inputs classes and compute names). `list_groups()` is not emitted.
 
 `generate_modules` omits setters, readers, `make_context`, and `list_groups`.
 

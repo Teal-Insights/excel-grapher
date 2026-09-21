@@ -141,17 +141,7 @@ sys.meta_path.insert(0, _Block())
 sys.path.insert(0, __import__("os").getcwd())
 import tiny_dsa_standalone as package
 
-data = package.data
-result = package.compute_output_shocked(
-    country_name=data.COUNTRY_NAME_DEFAULT,
-    country_initial_debt=data.COUNTRY_INITIAL_DEBT_DEFAULT,
-    growth_baseline=data.GROWTH_BASELINE_DEFAULT,
-    interest_baseline=data.INTEREST_BASELINE_DEFAULT,
-    primary_balance_baseline=data.PRIMARY_BALANCE_BASELINE_DEFAULT,
-    shock_year=data.SHOCK_YEAR_DEFAULT,
-    shock_type=data.SHOCK_TYPE_DEFAULT,
-    shock_magnitudes=data.SHOCK_MAGNITUDES_DEFAULT,
-)
+result = package.compute_output_shocked(package.OutputShockedInputs.from_defaults())
 print(repr(tuple(result[year] for year in (1, 2, 3, 4, 5))))
 print(sorted(name for name in sys.modules if name.startswith("excel_grapher")))
 """

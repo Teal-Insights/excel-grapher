@@ -29,6 +29,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
     inverted_graph_parts,
+    invoke_public_compute,
     load_package,
     named_input_kwargs,
     oriented_document,
@@ -160,8 +161,7 @@ def _package_matches_evaluator(
     for series in catalog.output_series():
         name = series.compute_name or f"compute_{series.series_id}"
         function = getattr(pkg, name)
-        accepted = set(inspect.signature(function).parameters)
-        got = function(**{key: value for key, value in kwargs.items() if key in accepted})
+        got = invoke_public_compute(pkg, function, kwargs)
         if series.layout == "scalar":
             _values_close(got, expected[series.cells[0]])
         else:

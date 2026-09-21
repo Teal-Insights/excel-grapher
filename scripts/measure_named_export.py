@@ -557,19 +557,27 @@ if limit:
     names = names[:limit]
 for name in names:
     function = getattr(package, name)
-    kwargs = {{}}
-    for parameter in inspect.signature(function).parameters:
-        kwargs[parameter] = getattr(data, parameter.upper() + "_DEFAULT")
+    annotation = function.__annotations__.get("inputs")
+    if isinstance(annotation, str):
+        annotation = getattr(package, annotation, None)
+    if annotation is not None and hasattr(annotation, "from_defaults"):
+        bound = annotation.from_defaults()
+        call = lambda bound=bound: function(bound)
+    else:
+        kwargs = {{}}
+        for parameter in inspect.signature(function).parameters:
+            kwargs[parameter] = getattr(data, parameter.upper() + "_DEFAULT")
+        call = lambda kwargs=kwargs: function(**kwargs)
     entry = {{"function": name}}
     started = time.perf_counter()
     try:
-        result = function(**kwargs)
+        result = call()
         entry["seconds"] = time.perf_counter() - started
         entry["cells"] = 1 if function.__domain__ is None else len(function.__domain__)
         samples = []
         for _ in range({warm}):
             started = time.perf_counter()
-            function(**kwargs)
+            call()
             samples.append(time.perf_counter() - started)
         if samples:
             samples.sort()

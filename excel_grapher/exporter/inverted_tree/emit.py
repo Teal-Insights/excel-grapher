@@ -20,7 +20,11 @@ from excel_grapher.exporter.inverted_tree.deps import (
     reset_blank_rects,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.named_emit import emit_named_modules
+from excel_grapher.exporter.inverted_tree.named_emit import (
+    _inputs_class_name,
+    _wrapped_from_import,
+    emit_named_modules,
+)
 from excel_grapher.exporter.inverted_tree.schedule import (
     assert_distance_zero_legal,
     build_scc_map,
@@ -148,8 +152,10 @@ def _cell_value(graph: DependencyGraph, address: str, dtype: str) -> object:
 
 
 def emit_init_module(catalog: SeriesCatalog) -> str:
-    """Emit package `__init__.py` re-exporting `Model` and public `compute_*`."""
-    computes = [s.compute_name or f"compute_{s.series_id}" for s in catalog.output_series()]
+    """Emit package `__init__.py` re-exporting `Model`, Inputs classes, and `compute_*`."""
+    outputs = list(catalog.output_series())
+    input_names = [_inputs_class_name(series) for series in outputs]
+    computes = [s.compute_name or f"compute_{s.series_id}" for s in outputs]
     lines = [
         '"""Inverted-tree mechanical extraction."""',
         "",
@@ -158,19 +164,19 @@ def emit_init_module(catalog: SeriesCatalog) -> str:
         "from . import data",
     ]
     if computes:
-        lines.append(f"from .api import {', '.join(computes)}")
+        lines.append(_wrapped_from_import("api", computes))
     lines.extend(
         [
-            "from .model import Model",
+            _wrapped_from_import("model", ["Model", *input_names]),
             "from .runtime import as_records",
             "",
             "__all__ = [",
-            f"    {'as_records'!r},",
-            f"    {'data'!r},",
-            f"    {'Model'!r},",
+            "    'as_records',",
+            "    'data',",
+            "    'Model',",
         ]
     )
-    for name in computes:
+    for name in [*input_names, *computes]:
         lines.append(f"    {name!r},")
     lines.append("]")
     lines.append("")

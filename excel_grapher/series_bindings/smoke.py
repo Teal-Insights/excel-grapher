@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 import importlib
 import inspect
 import sys
@@ -87,7 +88,7 @@ def smoke_test_computes(
         expected_count = len(resolved["leaves"])
         kwargs = _inverted_tree_default_kwargs(compute, data, bindings)
         try:
-            result = compute(**kwargs)
+            result = _call_compute(pkg, compute, kwargs)
         except Exception as exc:
             raise BindingsSmokeError(
                 f"Compute {name!r} raised {type(exc).__name__}: {exc}"
@@ -117,6 +118,37 @@ def _public_compute_arg(series: dict[str, Any], workbook_value: object) -> objec
     return workbook_value
 
 
+def _compute_input_names(compute: Callable[..., Any]) -> list[str]:
+    """Leaf names required by `compute`, including generated Inputs fields."""
+    parameters = inspect.signature(compute).parameters
+    if list(parameters) == ["inputs"]:
+        annotation = compute.__annotations__.get("inputs")
+        if isinstance(annotation, str):
+            annotation = getattr(compute, "__globals__", {}).get(annotation)
+        if annotation is not None and dataclasses.is_dataclass(annotation):
+            return [field.name for field in dataclasses.fields(annotation)]
+    names: list[str] = []
+    for name, param in parameters.items():
+        if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
+            continue
+        if param.default is not inspect.Parameter.empty:
+            continue
+        names.append(name)
+    return names
+
+
+def _call_compute(pkg: Any, compute: Callable[..., Any], kwargs: dict[str, Any]) -> Any:
+    """Call `compute` with either an Inputs bundle or legacy leaf keywords."""
+    if list(inspect.signature(compute).parameters) != ["inputs"]:
+        return compute(**kwargs)
+    annotation = compute.__annotations__.get("inputs")
+    if isinstance(annotation, str):
+        annotation = getattr(pkg, annotation, None)
+    if annotation is None:
+        return compute(**kwargs)
+    return compute(annotation(**kwargs))
+
+
 def _inverted_tree_default_kwargs(
     compute: Callable[..., Any],
     data: Any,
@@ -129,11 +161,7 @@ def _inverted_tree_default_kwargs(
         if isinstance(series, dict) and series.get("id") is not None
     }
     kwargs: dict[str, Any] = {}
-    for name, param in inspect.signature(compute).parameters.items():
-        if param.kind in {inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD}:
-            continue
-        if param.default is not inspect.Parameter.empty:
-            continue
+    for name in _compute_input_names(compute):
         default_name = f"{name.upper()}_DEFAULT"
         binding_name = name.upper()
         if hasattr(data, default_name):

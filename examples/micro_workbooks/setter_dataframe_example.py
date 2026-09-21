@@ -138,7 +138,9 @@ def main() -> None:
         print()
 
         overlay = apply_tidy_updates(default, updates)
-        result = pkg.compute_borvelia_primary_balance_out(borvelia_primary_balance=overlay)
+        result = pkg.compute_borvelia_primary_balance_out(
+            pkg.BorveliaPrimaryBalanceOutInputs.from_defaults(borvelia_primary_balance=overlay)
+        )
         records = pkg.as_records(pkg.compute_borvelia_primary_balance_out, result)
         by_period = {row["TIME_PERIOD"]: row["OBS_VALUE"] for row in records}
         print("After partial DataFrame overlay:")
@@ -161,7 +163,9 @@ def main() -> None:
         print()
 
         overlay = apply_tidy_updates(default, tidy)
-        result = pkg.compute_borvelia_primary_balance_out(borvelia_primary_balance=overlay)
+        result = pkg.compute_borvelia_primary_balance_out(
+            pkg.BorveliaPrimaryBalanceOutInputs.from_defaults(borvelia_primary_balance=overlay)
+        )
         records = pkg.as_records(pkg.compute_borvelia_primary_balance_out, result)
         by_period = {row["TIME_PERIOD"]: row["OBS_VALUE"] for row in records}
         print("After wide→tidy overlay:")

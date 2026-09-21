@@ -14,7 +14,6 @@ Excel type as well; leaf `xl_lookup_cell` restore is not enough (#916).
 
 from __future__ import annotations
 
-import inspect
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +22,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree import excel
 from excel_grapher.grapher import create_dependency_graph
 from tests.unit.exporter.inverted_tree.helpers import (
+    all_param_names,
     assert_package_matches_evaluator,
     bindings_document,
     generate_inverted,
@@ -364,7 +364,7 @@ def _kwargs(pkg: Any, **overrides: object) -> dict[str, object]:
         "mkt_fin_labels": getattr(pkg.data, "MKT_FIN_LABELS", None),
     }
     values.update(overrides)
-    accepted = inspect.signature(pkg.compute_yes_no).parameters
+    accepted = all_param_names(pkg.compute_yes_no)
     return {key: value for key, value in values.items() if key in accepted}
 
 

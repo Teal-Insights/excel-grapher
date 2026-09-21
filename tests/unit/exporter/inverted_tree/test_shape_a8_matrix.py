@@ -143,7 +143,7 @@ def test_matrix_constant_is_imported_not_passed(tmp_path: Path) -> None:
     assert "PROFILE_TABLE" in modules["data.py"]
     pkg = load_package(modules, tmp_path, name="a8_kw")
     params = inspect.signature(pkg.compute_output_cell).parameters
-    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in params.values())
+    assert list(params) == ["inputs"]
     assert required_param_names(pkg.compute_output_cell) == ()
     assert "profile_table" not in all_param_names(pkg.compute_output_cell)
     assert pkg.compute_output_cell.__constants__ == ("profile_table",)

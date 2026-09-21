@@ -369,7 +369,7 @@ assert "def list_setters(" not in modules["api.py"]
 ```
 
 ``` text
-compute_borvelia_primary_balance_out(*, borvelia_primary_balance: 'data.BorveliaPrimaryBalance[float | str | None]') -> 'data.BorveliaPrimaryBalanceOut[float | str | None]'
+compute_borvelia_primary_balance_out(inputs: 'BorveliaPrimaryBalanceOutInputs') -> 'data.BorveliaPrimaryBalanceOut[float | str | None]'
 ```
 
 ### Calling `compute_*`
@@ -379,12 +379,19 @@ to coordinate records — see
 [setter_dataframe_example.py](setter_dataframe_example.py).
 
 ``` python
-from generated import as_records, compute_borvelia_primary_balance_out, data
+from generated import (
+    BorveliaPrimaryBalanceOutInputs,
+    as_records,
+    compute_borvelia_primary_balance_out,
+    data,
+)
 
 result = compute_borvelia_primary_balance_out(
-    borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
-        (((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
-    ),
+    BorveliaPrimaryBalanceOutInputs.from_defaults(
+        borvelia_primary_balance=data.BORVELIA_PRIMARY_BALANCE.with_records(
+            (((1,), -1.0), ((2,), -0.5), ((3,), 0.0), ((4,), 7.5), ((5,), 8.0)),
+        ),
+    )
 )
 records = as_records(compute_borvelia_primary_balance_out, result)
 ```
@@ -400,7 +407,7 @@ records = as_records(compute_borvelia_primary_balance_out, result)
 Period **4** and **5** values (`7.5` and `8.0`) are the measures you
 passed; `as_records` attaches `TIME_PERIOD` from `__domain__`. Read them
 directly as `result[4]` and `result[5]`. Package discovery is
-`exported.__all__` (compute names and tensor types).
+`exported.__all__` (Inputs classes, compute names, and tensor types).
 
 ## 02. Formula-cell overrides (`input.mode: override`)
 
