@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.0.0 (2026-09-21)
+
+### Bug Fixes
+
+- Drop unused FromWorkbook helpers that broke lint
+  ([#946](https://github.com/Teal-Insights/excel-grapher/pull/946),
+  [`6224126`](https://github.com/Teal-Insights/excel-grapher/commit/62241267d6ea1303101934ca5feb4b2a68343fb6))
+
+- Type blank_ranges OFFSET selectors as numeric zero
+  ([#946](https://github.com/Teal-Insights/excel-grapher/pull/946),
+  [`6224126`](https://github.com/Teal-Insights/excel-grapher/commit/62241267d6ea1303101934ca5feb4b2a68343fb6))
+
+### Features
+
+- Retire constraints.py now that bindings own cell domains
+  ([#946](https://github.com/Teal-Insights/excel-grapher/pull/946),
+  [`6224126`](https://github.com/Teal-Insights/excel-grapher/commit/62241267d6ea1303101934ca5feb4b2a68343fb6))
+
+
 ## v22.0.0 (2026-09-21)
 
 ### Bug Fixes
