@@ -56,6 +56,7 @@ def test_from_defaults_emits_catalog_input_ids_not_annotations(tmp_path: Path) -
     assert "def from_defaults" in api
     assert "cls.__annotations__" not in api
     assert 'for name in ("seed",)' in api
+    assert "inputs: dict[str, object] = {" in api
 
 
 def test_from_defaults_binds_snapshot_and_overrides(tmp_path: Path) -> None:

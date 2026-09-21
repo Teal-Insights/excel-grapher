@@ -1414,7 +1414,7 @@ def _model_from_defaults(catalog: SeriesCatalog) -> list[str]:
         "    @classmethod",
         "    def from_defaults(cls, **overrides: object) -> Model:",
         '        """Bind every input from `data.*_DEFAULT`, then apply overrides."""',
-        "        inputs = {",
+        "        inputs: dict[str, object] = {",
         "            name: getattr(data, f'{name.upper()}_DEFAULT')",
         f"            for name in {names}",
         "        }",
