@@ -1757,7 +1757,8 @@ def _key_field_axis(series: BoundSeries, field: str) -> Literal["sheet", "row", 
     """Return the Excel axis that binds `field`, or `None` when unknown.
 
     Bind kind wins when declared (`sheet_name`, `column_header`, `row_label`,
-    `value_map`). Otherwise the catalog geometry is used: a field that is
+    `row_index`, `column_letter`, `value_map`). Otherwise the catalog geometry
+    is used: a field that is
     constant on one axis and varies on another belongs to the varying axis.
 
     Results, including unknown axes, are cached on the `BoundSeries` instance
@@ -1773,9 +1774,9 @@ def _key_field_axis(series: BoundSeries, field: str) -> Literal["sheet", "row", 
         kind = bind.get("kind")
         if kind == "sheet_name":
             axis = "sheet"
-        elif kind == "column_header":
+        elif kind in {"column_header", "column_letter"}:
             axis = "col"
-        elif kind == "row_label":
+        elif kind in {"row_label", "row_index"}:
             axis = "row"
         elif kind == "value_map":
             try:
