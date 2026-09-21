@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.0.1 (2026-09-21)
+
+### Bug Fixes
+
+- Refuse unique-key opt-out on keyed catalog series
+  ([#948](https://github.com/Teal-Insights/excel-grapher/pull/948),
+  [`dc2531a`](https://github.com/Teal-Insights/excel-grapher/commit/dc2531ac58abcd787562b2d8d3bf2fa6721301b7))
+
+
 ## v23.0.0 (2026-09-21)
 
 ### Bug Fixes
