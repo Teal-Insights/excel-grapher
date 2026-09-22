@@ -1490,6 +1490,27 @@ def _string_enum(value: str) -> CellType:
     return CellType(kind=CellKind.STRING, enum=EnumDomain(values=frozenset({value})))
 
 
+def _number_enum(*values: int) -> CellType:
+    return CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset(values)))
+
+
+def _infer_domain(
+    expr: str,
+    env: CellTypeEnv | None = None,
+    *,
+    limits: DynamicRefLimits | None = None,
+    context: dict[str, int] | None = None,
+    current_sheet: str = "Sheet",
+) -> object:
+    return dynamic_refs_mod._infer_numeric_domain(
+        parse_ast("=" + expr),
+        env or {},
+        limits or DynamicRefLimits(),
+        context=context,
+        current_sheet=current_sheet,
+    )
+
+
 def test_exact_match_string_enum_collapses_index_when_lookup_exceeds_max_cells() -> None:
     """Pinned string MATCH collapses INDEX even if the lookup is longer than max_cells.
 
@@ -1847,6 +1868,44 @@ def test_string_and_year_match_typed_header_is_one_cell() -> None:
     assert targets == {"data!C3"}
 
 
+def test_value_concat_match_collapses_index_with_string_column_needle() -> None:
+    """MATCH(VALUE(country&year)) pins the row while a string header pins the column.
+
+    Issue #970: without an integer domain on ``VALUE(D3&G59)``, the outer INDEX
+    falls through to enumeration and then rejects the text column needle.
+    """
+    formula = "=INDEX(Data!B2:C4,MATCH(VALUE(In!A1&In!B1),Data!A2:A4,0),MATCH(In!C1,Data!B1:C1,0))"
+    env = _make_env(
+        {
+            "In!A1": _number_enum(652),
+            "In!B1": _number_enum(2014),
+            "In!C1": _string_enum("Capital stock/GDP"),
+            "Data!A2": _number_enum(6522013),
+            "Data!A3": _number_enum(6522014),
+            "Data!A4": _number_enum(6522015),
+            "Data!B1": _string_enum("Capital stock/GDP"),
+            "Data!C1": _string_enum("Other"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="In", cell_type_env=env)
+    assert targets == {"Data!B3"}
+
+
+def test_value_concat_match_stays_wide_when_an_operand_has_no_domain() -> None:
+    """An unknown concat operand must not invent a row, so INDEX keeps every candidate."""
+    formula = "=INDEX(Data!B2:B4,MATCH(VALUE(In!A1&In!B1),Data!A2:A4,0),1)"
+    env = _make_env(
+        {
+            "In!A1": _number_enum(652),
+            "Data!A2": _number_enum(6522013),
+            "Data!A3": _number_enum(6522014),
+            "Data!A4": _number_enum(6522015),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="In", cell_type_env=env)
+    assert targets == {"Data!B2", "Data!B3", "Data!B4"}
+
+
 def test_quoted_sheet_year_match_collapses_without_expanding_the_grid() -> None:
     """Pinned year headers on a quoted sheet stay inside `max_cells` (#968).
 
@@ -2036,6 +2095,19 @@ def test_static_match_lookup_extent_resolves_index_empty_row_column_slice() -> N
     ordered_row = dynamic_refs_mod._ordered_match_lookup_cells(row_slice, current_sheet="Out")
     assert ordered_row == ["Trigger!AA2", "Trigger!AB2"]
 
+    from fastpyxl.utils import get_column_letter
+
+    header = parse_ast("=INDEX(Data!A1:T1,1,)")
+    assert dynamic_refs_mod._static_match_lookup_extent(header) == 20
+    assert dynamic_refs_mod._ordered_match_lookup_cells(header, current_sheet="Out") == [
+        f"Data!{get_column_letter(col)}1" for col in range(1, 21)
+    ]
+    vector_index = parse_ast("=INDEX(Data!A1:T1,1)")
+    assert dynamic_refs_mod._static_match_lookup_extent(vector_index) == 1
+    assert dynamic_refs_mod._ordered_match_lookup_cells(vector_index, current_sheet="Out") == [
+        "Data!A1"
+    ]
+
 
 def test_columns_rows_numeric_domain_from_static_range() -> None:
     """COLUMNS/ROWS over a static range yield a singleton integer domain."""
@@ -2183,6 +2255,185 @@ def test_match_true_index_boolean_projection_numeric_domain() -> None:
     dom = dynamic_refs_mod._infer_numeric_domain(match, {}, DynamicRefLimits(), current_sheet="B")
     assert isinstance(dom, dynamic_refs_mod._IntBounds)
     assert dom.lo == 1 and dom.hi == 4
+
+
+def _header_row_env(
+    sheet: str, header_col: int, header: str, *, last_col: int
+) -> dict[str, CellType]:
+    """Singleton string enums for a header row, with `header` at `header_col`."""
+    from fastpyxl.utils import get_column_letter
+
+    env: dict[str, CellType] = {}
+    for col in range(1, last_col + 1):
+        value = header if col == header_col else f"h{col}"
+        env[f"{sheet}!{get_column_letter(col)}1"] = _string_enum(value)
+    return env
+
+
+def test_static_match_lookup_extent_index_dynamic_omitted_axis() -> None:
+    """INDEX(range,,expr) has a known column extent even when expr is dynamic."""
+    lookup = parse_ast('=INDEX(Data!A1:T3,,MATCH("DSA Template ID",Data!A1:Z1,0))')
+    assert dynamic_refs_mod._static_match_lookup_extent(lookup) == 3
+    row = parse_ast("=INDEX(Data!A1:T3,MATCH(Sheet!A1,Data!A1:A3,0),)")
+    assert dynamic_refs_mod._static_match_lookup_extent(row) == 20
+    both = parse_ast("=INDEX(Data!A1:T3,MATCH(Sheet!A1,Data!A1:A3,0),2)")
+    assert dynamic_refs_mod._static_match_lookup_extent(both) == 1
+    vector = parse_ast("=INDEX(Data!A1:A3,MATCH(Sheet!A1,Data!B1:B3,0))")
+    assert dynamic_refs_mod._static_match_lookup_extent(vector) == 1
+    whole_col = parse_ast("=INDEX(Data!A1:T3,0,MATCH(Sheet!A1,Data!A1:A3,0))")
+    assert dynamic_refs_mod._static_match_lookup_extent(whole_col) == 3
+
+
+def test_ordered_match_lookup_cells_index_axis_densified_by_match() -> None:
+    """Exact MATCH may enumerate INDEX(range,,MATCH(header)) once the axis is a singleton.
+
+    Issue #973: `_index_vector_lookup_array` previously required a literal axis, so a
+    densified header MATCH could not expose the selected column's cells.
+    """
+    env = _header_row_env("Data", header_col=20, header="DSA Template ID", last_col=26)
+    env["Data!T2"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    env["Data!T3"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522015})))
+    limits = DynamicRefLimits()
+    lookup = parse_ast('=INDEX(Data!A1:T3,,MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0))')
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(
+        lookup,
+        current_sheet="Sheet",
+        env=env,
+        limits=limits,
+    )
+    assert ordered == ["Data!T1", "Data!T2", "Data!T3"]
+
+
+def test_ordered_match_lookup_cells_index_axis_densified_by_cell() -> None:
+    """A cell-typed singleton column index is equivalent to a literal INDEX axis."""
+    env = {
+        "Sheet!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3}))),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C4,,Sheet!C1)")
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(
+        lookup,
+        current_sheet="Sheet",
+        env=env,
+        limits=DynamicRefLimits(),
+    )
+    assert ordered == ["Data!C1", "Data!C2", "Data!C3", "Data!C4"]
+
+
+def test_ordered_match_lookup_cells_densified_zero_is_whole_axis() -> None:
+    """A densified `0` INDEX axis is Excel's whole-row/column form."""
+    env = {
+        "Sheet!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0}))),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C3,Sheet!A1,2)")
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(
+        lookup,
+        current_sheet="Sheet",
+        env=env,
+        limits=DynamicRefLimits(),
+    )
+    assert ordered == ["Data!B1", "Data!B2", "Data!B3"]
+
+
+def test_ordered_match_lookup_cells_negative_axis_is_not_a_vector() -> None:
+    """A densified negative INDEX axis is not a lookup vector."""
+    env = {
+        "Sheet!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({-1}))),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C3,,Sheet!A1)")
+    assert (
+        dynamic_refs_mod._ordered_match_lookup_cells(
+            lookup,
+            current_sheet="Sheet",
+            env=env,
+            limits=DynamicRefLimits(),
+        )
+        is None
+    )
+
+
+def test_two_arg_index_on_block_is_not_a_lookup_vector() -> None:
+    """INDEX(A1:T3,1) is #REF! in Excel; INDEX(A1:T3,1,) is row 1."""
+    block = parse_ast("=INDEX(Data!A1:T3,1)")
+    assert dynamic_refs_mod._ordered_match_lookup_cells(block, current_sheet="Data") is None
+    assert dynamic_refs_mod._static_match_lookup_extent(block) is None
+    row = parse_ast("=INDEX(Data!A1:T3,1,)")
+    assert dynamic_refs_mod._static_match_lookup_extent(row) == 20
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(row, current_sheet="Data")
+    assert ordered is not None
+    assert ordered[0] == "Data!A1"
+    assert len(ordered) == 20
+
+
+def test_ordered_match_lookup_cells_index_axis_stays_closed_when_not_singleton() -> None:
+    """A multi-value INDEX axis is not a single MATCH lookup vector."""
+    env = {
+        "Sheet!C1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({2, 3})),
+        ),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C4,,Sheet!C1)")
+    assert (
+        dynamic_refs_mod._ordered_match_lookup_cells(
+            lookup,
+            current_sheet="Sheet",
+            env=env,
+            limits=DynamicRefLimits(),
+        )
+        is None
+    )
+
+
+def test_match_over_index_header_match_collapses_to_row() -> None:
+    """MATCH(needle, INDEX(range,,MATCH(header))) densifies when every leaf is pinned.
+
+    Issue #973 MCVE: inner header MATCH is 20, so the outer MATCH scans column T.
+    """
+    env = _header_row_env("Data", header_col=20, header="DSA Template ID", last_col=26)
+    env["Data!T2"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    env["Data!T3"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522015})))
+    inner = dynamic_refs_mod._infer_numeric_domain(
+        parse_ast('=MATCH("DSA Template ID",Data!A1:Z1,0)'),
+        env,
+        DynamicRefLimits(),
+        current_sheet="Data",
+    )
+    assert isinstance(inner, dynamic_refs_mod._IntBounds)
+    assert inner.lo == 20 and inner.hi == 20
+    inner_index = dynamic_refs_mod._infer_numeric_domain(
+        parse_ast('=MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0)'),
+        env,
+        DynamicRefLimits(),
+        current_sheet="Data",
+    )
+    assert isinstance(inner_index, dynamic_refs_mod._IntBounds)
+    assert inner_index.lo == 20 and inner_index.hi == 20
+
+    dom = dynamic_refs_mod._infer_numeric_domain(
+        parse_ast(
+            '=MATCH(6522014,INDEX(Data!A1:T3,,MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0)),0)'
+        ),
+        env,
+        DynamicRefLimits(),
+        current_sheet="Sheet",
+    )
+    assert isinstance(dom, dynamic_refs_mod._IntBounds)
+    assert dom.lo == 2 and dom.hi == 2
+
+
+def test_index_targets_collapse_through_header_match_column() -> None:
+    """INDEX row MATCH over a header-selected column collapses to one cell."""
+    env = _header_row_env("Data", header_col=20, header="DSA Template ID", last_col=26)
+    env["Data!T2"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    env["Data!T3"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522015})))
+    env["Sheet!A1"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    formula = (
+        "=INDEX(Data!A1:T3,"
+        'MATCH(Sheet!A1,INDEX(Data!A1:T3,,MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0)),0),'
+        'MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0))'
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet", cell_type_env=env)
+    assert targets == {"Data!T2"}
 
 
 def _build_match_index_first_nonzero_workbook(path: Path) -> None:
@@ -2997,6 +3248,338 @@ def test_infer_numeric_domain_parity_never_raises() -> None:
         )
         assert out is None or isinstance(
             out, (dynamic_refs_mod._FiniteInts, dynamic_refs_mod._IntBounds)
+        )
+
+
+def _finite_ints(values: set[int]) -> dynamic_refs_mod._FiniteInts:
+    return dynamic_refs_mod._FiniteInts(frozenset(values))
+
+
+class TestValueAndConcatNumericDomain:
+    """Integer domains for Excel ``VALUE`` and ``&`` (issue #970).
+
+    Text fragments stay exact and finite. Oversized cartesian products and
+    non-integral text fail closed (``None``) instead of an interval hull:
+    concatenation is sparse, and a hull would pin the wrong MATCH row.
+    ``&`` becomes an integer only when every fragment is the general-format
+    spelling of that integer, so a cached cell re-stringifies to the same text.
+    """
+
+    def test_value_of_numeric_literal(self) -> None:
+        assert _infer_domain("VALUE(6522014)") == _finite_ints({6522014})
+
+    def test_value_of_digit_string_literal(self) -> None:
+        assert _infer_domain('VALUE("6522014")') == _finite_ints({6522014})
+
+    def test_value_parses_excel_numeric_text(self) -> None:
+        assert _infer_domain('VALUE("$6,522,014")') == _finite_ints({6522014})
+        assert _infer_domain('VALUE("(652)")') == _finite_ints({-652})
+        assert _infer_domain('VALUE(" 652 ")') == _finite_ints({652})
+
+    def test_concat_of_singleton_numeric_enums(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(652), "Sheet!B1": _number_enum(2014)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints({6522014})
+        assert _infer_domain("VALUE(Sheet!A1&Sheet!B1)", env) == _finite_ints({6522014})
+
+    def test_concat_of_digit_string_enums(self) -> None:
+        env = _make_env(
+            {
+                "Sheet!A1": _string_enum("652"),
+                "Sheet!B1": CellType(
+                    kind=CellKind.STRING, enum=EnumDomain(values=frozenset({"2014"}))
+                ),
+            }
+        )
+        assert _infer_domain("VALUE(Sheet!A1&Sheet!B1)", env) == _finite_ints({6522014})
+
+    def test_concat_mixes_digit_string_and_number(self) -> None:
+        env = _make_env({"Sheet!A1": _string_enum("652"), "Sheet!B1": _number_enum(2014)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints({6522014})
+
+    def test_concat_cartesian_product_stays_exact(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(652, 653), "Sheet!B1": _number_enum(2014, 2015)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints(
+            {6522014, 6522015, 6532014, 6532015}
+        )
+
+    def test_concat_does_not_hull_sparse_results(self) -> None:
+        """``{1,100}&{0}`` is ``{10,1000}``, not every integer between them."""
+        env = _make_env({"Sheet!A1": _number_enum(1, 100), "Sheet!B1": _number_enum(0)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints({10, 1000})
+
+    def test_internal_zeros_use_text_not_restringified_integers(self) -> None:
+        """``"10"&"05"`` is 1005. Parsing ``"05"`` to 5 and concatenating again is 105."""
+        env = _make_env({"Sheet!A1": _string_enum("10"), "Sheet!B1": _string_enum("05")})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints({1005})
+
+    def test_noncanonical_decimal_text_does_not_poison_a_later_concat(self) -> None:
+        """``("1"&"2.0")`` is the text ``12.0``. Only ``VALUE`` turns that into 12."""
+        assert _infer_domain('VALUE("1"&"2.0")') == _finite_ints({12})
+        assert _infer_domain('"1"&"2.0"') is None
+        assert _infer_domain('("1"&"2.0")&"3"') is None
+
+    def test_chained_numeric_concat(self) -> None:
+        env = _make_env(
+            {
+                "Sheet!A1": _number_enum(6),
+                "Sheet!B1": _number_enum(52),
+                "Sheet!C1": _number_enum(2014),
+            }
+        )
+        assert _infer_domain("Sheet!A1&Sheet!B1&Sheet!C1", env) == _finite_ints({6522014})
+
+    def test_concat_function_matches_operator(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(652), "Sheet!B1": _number_enum(2014)})
+        assert _infer_domain('CONCAT("652","2014")') == _finite_ints({6522014})
+        assert _infer_domain("CONCATENATE(Sheet!A1,Sheet!B1)", env) == _finite_ints({6522014})
+
+    def test_signed_concat_keeps_canonical_spelling(self) -> None:
+        assert _infer_domain('("-"&"12")') == _finite_ints({-12})
+
+    def test_zero_padded_concat_is_not_cached_as_its_integer_value(self) -> None:
+        """``0&5`` is the text ``05``. ``VALUE`` of that text is 5."""
+        env = _make_env({"Sheet!A1": _number_enum(0), "Sheet!B1": _number_enum(5)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) is None
+        assert _infer_domain("VALUE(Sheet!A1&Sheet!B1)", env) == _finite_ints({5})
+
+    def test_mixed_canonical_product_fails_closed(self) -> None:
+        """One non-canonical spelling (``05``) drops the whole concat domain."""
+        env = _make_env({"Sheet!A1": _number_enum(0, 1), "Sheet!B1": _number_enum(5)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) is None
+
+    def test_scientific_concat_is_not_an_exact_integer(self) -> None:
+        assert _infer_domain('VALUE("1E2")') == _finite_ints({100})
+        assert _infer_domain('"1E2"&"3"') is None
+
+    def test_value_of_arithmetic_is_identity(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(652)})
+        assert _infer_domain("VALUE(Sheet!A1+1)", env) == _finite_ints({653})
+
+    def test_value_of_wide_numeric_interval_stays_bounds(self) -> None:
+        env = _make_env(
+            {"Sheet!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=5000))}
+        )
+        limits = DynamicRefLimits(max_branches=8)
+        assert _infer_domain("VALUE(Sheet!A1)", env, limits=limits) == dynamic_refs_mod._IntBounds(
+            0, 5000
+        )
+
+    def test_proven_if_branch_keeps_concat_domain(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(652), "Sheet!B1": _number_enum(2014)})
+        assert _infer_domain('VALUE(IF(1,Sheet!A1&Sheet!B1,"0"))', env) == _finite_ints({6522014})
+
+    def test_ambiguous_if_unions_reachable_digit_branches(self) -> None:
+        env = _make_env(
+            {
+                "Sheet!A1": _number_enum(0, 1),
+                "Sheet!B1": _string_enum("10"),
+                "Sheet!C1": _string_enum("20"),
+            }
+        )
+        assert _infer_domain("VALUE(IF(Sheet!A1,Sheet!B1,Sheet!C1))", env) == _finite_ints({10, 20})
+
+    def test_dead_if_branch_is_dropped(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(1, 2)})
+        assert _infer_domain('VALUE(IF(Sheet!A1>0,"652"&"2014","1"))', env) == _finite_ints(
+            {6522014}
+        )
+
+    def test_row_context_concat(self) -> None:
+        assert _infer_domain("ROW()&2014", context={"row": 652}) == _finite_ints({6522014})
+
+    def test_choose_selects_digit_text_branch(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(2)})
+        assert _infer_domain('VALUE(CHOOSE(Sheet!A1,"111","652"&"2014"))', env) == _finite_ints(
+            {6522014}
+        )
+
+    def test_choose_unknown_index_has_no_domain(self) -> None:
+        assert _infer_domain('VALUE(CHOOSE(Sheet!A1,"10","20"))') is None
+
+    @pytest.mark.parametrize(
+        ("left", "right"),
+        [(652, 2014), (0, 5), (-12, 3), (10, 0), (6, 52)],
+    )
+    def test_concat_domain_matches_runtime_value(self, left: int, right: int) -> None:
+        """Analysis uses the same coercion as `value_from_text` / `to_string`."""
+        from excel_grapher.core.coercions import to_string
+        from excel_grapher.core.text_funcs import value_from_text
+
+        env = _make_env({"Sheet!A1": _number_enum(left), "Sheet!B1": _number_enum(right)})
+        parsed = value_from_text(to_string(left) + to_string(right))
+        assert isinstance(parsed, float)
+        assert _infer_domain("VALUE(Sheet!A1&Sheet!B1)", env) == _finite_ints({int(parsed)})
+
+    @pytest.mark.parametrize(
+        "expr",
+        [
+            '"Capital"&" stock"',
+            'VALUE("abc")',
+            'VALUE("12.5")',
+            "TRUE&1",
+            "VALUE()",
+        ],
+    )
+    def test_non_integral_text_has_no_numeric_domain(self, expr: str) -> None:
+        assert _infer_domain(expr) is None
+
+    def test_mixed_string_enum_fails_closed(self) -> None:
+        env = _make_env(
+            {
+                "Sheet!A1": CellType(
+                    kind=CellKind.STRING,
+                    enum=EnumDomain(values=frozenset({"12", "ab"})),
+                )
+            }
+        )
+        assert _infer_domain("VALUE(Sheet!A1)", env) is None
+
+    def test_oversized_concat_product_is_none(self) -> None:
+        env = _make_env({"Sheet!A1": _number_enum(1, 2, 3), "Sheet!B1": _number_enum(4, 5, 6)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env, limits=DynamicRefLimits(max_branches=4)) is (
+            None
+        )
+
+    def test_wide_interval_concat_is_none(self) -> None:
+        env = _make_env(
+            {
+                "Sheet!A1": CellType(
+                    kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=5000)
+                ),
+                "Sheet!B1": _number_enum(1),
+            }
+        )
+        assert (
+            _infer_domain(
+                "Sheet!A1&Sheet!B1",
+                env,
+                limits=DynamicRefLimits(max_branches=8),
+            )
+            is None
+        )
+
+
+def _sheet_refs(formula: str) -> set[str]:
+    import re
+
+    return set(re.findall(r"Sheet![A-Z]+[0-9]+", formula))
+
+
+def test_noncanonical_concat_cell_keeps_text_for_a_later_concat() -> None:
+    """A cached ``&`` result must stay the concatenated text.
+
+    Publishing ``"1"&"2.0"`` as the number 12 makes a later ``&"3"`` the
+    integer 123. Excel's text is ``12.03``.
+    """
+    formulas = {
+        "Sheet!C1": "=Sheet!A1&Sheet!B1",
+        "Sheet!D1": '=Sheet!C1&"3"',
+    }
+    leaf_env = _make_env(
+        {
+            "Sheet!A1": _string_enum("1"),
+            "Sheet!B1": _string_enum("2.0"),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return formulas.get(addr)
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet!D1"},
+        _get_cell_formula,
+        lambda formula, _sheet: _sheet_refs(formula),
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet!C1"].kind is CellKind.STRING
+    assert env["Sheet!C1"].enum is not None
+    assert env["Sheet!C1"].enum.values == frozenset({"12.0"})
+    assert env["Sheet!D1"].kind is CellKind.STRING
+    assert env["Sheet!D1"].enum is not None
+    assert env["Sheet!D1"].enum.values == frozenset({"12.03"})
+
+
+def test_canonical_concat_cell_restrings_to_the_same_digits() -> None:
+    formulas = {
+        "Sheet!C1": "=Sheet!A1&Sheet!B1",
+        "Sheet!D1": '=Sheet!C1&"7"',
+    }
+    leaf_env = _make_env(
+        {
+            "Sheet!A1": _number_enum(652),
+            "Sheet!B1": _number_enum(2014),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return formulas.get(addr)
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet!D1"},
+        _get_cell_formula,
+        lambda formula, _sheet: _sheet_refs(formula),
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet!C1"].kind is CellKind.NUMBER
+    assert env["Sheet!C1"].enum is not None
+    assert env["Sheet!C1"].enum.values == frozenset({6522014})
+    assert env["Sheet!D1"].kind is CellKind.NUMBER
+    assert env["Sheet!D1"].enum is not None
+    assert env["Sheet!D1"].enum.values == frozenset({65220147})
+
+
+def test_concat_root_propagates_divisor_zero_diagnostic() -> None:
+    limits = DynamicRefLimits(max_branches=8)
+    env = _make_env(
+        {
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+            "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=3)),
+            "Sheet1!C1": _number_enum(1),
+        }
+    )
+    result = dynamic_refs_mod._infer_numeric_domain_result(
+        parse_ast("=(Sheet1!A1/Sheet1!B1)&Sheet1!C1"),
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+    assert result.domain is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.reason == "divisor may include zero"
+
+    concat_result = dynamic_refs_mod._infer_numeric_domain_result(
+        parse_ast("=CONCAT(Sheet1!A1/Sheet1!B1,Sheet1!C1)"),
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+    assert concat_result.diagnostic is not None
+    assert concat_result.diagnostic.reason == "divisor may include zero"
+
+
+def test_expand_leaf_env_concat_of_unsafe_division_raises() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+            "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=3)),
+            "Sheet1!C1": _number_enum(1),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!D1":
+            return "=(Sheet1!A1/Sheet1!B1)&Sheet1!C1"
+        return None
+
+    with pytest.raises(DynamicRefError, match="divisor may include zero"):
+        expand_leaf_env_to_argument_env(
+            {"Sheet1!D1"},
+            _get_cell_formula,
+            lambda formula, _sheet: set(),
+            leaf_env,
+            DynamicRefLimits(max_branches=8),
         )
 
 

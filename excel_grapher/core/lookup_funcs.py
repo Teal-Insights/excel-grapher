@@ -37,7 +37,10 @@ def index_cells(
     when only one of `row_num` / `col_num` selects a vector.
 
     A `row_num` or `col_num` of `0` selects the entire column or row (Excel
-    whole-vector form). Both `0` returns the full array.
+    whole-vector form). Both `0` returns the full array. `col_num is None` is
+    the two-argument form: a vector index, or `#REF!` when `array` has more
+    than one row and column. Callers pass `0` for an empty third argument
+    (`INDEX(array, row,)`).
     """
     grid = Grid.wrap(array)
     if grid is None:
@@ -90,9 +93,7 @@ def index_cells(
             if row < 1 or row > nrows:
                 return XlError.REF
             return grid.at(row - 1, 0)
-        if row < 1 or row > nrows:
-            return XlError.REF
-        return grid.row_slice(row - 1)
+        return XlError.REF
 
     col_s = as_scalar(col_num)
     if isinstance(col_s, XlError):

@@ -976,8 +976,11 @@ class FormulaEvaluator:
             row_num = self._evaluate_ast(args[1])
             if isinstance(row_num, XlError):
                 return None, None, row_num
-        if len(args) < 3 or isinstance(args[2], EmptyArgNode):
+        if len(args) < 3:
             col_num: FormulaValue | None = None
+        elif isinstance(args[2], EmptyArgNode):
+            # A trailing empty column is Excel's whole-row form, same as 0.
+            col_num = 0
         else:
             col_num = self._evaluate_ast(args[2])
             if isinstance(col_num, XlError):

@@ -130,6 +130,35 @@ def test_narrow_static_index_column_and_row_slices() -> None:
     assert row == "=MATCH(D1,Dump!A1:T1,0)"
 
 
+def test_narrow_static_index_one_row_empty_column_is_the_header() -> None:
+    """INDEX(A1:T1,1,) rewrites to the header row; INDEX(A1:T1,1) is A1.
+
+    Desktop Excel 16.0 keeps the trailing comma. INDEX(A1:T1,1,) and
+    INDEX(A1:T1,1,0) are the row A1:T1 (exact MATCH of a later header is
+    column 20). INDEX(A1:T1,1) is the cell A1.
+    """
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T1,1,)", current_sheet="Data")
+        == "=Data!A1:T1"
+    )
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T1,1,0)", current_sheet="Data")
+        == "=Data!A1:T1"
+    )
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T1,1)", current_sheet="Data")
+        == "=Data!A1"
+    )
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T3,1)", current_sheet="Data")
+        == "=INDEX(Data!A1:T3,1)"
+    )
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T3,1,)", current_sheet="Data")
+        == "=Data!A1:T1"
+    )
+
+
 def test_narrow_static_index_keeps_dynamic_selectors_and_quoted_sheets() -> None:
     """Non-literal selectors stay put; quoted sheet names survive the rewrite."""
     dynamic = "=MATCH(C1,INDEX(Dump!A1:T26,,C2),0)"

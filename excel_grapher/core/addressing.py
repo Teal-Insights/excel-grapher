@@ -29,7 +29,9 @@ def index_excel_range(
     so OFFSET(INDEX(...), ...) receives a true cell reference.
 
     A `row_num` or `col_num` of `0` selects the entire column or row. Both `0`
-    returns the full `base` range.
+    returns the full `base` range. `col_num is None` is the two-argument form:
+    a vector index, or `#REF!` when `base` has more than one row and column.
+    Callers pass `0` for an empty third argument (`INDEX(array, row,)`).
     """
     nrows = base.end_row - base.start_row + 1
     ncols = base.end_col - base.start_col + 1
@@ -83,10 +85,7 @@ def index_excel_range(
             if row < 1 or row > nrows:
                 return XlError.REF
             return abs_cell(row - 1, 0)
-        if row < 1 or row > nrows:
-            return XlError.REF
-        r0 = base.start_row + row - 1
-        return ExcelRange(base.sheet, r0, base.start_col, r0, base.end_col)
+        return XlError.REF
 
     cn = to_number(col_num)
     if isinstance(cn, XlError):

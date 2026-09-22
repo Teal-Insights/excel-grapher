@@ -29,14 +29,17 @@ from excel_grapher.core.cell_types import (
     CellKind,
     CellType,
     CellTypeEnv,
+    CellTypeEnvDict,
     EnumDomain,
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
+    canonicalize_cell_type_env_keys,
     constraints_to_cell_type_env,
+    lookup_cell_type,
     normalize_cell_type_env_key,
 )
-from excel_grapher.core.coercions import excel_casefold, try_coerce_string_to_float
+from excel_grapher.core.coercions import excel_casefold, to_string, try_coerce_string_to_float
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
@@ -67,6 +70,7 @@ from excel_grapher.core.range_shorthand import (
     expand_whole_column_span_deps,
     expand_whole_row_span_deps,
 )
+from excel_grapher.core.text_funcs import value_from_text
 from excel_grapher.core.types import ExcelRange, XlError
 
 from .blank_ranges import BlankRangeRect, address_in_blank_ranges
@@ -347,6 +351,34 @@ _BLANK_RANGE_LEAF_TYPE = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=f
 """Excel blank used as an OFFSET/INDEX selector: numeric `0` (empty cell coerce)."""
 
 
+class _NormalizedCellTypeCache:
+    """Write-through view that stores `CellTypeEnv` keys in canonical form.
+
+    Used only when the caller shares a plain `dict`. A `CellTypeEnvDict` is
+    used directly so already-canonical membership stays a raw hash lookup.
+    """
+
+    __slots__ = ("_store",)
+
+    def __init__(self, store: dict[str, CellType]) -> None:
+        self._store = store
+
+    def __setitem__(self, key: str, value: CellType) -> None:
+        self._store[normalize_cell_type_env_key(key)] = value
+
+    def __getitem__(self, key: str) -> CellType:
+        return self._store[normalize_cell_type_env_key(key)]
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and normalize_cell_type_env_key(key) in self._store
+
+    def get(self, key: str, default: CellType | None = None) -> CellType | None:
+        return self._store.get(normalize_cell_type_env_key(key), default)
+
+    def __len__(self) -> int:
+        return len(self._store)
+
+
 def expand_leaf_env_to_argument_env(
     argument_refs: set[str],
     get_cell_formula: Callable[[str], str | None],
@@ -381,6 +413,12 @@ def expand_leaf_env_to_argument_env(
     ranges collected from the AST align with
     `excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
 
+    Returned (and shared-cache) keys are `normalize_cell_type_env_key` of each
+    address so `_lookup_cell_type` / `lookup_cell_type` can resolve graph
+    `format_key` addresses after expand (issue #972). A `CellTypeEnvDict`
+    shared cache is used in place (no O(|cache|) re-canonicalize); a plain
+    dict is rewritten once, then writes go through a normalizing view.
+
     When `shared_cell_type_cache` is provided, intermediate cell type inferences
     are persisted across multiple calls.  This avoids redundant work when many
     BFS nodes share intermediate formula cells in their argument subgraphs.
@@ -396,9 +434,14 @@ def expand_leaf_env_to_argument_env(
     share A1 text do not collide. The fallback path keys by formula string and
     parses only after a cache miss.
     """
-    cache: dict[str, CellType] = (
-        shared_cell_type_cache if shared_cell_type_cache is not None else {}
+    backing: dict[str, CellType] = (
+        shared_cell_type_cache if shared_cell_type_cache is not None else CellTypeEnvDict()
     )
+    if isinstance(backing, CellTypeEnvDict):
+        cache: CellTypeEnvDict | _NormalizedCellTypeCache = backing
+    else:
+        canonicalize_cell_type_env_keys(backing)
+        cache = _NormalizedCellTypeCache(backing)
     in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}
@@ -581,13 +624,14 @@ def expand_leaf_env_to_argument_env(
         ref_types: dict[str, CellType] = {}
         bulk_served: list[str] = []
         for r in refs:
-            cached_ct = cache.get(r)
+            norm = normalize_cell_type_env_key(r)
+            cached_ct = cache.get(norm)
             if cached_ct is not None:
-                ref_types[r] = cached_ct
-                bulk_served.append(r)
+                ref_types[norm] = cached_ct
+                bulk_served.append(norm)
                 continue
             # Cycle back-edge (still on the analysis stack) or a worklist miss.
-            ref_types[r] = CellType(kind=CellKind.ANY)
+            ref_types[norm] = CellType(kind=CellKind.ANY)
         if bulk_served:
             _bulk_hits += len(bulk_served)
             _note_progress(bulk_served[-1])
@@ -595,16 +639,17 @@ def expand_leaf_env_to_argument_env(
         return ref_types
 
     def _exit_cell(addr: str, formula: str | None, stored_ast: AstNode | None) -> None:
-        in_progress.discard(addr)
-        if _analysis_stack and _analysis_stack[-1] == addr:
+        norm = normalize_cell_type_env_key(addr)
+        in_progress.discard(norm)
+        if _analysis_stack and _analysis_stack[-1] == norm:
             _analysis_stack.pop()
             if _track_consumed and _analysis_stack:
                 parent = _analysis_stack[-1]
-                child_leaves = _consumed_leaves.get(addr)
+                child_leaves = _consumed_leaves.get(norm)
                 if child_leaves:
                     _consumed_leaves.setdefault(parent, set()).update(child_leaves)
-        if addr in cache and formula is not None and addr not in _loaded_from_persistent:
-            _persist_result(addr, formula, stored_ast, cache[addr])
+        if norm in cache and formula is not None and norm not in _loaded_from_persistent:
+            _persist_result(norm, formula, stored_ast, cache[norm])
 
     def _infer_cell_type(
         addr: str,
@@ -694,11 +739,15 @@ def expand_leaf_env_to_argument_env(
                 f"the formula, or extend numeric abstract analysis to cover it."
             )
         result_values: set[Any] = set()
-        for assignment in product(*(domains[r] for r in refs)):
-            addr_to_val = dict(zip(refs, assignment, strict=False))
+        ordered_refs = list(ref_types)
+        for assignment in product(*(domains[r] for r in ordered_refs)):
+            addr_to_val = dict(zip(ordered_refs, assignment, strict=False))
 
             def get_cell_value(a: str, _av=addr_to_val) -> Any:
-                return _av.get(a)
+                try:
+                    return _av.get(normalize_cell_type_env_key(a))
+                except (IndexError, ValueError):
+                    return _av.get(a)
 
             try:
                 formula_parse = _formula_to_parse(formula)
@@ -729,22 +778,22 @@ def expand_leaf_env_to_argument_env(
         Returns None when `addr` is already typed (or a cycle back-edge).
         """
         nonlocal _calls
-        if addr in cache:
-            _propagate_consumed_leaves_to_ancestors(addr)
+        norm = normalize_cell_type_env_key(addr)
+        if norm in cache:
+            _propagate_consumed_leaves_to_ancestors(norm)
             return None
         _calls += 1
         _note_progress(addr)
-        if addr in in_progress:
+        if norm in in_progress:
             return None
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
-            cache[addr] = ct_resolved
+            cache[norm] = ct_resolved
             if _track_consumed:
-                norm_key = normalize_cell_type_env_key(addr)
-                _consumed_leaves.setdefault(addr, set()).add(norm_key)
-                _record_consumed_leaf(norm_key)
+                _consumed_leaves.setdefault(norm, set()).add(norm)
+                _record_consumed_leaf(norm)
             return None
-        in_progress.add(addr)
+        in_progress.add(norm)
         formula = get_cell_formula(addr)
         stored_ast: AstNode | None = None
         ast_root: AstNode | None = None
@@ -752,11 +801,10 @@ def expand_leaf_env_to_argument_env(
         try:
             if formula is None:
                 if blank_rects and address_in_blank_ranges(addr, blank_rects):
-                    cache[addr] = _BLANK_RANGE_LEAF_TYPE
+                    cache[norm] = _BLANK_RANGE_LEAF_TYPE
                     if _track_consumed:
-                        norm_key = normalize_cell_type_env_key(addr)
-                        _consumed_leaves.setdefault(addr, set()).add(norm_key)
-                        _record_consumed_leaf(norm_key)
+                        _consumed_leaves.setdefault(norm, set()).add(norm)
+                        _record_consumed_leaf(norm)
                     return None
                 raise DynamicRefError(
                     f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
@@ -765,13 +813,13 @@ def expand_leaf_env_to_argument_env(
             if get_cell_ast is not None:
                 fetched = get_cell_ast(addr)
                 stored_ast = fetched if isinstance(fetched, AstNode) else None
-            _persistent_result = _try_persistent_lookup(addr, formula, stored_ast)
+            _persistent_result = _try_persistent_lookup(norm, formula, stored_ast)
             if _persistent_result is not None:
                 cached_ct, cached_consumed = _persistent_result
-                cache[addr] = cached_ct
-                _consumed_leaves[addr] = set(cached_consumed)
-                _loaded_from_persistent.add(addr)
-                _propagate_consumed_leaves_to_ancestors(addr)
+                cache[norm] = cached_ct
+                _consumed_leaves[norm] = set(cached_consumed)
+                _loaded_from_persistent.add(norm)
+                _propagate_consumed_leaves_to_ancestors(norm)
                 return None
             ast_root = stored_ast
             if ast_root is None:
@@ -790,7 +838,7 @@ def expand_leaf_env_to_argument_env(
                     "constrain an intermediate cell in the chain to cut it short, or "
                     "simplify the chain."
                 )
-            _analysis_stack.append(addr)
+            _analysis_stack.append(norm)
             refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
             if ast_root is not None:
                 refs |= _collect_static_addresses_from_ast(
@@ -894,7 +942,7 @@ def expand_leaf_env_to_argument_env(
             },
         )
     )
-    return cache
+    return backing
 
 
 def dynamic_ref_selectors_boundable_without_expand(
@@ -1858,86 +1906,150 @@ def _range_node_from_bounds(
     return RangeNode(start=start, end=end)
 
 
+@dataclass(frozen=True, slots=True)
+class _IndexAxisEnv:
+    """Type environment used to densify non-literal INDEX row/col selectors."""
+
+    env: CellTypeEnv
+    limits: DynamicRefLimits
+    context: dict[str, int]
+    current_sheet: str
+    depth: int
+
+
+def _singleton_int(domain: _FiniteInts | _IntBounds | None) -> int | None:
+    """Return the only integer in `domain` when it is a singleton."""
+    if isinstance(domain, _FiniteInts):
+        if len(domain.values) != 1:
+            return None
+        return next(iter(domain.values))
+    if isinstance(domain, _IntBounds) and domain.lo == domain.hi:
+        return domain.lo
+    return None
+
+
+def _resolved_index_axis(node: AstNode, axes: _IndexAxisEnv | None) -> int | None:
+    """Return a singleton INDEX axis, including Excel's `0` whole-axis form.
+
+    Literals resolve without `axes`. Non-literals densify only when `axes` is
+    provided and numeric inference yields exactly one integer.
+    """
+    if _is_literal_zero(node):
+        return 0
+    literal = _literal_positive_int(node)
+    if literal is not None:
+        return literal
+    if axes is None:
+        return None
+    result = _infer_numeric_domain_result(
+        node,
+        axes.env,
+        axes.limits,
+        context=axes.context,
+        current_sheet=axes.current_sheet,
+        depth=axes.depth + 1,
+    )
+    if result.diagnostic is not None:
+        return None
+    resolved = _singleton_int(result.domain)
+    if resolved is None or resolved < 0:
+        return None
+    return resolved
+
+
 def _index_vector_from_bounds(
     bounds: tuple[str, int, int, int, int],
     row_arg: AstNode,
     col_arg: AstNode | None,
+    *,
+    axes: _IndexAxisEnv | None = None,
 ) -> AstNode | None:
     """Map INDEX row/col selectors over static bounds to a rectangular result range.
 
-    Supports omitted axes, literal positive selectors, and Excel's `0` form that
-    returns an entire row/column/array.
+    Supports omitted axes, singleton positive selectors (literals or densified
+    under `axes`), and Excel's `0` form that returns an entire row/column/array.
+    Two-arg `INDEX(array, k)` indexes a 1-D vector, and does not resolve when
+    `array` has more than one row and column (Excel `#REF!`). A trailing empty
+    column (`INDEX(array, k,)`) is the 2-D form and selects that row.
     """
     sheet, rlo, rhi, clo, chi = bounds
     nrows = rhi - rlo + 1
     ncols = chi - clo + 1
 
     row_omitted = isinstance(row_arg, EmptyArgNode)
-    col_omitted = col_arg is None or isinstance(col_arg, EmptyArgNode)
-    row_zero = _is_literal_zero(row_arg)
-    col_zero = col_arg is not None and _is_literal_zero(col_arg)
+    col_missing = col_arg is None
+    col_empty = isinstance(col_arg, EmptyArgNode)
+    col_omitted = col_missing or col_empty
+    row_sel = None if row_omitted else _resolved_index_axis(row_arg, axes)
+    col_sel = None if col_arg is None or col_empty else _resolved_index_axis(col_arg, axes)
+    row_zero = row_sel == 0
+    col_zero = col_sel == 0
 
     if row_omitted and col_omitted:
         return None
 
     if row_omitted:
-        assert col_arg is not None
         if col_zero:
             return _range_node_from_bounds(sheet, rlo, rhi, clo, chi)
-        k = _literal_positive_int(col_arg)
-        if k is None or k > ncols:
+        if col_sel is None or col_sel > ncols:
             return None
-        c = clo + k - 1
+        c = clo + col_sel - 1
         return _range_node_from_bounds(sheet, rlo, rhi, c, c)
 
     if col_omitted:
         if row_zero:
             return _range_node_from_bounds(sheet, rlo, rhi, clo, chi)
-        k = _literal_positive_int(row_arg)
-        if k is None:
+        if row_sel is None:
             return None
-        if nrows == 1:
-            if k > ncols:
+        # 2-arg INDEX(array, k) indexes a 1-D vector. A trailing empty
+        # column (`INDEX(array, k,)`) is the 2-D form and selects that row.
+        if col_missing and nrows == 1:
+            if row_sel > ncols:
                 return None
-            c = clo + k - 1
+            c = clo + row_sel - 1
             return _range_node_from_bounds(sheet, rlo, rhi, c, c)
-        if ncols == 1:
-            if k > nrows:
+        if col_missing and ncols == 1:
+            if row_sel > nrows:
                 return None
-            r = rlo + k - 1
+            r = rlo + row_sel - 1
             return _range_node_from_bounds(sheet, r, r, clo, chi)
-        if k > nrows:
+        # Two-arg INDEX on a 2-D block is #REF! in Excel.
+        if col_missing:
             return None
-        r = rlo + k - 1
+        if row_sel > nrows:
+            return None
+        r = rlo + row_sel - 1
         return _range_node_from_bounds(sheet, r, r, clo, chi)
 
     # Both axes present: 0 selects the full opposite axis (Excel INDEX).
     if row_zero and col_zero:
         return _range_node_from_bounds(sheet, rlo, rhi, clo, chi)
     if row_zero:
-        assert col_arg is not None
-        k = _literal_positive_int(col_arg)
-        if k is None or k > ncols:
+        if col_sel is None or col_sel > ncols:
             return None
-        c = clo + k - 1
+        c = clo + col_sel - 1
         return _range_node_from_bounds(sheet, rlo, rhi, c, c)
     if col_zero:
-        k = _literal_positive_int(row_arg)
-        if k is None or k > nrows:
+        if row_sel is None or row_sel > nrows:
             return None
-        r = rlo + k - 1
+        r = rlo + row_sel - 1
         return _range_node_from_bounds(sheet, r, r, clo, chi)
     return None
 
 
 def _index_vector_lookup_array(
-    node: AstNode, *, allow_shape_preserving: bool = False
+    node: AstNode,
+    *,
+    allow_shape_preserving: bool = False,
+    axes: _IndexAxisEnv | None = None,
 ) -> AstNode | None:
-    """Resolve static INDEX forms to a rectangular range for MATCH lookup geometry.
+    """Resolve INDEX forms to a rectangular range for MATCH lookup geometry.
 
     Handles `INDEX(range,,k)` / `INDEX(range,k[,])` and Excel's `INDEX(...,0[,k])`
-    whole-axis form. When `allow_shape_preserving` is True, also accepts array
-    expressions that keep a static rectangle's shape (e.g. `(range<>0)`).
+    whole-axis form. `k` may be a literal or, when `axes` is provided, any
+    selector that densifies to a singleton integer. When
+    `allow_shape_preserving` is True, also accepts array expressions that keep
+    a static rectangle's shape (e.g. `(range<>0)`).
 
     Value-preserving callers (exact MATCH cell enumeration) must leave
     `allow_shape_preserving` False so projected arrays are not treated as the
@@ -1955,7 +2067,7 @@ def _index_vector_lookup_array(
     if bounds is None:
         return None
     col_arg: AstNode | None = node.args[2] if len(node.args) >= 3 else None
-    return _index_vector_from_bounds(bounds, node.args[1], col_arg)
+    return _index_vector_from_bounds(bounds, node.args[1], col_arg, axes=axes)
 
 
 def _span_strictly_inside(inner: tuple[int, int], outer: tuple[int, int]) -> bool:
@@ -2051,6 +2163,45 @@ def prepare_dynamic_selector_expr(formula: str, *, current_sheet: str) -> str:
     )
 
 
+def _index_dynamic_axis_match_extent(node: AstNode) -> int | None:
+    """Return MATCH lookup length when INDEX shape is known but an axis is dynamic.
+
+    An omitted or `0` axis still yields a vector of known length. A specific
+    (unknown) axis over a 1-D array, or both specific axes over a 2-D array,
+    yields a scalar. Two-arg `INDEX` on a 2-D block has no lookup (`#REF!`).
+    """
+    if not isinstance(node, FunctionCallNode) or node.name.upper() != "INDEX":
+        return None
+    if len(node.args) < 2:
+        return None
+    bounds = _array_expr_static_bounds(node.args[0])
+    if bounds is None:
+        return None
+    _sheet, rlo, rhi, clo, chi = bounds
+    nrows = rhi - rlo + 1
+    ncols = chi - clo + 1
+    row_arg = node.args[1]
+    col_arg: AstNode | None = node.args[2] if len(node.args) >= 3 else None
+    row_omitted = isinstance(row_arg, EmptyArgNode)
+    col_missing = col_arg is None
+    col_empty = isinstance(col_arg, EmptyArgNode)
+    row_zero = _is_literal_zero(row_arg)
+    col_zero = col_arg is not None and _is_literal_zero(col_arg)
+    if row_omitted and (col_missing or col_empty):
+        return None
+    if (row_omitted or row_zero) and (col_missing or col_empty or col_zero):
+        return nrows * ncols
+    if row_omitted or row_zero:
+        return nrows
+    if col_missing:
+        if nrows == 1 or ncols == 1:
+            return 1
+        return None
+    if col_empty or col_zero:
+        return ncols
+    return 1
+
+
 def _static_match_lookup_extent(node: AstNode) -> int | None:
     """Return N so MATCH position is within [1, N] when lookup_array has static shape."""
     if isinstance(node, CellRefNode):
@@ -2075,11 +2226,23 @@ def _static_match_lookup_extent(node: AstNode) -> int | None:
     vector = _index_vector_lookup_array(node, allow_shape_preserving=True)
     if vector is not None:
         return _static_match_lookup_extent(vector)
-    return None
+    return _index_dynamic_axis_match_extent(node)
 
 
-def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str] | None:
-    """Return sheet-qualified addresses for a one-dimensional MATCH lookup_array (in scan order)."""
+def _ordered_match_lookup_cells(
+    arg: AstNode,
+    *,
+    current_sheet: str,
+    env: CellTypeEnv | None = None,
+    limits: DynamicRefLimits | None = None,
+    context: dict[str, int] | None = None,
+    depth: int = 0,
+) -> list[str] | None:
+    """Return sheet-qualified addresses for a one-dimensional MATCH lookup_array (in scan order).
+
+    When `env` and `limits` are provided, INDEX axes that densify to a singleton
+    integer are treated like literals.
+    """
     from fastpyxl.utils.cell import get_column_letter
 
     if isinstance(arg, CellRefNode):
@@ -2115,9 +2278,27 @@ def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str
                 out.append(format_key(sheet, f"{get_column_letter(c)}{rlo}"))
         return out
     # Value-preserving INDEX only: projected arrays must not expose raw cell domains.
-    vector = _index_vector_lookup_array(arg)
+    axes = (
+        _IndexAxisEnv(
+            env=env,
+            limits=limits,
+            context=context or {},
+            current_sheet=current_sheet,
+            depth=depth,
+        )
+        if env is not None and limits is not None
+        else None
+    )
+    vector = _index_vector_lookup_array(arg, axes=axes)
     if vector is not None:
-        return _ordered_match_lookup_cells(vector, current_sheet=current_sheet)
+        return _ordered_match_lookup_cells(
+            vector,
+            current_sheet=current_sheet,
+            env=env,
+            limits=limits,
+            context=context,
+            depth=depth,
+        )
     return None
 
 
@@ -2511,7 +2692,14 @@ def _infer_exact_match_position_domain(
         if needles is None or _needle_blocks_exact_match_refine(needles):
             return None
 
-    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
+    ordered = _ordered_match_lookup_cells(
+        node.args[1],
+        current_sheet=current_sheet,
+        env=env,
+        limits=limits,
+        context=context,
+        depth=depth,
+    )
     if not ordered:
         return None
     if lookup_dom is None:
@@ -2635,7 +2823,7 @@ def _domain_without_zero(
 
 def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
     """Resolve env entry; keys match `excel_grapher.core.cell_types.normalize_cell_type_env_key`."""
-    return env.get(normalize_cell_type_env_key(address))
+    return lookup_cell_type(env, address)
 
 
 def _cell_has_relation(
@@ -3444,6 +3632,512 @@ def _infer_choose_numeric_domain_result(
     return _domain_result(out)
 
 
+# Excel rejects text results longer than one cell. Checked before concatenation
+# so an oversized fragment fails closed without building the product.
+_EXCEL_CELL_TEXT_LIMIT = 32_767
+
+# VALUE of an already-numeric expression is the identity. These calls never
+# produce digit-text that would need value_from_text.
+_VALUE_NUMERIC_IDENTITY_FUNCS = frozenset(
+    {
+        "ABS",
+        "COLUMN",
+        "COLUMNS",
+        "EXP",
+        "ISNUMBER",
+        "MATCH",
+        "MAX",
+        "MIN",
+        "ROW",
+        "ROWS",
+        "SUM",
+        "VALUE",
+    }
+)
+
+
+def _integer_from_excel_text(text: str) -> int | None:
+    """Return the integer `VALUE` of `text`.
+
+    Uses `value_from_text` so analysis matches the evaluator. Non-integral
+    results (`12.5`, `#VALUE!`) fail closed.
+    """
+    parsed = value_from_text(text)
+    if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
+        return None
+    if isinstance(parsed, float):
+        if not math.isfinite(parsed) or not parsed.is_integer():
+            return None
+        return int(parsed)
+    return parsed
+
+
+def _numeric_domain_from_text_fragments(
+    texts: frozenset[str] | None,
+) -> _NumericDomainInferenceResult:
+    """Map an exact text set through `VALUE`.
+
+    `texts is None` means the text is unknown. A known set that is not
+    uniformly integral also yields no numeric domain: dropping the failures
+    would under-approximate a MATCH needle.
+    """
+    if texts is None:
+        return _domain_result(None)
+    if not texts:
+        return _domain_result(_FiniteInts(frozenset()))
+    values: set[int] = set()
+    for text in texts:
+        parsed = _integer_from_excel_text(text)
+        if parsed is None:
+            return _domain_result(None)
+        values.add(parsed)
+    return _domain_result(_FiniteInts(frozenset(values)))
+
+
+def _integer_from_canonical_excel_text(text: str) -> int | None:
+    """Return the integer when `text` is already its general-format spelling.
+
+    `VALUE` may parse `"05"` or `"12.0"`. The `&` operator returns that text,
+    so a later concatenation must see the original spelling. Caching the
+    parsed integer would re-stringify it as `"5"` or `"12"`.
+    """
+    parsed = _integer_from_excel_text(text)
+    if parsed is None:
+        return None
+    if to_string(parsed) != text:
+        return None
+    return parsed
+
+
+def _numeric_domain_from_canonical_text_fragments(
+    texts: frozenset[str] | None,
+) -> _NumericDomainInferenceResult:
+    """Integer domain of concat text that round-trips through general format.
+
+    One non-canonical fragment fails the whole set. Keeping only the
+    canonical members would under-approximate a MATCH needle.
+    """
+    if texts is None:
+        return _domain_result(None)
+    if not texts:
+        return _domain_result(_FiniteInts(frozenset()))
+    values: set[int] = set()
+    for text in texts:
+        parsed = _integer_from_canonical_excel_text(text)
+        if parsed is None:
+            return _domain_result(None)
+        values.add(parsed)
+    return _domain_result(_FiniteInts(frozenset(values)))
+
+
+def _first_operand_diagnostic(
+    operands: Sequence[AstNode],
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> _NumericDomainInferenceResult | None:
+    """Return the first operand diagnostic, so concat does not hide it."""
+    for operand in operands:
+        result = _infer_numeric_domain_result(
+            operand,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if result.diagnostic is not None:
+            return result
+    return None
+
+
+def _join_text_fragment_sets(
+    left: frozenset[str],
+    right: frozenset[str],
+    limits: DynamicRefLimits,
+) -> frozenset[str] | None:
+    """Concatenate two exact text sets, or return None past the branch cap.
+
+    The product size is checked before any strings are allocated. The result
+    stays a set: concatenated integers are sparse, so collapsing to a bounding
+    interval would be unsound for MATCH.
+    """
+    if not left or not right:
+        return frozenset()
+    if len(left) * len(right) > limits.max_branches:
+        return None
+    if max(len(text) for text in left) + max(len(text) for text in right) > _EXCEL_CELL_TEXT_LIMIT:
+        return None
+    return frozenset(left_text + right_text for left_text in left for right_text in right)
+
+
+def _union_text_fragment_sets(
+    parts: Sequence[frozenset[str]],
+    limits: DynamicRefLimits,
+) -> frozenset[str] | None:
+    """Union exact text sets, stopping once the cap is exceeded."""
+    merged: set[str] = set()
+    for part in parts:
+        merged.update(part)
+        if len(merged) > limits.max_branches:
+            return None
+    return frozenset(merged)
+
+
+def _enum_number_fragment(value: object) -> str | None:
+    """General-format text of one integral enum member, if it is one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return to_string(value)
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return to_string(value)
+    return None
+
+
+def _cell_text_fragments(ct: CellType | None, limits: DynamicRefLimits) -> frozenset[str] | None:
+    """Exact general-format text of a cell, when the domain is small enough.
+
+    Wide intervals are not densified: concatenation is not interval arithmetic,
+    and stringifying every integer would dominate analysis.
+    """
+    if ct is None:
+        return None
+    if ct.enum is not None:
+        values = ct.enum.values
+        if len(values) > limits.max_branches:
+            return None
+        if not values:
+            return frozenset()
+        if all(isinstance(value, str) for value in values):
+            return frozenset(cast(str, value) for value in values)
+        fragments: list[str] = []
+        for value in values:
+            fragment = _enum_number_fragment(value)
+            if fragment is None:
+                return None
+            fragments.append(fragment)
+        return frozenset(fragments)
+    if ct.kind not in (CellKind.NUMBER, CellKind.ANY) or ct.interval is None:
+        return None
+    if ct.interval.min is None or ct.interval.max is None:
+        return None
+    lo = int(ct.interval.min)
+    hi = int(ct.interval.max)
+    if hi < lo:
+        return frozenset()
+    if hi - lo + 1 > limits.max_branches:
+        return None
+    return frozenset(to_string(value) for value in range(lo, hi + 1))
+
+
+def _domain_provably_true(domain: _FiniteInts | _IntBounds) -> bool:
+    if isinstance(domain, _FiniteInts):
+        return bool(domain.values) and all(value != 0 for value in domain.values)
+    return domain.lo > 0 or domain.hi < 0
+
+
+def _domain_provably_false(domain: _FiniteInts | _IntBounds) -> bool:
+    if isinstance(domain, _FiniteInts):
+        return bool(domain.values) and all(value == 0 for value in domain.values)
+    return domain.lo == domain.hi == 0
+
+
+def _infer_text_fragments(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None = None,
+    current_sheet: str = "",
+    depth: int = 0,
+) -> frozenset[str] | None:
+    """Return the exact strings `node` can produce, or None if unknown.
+
+    None is fail-closed. Callers that turn the set into a MATCH needle must
+    not substitute an over-approximation: one extra integer can collapse onto
+    the wrong row.
+    """
+    if depth > limits.max_depth:
+        return None
+    if isinstance(node, StringNode):
+        if len(node.value) > _EXCEL_CELL_TEXT_LIMIT:
+            return None
+        return frozenset({node.value})
+    if isinstance(node, (NumberNode, BoolNode)):
+        return frozenset({to_string(node.value)})
+    if isinstance(node, (ErrorNode, RangeNode, EmptyArgNode)):
+        return None
+    if isinstance(node, CellRefNode):
+        return _cell_text_fragments(_lookup_cell_type(env, node.address), limits)
+    if isinstance(node, BinaryOpNode) and node.op == "&":
+        return _concat_text_fragments(
+            (node.left, node.right),
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth,
+        )
+    if isinstance(node, FunctionCallNode):
+        name = node.name.upper()
+        if name == "IF":
+            return _if_text_fragments(
+                node,
+                env,
+                limits,
+                context=context,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name == "CHOOSE":
+            return _choose_text_fragments(
+                node,
+                env,
+                limits,
+                context=context,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name in {"CONCAT", "CONCATENATE"}:
+            if not node.args:
+                return None
+            return _concat_text_fragments(
+                node.args,
+                env,
+                limits,
+                context=context,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+    numeric = _infer_numeric_domain_result(
+        node,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    domain = numeric.domain
+    if isinstance(domain, _FiniteInts) and len(domain.values) <= limits.max_branches:
+        return frozenset(to_string(value) for value in domain.values)
+    return None
+
+
+def _concat_text_fragments(
+    parts: Sequence[AstNode],
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> frozenset[str] | None:
+    """Fold `&` / `CONCAT` left to right, capping the running product."""
+    acc: frozenset[str] = frozenset({""})
+    for part in parts:
+        side = _infer_text_fragments(
+            part,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if side is None:
+            return None
+        joined = _join_text_fragment_sets(acc, side, limits)
+        if joined is None:
+            return None
+        acc = joined
+    return acc
+
+
+def _if_text_fragments(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> frozenset[str] | None:
+    """Exact text of `IF`, dropping a branch only when the condition proves it dead."""
+    if len(node.args) < 2:
+        return None
+    cond = _infer_numeric_domain_result(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if cond.diagnostic is not None or cond.domain is None:
+        return None
+    if isinstance(cond.domain, _FiniteInts) and not cond.domain.values:
+        return frozenset()
+    if _domain_provably_true(cond.domain):
+        return _infer_text_fragments(
+            node.args[1],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+    if _domain_provably_false(cond.domain):
+        if len(node.args) < 3:
+            return frozenset({"FALSE"})
+        return _infer_text_fragments(
+            node.args[2],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+    then_text = _infer_text_fragments(
+        node.args[1],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    else_text = (
+        _infer_text_fragments(
+            node.args[2],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if len(node.args) >= 3
+        else frozenset({"FALSE"})
+    )
+    if then_text is None or else_text is None:
+        return None
+    return _union_text_fragment_sets((then_text, else_text), limits)
+
+
+def _choose_text_fragments(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> frozenset[str] | None:
+    """Exact text of the `CHOOSE` options selected by a known index domain."""
+    if len(node.args) < 2:
+        return None
+    index = _infer_numeric_domain_result(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if index.diagnostic is not None or index.domain is None:
+        return None
+    option_count = len(node.args) - 1
+    if isinstance(index.domain, _FiniteInts):
+        selected = [i for i in sorted(index.domain.values) if 1 <= i <= option_count]
+    else:
+        lo = max(1, index.domain.lo)
+        hi = min(option_count, index.domain.hi)
+        selected = list(range(lo, hi + 1)) if lo <= hi else []
+    if not selected:
+        return frozenset()
+    parts: list[frozenset[str]] = []
+    for option_index in selected:
+        text = _infer_text_fragments(
+            node.args[option_index],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if text is None:
+            return None
+        parts.append(text)
+    return _union_text_fragment_sets(parts, limits)
+
+
+def _value_arg_keeps_numeric_domain(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+) -> bool:
+    """Return True when `VALUE(node)` is the numeric domain of `node`.
+
+    Digit-text (string cells, `&`, `CONCAT`) is excluded: `VALUE` must parse
+    that text instead of treating it as already numeric.
+    """
+    if isinstance(node, NumberNode):
+        return not isinstance(node.value, bool)
+    if isinstance(node, UnaryOpNode):
+        return node.op in {"-", "%"}
+    if isinstance(node, BinaryOpNode):
+        return node.op in {"+", "-", "*", "/"}
+    if isinstance(node, CellRefNode):
+        return _domain_from_cell_type(_lookup_cell_type(env, node.address), limits) is not None
+    if isinstance(node, FunctionCallNode):
+        return node.name.upper() in _VALUE_NUMERIC_IDENTITY_FUNCS
+    return False
+
+
+def _infer_value_numeric_domain(
+    arg: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> _NumericDomainInferenceResult:
+    """Integer domain of `VALUE(arg)`.
+
+    Already-numeric arguments pass through, including wide bounds, without
+    enumerating them. Digit-text is parsed only when the fragment set is finite.
+    """
+    if _value_arg_keeps_numeric_domain(arg, env, limits):
+        return _infer_numeric_domain_result(
+            arg,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+    texts = _infer_text_fragments(
+        arg,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if texts is not None:
+        return _numeric_domain_from_text_fragments(texts)
+    return _infer_numeric_domain_result(
+        arg,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+
+
 def _infer_numeric_domain_result(
     node: AstNode,
     env: CellTypeEnv,
@@ -3505,6 +4199,27 @@ def _infer_numeric_domain_result(
         return _domain_result(None)
 
     if isinstance(node, BinaryOpNode):
+        if node.op == "&":
+            diagnostic = _first_operand_diagnostic(
+                (node.left, node.right),
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+            if diagnostic is not None:
+                return diagnostic
+            return _numeric_domain_from_canonical_text_fragments(
+                _concat_text_fragments(
+                    (node.left, node.right),
+                    env,
+                    limits,
+                    context=ctx,
+                    current_sheet=current_sheet,
+                    depth=depth,
+                )
+            )
         left = _infer_numeric_domain_result(
             node.left, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
         )
@@ -3727,8 +4442,40 @@ def _infer_numeric_domain_result(
                 else:
                     acc = _max_numeric_domains(acc, arg_result.domain, limits)
             return _domain_result(acc)
-        if name == "CONCAT":
-            return _domain_result(None)
+        if name == "VALUE":
+            if len(node.args) != 1:
+                return _domain_result(None)
+            return _infer_value_numeric_domain(
+                node.args[0],
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name in {"CONCAT", "CONCATENATE"}:
+            if not node.args:
+                return _domain_result(None)
+            diagnostic = _first_operand_diagnostic(
+                node.args,
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+            if diagnostic is not None:
+                return diagnostic
+            return _numeric_domain_from_canonical_text_fragments(
+                _concat_text_fragments(
+                    node.args,
+                    env,
+                    limits,
+                    context=ctx,
+                    current_sheet=current_sheet,
+                    depth=depth,
+                )
+            )
         return _domain_result(None)
 
     return _domain_result(None)

@@ -60,6 +60,37 @@ def test_index_excel_range_col_zero_returns_full_row() -> None:
     assert (result.start_row, result.start_col, result.end_row, result.end_col) == (2, 1, 2, 3)
 
 
+def test_index_one_row_empty_column_is_the_row_and_two_arg_block_is_ref() -> None:
+    """Excel 16: INDEX(A1:T1,1,) is the row; INDEX(A1:T3,1) is #REF!.
+
+    `col_num is None` is the two-argument form. Callers pass `0` for an empty
+    third argument, which matches `INDEX(...,1,0)`.
+    """
+    header = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=1, end_col=20)
+    two_arg_header = index_excel_range(header, 1, None)
+    assert isinstance(two_arg_header, ExcelRange)
+    assert (two_arg_header.start_col, two_arg_header.end_col) == (1, 1)
+    empty_header = index_excel_range(header, 1, 0)
+    assert isinstance(empty_header, ExcelRange)
+    assert (empty_header.start_col, empty_header.end_col) == (1, 20)
+
+    block = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=3, end_col=20)
+    assert index_excel_range(block, 1, None) == XlError.REF
+    empty_row = index_excel_range(block, 1, 0)
+    assert isinstance(empty_row, ExcelRange)
+    assert (empty_row.start_row, empty_row.end_row, empty_row.start_col, empty_row.end_col) == (
+        1,
+        1,
+        1,
+        20,
+    )
+
+    assert index_cells([[1, 2, 3]], 1, None) == 1
+    assert index_cells([[1, 2, 3]], 1, 0) == [[1, 2, 3]]
+    assert index_cells([[1, 2], [3, 4]], 1, None) == XlError.REF
+    assert index_cells([[1, 2], [3, 4]], 1, 0) == [[1, 2]]
+
+
 def test_index_excel_range_row_zero_with_col_selects_column() -> None:
     base = ExcelRange(sheet="S", start_row=1, start_col=1, end_row=3, end_col=3)
     result = index_excel_range(base, 0, 2)

@@ -1678,8 +1678,11 @@ def _static_int_expr(expr: str) -> int | None:
 
 
 def _emit_index_column_arg(col_arg: AstNode | None, ctx: EmitContext) -> tuple[str, int | None]:
-    if col_arg is None or isinstance(col_arg, EmptyArgNode):
+    if col_arg is None:
         return "None", None
+    if isinstance(col_arg, EmptyArgNode):
+        # Trailing empty column is Excel's whole-row form, same as 0.
+        return "0", 0
     try:
         expr = emit_expr(col_arg, ctx)
     except InvertedTreeExportError as exc:

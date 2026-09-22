@@ -14,8 +14,13 @@ from excel_grapher.core.cell_types import (
     RealBetween,
     RealIntervalDomain,
     constraints_to_cell_type_env,
+    normalize_cell_type_env_key,
 )
-from excel_grapher.grapher.dynamic_refs import DynamicRefLimits, expand_leaf_env_to_argument_env
+from excel_grapher.grapher.dynamic_refs import (
+    DynamicRefLimits,
+    _lookup_cell_type,
+    expand_leaf_env_to_argument_env,
+)
 
 
 def test_constraints_mapping_builds_expected_cell_type_env() -> None:
@@ -157,6 +162,8 @@ def test_expand_leaf_env_resolves_format_key_addr_against_normalized_env() -> No
     """Graph builder passes format_key addresses; env keys are normalized (PR #46)."""
     norm = "Chart Data!I21"
     quoted = "'Chart Data'!I21"
+    assert quoted != norm
+    assert normalize_cell_type_env_key(quoted) == norm
     leaf_env: CellTypeEnv = {
         norm: CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=1)),
     }
@@ -167,5 +174,8 @@ def test_expand_leaf_env_resolves_format_key_addr_against_normalized_env() -> No
         leaf_env,
         DynamicRefLimits(),
     )
-    assert quoted in out
-    assert out[quoted].interval == IntervalDomain(min=1, max=1)
+    assert set(out) == {norm}
+    assert quoted not in set(out)
+    assert out[norm].interval == IntervalDomain(min=1, max=1)
+    assert _lookup_cell_type(out, quoted) == out[norm]
+    assert _lookup_cell_type(out, norm) == out[norm]
