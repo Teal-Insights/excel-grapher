@@ -11,11 +11,18 @@ import xlsxwriter
 from fastpyxl.utils.cell import coordinate_from_string
 
 from excel_grapher.core.cell_types import normalize_cell_type_env_key
+from excel_grapher.exporter.inverted_tree.emit import generate_inverted_tree_modules
 from excel_grapher.exporter.inverted_tree.input_annotations import public_input_annotations
 from excel_grapher.grapher import create_dependency_graph
+from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
 from excel_grapher.series_bindings import validate_bindings_document
 from excel_grapher.series_bindings.domains import SeriesDomainIndex
 from excel_grapher.series_bindings.resolve import _stream_sheet_values, _WorkbookValues
+from tests.unit.exporter.inverted_tree.helpers import (
+    bindings_document,
+    series_entry,
+    write_workbook,
+)
 
 
 def _constant_series(series_id: str, data_range: str, sheet: str) -> dict[str, Any]:
@@ -224,7 +231,7 @@ def test_materialize_skips_workbook_reads_for_graph_nodes(
     assert _enum_values(index, "Data!A10") == frozenset({"label-10"})
 
 
-def test_prefetch_reuses_cells_already_scanned_on_the_sheet(
+def test_prefetch_caches_requested_coordinates_only(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     path = tmp_path / "book.xlsx"
@@ -249,16 +256,113 @@ def test_prefetch_reuses_cells_already_scanned_on_the_sheet(
 
     monkeypatch.setattr("excel_grapher.series_bindings.resolve._stream_sheet_values", counting)
     reader = _WorkbookValues(path)
-    reader.prefetch(["Sheet!A1"])
-    assert calls == [1]
+    reader.prefetch(["Sheet!A1", "Sheet!B1", "Sheet!A4"])
+    assert calls == [4]
+    assert reader.read("Sheet!A1") == "a"
     assert reader.read("Sheet!B1") == "bee"
-    assert reader.read("Sheet!C1") is None
-    assert calls == [1]
     assert reader.read("Sheet!A4") == "later"
-    assert calls == [1, 4]
+    assert calls == [4]
+    assert reader.read("Sheet!C1") is None
+    assert calls == [4, 1]
     reader.close()
     assert reader.read("Sheet!A1") == "a"
-    assert calls == [1, 4, 1]
+    assert calls == [4, 1, 1]
+
+
+def test_successive_off_graph_lookups_stream_each_sheet_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "book.xlsx"
+    _write_split_constants(path)
+    graph = create_dependency_graph(path, ["Calc!B1"], load_values=True)
+    index = graph.attach_domains(_split_bindings(), workbook=path)
+    calls = _record_streams(monkeypatch)
+
+    assert _enum_values(index, "Data!A1") == frozenset({"label-1"})
+    assert [(sheet, max(_row(coord) for coord in wanted)) for sheet, wanted in calls] == [
+        ("Data", 20),
+        ("Climate Data", 3),
+    ]
+    assert index._expanded is None
+    assert len(index._memo) == 1
+
+    assert _enum_values(index, "Data!A20") == frozenset({"label-20"})
+    assert _enum_values(index, "'Climate Data'!B3") == frozenset({"corner"})
+    assert len(calls) == 2
+    assert index._expanded is None
+    assert len(index._memo) == 3
+
+
+def test_blank_from_workbook_truthiness_does_not_flip(tmp_path: Path) -> None:
+    path = tmp_path / "book.xlsx"
+    workbook = xlsxwriter.Workbook(path)
+    workbook.add_worksheet("Data")
+    workbook.close()
+    bindings = validate_bindings_document(
+        {
+            "schema_version": "1.19.0",
+            "series": [_constant_series("labels", "Data!A1:A3", "Data")],
+        }
+    )
+    index = SeriesDomainIndex.from_bindings(bindings, workbook=path)
+    assert index._expanded is None
+    assert index
+    assert len(index) == 0
+    assert index
+
+
+def test_codegen_does_not_materialize_constant_domains(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = write_workbook(
+        tmp_path / "book.xlsx",
+        {
+            "Data": {"A1": "label-1"},
+            "Calc": {"A1": "On", "B1": "=A1"},
+        },
+    )
+    bindings = validate_bindings_document(
+        bindings_document(
+            series_entry(
+                "flag",
+                "Calc!A1",
+                direction="input",
+                dtype="string",
+                domain={"enum": ["On", "Off"]},
+            ),
+            series_entry("labels", "Data!A1", direction="constant", dtype="string"),
+            series_entry(
+                "result",
+                "Calc!B1",
+                direction="output",
+                dtype="string",
+                compute_name="compute_result",
+            ),
+            schema_version="1.19.0",
+        )
+    )
+    graph = create_dependency_graph(
+        path,
+        ["Calc!B1"],
+        load_values=True,
+        dynamic_refs=DynamicRefConfig.from_bindings(bindings, path),
+    )
+    assert isinstance(graph.cell_type_env, SeriesDomainIndex)
+    assert graph.cell_type_env._expanded is None
+    calls = {"n": 0}
+    original = SeriesDomainIndex._materialize
+
+    def counting(self: SeriesDomainIndex) -> dict[str, Any]:
+        calls["n"] += 1
+        return original(self)
+
+    monkeypatch.setattr(SeriesDomainIndex, "_materialize", counting)
+    modules = generate_inverted_tree_modules(
+        graph, series_bindings=bindings, bindings_workbook=path
+    )
+    assert calls["n"] == 0
+    assert graph.cell_type_env._expanded is None
+    assert 'Literal["Off", "On"]' in modules["model.py"]
 
 
 def _enum_values(index: SeriesDomainIndex, address: str) -> frozenset[object]:
