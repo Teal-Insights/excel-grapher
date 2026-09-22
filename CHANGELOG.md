@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.2 (2026-09-22)
+
+### Bug Fixes
+
+- **grapher**: Collapse exact MATCH on string enum needles
+  ([#969](https://github.com/Teal-Insights/excel-grapher/pull/969),
+  [`662f211`](https://github.com/Teal-Insights/excel-grapher/commit/662f211da228821998cde44512c66849056762be))
+
+
 ## v23.6.1 (2026-09-22)
 
 ### Bug Fixes
