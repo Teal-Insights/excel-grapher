@@ -246,10 +246,12 @@ def test_index_match_does_not_require_lookup_formula_leaf_constraints(
 
 
 def test_quoted_sheet_omitted_index_match_skips_expand(tmp_path: Path) -> None:
-    """Omitted-axis INDEX/MATCH keeps the lazy env and one year column (#968).
+    """Omitted-axis INDEX/MATCH keeps the lazy env and stays under `max_cells` (#968).
 
     The 6x4 grid exceeds `max_cells`. Year headers are pinned; code cells are
-    not, so the row MATCH stays unbounded and targets are that one column.
+    not, so the row MATCH stays unbounded. The untyped corner stays a year
+    candidate and the certain 2018 hit stops the scan, so targets are columns
+    A and C. Argument-env expansion still does not run.
     """
     excel_path = tmp_path / "quoted-index-match.xlsx"
     wb = Workbook()
@@ -311,8 +313,10 @@ def test_quoted_sheet_omitted_index_match_skips_expand(tmp_path: Path) -> None:
 
     deps = set(graph.get_dependencies("'Imported data'!C1"))
     assert expand_calls == 0
+    assert "'data all'!A3" in deps
     assert "'data all'!C3" in deps
     assert "'data all'!B2" not in deps
+    assert "'data all'!D2" not in deps
 
 
 def test_index_cell_selector_still_fail_closes_without_constraint(tmp_path: Path) -> None:
