@@ -2,7 +2,12 @@ from __future__ import annotations
 
 from excel_grapher.core.address_keys import format_key, parse_address
 from excel_grapher.core.addressing import split_sheet_qualified_address
-from excel_grapher.core.cell_types import CellKind, CellType, IntervalDomain
+from excel_grapher.core.cell_types import (
+    CellKind,
+    CellType,
+    IntervalDomain,
+    normalize_cell_type_env_key,
+)
 from excel_grapher.grapher.blank_ranges import (
     address_in_blank_ranges,
     parse_blank_range_spec,
@@ -110,7 +115,10 @@ def test_expand_leaf_env_passes_correct_sheet_for_apostrophe_sheet_names() -> No
         DynamicRefLimits(),
     )
     assert seen_sheets == [_APOSTROPHE_SHEET]
-    assert formula_cell in env
+    assert set(env) == {
+        normalize_cell_type_env_key(formula_cell),
+        f"{_APOSTROPHE_SHEET}!A1",
+    }
 
 
 def test_parse_cell_refs_handles_apostrophe_sheet_names() -> None:

@@ -4,10 +4,15 @@ from excel_grapher.core.cell_types import (
     CellKind,
     CellType,
     CellTypeEnv,
+    CellTypeEnvDict,
+    EnumDomain,
     IntervalDomain,
+    canonicalize_cell_type_env_keys,
     leaves_missing_cell_type_constraints,
+    lookup_cell_type,
     normalize_cell_type_env_key,
 )
+from excel_grapher.grapher.dynamic_refs import _lookup_cell_type
 
 
 def test_normalize_cell_type_env_key_strips_excel_sheet_quotes() -> None:
@@ -15,6 +20,42 @@ def test_normalize_cell_type_env_key_strips_excel_sheet_quotes() -> None:
     assert normalize_cell_type_env_key(f"'{sheet}'!B2") == f"{sheet}!B2"
     assert normalize_cell_type_env_key(f"'{sheet}'!b2") == f"{sheet}!B2"
     assert normalize_cell_type_env_key(f"{sheet}!B2") == f"{sheet}!B2"
+
+
+def test_lookup_cell_type_reads_normalized_keys_only() -> None:
+    """Issue #972: lookups always go through `normalize_cell_type_env_key`."""
+    quoted = "'Imported data'!G59"
+    norm = normalize_cell_type_env_key(quoted)
+    cell_type = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2014})))
+    assert quoted != norm
+    assert lookup_cell_type({quoted: cell_type}, quoted) is None
+    assert lookup_cell_type({norm: cell_type}, quoted) is cell_type
+    assert _lookup_cell_type({norm: cell_type}, quoted) is cell_type
+
+
+def test_canonicalize_cell_type_env_keys_rewrites_quoted_keys() -> None:
+    quoted = "'Imported data'!G59"
+    norm = normalize_cell_type_env_key(quoted)
+    cell_type = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2014})))
+    env = {quoted: cell_type, "Sheet1!A1": cell_type}
+    canonicalize_cell_type_env_keys(env)
+    assert set(env) == {norm, "Sheet1!A1"}
+    assert env[norm] is cell_type
+
+
+def test_cell_type_env_dict_stores_normalized_keys() -> None:
+    quoted = "'Imported data'!G59"
+    norm = normalize_cell_type_env_key(quoted)
+    cell_type = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2014})))
+    env = CellTypeEnvDict({quoted: cell_type})
+    env["'Imported data'!$g$60"] = CellType(kind=CellKind.NUMBER)
+
+    assert set(env) == {norm, "Imported data!G60"}
+    assert env[quoted] is cell_type
+    assert env[norm] is cell_type
+    assert quoted in env
+    assert lookup_cell_type(env, quoted) is cell_type
+    assert quoted not in set(env)
 
 
 def test_leaves_missing_cell_type_constraints_ignores_format_key_quoting() -> None:

@@ -11,7 +11,7 @@ from __future__ import annotations
 from collections.abc import Callable, Collection, Iterable
 
 from excel_grapher.core.address_keys import CellKey, parse_address
-from excel_grapher.core.cell_types import CellType
+from excel_grapher.core.cell_types import CellType, CellTypeEnvDict
 from excel_grapher.core.formula_ast import AstNode, parse_preserving_axes_optional
 from excel_grapher.core.formula_normalization import NamedRangeReplacementState
 
@@ -57,7 +57,7 @@ class DynamicRefWalkContext:
             sheet_names if isinstance(sheet_names, (set, frozenset)) else set(sheet_names)
         )
         self.shared_cell_type_cache: dict[str, CellType] = (
-            shared_cell_type_cache if shared_cell_type_cache is not None else {}
+            shared_cell_type_cache if shared_cell_type_cache is not None else CellTypeEnvDict()
         )
         self._stats = stats
         self._named_ranges = named_ranges
