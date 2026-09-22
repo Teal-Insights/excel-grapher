@@ -27,10 +27,13 @@ from excel_grapher.grapher import parser as parser_mod
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.dynamic_refs import (
+    EXACT_MATCH_UNDOMAINED_WARN_CAP,
     DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefError,
     DynamicRefLimits,
+    ExactMatchUndomainedCellWarning,
+    dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
@@ -1700,6 +1703,196 @@ def test_exact_match_untyped_before_certain_hit_stays() -> None:
     )
     targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
     assert targets == {"dump!B1", "dump!B2"}
+
+
+def _undomained_match_warnings(
+    caught: list[warnings.WarningMessage],
+) -> list[warnings.WarningMessage]:
+    return [item for item in caught if issubclass(item.category, ExactMatchUndomainedCellWarning)]
+
+
+def test_exact_match_warns_for_untyped_cell_before_certain_string_hit() -> None:
+    """A missing type before a certain hit is warned; the hit and later cells are not."""
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("KEY"),
+            "dump!A2": _string_enum("KEY"),
+            "dump!A3": _string_enum("KEY"),
+        }
+    )
+    with pytest.warns(ExactMatchUndomainedCellWarning) as recorded:
+        targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+    assert len(recorded) == 1
+    message = str(recorded[0].message)
+    assert message == "Exact MATCH kept 1 lookup cell with no domain: dump!A1"
+    assert "showing" not in message
+
+
+def test_exact_match_overlap_and_bare_number_are_not_undomained_warnings() -> None:
+    """A real domain that overlaps the needle is kept without this warning.
+
+    A numeric cell with no finite domain is also a real type. Only a missing
+    cell type is reported, and only before the certain hit.
+    """
+    formula = "=INDEX(dump!B1:B5,MATCH(calc!A1,dump!A1:A5,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _number_enum(5),
+            "dump!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10)),
+            "dump!A2": CellType(kind=CellKind.NUMBER),
+            "dump!A4": _number_enum(5),
+        }
+    )
+    with pytest.warns(ExactMatchUndomainedCellWarning) as recorded:
+        targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2", "dump!B3", "dump!B4"}
+    assert len(recorded) == 1
+    assert str(recorded[0].message) == ("Exact MATCH kept 1 lookup cell with no domain: dump!A3")
+
+
+def test_exact_match_numeric_zero_is_not_an_undomained_warning() -> None:
+    """A numeric 0 domain misses a non-zero needle and is not reported.
+
+    `blank_ranges` cells typed as numeric 0 inside this scan stay out of the
+    warning for the same reason.
+    """
+    formula = "=INDEX(data!A1:C1,1,MATCH(imp!K1,data!A1:C1,0))"
+    env = _make_env(
+        {
+            "imp!K1": _number_enum(2018),
+            "data!A1": _number_enum(0),
+            "data!B1": _number_enum(2017),
+            "data!C1": _number_enum(2018),
+        }
+    )
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        targets = infer_dynamic_index_targets(formula, current_sheet="imp", cell_type_env=env)
+    assert targets == {"data!C1"}
+    assert _undomained_match_warnings(caught) == []
+
+
+def test_exact_match_year_header_warns_for_the_untyped_corner_only() -> None:
+    """Pinned year scan stops at the certain hit, so later untyped cells are silent.
+
+    The row needle is unpinned, so that axis is not scanned and does not warn.
+    """
+    formula = (
+        "=INDEX('data all'!A1:D6,"
+        "MATCH('Imported data'!A1,INDEX('data all'!A1:D6,,1),0),"
+        "MATCH('Imported data'!B1,INDEX('data all'!A1:D6,1,),0))"
+    )
+    env = _make_env(
+        {
+            "Imported data!B1": _number_enum(2018),
+            "data all!B1": _number_enum(2017),
+            "data all!C1": _number_enum(2018),
+        }
+    )
+    limits = DynamicRefLimits(max_cells=20)
+    with pytest.warns(ExactMatchUndomainedCellWarning) as recorded:
+        targets = infer_dynamic_index_targets(
+            formula,
+            current_sheet="Imported data",
+            cell_type_env=env,
+            limits=limits,
+        )
+    assert len(recorded) == 1
+    assert str(recorded[0].message) == (
+        "Exact MATCH kept 1 lookup cell with no domain: 'data all'!A1"
+    )
+    assert targets == {f"'data all'!{col}{row}" for col in ("A", "C") for row in range(1, 7)}
+
+
+def test_exact_match_without_certain_hit_caps_undomained_warning() -> None:
+    """A long untyped vector prints a prefix and the total, and still succeeds."""
+    n = EXACT_MATCH_UNDOMAINED_WARN_CAP + 4
+    formula = f"=INDEX(dump!B1:B{n},MATCH(1,dump!A1:A{n},0),1)"
+    with pytest.warns(ExactMatchUndomainedCellWarning) as recorded:
+        targets = infer_dynamic_index_targets(formula, current_sheet="dump", cell_type_env={})
+    assert targets == {f"dump!B{row}" for row in range(1, n + 1)}
+    assert len(recorded) == 1
+    message = str(recorded[0].message)
+    assert f"showing {EXACT_MATCH_UNDOMAINED_WARN_CAP} of {n}" in message
+    listed = message.split(": ", 1)[1]
+    assert [part.strip() for part in listed.split(",")] == [
+        f"dump!A{row}" for row in range(1, EXACT_MATCH_UNDOMAINED_WARN_CAP + 1)
+    ]
+
+
+def test_unpinned_exact_match_needle_does_not_warn() -> None:
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env={})
+    assert targets == {"dump!B1", "dump!B2", "dump!B3"}
+    assert _undomained_match_warnings(caught) == []
+
+
+def test_wildcard_exact_match_needle_does_not_warn() -> None:
+    formula = "=INDEX(dump!B1:B2,MATCH(calc!A1,dump!A1:A2,0),1)"
+    env = _make_env({"calc!A1": _string_enum("K*")})
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+    assert _undomained_match_warnings(caught) == []
+
+
+def test_geometry_probe_does_not_warn_about_undomained_match_cells() -> None:
+    """The empty-env geometry check must not report the author's lookup cells."""
+    n = EXACT_MATCH_UNDOMAINED_WARN_CAP + 4
+    formula = f"=INDEX(dump!B1:B{n},MATCH(1,dump!A1:A{n},0),1)"
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        boundable = dynamic_ref_selectors_boundable_without_expand(formula, current_sheet="dump")
+    assert boundable
+    assert _undomained_match_warnings(caught) == []
+
+
+def test_exact_match_undomained_warning_does_not_fail_the_build(tmp_path: Path) -> None:
+    excel_path = tmp_path / "undomained-match.xlsx"
+    wb = xlsxwriter.Workbook(excel_path)
+    data = wb.add_worksheet("data")
+    data.write_string(0, 0, "corner")  # A1 untyped
+    data.write_number(0, 1, 2017)  # B1
+    data.write_number(0, 2, 2018)  # C1
+    data.write_number(0, 3, 2019)  # D1 value present, domain absent
+    for row in range(1, 4):
+        data.write_string(row, 0, f"code.{row}")
+        for col in range(1, 4):
+            data.write_number(row, col, row * 10 + col)
+    calc = wb.add_worksheet("calc")
+    calc.write_string(0, 0, "code.2")  # A1 unpinned row needle
+    calc.write_number(0, 1, 2018)  # B1 year needle
+    calc.write_formula(
+        0,
+        2,
+        "=INDEX(data!A1:D4,MATCH(calc!A1,data!A1:A4,0),MATCH(calc!B1,data!A1:D1,0))",
+    )
+    wb.close()
+    env = {
+        "calc!B1": _number_enum(2018),
+        "data!B1": _number_enum(2017),
+        "data!C1": _number_enum(2018),
+    }
+    with pytest.warns(ExactMatchUndomainedCellWarning) as recorded:
+        graph = create_dependency_graph(
+            excel_path,
+            ["calc!C1"],
+            load_values=False,
+            dynamic_refs=DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits()),
+        )
+    assert len(recorded) == 1
+    assert str(recorded[0].message) == ("Exact MATCH kept 1 lookup cell with no domain: data!A1")
+    deps = set(graph.get_dependencies("calc!C1"))
+    assert "data!A1" in deps
+    assert "data!C4" in deps
+    # Header D1 is still a MATCH argument. Column D's body is not an INDEX target.
+    assert "data!D2" not in deps
+    assert "data!B2" not in deps
 
 
 def test_exact_match_non_finite_text_is_not_a_numeric_hit() -> None:

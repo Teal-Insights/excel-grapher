@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from pathlib import Path
 
 import pytest
@@ -16,9 +17,11 @@ from excel_grapher.core.cell_types import (
 )
 from excel_grapher.grapher.builder import list_dynamic_ref_constraint_candidates
 from excel_grapher.grapher.dynamic_refs import (
+    EXACT_MATCH_UNDOMAINED_WARN_CAP,
     DynamicRefCellLimitError,
     DynamicRefConfig,
     DynamicRefLimits,
+    ExactMatchUndomainedCellWarning,
 )
 
 # ---------------------------------------------------------------------------
@@ -248,6 +251,106 @@ def test_index_match_range_argument_expands_all_cells(tmp_path: Path) -> None:
     result = list_dynamic_ref_constraint_candidates(path, ["Sheet1!D5"], dynamic_refs=None)
 
     assert result == []
+
+
+def _build_year_match_corner(path: Path) -> None:
+    """calc!C1 indexes data!A1:D4; the year header's corner has no domain."""
+    wb = xlsxwriter.Workbook(path)
+    data = wb.add_worksheet("data")
+    data.write_string(0, 0, "corner")
+    data.write_number(0, 1, 2017)
+    data.write_number(0, 2, 2018)
+    data.write_number(0, 3, 2019)
+    for row in range(1, 4):
+        data.write_string(row, 0, f"code.{row}")
+        for col in range(1, 4):
+            data.write_number(row, col, row * 10 + col)
+    calc = wb.add_worksheet("calc")
+    calc.write_string(0, 0, "code.2")
+    calc.write_number(0, 1, 2018)
+    calc.write_formula(
+        0,
+        2,
+        "=INDEX(data!A1:D4,MATCH(calc!A1,data!A1:A4,0),MATCH(calc!B1,data!A1:D1,0))",
+    )
+    wb.close()
+
+
+def _build_literal_match_column(path: Path, *, rows: int) -> None:
+    wb = xlsxwriter.Workbook(path)
+    ws = wb.add_worksheet("S")
+    for row in range(rows):
+        ws.write_number(row, 0, row + 1)
+        ws.write_number(row, 1, (row + 1) * 10)
+    ws.write_formula(0, 2, f"=INDEX(S!B1:B{rows},MATCH(1,S!A1:A{rows},0),1)")
+    wb.close()
+
+
+def test_candidates_opt_in_lists_undomained_match_cells_separately(tmp_path: Path) -> None:
+    """The must-bind list stays empty; the opt-in is the corner, not the lookup."""
+    path = tmp_path / "year-match.xlsx"
+    _build_year_match_corner(path)
+    env = {
+        "calc!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+        "data!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2017}))),
+        "data!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+    }
+    config = DynamicRefConfig(cell_type_env=env, limits=DynamicRefLimits())
+    undomained: list[str] = []
+    with pytest.warns(ExactMatchUndomainedCellWarning, match="data!A1"):
+        result = list_dynamic_ref_constraint_candidates(
+            path,
+            ["calc!C1"],
+            dynamic_refs=config,
+            undomained_exact_match=undomained,
+        )
+    assert result == []
+    assert undomained == ["data!A1"]
+
+    untouched: list[str] = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        without_config = list_dynamic_ref_constraint_candidates(
+            path,
+            ["calc!C1"],
+            dynamic_refs=None,
+            undomained_exact_match=untouched,
+        )
+    assert without_config == []
+    assert untouched == []
+    assert not any(issubclass(item.category, ExactMatchUndomainedCellWarning) for item in caught)
+
+
+def test_candidates_opt_in_keeps_full_untyped_vector_while_warning_is_capped(
+    tmp_path: Path,
+) -> None:
+    """No certain hit: the collection is every kept cell, and the warning is capped.
+
+    The geometry probe uses an empty env and must not emit a second warning.
+    Value cells of the INDEX array are not part of the collection.
+    """
+    rows = EXACT_MATCH_UNDOMAINED_WARN_CAP + 4
+    path = tmp_path / "literal-match.xlsx"
+    _build_literal_match_column(path, rows=rows)
+    config = DynamicRefConfig(cell_type_env={}, limits=DynamicRefLimits())
+    undomained: list[str] = []
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        result = list_dynamic_ref_constraint_candidates(
+            path,
+            ["S!C1"],
+            dynamic_refs=config,
+            undomained_exact_match=undomained,
+        )
+    assert result == []
+    assert undomained == [f"S!A{row}" for row in range(1, rows + 1)]
+    assert "S!B1" not in undomained
+    warnings_issued = [
+        item for item in caught if issubclass(item.category, ExactMatchUndomainedCellWarning)
+    ]
+    assert len(warnings_issued) == 1
+    message = str(warnings_issued[0].message)
+    assert f"showing {EXACT_MATCH_UNDOMAINED_WARN_CAP} of {rows}" in message
 
 
 def test_infer_raises_dynamic_ref_error_is_caught(tmp_path: Path) -> None:
