@@ -1828,6 +1828,59 @@ def test_exact_match_blank_range_cell_is_numeric_zero() -> None:
     assert typed == {"data!A1"}
 
 
+def test_offset_exact_match_blank_range_cell_is_numeric_zero() -> None:
+    """OFFSET(MATCH) uses the same blank-rectangle rule as INDEX (#979).
+
+    The lookup cell in `blank_rects` is numeric 0. Needle 2018 misses it and
+    lands on the pinned year. Needle 0 is a certain hit on that cell, so the
+    row offset is 0. An untyped lookup cell with no blank declaration stays
+    a candidate.
+    """
+    formula = "=OFFSET(Chart!A1,MATCH(Inputs!A1,Lookup!A1:A3,0)-1,0)"
+    blanks = normalize_blank_range_specs(("Lookup!A1",))
+
+    year = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Chart",
+        cell_type_env=_make_env(
+            {
+                "Inputs!A1": _number_enum(2018),
+                "Lookup!A2": _number_enum(2017),
+                "Lookup!A3": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert year == {"Chart!A3"}
+
+    zero = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Chart",
+        cell_type_env=_make_env(
+            {
+                "Inputs!A1": _number_enum(0),
+                "Lookup!A2": _number_enum(2017),
+                "Lookup!A3": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert zero == {"Chart!A1"}
+
+    untyped = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Chart",
+        cell_type_env=_make_env(
+            {
+                "Inputs!A1": _number_enum(2018),
+                "Lookup!A3": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert untyped == {"Chart!A2", "Chart!A3"}
+
+
 def test_exact_match_numeric_keeps_numeric_text_enum() -> None:
     """Numeric text can equal a number under exact MATCH, so it stays a candidate."""
     formula = "=INDEX(data!A1:B1,1,MATCH(imp!K1,data!A1:B1,0))"
