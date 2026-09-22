@@ -1899,7 +1899,7 @@ def _index_vector_from_bounds(
     col_empty = isinstance(col_arg, EmptyArgNode)
     col_omitted = col_missing or col_empty
     row_sel = None if row_omitted else _resolved_index_axis(row_arg, axes)
-    col_sel = None if col_omitted else _resolved_index_axis(col_arg, axes)
+    col_sel = None if col_arg is None or col_empty else _resolved_index_axis(col_arg, axes)
     row_zero = row_sel == 0
     col_zero = col_sel == 0
 
