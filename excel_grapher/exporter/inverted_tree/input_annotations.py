@@ -44,7 +44,8 @@ def public_input_annotations(
     Singleton literals, `Literal[None]` blanks, and `constant` series are not
     public types. A series whose cells do not share one caller-facing domain
     fails closed. `input.value_map` workbook needles stay off the annotation;
-    callers are still checked against the map keys.
+    callers are still checked against the map keys. A missing `cell_type_env`
+    yields no annotations; the check does not expand a lazy domain index.
 
     Args:
         catalog: Bound series for this export.
@@ -59,7 +60,7 @@ def public_input_annotations(
             an interval kind disagrees with the measure dtype.
     """
     env = graph.cell_type_env
-    if not env:
+    if env is None:
         return {}
     annotations: dict[str, str] = {}
     for series in catalog.series.values():

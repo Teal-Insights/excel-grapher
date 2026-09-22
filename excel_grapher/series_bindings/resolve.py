@@ -115,8 +115,11 @@ class _WorkbookValues:
     """Lazy cached value reader for bind cells outside the dependency graph.
 
     Opens the workbook in `read_only` mode so unused sheets are never bound.
-    Each touched sheet is streamed only through the last requested row; the
-    rest of that sheet and every unread sheet stay unparsed.
+    Each touched sheet is streamed only through the deepest requested row.
+    Every cell value encountered on that pass stays cached, so a later
+    coordinate in an already scanned row does not stream the sheet again.
+    A deeper row streams the sheet once more through that row. Unread sheets
+    stay unparsed.
     """
 
     def __init__(self, path: Path | str, *, data_only: bool = True) -> None:
@@ -124,6 +127,7 @@ class _WorkbookValues:
         self._data_only = data_only
         self._workbook_cache: fastpyxl.Workbook | None = None
         self._sheet_values: dict[str, dict[str, Any]] = {}
+        self._sheet_scanned_through: dict[str, int] = {}
 
     def _workbook(self) -> fastpyxl.Workbook:
         if self._workbook_cache is not None:
@@ -138,7 +142,11 @@ class _WorkbookValues:
         return self._workbook_cache
 
     def prefetch(self, addresses: Iterable[str], *, graph: DependencyGraph | None = None) -> None:
-        """Stream each touched sheet only through the last requested row."""
+        """Cache `addresses`, streaming each sheet once through its deepest row.
+
+        Coordinates on a row already scanned are not read again. When `graph`
+        is set, addresses that are graph nodes are skipped.
+        """
         wanted_by_sheet: dict[str, set[str]] = {}
         for address in addresses:
             if graph is not None and address in graph:
@@ -146,8 +154,14 @@ class _WorkbookValues:
             sheet, coord = parse_address(address)
             wanted_by_sheet.setdefault(sheet, set()).add(coord)
         for sheet, wanted in wanted_by_sheet.items():
-            cached = self._sheet_values.get(sheet)
-            if cached is not None and wanted <= cached.keys():
+            if not wanted:
+                continue
+            scanned = self._sheet_scanned_through.get(sheet, 0)
+            max_row = max(_coord_row(coord) for coord in wanted)
+            cached = self._sheet_values.setdefault(sheet, {})
+            if max_row <= scanned:
+                for coord in wanted:
+                    cached.setdefault(coord, None)
                 continue
             values = _stream_sheet_values(
                 self._workbook(),
@@ -155,7 +169,8 @@ class _WorkbookValues:
                 wanted,
                 data_only=self._data_only,
             )
-            self._sheet_values.setdefault(sheet, {}).update(values)
+            cached.update(values)
+            self._sheet_scanned_through[sheet] = max_row
 
     def read(self, address: str) -> Any:
         sheet, coord = parse_address(address)
@@ -171,12 +186,18 @@ class _WorkbookValues:
             self._workbook_cache.close()
             self._workbook_cache = None
         self._sheet_values.clear()
+        self._sheet_scanned_through.clear()
 
     def __enter__(self) -> _WorkbookValues:
         return self
 
     def __exit__(self, *args: object) -> None:
         self.close()
+
+
+def _coord_row(coord: str) -> int:
+    _column, row = fastpyxl.utils.cell.coordinate_from_string(coord.replace("$", ""))
+    return int(row)
 
 
 def _stream_sheet_values(
@@ -186,7 +207,11 @@ def _stream_sheet_values(
     *,
     data_only: bool = True,
 ) -> dict[str, Any]:
-    """Stream one worksheet until every requested coordinate's row is passed."""
+    """Stream one worksheet through the deepest requested row.
+
+    The returned mapping includes every cell the parser yields on that pass,
+    plus an explicit `None` for each requested coordinate the parser omitted.
+    """
     from fastpyxl.worksheet._reader import WorkSheetParser
 
     if not wanted:
@@ -210,9 +235,7 @@ def _stream_sheet_values(
         )
         for row_idx, cells in parser.parse():
             for row, column, value, _dtype, _style, _cached in cells:
-                coord = f"{get_column_letter(column)}{row}"
-                if coord in wanted:
-                    values[coord] = value
+                values[f"{get_column_letter(column)}{row}"] = value
             if row_idx >= max_row:
                 break
     for coord in wanted:
