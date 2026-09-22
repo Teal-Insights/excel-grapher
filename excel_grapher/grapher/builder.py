@@ -33,10 +33,14 @@ from excel_grapher.core.formula_ast import (
     CellRefNode,
     FormulaStyle,
     RangeNode,
+    WholeColumnNode,
+    WholeRowNode,
     intern_formula_ast,
     parse_preserving_axes_optional,
     render_formula,
     resolve_cell_ref,
+    resolve_whole_column_ref,
+    resolve_whole_row_ref,
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 
@@ -241,7 +245,10 @@ def _shape_instance_cache_token(
     Cell holes contribute only their domain, so row-wise copies with the same
     selector domain still share inference. Range holes contribute resolved
     corners, so a shifted MATCH lookup does not reuse another row's collapsed
-    targets. Relative axes are resolved against `anchor` (the formula cell).
+    targets. Whole-column and whole-row holes contribute the anchor-resolved
+    span, so a relative `C:C` on one host does not share an absolute column
+    or another host's column. Relative axes are resolved against `anchor`
+    (the formula cell).
     """
     tokens: list[object] = []
     for leaf in params:
@@ -255,6 +262,10 @@ def _shape_instance_cache_token(
                     resolve_cell_ref(leaf.end_ref, anchor),
                 )
             )
+        elif isinstance(leaf, WholeColumnNode):
+            tokens.append(("column", *resolve_whole_column_ref(leaf, anchor)))
+        elif isinstance(leaf, WholeRowNode):
+            tokens.append(("row", *resolve_whole_row_ref(leaf, anchor)))
         else:
             tokens.append(leaf)
     return tuple(tokens)
