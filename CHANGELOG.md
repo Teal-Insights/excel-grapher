@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.6 (2026-09-22)
+
+### Bug Fixes
+
+- Match Excel on negative, empty-column, and two-arg INDEX
+  ([#974](https://github.com/Teal-Insights/excel-grapher/pull/974),
+  [`6aed303`](https://github.com/Teal-Insights/excel-grapher/commit/6aed3039475cb579dbc5a1f766319875ca93af60))
+
+- **grapher**: Narrow INDEX column axis before domain inference
+  ([#974](https://github.com/Teal-Insights/excel-grapher/pull/974),
+  [`6aed303`](https://github.com/Teal-Insights/excel-grapher/commit/6aed3039475cb579dbc5a1f766319875ca93af60))
+
+- **grapher**: Treat densified INDEX axes as MATCH lookup vectors
+  ([#974](https://github.com/Teal-Insights/excel-grapher/pull/974),
+  [`6aed303`](https://github.com/Teal-Insights/excel-grapher/commit/6aed3039475cb579dbc5a1f766319875ca93af60))
+
+### Testing
+
+- **grapher**: Lock one-row INDEX empty-column rewrite
+  ([#974](https://github.com/Teal-Insights/excel-grapher/pull/974),
+  [`6aed303`](https://github.com/Teal-Insights/excel-grapher/commit/6aed3039475cb579dbc5a1f766319875ca93af60))
+
+- **grapher**: Narrow INDEX row lookup before indexing it
+  ([#974](https://github.com/Teal-Insights/excel-grapher/pull/974),
+  [`6aed303`](https://github.com/Teal-Insights/excel-grapher/commit/6aed3039475cb579dbc5a1f766319875ca93af60))
+
+
 ## v23.6.5 (2026-09-22)
 
 ### Bug Fixes
