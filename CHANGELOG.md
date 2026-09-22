@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.1 (2026-09-22)
+
+### Bug Fixes
+
+- **grapher**: Narrow nested INDEX MATCH dependencies to the lookup vector
+  ([#963](https://github.com/Teal-Insights/excel-grapher/pull/963),
+  [`fa51029`](https://github.com/Teal-Insights/excel-grapher/commit/fa51029494ee3e22ea4467cf856c75ffb64f3be1))
+
+### Testing
+
+- **grapher**: Build INDEX MATCH domains without computed Literals
+  ([#963](https://github.com/Teal-Insights/excel-grapher/pull/963),
+  [`fa51029`](https://github.com/Teal-Insights/excel-grapher/commit/fa51029494ee3e22ea4467cf856c75ffb64f3be1))
+
+
 ## v23.6.0 (2026-09-21)
 
 ### Bug Fixes
