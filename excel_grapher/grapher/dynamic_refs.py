@@ -3267,6 +3267,66 @@ def _numeric_domain_from_text_fragments(
     return _domain_result(_FiniteInts(frozenset(values)))
 
 
+def _integer_from_canonical_excel_text(text: str) -> int | None:
+    """Return the integer when `text` is already its general-format spelling.
+
+    `VALUE` may parse `"05"` or `"12.0"`. The `&` operator returns that text,
+    so a later concatenation must see the original spelling. Caching the
+    parsed integer would re-stringify it as `"5"` or `"12"`.
+    """
+    parsed = _integer_from_excel_text(text)
+    if parsed is None:
+        return None
+    if to_string(parsed) != text:
+        return None
+    return parsed
+
+
+def _numeric_domain_from_canonical_text_fragments(
+    texts: frozenset[str] | None,
+) -> _NumericDomainInferenceResult:
+    """Integer domain of concat text that round-trips through general format.
+
+    One non-canonical fragment fails the whole set. Keeping only the
+    canonical members would under-approximate a MATCH needle.
+    """
+    if texts is None:
+        return _domain_result(None)
+    if not texts:
+        return _domain_result(_FiniteInts(frozenset()))
+    values: set[int] = set()
+    for text in texts:
+        parsed = _integer_from_canonical_excel_text(text)
+        if parsed is None:
+            return _domain_result(None)
+        values.add(parsed)
+    return _domain_result(_FiniteInts(frozenset(values)))
+
+
+def _first_operand_diagnostic(
+    operands: Sequence[AstNode],
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> _NumericDomainInferenceResult | None:
+    """Return the first operand diagnostic, so concat does not hide it."""
+    for operand in operands:
+        result = _infer_numeric_domain_result(
+            operand,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if result.diagnostic is not None:
+            return result
+    return None
+
+
 def _join_text_fragment_sets(
     left: frozenset[str],
     right: frozenset[str],
@@ -3713,7 +3773,17 @@ def _infer_numeric_domain_result(
 
     if isinstance(node, BinaryOpNode):
         if node.op == "&":
-            return _numeric_domain_from_text_fragments(
+            diagnostic = _first_operand_diagnostic(
+                (node.left, node.right),
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+            if diagnostic is not None:
+                return diagnostic
+            return _numeric_domain_from_canonical_text_fragments(
                 _concat_text_fragments(
                     (node.left, node.right),
                     env,
@@ -3959,7 +4029,17 @@ def _infer_numeric_domain_result(
         if name in {"CONCAT", "CONCATENATE"}:
             if not node.args:
                 return _domain_result(None)
-            return _numeric_domain_from_text_fragments(
+            diagnostic = _first_operand_diagnostic(
+                node.args,
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+            if diagnostic is not None:
+                return diagnostic
+            return _numeric_domain_from_canonical_text_fragments(
                 _concat_text_fragments(
                     node.args,
                     env,

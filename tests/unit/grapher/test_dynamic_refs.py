@@ -2719,6 +2719,8 @@ class TestValueAndConcatNumericDomain:
     Text fragments stay exact and finite. Oversized cartesian products and
     non-integral text fail closed (``None``) instead of an interval hull:
     concatenation is sparse, and a hull would pin the wrong MATCH row.
+    ``&`` becomes an integer only when every fragment is the general-format
+    spelling of that integer, so a cached cell re-stringifies to the same text.
     """
 
     def test_value_of_numeric_literal(self) -> None:
@@ -2769,8 +2771,9 @@ class TestValueAndConcatNumericDomain:
         assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints({1005})
 
     def test_noncanonical_decimal_text_does_not_poison_a_later_concat(self) -> None:
-        """``("1"&"2.0")&"3"`` is the text ``12.03``, which is not an integer."""
+        """``("1"&"2.0")`` is the text ``12.0``. Only ``VALUE`` turns that into 12."""
         assert _infer_domain('VALUE("1"&"2.0")') == _finite_ints({12})
+        assert _infer_domain('"1"&"2.0"') is None
         assert _infer_domain('("1"&"2.0")&"3"') is None
 
     def test_chained_numeric_concat(self) -> None:
@@ -2788,10 +2791,23 @@ class TestValueAndConcatNumericDomain:
         assert _infer_domain('CONCAT("652","2014")') == _finite_ints({6522014})
         assert _infer_domain("CONCATENATE(Sheet!A1,Sheet!B1)", env) == _finite_ints({6522014})
 
-    def test_signed_and_zero_padded_concat_follow_value(self) -> None:
+    def test_signed_concat_keeps_canonical_spelling(self) -> None:
         assert _infer_domain('("-"&"12")') == _finite_ints({-12})
+
+    def test_zero_padded_concat_is_not_cached_as_its_integer_value(self) -> None:
+        """``0&5`` is the text ``05``. ``VALUE`` of that text is 5."""
         env = _make_env({"Sheet!A1": _number_enum(0), "Sheet!B1": _number_enum(5)})
-        assert _infer_domain("Sheet!A1&Sheet!B1", env) == _finite_ints({5})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) is None
+        assert _infer_domain("VALUE(Sheet!A1&Sheet!B1)", env) == _finite_ints({5})
+
+    def test_mixed_canonical_product_fails_closed(self) -> None:
+        """One non-canonical spelling (``05``) drops the whole concat domain."""
+        env = _make_env({"Sheet!A1": _number_enum(0, 1), "Sheet!B1": _number_enum(5)})
+        assert _infer_domain("Sheet!A1&Sheet!B1", env) is None
+
+    def test_scientific_concat_is_not_an_exact_integer(self) -> None:
+        assert _infer_domain('VALUE("1E2")') == _finite_ints({100})
+        assert _infer_domain('"1E2"&"3"') is None
 
     def test_value_of_arithmetic_is_identity(self) -> None:
         env = _make_env({"Sheet!A1": _number_enum(652)})
@@ -2898,6 +2914,130 @@ class TestValueAndConcatNumericDomain:
                 limits=DynamicRefLimits(max_branches=8),
             )
             is None
+        )
+
+
+def _sheet_refs(formula: str) -> set[str]:
+    import re
+
+    return set(re.findall(r"Sheet![A-Z]+[0-9]+", formula))
+
+
+def test_noncanonical_concat_cell_keeps_text_for_a_later_concat() -> None:
+    """A cached ``&`` result must stay the concatenated text.
+
+    Publishing ``"1"&"2.0"`` as the number 12 makes a later ``&"3"`` the
+    integer 123. Excel's text is ``12.03``.
+    """
+    formulas = {
+        "Sheet!C1": "=Sheet!A1&Sheet!B1",
+        "Sheet!D1": '=Sheet!C1&"3"',
+    }
+    leaf_env = _make_env(
+        {
+            "Sheet!A1": _string_enum("1"),
+            "Sheet!B1": _string_enum("2.0"),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return formulas.get(addr)
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet!D1"},
+        _get_cell_formula,
+        lambda formula, _sheet: _sheet_refs(formula),
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet!C1"].kind is CellKind.STRING
+    assert env["Sheet!C1"].enum is not None
+    assert env["Sheet!C1"].enum.values == frozenset({"12.0"})
+    assert env["Sheet!D1"].kind is CellKind.STRING
+    assert env["Sheet!D1"].enum is not None
+    assert env["Sheet!D1"].enum.values == frozenset({"12.03"})
+
+
+def test_canonical_concat_cell_restrings_to_the_same_digits() -> None:
+    formulas = {
+        "Sheet!C1": "=Sheet!A1&Sheet!B1",
+        "Sheet!D1": '=Sheet!C1&"7"',
+    }
+    leaf_env = _make_env(
+        {
+            "Sheet!A1": _number_enum(652),
+            "Sheet!B1": _number_enum(2014),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        return formulas.get(addr)
+
+    env = expand_leaf_env_to_argument_env(
+        {"Sheet!D1"},
+        _get_cell_formula,
+        lambda formula, _sheet: _sheet_refs(formula),
+        leaf_env,
+        DynamicRefLimits(),
+    )
+    assert env["Sheet!C1"].kind is CellKind.NUMBER
+    assert env["Sheet!C1"].enum is not None
+    assert env["Sheet!C1"].enum.values == frozenset({6522014})
+    assert env["Sheet!D1"].kind is CellKind.NUMBER
+    assert env["Sheet!D1"].enum is not None
+    assert env["Sheet!D1"].enum.values == frozenset({65220147})
+
+
+def test_concat_root_propagates_divisor_zero_diagnostic() -> None:
+    limits = DynamicRefLimits(max_branches=8)
+    env = _make_env(
+        {
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+            "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=3)),
+            "Sheet1!C1": _number_enum(1),
+        }
+    )
+    result = dynamic_refs_mod._infer_numeric_domain_result(
+        parse_ast("=(Sheet1!A1/Sheet1!B1)&Sheet1!C1"),
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+    assert result.domain is None
+    assert result.diagnostic is not None
+    assert result.diagnostic.reason == "divisor may include zero"
+
+    concat_result = dynamic_refs_mod._infer_numeric_domain_result(
+        parse_ast("=CONCAT(Sheet1!A1/Sheet1!B1,Sheet1!C1)"),
+        env,
+        limits,
+        current_sheet="Sheet1",
+    )
+    assert concat_result.diagnostic is not None
+    assert concat_result.diagnostic.reason == "divisor may include zero"
+
+
+def test_expand_leaf_env_concat_of_unsafe_division_raises() -> None:
+    leaf_env = _make_env(
+        {
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=5)),
+            "Sheet1!B1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=0, max=3)),
+            "Sheet1!C1": _number_enum(1),
+        }
+    )
+
+    def _get_cell_formula(addr: str) -> str | None:
+        if addr == "Sheet1!D1":
+            return "=(Sheet1!A1/Sheet1!B1)&Sheet1!C1"
+        return None
+
+    with pytest.raises(DynamicRefError, match="divisor may include zero"):
+        expand_leaf_env_to_argument_env(
+            {"Sheet1!D1"},
+            _get_cell_formula,
+            lambda formula, _sheet: set(),
+            leaf_env,
+            DynamicRefLimits(max_branches=8),
         )
 
 
