@@ -331,7 +331,10 @@ You typically author domains on the series binding sidecar and build a
 `list_dynamic_ref_constraint_candidates` (CLI: `bindings candidates`) lists
 leaves that feed dynamic-ref arguments and have no domain yet. Cells behind
 an unresolved dynamic ref are omitted until the first domains are in, so the
-scan is repeated after each selector domain. The low-level `from_constraints`
+scan is repeated after each selector domain. Exact MATCH that keeps a lookup
+cell only because its type is missing warns (`ExactMatchUndomainedCellWarning`)
+without failing the build. Pass `undomained_exact_match` to collect those
+cells separately from the must-bind list. The low-level `from_constraints`
 path still accepts a `dict[str, type]` of sheet-qualified addresses:
 
 ```python

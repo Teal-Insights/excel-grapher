@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.7.0 (2026-09-22)
+
+### Features
+
+- **grapher**: Warn when exact MATCH keeps undomained lookup cells
+  ([#982](https://github.com/Teal-Insights/excel-grapher/pull/982),
+  [`a15f308`](https://github.com/Teal-Insights/excel-grapher/commit/a15f3089b973338c0f3634f8e55c8d5604185274))
+
+
 ## v23.6.7 (2026-09-22)
 
 ### Bug Fixes

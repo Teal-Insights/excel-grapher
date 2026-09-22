@@ -17,7 +17,11 @@ from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
 from excel_grapher.exporter.semantic_viz import to_semantic_viz_payload, write_semantic_viz_html
 from excel_grapher.grapher.blank_ranges import BlankRangesLoadError, load_blank_ranges_module
 from excel_grapher.grapher.builder import list_dynamic_ref_constraint_candidates
-from excel_grapher.grapher.dynamic_refs import DynamicRefConfig, DynamicRefError
+from excel_grapher.grapher.dynamic_refs import (
+    EXACT_MATCH_UNDOMAINED_WARN_CAP,
+    DynamicRefConfig,
+    DynamicRefError,
+)
 from excel_grapher.series_bindings.audit import (
     DIRECTIONS,
     audit_binding_resolutions,
@@ -199,6 +203,12 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--strict",
         action="store_true",
         help="Exit 1 when any dynamic-ref leaf is still missing a domain",
+    )
+    candidates_parser.add_argument(
+        "--undomained-match",
+        action="store_true",
+        help="Also report lookup cells exact MATCH kept only because they have no domain. "
+        "Printed separately from the must-bind list.",
     )
 
     audit_parser = bindings_sub.add_parser(
@@ -572,12 +582,16 @@ def cmd_candidates(args: argparse.Namespace) -> int:
         )
         return 1
 
+    undomained_exact_match: list[str] = []
     try:
         dynamic_refs = DynamicRefConfig.from_bindings(
             bindings_doc, workbook, bindings_path=bindings_path
         )
         leaves = list_dynamic_ref_constraint_candidates(
-            workbook, targets, dynamic_refs=dynamic_refs
+            workbook,
+            targets,
+            dynamic_refs=dynamic_refs,
+            undomained_exact_match=undomained_exact_match if args.undomained_match else None,
         )
     except SeriesRelationError as exc:
         print(str(exc), file=sys.stderr)
@@ -586,15 +600,42 @@ def cmd_candidates(args: argparse.Namespace) -> int:
         print(_format_cli_dynamic_ref_error(exc), file=sys.stderr)
         return 1
 
-    if args.json:
+    if args.json and args.undomained_match:
+        print(
+            json.dumps(
+                {"missing": leaves, "undomained_exact_match": undomained_exact_match},
+                indent=2,
+            )
+        )
+    elif args.json:
         print(json.dumps(leaves, indent=2))
     elif leaves:
         print("\n".join(leaves))
     else:
         print("ok: no dynamic-ref leaves are missing a bindings domain")
+    if args.undomained_match and not args.json:
+        _print_undomained_exact_match(undomained_exact_match)
     if args.strict and leaves:
         return 1
     return 0
+
+
+def _print_undomained_exact_match(addresses: list[str]) -> None:
+    """Print the opt-in exact-MATCH list without merging it into must-bind output."""
+    if not addresses:
+        print("undomained exact MATCH: none")
+        return
+    total = len(addresses)
+    if total > EXACT_MATCH_UNDOMAINED_WARN_CAP:
+        shown = addresses[:EXACT_MATCH_UNDOMAINED_WARN_CAP]
+        print(
+            f"undomained exact MATCH ({total} cells; showing {len(shown)}; "
+            "pass --json for the full list):"
+        )
+        print("\n".join(shown))
+        return
+    print(f"undomained exact MATCH ({total}):")
+    print("\n".join(addresses))
 
 
 def _parse_audit_directions(raw: list[str] | None) -> tuple[BindingDirection, ...]:

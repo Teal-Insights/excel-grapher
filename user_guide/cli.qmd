@@ -326,7 +326,7 @@ dependency graph and does **not** accept `--use-cached-dynamic-refs`.
 
 ```bash
 excel-grapher bindings candidates WORKBOOK [--bindings PATH]
-  [--target ADDR] [--json] [--strict]
+  [--target ADDR] [--json] [--strict] [--undomained-match]
 ```
 
 | Argument | Description |
@@ -334,8 +334,9 @@ excel-grapher bindings candidates WORKBOOK [--bindings PATH]
 | `WORKBOOK` | Path to the `.xlsx` workbook (required). |
 | `--bindings PATH` | Sidecar file or shard directory. When omitted, the CLI looks for a colocated sidecar. |
 | `--target ADDR` | Extraction root (sheet-qualified address, range, or defined name). Repeatable. Unioned with every series `data_range`. |
-| `--json` | Print the address list as JSON. |
-| `--strict` | Exit 1 while any candidate remains. |
+| `--json` | Print the address list as JSON. With `--undomained-match`, print `{"missing", "undomained_exact_match"}`. |
+| `--strict` | Exit 1 while any must-bind candidate remains. Undomained MATCH cells do not fail `--strict`. |
+| `--undomained-match` | Also print lookup cells exact MATCH kept only because they have no domain. Not merged into the must-bind list. |
 
 Empty shards have no roots. Author an output series first, or pass `--target`
 before a sidecar exists. The command prints one A1 address per line, or
@@ -344,7 +345,13 @@ before a sidecar exists. The command prints one A1 address per line, or
 The list is incomplete until controlling domains are wide enough to reach the
 next dynamic ref. Re-run after every domain edit on a dynamic-ref argument.
 `INDEX`/`MATCH` over a static rectangle is often typed from range geometry and
-does not appear. Defined names are resolved to addresses. `BLANK_RANGES` is
+does not appear on the must-bind list. When exact MATCH keeps a lookup cell
+only because it has no domain, inference emits `ExactMatchUndomainedCellWarning`
+and still succeeds. The warning lists cells the scan classified before a
+certain hit. A scan with no certain hit prints a prefix and the total count.
+An unpinned needle is not scanned and does not warn. `--undomained-match`
+returns that same collection separately; it does not list proven misses or
+cells after the hit. Defined names are resolved to addresses. `BLANK_RANGES` is
 not applied; subtract those cells yourself. A blank cell pinned only with
 `constant` stays on the list. A `greater_than` / `not_equal` whose partner
 series is missing fails with `SeriesRelationError` before any list is printed.

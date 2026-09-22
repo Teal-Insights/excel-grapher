@@ -4,9 +4,10 @@ import logging
 import math
 import re
 import time
+import warnings
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
-from contextvars import ContextVar
+from contextvars import ContextVar, Token
 from dataclasses import dataclass, field
 from enum import Enum
 from functools import lru_cache
@@ -196,6 +197,64 @@ class DynamicRefError(ValueError):
     or set `use_cached_dynamic_refs=True` to resolve OFFSET/INDIRECT instead
     of raising.
     """
+
+
+class ExactMatchUndomainedCellWarning(UserWarning):
+    """Exact MATCH kept a lookup cell that has no cell type.
+
+    Inference still succeeds. The message lists cells whose verdict was
+    possible only because the type was missing, in lookup order, and stops
+    at a certain hit. A scan with no certain hit prints a prefix and the
+    total count.
+    """
+
+
+# Printed addresses when an exact-MATCH scan has no certain hit. The opt-in
+# collection keeps every such cell; only the warning text is capped.
+EXACT_MATCH_UNDOMAINED_WARN_CAP = 8
+
+
+class _UndomainedExactMatchSink:
+    """Append undomained lookup cells in first-seen scan order."""
+
+    def __init__(self, dest: list[str]) -> None:
+        self.dest = dest
+        self._seen = set(dest)
+
+    def add_many(self, addresses: Sequence[str]) -> None:
+        for address in addresses:
+            if address in self._seen:
+                continue
+            self._seen.add(address)
+            self.dest.append(address)
+
+
+_report_exact_match_undomained: ContextVar[bool] = ContextVar(
+    "_report_exact_match_undomained", default=True
+)
+_exact_match_undomained_sink: ContextVar[_UndomainedExactMatchSink | None] = ContextVar(
+    "_exact_match_undomained_sink", default=None
+)
+
+
+def _push_undomained_exact_match_sink(
+    dest: list[str] | None,
+) -> Token[_UndomainedExactMatchSink | None] | None:
+    """Record exact-MATCH cells kept only because they have no domain.
+
+    `None` leaves collection off. The returned token is passed to
+    `_pop_undomained_exact_match_sink`.
+    """
+    if dest is None:
+        return None
+    return _exact_match_undomained_sink.set(_UndomainedExactMatchSink(dest))
+
+
+def _pop_undomained_exact_match_sink(
+    token: Token[_UndomainedExactMatchSink | None] | None,
+) -> None:
+    if token is not None:
+        _exact_match_undomained_sink.reset(token)
 
 
 class DynamicRefCellLimitError(DynamicRefError):
@@ -1080,7 +1139,13 @@ def dynamic_ref_selectors_boundable_without_expand(
             return visit(node.operand)
         return True
 
-    ok = visit(root)
+    # The probe infers with an empty env. A literal needle would otherwise
+    # warn that every lookup cell lacks a domain, which is not the author's env.
+    report_token = _report_exact_match_undomained.set(False)
+    try:
+        ok = visit(root)
+    finally:
+        _report_exact_match_undomained.reset(report_token)
     return found and ok
 
 
@@ -2673,23 +2738,76 @@ def _exact_match_position_domain(
     return _FiniteInts(frozenset(candidates))
 
 
+def _format_undomained_exact_match_warning(
+    addresses: Sequence[str],
+    *,
+    cap_printed: bool,
+) -> str:
+    """Format the exact-MATCH missing-domain warning.
+
+    `cap_printed` limits the address list when the scan had no certain hit.
+    The total count stays in the message either way.
+    """
+    total = len(addresses)
+    if cap_printed and total > EXACT_MATCH_UNDOMAINED_WARN_CAP:
+        shown = list(addresses[:EXACT_MATCH_UNDOMAINED_WARN_CAP])
+        listed = ", ".join(shown)
+        return (
+            f"Exact MATCH kept {total} lookup cells with no domain; "
+            f"showing {len(shown)} of {total}: {listed}"
+        )
+    listed = ", ".join(addresses)
+    noun = "cell" if total == 1 else "cells"
+    return f"Exact MATCH kept {total} lookup {noun} with no domain: {listed}"
+
+
+def _report_undomained_exact_match_cells(
+    addresses: list[str],
+    *,
+    cap_printed: bool,
+) -> None:
+    """Warn, and optionally record, lookup cells kept only for a missing type."""
+    if not addresses or not _report_exact_match_undomained.get():
+        return
+    sink = _exact_match_undomained_sink.get()
+    if sink is not None:
+        sink.add_many(addresses)
+    warnings.warn(
+        _format_undomained_exact_match_warning(addresses, cap_printed=cap_printed),
+        ExactMatchUndomainedCellWarning,
+        stacklevel=2,
+    )
+
+
 def _refine_exact_match_positions(
     ordered: list[str],
     verdict_of: Callable[[str], _ExactMatchVerdict],
+    *,
+    cell_type_of: Callable[[str], CellType | None],
 ) -> _FiniteInts | _IntBounds | None:
     """Drop lookup positions proven unequal to the needle.
 
     A certain hit ends the scan: MATCH returns the first match, so later
     cells are unreachable. One pass, bounded by the caller's scan limit.
+
+    Cells kept only because they have no cell type are warned here. A real
+    domain that overlaps the needle is not. The geometry probe suppresses
+    the report; it classifies against an empty env.
     """
     candidates: list[int] = []
+    undomained: list[str] = []
+    saw_certain = False
     for index, cell_addr in enumerate(ordered, start=1):
         verdict = verdict_of(cell_addr)
         if verdict is _ExactMatchVerdict.MISS:
             continue
+        if verdict is _ExactMatchVerdict.MAYBE and cell_type_of(cell_addr) is None:
+            undomained.append(cell_addr)
         candidates.append(index)
         if verdict is _ExactMatchVerdict.CERTAIN:
+            saw_certain = True
             break
+    _report_undomained_exact_match_cells(undomained, cap_printed=not saw_certain)
     return _exact_match_position_domain(candidates, len(ordered))
 
 
@@ -2713,7 +2831,11 @@ def _infer_enum_exact_match_position(
             folded_string_needles=folded,
         )
 
-    return _refine_exact_match_positions(ordered, verdict_of)
+    return _refine_exact_match_positions(
+        ordered,
+        verdict_of,
+        cell_type_of=lambda cell_addr: _lookup_cell_type_for_exact_match(env, cell_addr),
+    )
 
 
 def _domains_may_equal_exact_match(
@@ -2754,7 +2876,9 @@ def _infer_exact_match_position_domain(
 
     Lookup addresses are materialized only after the needle has a finite
     domain and the lookup extent fits the scan budget. Callers that only need
-    `IntBounds(1, n)` (an empty env, an unpinned needle) never walk the vector.
+    `IntBounds(1, n)` (an empty env, an unpinned needle) never walk the vector
+    and do not warn. Cells kept only because their type is missing produce
+    `ExactMatchUndomainedCellWarning` from this scan.
     """
     if len(node.args) < 2:
         return None
@@ -2798,7 +2922,11 @@ def _infer_exact_match_position_domain(
             limits,
         )
 
-    return _refine_exact_match_positions(ordered, verdict_of)
+    return _refine_exact_match_positions(
+        ordered,
+        verdict_of,
+        cell_type_of=lambda cell_addr: _lookup_cell_type_for_exact_match(env, cell_addr),
+    )
 
 
 def _match_is_exact_match_type(node: FunctionCallNode) -> bool:

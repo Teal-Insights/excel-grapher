@@ -994,7 +994,9 @@ constraint table when the sidecar covers every dynamic-ref leaf.
 `bindings undomained` prints graph leaves that still have no domain.
 `bindings candidates` prints the pre-extract worklist
 (`list_dynamic_ref_constraint_candidates` with `DynamicRefConfig.from_bindings`)
-without building the graph and without cached dynamic refs. The list grows
+without building the graph and without cached dynamic refs. Lookup cells that
+exact MATCH keeps only because they have no domain are a warning, not entries
+on that list; `--undomained-match` prints them separately. The list grows
 only as selector domains get wide enough to reach the next `OFFSET` / `INDEX` /
 `INDIRECT`. After extract, non-dynamic leaves are an `undomained` /
 `attach_domains` pass. See [Command-line interface](cli.qmd).
