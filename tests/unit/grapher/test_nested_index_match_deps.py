@@ -4,37 +4,68 @@ from __future__ import annotations
 
 import tempfile
 from pathlib import Path
-from typing import Annotated, Literal
 
 from fastpyxl import Workbook
 from fastpyxl.utils import get_column_letter
 from fastpyxl.workbook.defined_name import DefinedName
 
-from excel_grapher.core.cell_types import RealBetween
+from excel_grapher.core.cell_types import (
+    CellKind,
+    CellType,
+    EnumDomain,
+    RealIntervalDomain,
+    normalize_cell_type_env_key,
+)
 from excel_grapher.grapher import create_dependency_graph
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
+    DynamicRefLimits,
     narrow_static_index_lookup_vectors,
+)
+
+_REAL = CellType(
+    kind=CellKind.NUMBER,
+    real_interval=RealIntervalDomain(min=-1e9, max=1e9),
 )
 
 _NROWS = 25
 _NCOLS = 20
 
 
-def _constraints(nrows: int = _NROWS, ncols: int = _NCOLS) -> dict[str, object]:
-    constraints: dict[str, object] = {
-        "Out!C1": Literal["CODE_10"],
-        "Out!D1": Literal[2005],
+def _string_domain(value: str) -> CellType:
+    """Return a singleton string enum domain."""
+    return CellType(kind=CellKind.STRING, enum=EnumDomain(values=frozenset({value})))
+
+
+def _int_domain(value: int) -> CellType:
+    """Return a singleton integer enum domain."""
+    return CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({value})))
+
+
+def _config(constraints: dict[str, CellType]) -> DynamicRefConfig:
+    """Build a dynamic-ref config from sheet-qualified cell domains."""
+    return DynamicRefConfig(
+        cell_type_env={
+            normalize_cell_type_env_key(addr): cell_type for addr, cell_type in constraints.items()
+        },
+        limits=DynamicRefLimits(),
+    )
+
+
+def _constraints(nrows: int = _NROWS, ncols: int = _NCOLS) -> dict[str, CellType]:
+    constraints: dict[str, CellType] = {
+        "Out!C1": _string_domain("CODE_10"),
+        "Out!D1": _int_domain(2005),
     }
     for r in range(1, nrows + 2):
         for c in range(1, ncols + 1):
             addr = f"Dump!{get_column_letter(c)}{r}"
             if c == 1 and r >= 2:
-                constraints[addr] = Literal[f"CODE_{r}"]
+                constraints[addr] = _string_domain(f"CODE_{r}")
             elif r == 1 and c > 1:
-                constraints[addr] = Literal[2000 + c]
+                constraints[addr] = _int_domain(2000 + c)
             else:
-                constraints[addr] = Annotated[float, RealBetween(-1e9, 1e9)]
+                constraints[addr] = _REAL
     return constraints
 
 
@@ -68,7 +99,7 @@ def _dump_deps(formula: str) -> set[str]:
         graph = create_dependency_graph(
             path,
             targets=["Out!A1"],
-            dynamic_refs=DynamicRefConfig.from_constraints(_constraints()),
+            dynamic_refs=_config(_constraints()),
         )
     return {str(key) for key in graph.get_dependencies("Out!A1") if str(key).startswith("Dump!")}
 
@@ -165,22 +196,22 @@ def test_nested_index_match_over_offset_name_skips_body_cells(tmp_path: Path) ->
     wb.save(path)
     wb.close()
 
-    constraints: dict[str, object] = {
-        "Out!C1": Literal["CODE_4"],
-        "Out!D1": Literal[2002],
-        "'data all'!A1": Annotated[float, RealBetween(-1e9, 1e9)],
-        "'data all'!B1": Literal[2001],
-        "'data all'!C1": Literal[2002],
-        "'data all'!D1": Literal[2003],
+    constraints: dict[str, CellType] = {
+        "Out!C1": _string_domain("CODE_4"),
+        "Out!D1": _int_domain(2002),
+        "'data all'!A1": _REAL,
+        "'data all'!B1": _int_domain(2001),
+        "'data all'!C1": _int_domain(2002),
+        "'data all'!D1": _int_domain(2003),
     }
     for row in range(2, 6):
-        constraints[f"'data all'!A{row}"] = Literal[f"CODE_{row}"]
-        constraints[f"'data all'!C{row}"] = Annotated[float, RealBetween(-1e9, 1e9)]
+        constraints[f"'data all'!A{row}"] = _string_domain(f"CODE_{row}")
+        constraints[f"'data all'!C{row}"] = _REAL
 
     graph = create_dependency_graph(
         path,
         targets=["Out!A1"],
-        dynamic_refs=DynamicRefConfig.from_constraints(constraints),
+        dynamic_refs=_config(constraints),
         capture_dependency_provenance=True,
     )
     deps = {str(key) for key in graph.get_dependencies("Out!A1")}
