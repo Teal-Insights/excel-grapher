@@ -211,6 +211,7 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
                 dict(graph.named_range_ranges) if graph.named_range_ranges else None
             ),
             "domains_handle": _domains_handle_payload(graph),
+            "dynamic_ref_limits": getattr(graph, "dynamic_ref_limits", None),
         },
         buf,
         protocol=pickle.HIGHEST_PROTOCOL,
@@ -260,6 +261,7 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     graph.preparsed_formulas = None
     graph.formula_shapes = None
     graph.cell_type_env = None
+    graph.dynamic_ref_limits = part1.get("dynamic_ref_limits")
     graph.domains = None
     graph._domains_handle = None
     graph._value_generation = 0

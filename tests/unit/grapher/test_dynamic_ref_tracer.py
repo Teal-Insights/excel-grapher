@@ -111,6 +111,17 @@ class TestTraceEmissions:
         )
         assert any(e.kind == "infer" and e.name == "infer_dynamic_offset_targets" for e in events)
 
+    def test_infer_choose_emits(self) -> None:
+        from excel_grapher.grapher.dynamic_refs import infer_dynamic_choose_targets
+
+        events = self._collect(
+            infer_dynamic_choose_targets,
+            "=1+2",
+            current_sheet="Sheet1",
+            cell_type_env={},
+        )
+        assert any(e.kind == "infer" and e.name == "infer_dynamic_choose_targets" for e in events)
+
     def test_infer_index_emits(self) -> None:
         from excel_grapher.grapher.dynamic_refs import infer_dynamic_index_targets
 

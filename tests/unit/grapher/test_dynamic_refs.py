@@ -36,6 +36,8 @@ from excel_grapher.grapher.dynamic_refs import (
     ExactMatchUndomainedCellWarning,
     dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
+    feasible_choose_option_indices,
+    infer_dynamic_choose_targets,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
@@ -5673,3 +5675,99 @@ class TestNumericDomainTransferInvariants:
             self._limits(),
         )
         assert out == dynamic_refs_mod._FiniteInts(frozenset({1, 3}))
+
+
+def test_choose_literal_index_selects_one_alternative() -> None:
+    targets = infer_dynamic_choose_targets(
+        "=CHOOSE(2,Sheet1!A1,Sheet1!B1)",
+        current_sheet="Sheet1",
+        cell_type_env={},
+    )
+    assert targets == {"Sheet1!B1"}
+
+
+def test_choose_bool_literal_selects_first_alternative() -> None:
+    targets = infer_dynamic_choose_targets(
+        "=CHOOSE(TRUE,Sheet1!A1,Sheet1!B1)",
+        current_sheet="Sheet1",
+        cell_type_env={},
+    )
+    assert targets == {"Sheet1!A1"}
+
+
+def test_choose_enum_domain_drops_ref_and_unselected_cells() -> None:
+    formula = "=IF(Sheet1!E1=0,0,CHOOSE(Sheet1!E1,Sheet1!A1,Sheet1!B1,#REF!,Sheet1!D1))"
+    env = _make_env(
+        {"Sheet1!E1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1, 2})))}
+    )
+    targets = infer_dynamic_choose_targets(formula, current_sheet="Sheet1", cell_type_env=env)
+    assert targets == {"Sheet1!A1", "Sheet1!B1"}
+
+
+def test_choose_unknown_index_is_not_narrowed() -> None:
+    targets = infer_dynamic_choose_targets(
+        "=CHOOSE(Sheet1!E1,Sheet1!A1,Sheet1!B1)",
+        current_sheet="Sheet1",
+        cell_type_env={},
+    )
+    assert targets is None
+
+
+def test_choose_index_outside_options_selects_no_cells() -> None:
+    env = _make_env(
+        {"Sheet1!E1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0, 9})))}
+    )
+    targets = infer_dynamic_choose_targets(
+        "=CHOOSE(Sheet1!E1,Sheet1!A1,Sheet1!B1)",
+        current_sheet="Sheet1",
+        cell_type_env=env,
+    )
+    assert targets == set()
+
+
+def test_choose_wide_index_domain_is_not_narrowed() -> None:
+    env = _make_env(
+        {"Sheet1!E1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=100))}
+    )
+    limits = DynamicRefLimits(max_branches=2)
+    assert (
+        feasible_choose_option_indices(
+            "Sheet1!E1",
+            5,
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=limits,
+        )
+        is None
+    )
+    assert (
+        infer_dynamic_choose_targets(
+            "=CHOOSE(Sheet1!E1,Sheet1!A1,Sheet1!B1,Sheet1!C1,Sheet1!D1,Sheet1!F1)",
+            current_sheet="Sheet1",
+            cell_type_env=env,
+            limits=limits,
+        )
+        is None
+    )
+
+
+def test_nested_choose_drops_dead_inner_alternative() -> None:
+    env = _make_env(
+        {
+            "Sheet1!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Sheet1!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2}))),
+        }
+    )
+    targets = infer_dynamic_choose_targets(
+        "=CHOOSE(Sheet1!A1,CHOOSE(Sheet1!B1,Sheet1!C1,Sheet1!D1),Sheet1!E1)",
+        current_sheet="Sheet1",
+        cell_type_env=env,
+    )
+    assert targets == {"Sheet1!D1"}
+
+
+def test_formula_without_choose_has_no_choose_targets() -> None:
+    assert (
+        infer_dynamic_choose_targets("=Sheet1!A1+1", current_sheet="Sheet1", cell_type_env={})
+        == set()
+    )

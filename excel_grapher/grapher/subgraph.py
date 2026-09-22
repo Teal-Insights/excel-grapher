@@ -296,6 +296,7 @@ def _induced_dependency_subgraph(
         sub._domains_handle = graph._domains_handle
     elif graph.cell_type_env is not None:
         sub.cell_type_env = dict(graph.cell_type_env)
+    sub.dynamic_ref_limits = graph.dynamic_ref_limits
 
     for key in graph.keys(order="workbook", source=keep_keys):
         node = graph._get_internal_node(key)

@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from fastpyxl.utils.cell import coordinate_from_string
+from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from excel_grapher.core.address_keys import (
     format_key,
@@ -28,17 +28,21 @@ from excel_grapher.core.address_keys import (
     normalize_key,
     parse_address,
 )
+from excel_grapher.core.cell_types import CellTypeEnv
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
     CellRefNode,
+    FormulaParseError,
+    FormulaStyle,
     FunctionCallNode,
     NumberNode,
     RangeNode,
     UnaryOpNode,
     WholeColumnNode,
     WholeRowNode,
+    render_formula,
     resolve_cell_ref,
     resolve_whole_column_ref,
     resolve_whole_row_ref,
@@ -48,6 +52,7 @@ from excel_grapher.core.range_shorthand import (
     expand_whole_row_span_deps,
 )
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
+from excel_grapher.grapher.dynamic_refs import DynamicRefLimits, feasible_choose_option_indices
 from excel_grapher.grapher.node import NodeKey
 from excel_grapher.grapher.parser import DEFAULT_MAX_RANGE_CELLS, expand_range
 
@@ -252,7 +257,14 @@ def _add_formula_edge_issues(
     if node.formula_ast is None:
         return
     host_has_dynamic = _formula_has_dynamic_call(node.formula_ast)
-    expected = _expected_formula_ref_keys(graph, node, key, add)
+    expected = _expected_formula_ref_keys(
+        graph,
+        node,
+        key,
+        add,
+        cell_type_env=graph.cell_type_env,
+        choose_limits=_choose_limits(graph),
+    )
     for dest in sorted(expected - deps):
         add(
             GraphConsistencyIssue(
@@ -280,18 +292,75 @@ def _add_formula_edge_issues(
         )
 
 
+def _choose_limits(graph: DependencyGraph) -> DynamicRefLimits:
+    raw = getattr(graph, "dynamic_ref_limits", None)
+    if raw is None or len(raw) != 3:
+        return DynamicRefLimits()
+    return DynamicRefLimits(max_branches=raw[0], max_cells=raw[1], max_depth=raw[2])
+
+
+def _feasible_choose_options(
+    index: AstNode,
+    option_count: int,
+    *,
+    anchor: str,
+    cell_type_env: CellTypeEnv | None,
+    limits: DynamicRefLimits,
+) -> list[int] | None:
+    """Options extraction would keep for this `CHOOSE` index.
+
+    `None` means the index domain is unknown, matching extraction's
+    over-approximation. A render failure also returns `None` so consistency
+    does not require fewer edges than a graph that kept every alternative.
+    """
+    try:
+        rendered = render_formula(index, anchor=anchor or None, style=FormulaStyle.A1_ABSOLUTE)
+    except (ValueError, FormulaParseError):
+        return None
+    sheet = ""
+    row: int | None = None
+    col: int | None = None
+    if anchor:
+        try:
+            sheet, a1 = parse_address(anchor)
+            col_letter, row_i = coordinate_from_string(a1)
+            row = int(row_i)
+            col = column_index_from_string(col_letter)
+        except ValueError:
+            sheet = ""
+            row = None
+            col = None
+    return feasible_choose_option_indices(
+        rendered,
+        option_count,
+        current_sheet=sheet,
+        cell_type_env=cell_type_env,
+        limits=limits,
+        current_row=row,
+        current_col=col,
+    )
+
+
 def _expected_formula_ref_keys(
     graph: DependencyGraph,
     node: Node,
     key: NodeKey,
     add: Callable[[GraphConsistencyIssue], None],
+    *,
+    cell_type_env: CellTypeEnv | None = None,
+    choose_limits: DynamicRefLimits | None = None,
 ) -> set[NodeKey]:
     ast = node.formula_ast
     if ast is None:
         return set()
     anchor = node.address or key
     expected: set[NodeKey] = set()
-    for leaf in _iter_static_address_leaves(ast):
+    for leaf in _iter_static_address_leaves(
+        ast,
+        anchor=str(anchor),
+        cell_type_env=cell_type_env,
+        choose_limits=choose_limits or DynamicRefLimits(),
+    ):
         expected.update(
             _keys_for_address_leaf(graph, leaf, anchor=str(anchor), host_key=key, add=add)
         )
@@ -299,14 +368,35 @@ def _expected_formula_ref_keys(
 
 
 def _iter_static_address_leaves(
-    node: AstNode, *, dynamic_mask: bool = False
+    node: AstNode,
+    *,
+    dynamic_mask: bool = False,
+    anchor: str = "",
+    cell_type_env: CellTypeEnv | None = None,
+    choose_limits: DynamicRefLimits | None = None,
 ) -> Iterator[CellRefNode | RangeNode | WholeColumnNode | WholeRowNode]:
     """Yield address leaves extraction would record as static formula refs.
 
     CellRefs inside OFFSET/INDIRECT/dynamic INDEX still count (argument
     refs). Range and whole-column/row leaves inside those calls are masked,
-    matching builder extraction.
+    matching builder extraction. `CHOOSE` alternatives outside the index
+    domain are omitted when that domain is known, matching extraction.
+    `CHOOSE` nested inside a dynamic-ref call is not narrowed: argument
+    analysis still records every written reference.
     """
+    limits = choose_limits or DynamicRefLimits()
+
+    def walk(
+        child: AstNode, *, masked: bool
+    ) -> Iterator[CellRefNode | RangeNode | WholeColumnNode | WholeRowNode]:
+        return _iter_static_address_leaves(
+            child,
+            dynamic_mask=masked,
+            anchor=anchor,
+            cell_type_env=cell_type_env,
+            choose_limits=limits,
+        )
+
     match node:
         case CellRefNode():
             yield node
@@ -315,14 +405,28 @@ def _iter_static_address_leaves(
         case RangeNode() | WholeColumnNode() | WholeRowNode():
             yield node
         case BinaryOpNode(left=left, right=right):
-            yield from _iter_static_address_leaves(left, dynamic_mask=dynamic_mask)
-            yield from _iter_static_address_leaves(right, dynamic_mask=dynamic_mask)
+            yield from walk(left, masked=dynamic_mask)
+            yield from walk(right, masked=dynamic_mask)
         case UnaryOpNode(operand=operand):
-            yield from _iter_static_address_leaves(operand, dynamic_mask=dynamic_mask)
+            yield from walk(operand, masked=dynamic_mask)
+        case FunctionCallNode(name=name, args=args) if (
+            not dynamic_mask and normalize_excel_function_name(name) == "CHOOSE" and len(args) >= 2
+        ):
+            yield from walk(args[0], masked=False)
+            live = _feasible_choose_options(
+                args[0],
+                len(args) - 1,
+                anchor=anchor,
+                cell_type_env=cell_type_env,
+                limits=limits,
+            )
+            indexes = range(1, len(args)) if live is None else live
+            for index in indexes:
+                yield from walk(args[index], masked=False)
         case FunctionCallNode(args=args):
             nested = dynamic_mask or _masks_static_ranges(node)
             for arg in args:
-                yield from _iter_static_address_leaves(arg, dynamic_mask=nested)
+                yield from walk(arg, masked=nested)
         case _:
             return
 

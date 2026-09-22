@@ -268,6 +268,10 @@ class DependencyGraph:
     # `cell_type_env` so Mapping lookups stay lazy. Pickle/JSON persist a handle
     # (`SeriesDomainHandle`) rather than the expanded table.
     cell_type_env: CellTypeEnv | None = None
+    # `(max_branches, max_cells, max_depth)` used when CHOOSE precedents were
+    # narrowed during extraction. None on graphs not built by
+    # `create_dependency_graph` (consistency then uses default limits).
+    dynamic_ref_limits: tuple[int, int, int] | None = None
     domains: SeriesDomainIndex | None = field(default=None, repr=False, compare=False)
     _domains_handle: Any = field(default=None, repr=False, compare=False)
     # Bumped by `set_node_value` so FormulaEvaluator can skip a full leaf poll
@@ -342,6 +346,7 @@ class DependencyGraph:
             )
             cloned.domains = None
         cloned._domains_handle = self._domains_handle
+        cloned.dynamic_ref_limits = self.dynamic_ref_limits
         cloned._value_generation = self._value_generation
         return cloned
 

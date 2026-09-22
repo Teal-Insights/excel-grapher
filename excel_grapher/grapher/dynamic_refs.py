@@ -81,6 +81,9 @@ from .parser import (
     expand_range,
     format_key,
     mask_ref_only_function_calls,
+    mask_spans,
+    parse_range_refs_with_spans,
+    parse_standalone_cell_refs,
 )
 
 logger = logging.getLogger(__name__)
@@ -1347,6 +1350,304 @@ def _infer_dynamic_index_targets(
             detail={"targets": len(out), "formula": formula, "current_sheet": current_sheet},
         )
     )
+    return out
+
+
+def feasible_choose_option_indices(
+    index_expr: str,
+    option_count: int,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv | None = None,
+    limits: DynamicRefLimits | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+) -> list[int] | None:
+    """Return 1-based `CHOOSE` options the index domain can select.
+
+    `None` means the index is unknown or the feasible span is wider than
+    `limits.max_branches`, so callers must keep every written alternative.
+    An empty list means every feasible index is outside `1..option_count`
+    (Excel returns `#VALUE!` and reads no alternative).
+
+    A numeric literal and a boolean literal are domains even when
+    `cell_type_env` is empty. `TRUE` is option 1. Non-integral numbers are
+    not truncated here; an unknown index stays `None`.
+    """
+    if option_count < 1:
+        return None
+    lim = limits or DynamicRefLimits()
+    env: CellTypeEnv = cell_type_env or {}
+    text = index_expr.strip()
+    if text.startswith("="):
+        text = text[1:].strip()
+    if not text:
+        return None
+    qualified = _qualify_fragment(text, named_ranges or {}, named_range_ranges or {})
+    anchor = format_key(current_sheet, "A1") if current_sheet else None
+    try:
+        index_ast = parse_ast("=" + qualified, anchor=anchor)
+    except (FormulaParseError, ValueError):
+        return None
+    context = (
+        {"row": current_row, "column": current_col}
+        if current_row is not None and current_col is not None
+        else None
+    )
+    if isinstance(index_ast, BoolNode):
+        domain: _FiniteInts | _IntBounds | None = _FiniteInts(
+            frozenset({1 if index_ast.value else 0})
+        )
+    else:
+        result = _infer_numeric_domain_result(
+            index_ast,
+            env,
+            lim,
+            context=context,
+            current_sheet=current_sheet,
+        )
+        if result.diagnostic is not None or result.domain is None:
+            return None
+        domain = result.domain
+    return _choose_indices_from_domain(domain, option_count, lim)
+
+
+def _choose_indices_from_domain(
+    domain: _FiniteInts | _IntBounds,
+    option_count: int,
+    limits: DynamicRefLimits,
+) -> list[int] | None:
+    """Intersect `domain` with `1..option_count`.
+
+    `None` when that intersection is too wide to enumerate.
+    """
+    if isinstance(domain, _FiniteInts):
+        selected = [i for i in sorted(domain.values) if 1 <= i <= option_count]
+        if len(selected) > limits.max_branches:
+            return None
+        return selected
+    lo = max(1, domain.lo)
+    hi = min(option_count, domain.hi)
+    if hi < lo:
+        return []
+    if hi - lo + 1 > limits.max_branches:
+        return None
+    return list(range(lo, hi + 1))
+
+
+def _prepare_choose_fragment(
+    expr: str,
+    named_ranges: Mapping[str, tuple[str, str]],
+    named_range_ranges: Mapping[str, tuple[str, str, str]],
+) -> str:
+    text = expr.strip()
+    if text.startswith("="):
+        text = text[1:].strip()
+    return "=" + _qualify_fragment(text, named_ranges, named_range_ranges)
+
+
+def _static_formula_ref_keys(
+    formula: str,
+    *,
+    current_sheet: str,
+    max_range_cells: int,
+) -> set[str] | None:
+    """Return sheet-qualified cells referenced by `formula`.
+
+    `None` when a range exceeds `max_range_cells`. Callers must not drop
+    those cells from a precedent set they cannot enumerate.
+    """
+    text = formula if formula.startswith("=") else "=" + formula
+    out: set[str] = set()
+    try:
+        for start, end, _span in parse_range_refs_with_spans(text):
+            sheet = start.sheet if start.sheet is not None else current_sheet
+            for dep_sheet, dep_a1 in expand_range(
+                sheet=sheet,
+                start_col=start.column,
+                start_row=start.row,
+                end_col=end.column,
+                end_row=end.row,
+                max_cells=max_range_cells,
+            ):
+                out.add(format_key(dep_sheet, dep_a1))
+    except ValueError:
+        return None
+    for ref in parse_standalone_cell_refs(text):
+        sheet = ref.sheet if ref.sheet is not None else current_sheet
+        out.add(format_key(sheet, f"{ref.column}{ref.row}"))
+    return out
+
+
+def _selected_choose_ref_keys(
+    expr: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    named_ranges: Mapping[str, tuple[str, str]],
+    named_range_ranges: Mapping[str, tuple[str, str, str]],
+    current_row: int | None,
+    current_col: int | None,
+    max_range_cells: int,
+) -> set[str] | None:
+    """Cells `expr` reads, dropping `CHOOSE` alternatives outside the index domain.
+
+    `None` when a nested `CHOOSE` cannot be narrowed or a range cannot be
+    expanded. Index references of a narrowed `CHOOSE` are omitted; they are
+    not selected values.
+    """
+    text = _prepare_choose_fragment(expr, named_ranges, named_range_ranges)
+    calls = _find_function_calls_with_spans(text, frozenset({"CHOOSE"}))
+    if not calls:
+        return _static_formula_ref_keys(
+            text, current_sheet=current_sheet, max_range_cells=max_range_cells
+        )
+    masked = mask_spans(text, [span for _fn, _inner, span in calls])
+    base = _static_formula_ref_keys(
+        masked, current_sheet=current_sheet, max_range_cells=max_range_cells
+    )
+    if base is None:
+        return None
+    out = set(base)
+    for _fn, inner, _span in calls:
+        args = _split_top_level_args(inner, keep_empty=True)
+        if args is None or len(args) < 2:
+            return None
+        live = feasible_choose_option_indices(
+            args[0],
+            len(args) - 1,
+            current_sheet=current_sheet,
+            cell_type_env=cell_type_env,
+            limits=limits,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            current_row=current_row,
+            current_col=current_col,
+        )
+        if live is None:
+            return None
+        for index in live:
+            part = _selected_choose_ref_keys(
+                args[index],
+                current_sheet=current_sheet,
+                cell_type_env=cell_type_env,
+                limits=limits,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+                current_row=current_row,
+                current_col=current_col,
+                max_range_cells=max_range_cells,
+            )
+            if part is None:
+                return None
+            out |= part
+    return out
+
+
+def infer_dynamic_choose_targets(
+    formula: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+    max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
+) -> set[str] | None:
+    """Return cells referenced by `CHOOSE` alternatives the index can select.
+
+    `None` means at least one `CHOOSE` cannot be narrowed (unknown index,
+    unsupported index expression, or more feasible options than
+    `limits.max_branches`). Callers must then keep every written alternative.
+
+    The index expression's own references are not included; they are always
+    read. A formula with no `CHOOSE` returns an empty set. An empty set when
+    a `CHOOSE` is present means every call was narrowed and no feasible
+    alternative references a cell (literals, `#REF!`, or an index outside
+    `1..n`).
+    """
+    t0 = time.perf_counter()
+    lim = limits or DynamicRefLimits()
+    out_result = _infer_choose_target_set(
+        formula,
+        current_sheet=current_sheet,
+        cell_type_env=cell_type_env,
+        limits=lim,
+        named_ranges=named_ranges or {},
+        named_range_ranges=named_range_ranges or {},
+        current_row=current_row,
+        current_col=current_col,
+        max_range_cells=max_range_cells,
+    )
+    _emit_trace(
+        DynamicRefTraceEvent(
+            kind="infer",
+            name="infer_dynamic_choose_targets",
+            elapsed_s=time.perf_counter() - t0,
+            detail={
+                "targets": None if out_result is None else len(out_result),
+                "formula": formula,
+                "current_sheet": current_sheet,
+            },
+        )
+    )
+    return out_result
+
+
+def _infer_choose_target_set(
+    formula: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    named_ranges: Mapping[str, tuple[str, str]],
+    named_range_ranges: Mapping[str, tuple[str, str, str]],
+    current_row: int | None,
+    current_col: int | None,
+    max_range_cells: int,
+) -> set[str] | None:
+    if not isinstance(formula, str) or not formula.startswith("="):
+        return set()
+    text = _prepare_choose_fragment(formula, named_ranges, named_range_ranges)
+    calls = _find_function_calls_with_spans(text, frozenset({"CHOOSE"}))
+    out: set[str] = set()
+    for _fn, inner, _span in calls:
+        args = _split_top_level_args(inner, keep_empty=True)
+        if args is None or len(args) < 2:
+            return None
+        live = feasible_choose_option_indices(
+            args[0],
+            len(args) - 1,
+            current_sheet=current_sheet,
+            cell_type_env=cell_type_env,
+            limits=limits,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            current_row=current_row,
+            current_col=current_col,
+        )
+        if live is None:
+            return None
+        for index in live:
+            part = _selected_choose_ref_keys(
+                args[index],
+                current_sheet=current_sheet,
+                cell_type_env=cell_type_env,
+                limits=limits,
+                named_ranges=named_ranges,
+                named_range_ranges=named_range_ranges,
+                current_row=current_row,
+                current_col=current_col,
+                max_range_cells=max_range_cells,
+            )
+            if part is None:
+                return None
+            out |= part
     return out
 
 

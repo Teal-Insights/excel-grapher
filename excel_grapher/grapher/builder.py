@@ -65,6 +65,7 @@ from .dynamic_refs import (
     clear_index_target_cache,
     dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
+    feasible_choose_option_indices,
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
@@ -597,6 +598,15 @@ def create_dependency_graph(
     - **use_cached_dynamic_refs=False**, **dynamic_refs** set: Resolve OFFSET/INDIRECT/INDEX via
       the config's `cell_type_env` and `limits`; missing or invalid domains raise
       `DynamicRefError`.
+
+    `CHOOSE` is not a dynamic reference. Without a known index domain every
+    written alternative stays a guarded precedent, which is a sound
+    over-approximation (the alternatives are written in the formula, unlike
+    `OFFSET` / `INDIRECT` / `INDEX` targets). A numeric or boolean literal
+    index, or an index whose integer domain is in `dynamic_refs.cell_type_env`
+    and small enough to enumerate, keeps only the alternatives that index can
+    select, including dropping a `#REF!` slot. An unknown or too-wide index
+    keeps every alternative and does not raise.
 
     To build a config from a `dict[str, type]` constraints schema, use
     `DynamicRefConfig.from_constraints`.
@@ -1642,7 +1652,40 @@ def create_dependency_graph(
                 for sh, a1 in extract_expr_deps(index_s):
                     _merge_guarded_dep(out, (sh, a1), None)
 
-                for i, choice_s in enumerate(choose_args[1:], start=1):
+                # A known index domain drops alternatives Excel will not read,
+                # including `#REF!` slots. An unknown or too-wide index keeps
+                # every written alternative.
+                choose_env: CellTypeEnv = {}
+                choose_limits = DynamicRefLimits()
+                if dynamic_refs is not None:
+                    choose_env = dynamic_refs.cell_type_env
+                    choose_limits = dynamic_refs.limits
+                try:
+                    _choose_col, _choose_row = fastpyxl.utils.cell.coordinate_from_string(
+                        current_a1
+                    )
+                    _choose_col_i = fastpyxl.utils.cell.column_index_from_string(_choose_col)
+                    _choose_row_i: int | None = int(_choose_row)
+                except ValueError:
+                    _choose_col_i = None
+                    _choose_row_i = None
+                live_options = feasible_choose_option_indices(
+                    index_s,
+                    len(choose_args) - 1,
+                    current_sheet=current_sheet,
+                    cell_type_env=choose_env,
+                    limits=choose_limits,
+                    named_ranges=named_ranges,
+                    named_range_ranges=named_range_ranges,
+                    current_row=_choose_row_i,
+                    current_col=_choose_col_i,
+                )
+                option_exprs = choose_args[1:]
+                if live_options is None:
+                    selected_options = list(enumerate(option_exprs, start=1))
+                else:
+                    selected_options = [(i, option_exprs[i - 1]) for i in live_options]
+                for i, choice_s in selected_options:
                     guard: GuardExpr | None = None
                     if index_expr is not None:
                         guard = Compare(left=index_expr, op="=", right=Literal(i))
@@ -1964,6 +2007,12 @@ def create_dependency_graph(
             graph._domains_handle = getattr(graph.domains, "handle", None)
         else:
             graph.cell_type_env = dict(env)
+    used_limits = dynamic_refs.limits if dynamic_refs is not None else DynamicRefLimits()
+    graph.dynamic_ref_limits = (
+        used_limits.max_branches,
+        used_limits.max_cells,
+        used_limits.max_depth,
+    )
     graph.rebuild_adjacency()
     return graph
 

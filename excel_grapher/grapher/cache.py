@@ -22,7 +22,7 @@ from .node import Node, NodeKey
 # 9: persist `is_array_formula` / `array_formula_ref` for CSE and spill write-back.
 # 8: drop stored `normalized_formula`; strings are derived via `render_formula`.
 # 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
-GRAPH_CACHE_SCHEMA_VERSION = 9
+GRAPH_CACHE_SCHEMA_VERSION = 10
 
 
 class GraphCacheMeta(TypedDict):
@@ -454,6 +454,9 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
         "leaf_classification": graph.leaf_classification,
         "formula_asts": formula_asts,
         "domains_handle": _json_domains_handle(graph),
+        "dynamic_ref_limits": list(graph.dynamic_ref_limits)
+        if graph.dynamic_ref_limits is not None
+        else None,
     }
 
 
@@ -565,4 +568,11 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         if index is not None:
             g.domains = index
             g.cell_type_env = index
+    raw_limits = payload.get("dynamic_ref_limits")
+    if (
+        isinstance(raw_limits, list)
+        and len(raw_limits) == 3
+        and all(type(item) is int for item in raw_limits)
+    ):
+        g.dynamic_ref_limits = (raw_limits[0], raw_limits[1], raw_limits[2])
     return g
