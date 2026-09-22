@@ -27,13 +27,16 @@ from excel_grapher.core.cell_types import (
     IntervalDomain,
 )
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     BinaryOpNode,
     CellRef,
     CellRefNode,
     FunctionCallNode,
+    NumberNode,
     RangeNode,
     RelativeAxis,
     WholeColumnNode,
+    WholeRowNode,
     parse,
     parse_preserving_axes,
 )
@@ -43,7 +46,7 @@ from excel_grapher.core.formula_shape import (
     shape_parse_cache_info,
 )
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
-from excel_grapher.grapher.builder import create_dependency_graph
+from excel_grapher.grapher.builder import _dynamic_shape_cache_key, create_dependency_graph
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
@@ -130,6 +133,73 @@ def test_row_wise_index_copies_share_shape_keyed_dyn_cache(tmp_path: Path) -> No
             assert prov is not None
             if dep.startswith("Sheet1!D"):
                 assert DependencyCause.dynamic_index in prov.causes
+
+
+def _index_over_whole_column(column: AbsoluteAxis | RelativeAxis) -> FunctionCallNode:
+    """INDEX whose MATCH lookup is one whole column."""
+    return FunctionCallNode(
+        "INDEX",
+        [
+            RangeNode(start="Sheet1!A1", end="Sheet1!C10"),
+            FunctionCallNode(
+                "MATCH",
+                [
+                    CellRefNode(address="Sheet1!B1"),
+                    WholeColumnNode(sheet="Sheet1", col=column),
+                    NumberNode(0),
+                ],
+            ),
+        ],
+    )
+
+
+def test_relative_whole_column_shape_key_follows_the_host_cell() -> None:
+    """A relative whole-column lookup must not share another host's targets."""
+    relative = _index_over_whole_column(RelativeAxis(0))
+    absolute = _index_over_whole_column(AbsoluteAxis(3))
+    bases = ("Sheet1!A1:C10",)
+
+    def key(ast: FunctionCallNode, a1: str) -> tuple[object, ...]:
+        return _dynamic_shape_cache_key(
+            "=INDEX(Sheet1!A1:C10,MATCH(Sheet1!B1,Sheet1!C:C,0))",
+            "Sheet1",
+            a1,
+            bases,
+            has_indirect=False,
+            formula_ast=ast,
+            cell_type_env={},
+        )
+
+    assert key(relative, "C5") != key(relative, "E5")
+    assert key(absolute, "C5") == key(absolute, "E5")
+
+    def row_key(row: AbsoluteAxis | RelativeAxis, a1: str) -> tuple[object, ...]:
+        ast = FunctionCallNode(
+            "INDEX",
+            [
+                RangeNode(start="Sheet1!A1", end="Sheet1!C10"),
+                FunctionCallNode(
+                    "MATCH",
+                    [
+                        CellRefNode(address="Sheet1!B1"),
+                        WholeRowNode(sheet="Sheet1", row=row),
+                        NumberNode(0),
+                    ],
+                ),
+            ],
+        )
+        return _dynamic_shape_cache_key(
+            "=INDEX(Sheet1!A1:C10,MATCH(Sheet1!B1,Sheet1!5:5,0))",
+            "Sheet1",
+            a1,
+            bases,
+            has_indirect=False,
+            formula_ast=ast,
+            cell_type_env={},
+        )
+
+    assert row_key(RelativeAxis(0), "C5") != row_key(RelativeAxis(0), "C8")
+    assert row_key(AbsoluteAxis(5), "C5") == row_key(AbsoluteAxis(5), "C8")
 
 
 def test_shifted_index_arrays_keep_per_cell_targets(tmp_path: Path) -> None:
