@@ -1949,7 +1949,10 @@ def test_two_arg_index_on_block_is_not_a_lookup_vector() -> None:
     assert dynamic_refs_mod._static_match_lookup_extent(block) is None
     row = parse_ast("=INDEX(Data!A1:T3,1,)")
     assert dynamic_refs_mod._static_match_lookup_extent(row) == 20
-    assert dynamic_refs_mod._ordered_match_lookup_cells(row, current_sheet="Data")[0] == "Data!A1"
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(row, current_sheet="Data")
+    assert ordered is not None
+    assert ordered[0] == "Data!A1"
+    assert len(ordered) == 20
 
 
 def test_ordered_match_lookup_cells_index_axis_stays_closed_when_not_singleton() -> None:
