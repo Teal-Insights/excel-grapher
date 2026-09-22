@@ -53,6 +53,7 @@ from .dynamic_refs import (
     infer_dynamic_index_targets,
     infer_dynamic_indirect_targets,
     infer_dynamic_offset_targets,
+    prepare_dynamic_selector_expr,
 )
 from .graph import DependencyGraph, NodeHook
 from .guard import (
@@ -1153,7 +1154,9 @@ def create_dependency_graph(
                                 # Static ranges are handled by infer_dynamic_index_targets (GH-156).
                                 if fn_name == "INDEX" and i == 0 and "(" not in normalized:
                                     continue
-                                value_expr = mask_ref_only_function_calls(normalized)
+                                value_expr = prepare_dynamic_selector_expr(
+                                    normalized, current_sheet=current_sheet
+                                )
                                 for ref in parse_standalone_cell_refs(value_expr):
                                     sh = ref.sheet if ref.sheet is not None else current_sheet
                                     a1 = f"{ref.column}{ref.row}"
@@ -2142,7 +2145,9 @@ def list_dynamic_ref_constraint_candidates(
                             or (fn_name == "INDEX" and i >= 1)
                         )
                         if is_variable:
-                            value_arg = mask_ref_only_function_calls(normalized_arg)
+                            value_arg = prepare_dynamic_selector_expr(
+                                normalized_arg, current_sheet=current_sheet
+                            )
                             for ref in parse_standalone_cell_refs(value_arg):
                                 sh = ref.sheet if ref.sheet is not None else current_sheet
                                 argument_addrs.add(format_key(sh, f"{ref.column}{ref.row}"))

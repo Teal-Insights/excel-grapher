@@ -946,7 +946,9 @@ def _split_function_args(inner: str) -> list[str] | None:
 
 @functools.lru_cache(maxsize=4096)
 def _find_function_calls_with_spans(
-    formula: str, fn_names: frozenset[str]
+    formula: str,
+    fn_names: frozenset[str],
+    include_nested: bool = False,
 ) -> list[tuple[str, str, tuple[int, int]]]:
     s = formula
     out: list[tuple[str, str, tuple[int, int]]] = []
@@ -1001,7 +1003,9 @@ def _find_function_calls_with_spans(
                             if depth == 0:
                                 inner = s[k + 1 : m]
                                 out.append((fn, inner, (start, m + 1)))
-                                i = m + 1
+                                # Nested scan stays inside the call so INDEX(INDEX(...))
+                                # is visible. The default skips the body (outermost only).
+                                i = (k + 1) if include_nested else (m + 1)
                                 break
                         m += 1
                     else:

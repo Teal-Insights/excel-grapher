@@ -18,7 +18,7 @@ if TYPE_CHECKING:
 
 from fastpyxl.utils.cell import coordinate_from_string, coordinate_to_tuple
 
-from excel_grapher.core.address_keys import parse_address
+from excel_grapher.core.address_keys import format_range_key, parse_address
 from excel_grapher.core.addressing import (
     WorkbookBoundsProtocol,
     indirect_text_to_range,
@@ -72,6 +72,7 @@ from .parser import (
     _find_function_calls_with_spans,
     expand_range,
     format_key,
+    mask_ref_only_function_calls,
 )
 
 logger = logging.getLogger(__name__)
@@ -1923,6 +1924,99 @@ def _index_vector_lookup_array(
         return None
     col_arg: AstNode | None = node.args[2] if len(node.args) >= 3 else None
     return _index_vector_from_bounds(bounds, node.args[1], col_arg)
+
+
+def _span_strictly_inside(inner: tuple[int, int], outer: tuple[int, int]) -> bool:
+    """Return True when `inner` lies strictly inside `outer`."""
+    return (
+        outer[0] <= inner[0]
+        and inner[1] <= outer[1]
+        and (outer[0] < inner[0] or inner[1] < outer[1])
+    )
+
+
+def _static_index_vector_text(call_text: str, current_sheet: str) -> str | None:
+    """Return the rectangular ref for a static INDEX vector, or None."""
+    anchor = format_key(current_sheet, "A1") if current_sheet else None
+    try:
+        node = parse_ast(call_text, anchor=anchor)
+    except (FormulaParseError, ValueError):
+        return None
+    vector = _index_vector_lookup_array(node)
+    if isinstance(vector, CellRefNode):
+        return vector.address
+    if not isinstance(vector, RangeNode):
+        return None
+    try:
+        sheet, start = parse_address(vector.start)
+        end_sheet, end = parse_address(vector.end)
+    except ValueError:
+        return None
+    if sheet != end_sheet:
+        return None
+    return format_range_key(sheet, start, end)
+
+
+@lru_cache(maxsize=4096)
+def narrow_static_index_lookup_vectors(formula: str, current_sheet: str = "") -> str:
+    """Replace static INDEX row/column slices with the cells they select.
+
+    `INDEX(array,,k)` and `INDEX(array,k,)` (including Excel's `0` whole-axis
+    form) read only that vector. Callers that expand every range in an INDEX
+    selector otherwise pull the whole rectangle into the dependency graph.
+    Dynamic selectors are left unchanged. Nested static slices rewrite from
+    the inside out.
+
+    Args:
+        formula: Formula or fragment, with or without a leading `=`.
+        current_sheet: Sheet used to qualify unqualified ranges inside `INDEX`.
+
+    Returns:
+        `formula` with each resolved static INDEX vector replaced by its
+        rectangular reference.
+    """
+    if "INDEX" not in formula.upper():
+        return formula
+    current = formula
+    for _ in range(16):
+        calls = _find_function_calls_with_spans(current, frozenset({"INDEX"}), include_nested=True)
+        if not calls:
+            return current
+        spans = [span for _fn, _inner, span in calls]
+        replacements: list[tuple[tuple[int, int], str]] = []
+        for _fn, _inner, span in calls:
+            # Rewrite innermost calls first so an outer INDEX sees the vector.
+            if any(_span_strictly_inside(other, span) for other in spans):
+                continue
+            call_text = current[span[0] : span[1]]
+            replacement = _static_index_vector_text(call_text, current_sheet)
+            if replacement is None or replacement == call_text:
+                continue
+            replacements.append((span, replacement))
+        if not replacements:
+            return current
+        pieces: list[str] = []
+        cursor = 0
+        for (start, end), replacement in sorted(replacements, key=lambda item: item[0][0]):
+            pieces.append(current[cursor:start])
+            pieces.append(replacement)
+            cursor = end
+        pieces.append(current[cursor:])
+        current = "".join(pieces)
+    return current
+
+
+def prepare_dynamic_selector_expr(formula: str, *, current_sheet: str) -> str:
+    """Mask address-only calls, then narrow static INDEX lookup vectors.
+
+    Selector text is expanded into value dependencies. `ROW`/`COLUMN`/`ROWS`/
+    `COLUMNS` contribute no values, and a static `INDEX` slice contributes
+    only its vector.
+    """
+    return narrow_static_index_lookup_vectors(
+        mask_ref_only_function_calls(formula),
+        current_sheet=current_sheet,
+    )
 
 
 def _static_match_lookup_extent(node: AstNode) -> int | None:
