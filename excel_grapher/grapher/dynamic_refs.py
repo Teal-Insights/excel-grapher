@@ -35,7 +35,7 @@ from excel_grapher.core.cell_types import (
     constraints_to_cell_type_env,
     normalize_cell_type_env_key,
 )
-from excel_grapher.core.coercions import excel_casefold, try_coerce_string_to_float
+from excel_grapher.core.coercions import excel_casefold, to_string, try_coerce_string_to_float
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
@@ -66,6 +66,7 @@ from excel_grapher.core.range_shorthand import (
     expand_whole_column_span_deps,
     expand_whole_row_span_deps,
 )
+from excel_grapher.core.text_funcs import value_from_text
 from excel_grapher.core.types import ExcelRange, XlError
 
 from .blank_ranges import BlankRangeRect, address_in_blank_ranges
@@ -3204,6 +3205,452 @@ def _infer_choose_numeric_domain_result(
     return _domain_result(out)
 
 
+# Excel rejects text results longer than one cell. Checked before concatenation
+# so an oversized fragment fails closed without building the product.
+_EXCEL_CELL_TEXT_LIMIT = 32_767
+
+# VALUE of an already-numeric expression is the identity. These calls never
+# produce digit-text that would need value_from_text.
+_VALUE_NUMERIC_IDENTITY_FUNCS = frozenset(
+    {
+        "ABS",
+        "COLUMN",
+        "COLUMNS",
+        "EXP",
+        "ISNUMBER",
+        "MATCH",
+        "MAX",
+        "MIN",
+        "ROW",
+        "ROWS",
+        "SUM",
+        "VALUE",
+    }
+)
+
+
+def _integer_from_excel_text(text: str) -> int | None:
+    """Return the integer `VALUE` of `text`.
+
+    Uses `value_from_text` so analysis matches the evaluator. Non-integral
+    results (`12.5`, `#VALUE!`) fail closed.
+    """
+    parsed = value_from_text(text)
+    if isinstance(parsed, bool) or not isinstance(parsed, (int, float)):
+        return None
+    if isinstance(parsed, float):
+        if not math.isfinite(parsed) or not parsed.is_integer():
+            return None
+        return int(parsed)
+    return parsed
+
+
+def _numeric_domain_from_text_fragments(
+    texts: frozenset[str] | None,
+) -> _NumericDomainInferenceResult:
+    """Map an exact text set through `VALUE`.
+
+    `texts is None` means the text is unknown. A known set that is not
+    uniformly integral also yields no numeric domain: dropping the failures
+    would under-approximate a MATCH needle.
+    """
+    if texts is None:
+        return _domain_result(None)
+    if not texts:
+        return _domain_result(_FiniteInts(frozenset()))
+    values: set[int] = set()
+    for text in texts:
+        parsed = _integer_from_excel_text(text)
+        if parsed is None:
+            return _domain_result(None)
+        values.add(parsed)
+    return _domain_result(_FiniteInts(frozenset(values)))
+
+
+def _join_text_fragment_sets(
+    left: frozenset[str],
+    right: frozenset[str],
+    limits: DynamicRefLimits,
+) -> frozenset[str] | None:
+    """Concatenate two exact text sets, or return None past the branch cap.
+
+    The product size is checked before any strings are allocated. The result
+    stays a set: concatenated integers are sparse, so collapsing to a bounding
+    interval would be unsound for MATCH.
+    """
+    if not left or not right:
+        return frozenset()
+    if len(left) * len(right) > limits.max_branches:
+        return None
+    if max(len(text) for text in left) + max(len(text) for text in right) > _EXCEL_CELL_TEXT_LIMIT:
+        return None
+    return frozenset(left_text + right_text for left_text in left for right_text in right)
+
+
+def _union_text_fragment_sets(
+    parts: Sequence[frozenset[str]],
+    limits: DynamicRefLimits,
+) -> frozenset[str] | None:
+    """Union exact text sets, stopping once the cap is exceeded."""
+    merged: set[str] = set()
+    for part in parts:
+        merged.update(part)
+        if len(merged) > limits.max_branches:
+            return None
+    return frozenset(merged)
+
+
+def _enum_number_fragment(value: object) -> str | None:
+    """General-format text of one integral enum member, if it is one."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return to_string(value)
+    if isinstance(value, float) and math.isfinite(value) and value.is_integer():
+        return to_string(value)
+    return None
+
+
+def _cell_text_fragments(ct: CellType | None, limits: DynamicRefLimits) -> frozenset[str] | None:
+    """Exact general-format text of a cell, when the domain is small enough.
+
+    Wide intervals are not densified: concatenation is not interval arithmetic,
+    and stringifying every integer would dominate analysis.
+    """
+    if ct is None:
+        return None
+    if ct.enum is not None:
+        values = ct.enum.values
+        if len(values) > limits.max_branches:
+            return None
+        if not values:
+            return frozenset()
+        if all(isinstance(value, str) for value in values):
+            return frozenset(cast(str, value) for value in values)
+        fragments: list[str] = []
+        for value in values:
+            fragment = _enum_number_fragment(value)
+            if fragment is None:
+                return None
+            fragments.append(fragment)
+        return frozenset(fragments)
+    if ct.kind not in (CellKind.NUMBER, CellKind.ANY) or ct.interval is None:
+        return None
+    if ct.interval.min is None or ct.interval.max is None:
+        return None
+    lo = int(ct.interval.min)
+    hi = int(ct.interval.max)
+    if hi < lo:
+        return frozenset()
+    if hi - lo + 1 > limits.max_branches:
+        return None
+    return frozenset(to_string(value) for value in range(lo, hi + 1))
+
+
+def _domain_provably_true(domain: _FiniteInts | _IntBounds) -> bool:
+    if isinstance(domain, _FiniteInts):
+        return bool(domain.values) and all(value != 0 for value in domain.values)
+    return domain.lo > 0 or domain.hi < 0
+
+
+def _domain_provably_false(domain: _FiniteInts | _IntBounds) -> bool:
+    if isinstance(domain, _FiniteInts):
+        return bool(domain.values) and all(value == 0 for value in domain.values)
+    return domain.lo == domain.hi == 0
+
+
+def _infer_text_fragments(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None = None,
+    current_sheet: str = "",
+    depth: int = 0,
+) -> frozenset[str] | None:
+    """Return the exact strings `node` can produce, or None if unknown.
+
+    None is fail-closed. Callers that turn the set into a MATCH needle must
+    not substitute an over-approximation: one extra integer can collapse onto
+    the wrong row.
+    """
+    if depth > limits.max_depth:
+        return None
+    if isinstance(node, StringNode):
+        if len(node.value) > _EXCEL_CELL_TEXT_LIMIT:
+            return None
+        return frozenset({node.value})
+    if isinstance(node, (NumberNode, BoolNode)):
+        return frozenset({to_string(node.value)})
+    if isinstance(node, (ErrorNode, RangeNode, EmptyArgNode)):
+        return None
+    if isinstance(node, CellRefNode):
+        return _cell_text_fragments(_lookup_cell_type(env, node.address), limits)
+    if isinstance(node, BinaryOpNode) and node.op == "&":
+        return _concat_text_fragments(
+            (node.left, node.right),
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth,
+        )
+    if isinstance(node, FunctionCallNode):
+        name = node.name.upper()
+        if name == "IF":
+            return _if_text_fragments(
+                node,
+                env,
+                limits,
+                context=context,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name == "CHOOSE":
+            return _choose_text_fragments(
+                node,
+                env,
+                limits,
+                context=context,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name in {"CONCAT", "CONCATENATE"}:
+            if not node.args:
+                return None
+            return _concat_text_fragments(
+                node.args,
+                env,
+                limits,
+                context=context,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+    numeric = _infer_numeric_domain_result(
+        node,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    domain = numeric.domain
+    if isinstance(domain, _FiniteInts) and len(domain.values) <= limits.max_branches:
+        return frozenset(to_string(value) for value in domain.values)
+    return None
+
+
+def _concat_text_fragments(
+    parts: Sequence[AstNode],
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> frozenset[str] | None:
+    """Fold `&` / `CONCAT` left to right, capping the running product."""
+    acc: frozenset[str] = frozenset({""})
+    for part in parts:
+        side = _infer_text_fragments(
+            part,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if side is None:
+            return None
+        joined = _join_text_fragment_sets(acc, side, limits)
+        if joined is None:
+            return None
+        acc = joined
+    return acc
+
+
+def _if_text_fragments(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> frozenset[str] | None:
+    """Exact text of `IF`, dropping a branch only when the condition proves it dead."""
+    if len(node.args) < 2:
+        return None
+    cond = _infer_numeric_domain_result(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if cond.diagnostic is not None or cond.domain is None:
+        return None
+    if isinstance(cond.domain, _FiniteInts) and not cond.domain.values:
+        return frozenset()
+    if _domain_provably_true(cond.domain):
+        return _infer_text_fragments(
+            node.args[1],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+    if _domain_provably_false(cond.domain):
+        if len(node.args) < 3:
+            return frozenset({"FALSE"})
+        return _infer_text_fragments(
+            node.args[2],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+    then_text = _infer_text_fragments(
+        node.args[1],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    else_text = (
+        _infer_text_fragments(
+            node.args[2],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if len(node.args) >= 3
+        else frozenset({"FALSE"})
+    )
+    if then_text is None or else_text is None:
+        return None
+    return _union_text_fragment_sets((then_text, else_text), limits)
+
+
+def _choose_text_fragments(
+    node: FunctionCallNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> frozenset[str] | None:
+    """Exact text of the `CHOOSE` options selected by a known index domain."""
+    if len(node.args) < 2:
+        return None
+    index = _infer_numeric_domain_result(
+        node.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if index.diagnostic is not None or index.domain is None:
+        return None
+    option_count = len(node.args) - 1
+    if isinstance(index.domain, _FiniteInts):
+        selected = [i for i in sorted(index.domain.values) if 1 <= i <= option_count]
+    else:
+        lo = max(1, index.domain.lo)
+        hi = min(option_count, index.domain.hi)
+        selected = list(range(lo, hi + 1)) if lo <= hi else []
+    if not selected:
+        return frozenset()
+    parts: list[frozenset[str]] = []
+    for option_index in selected:
+        text = _infer_text_fragments(
+            node.args[option_index],
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+        if text is None:
+            return None
+        parts.append(text)
+    return _union_text_fragment_sets(parts, limits)
+
+
+def _value_arg_keeps_numeric_domain(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+) -> bool:
+    """Return True when `VALUE(node)` is the numeric domain of `node`.
+
+    Digit-text (string cells, `&`, `CONCAT`) is excluded: `VALUE` must parse
+    that text instead of treating it as already numeric.
+    """
+    if isinstance(node, NumberNode):
+        return not isinstance(node.value, bool)
+    if isinstance(node, UnaryOpNode):
+        return node.op in {"-", "%"}
+    if isinstance(node, BinaryOpNode):
+        return node.op in {"+", "-", "*", "/"}
+    if isinstance(node, CellRefNode):
+        return _domain_from_cell_type(_lookup_cell_type(env, node.address), limits) is not None
+    if isinstance(node, FunctionCallNode):
+        return node.name.upper() in _VALUE_NUMERIC_IDENTITY_FUNCS
+    return False
+
+
+def _infer_value_numeric_domain(
+    arg: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+    depth: int,
+) -> _NumericDomainInferenceResult:
+    """Integer domain of `VALUE(arg)`.
+
+    Already-numeric arguments pass through, including wide bounds, without
+    enumerating them. Digit-text is parsed only when the fragment set is finite.
+    """
+    if _value_arg_keeps_numeric_domain(arg, env, limits):
+        return _infer_numeric_domain_result(
+            arg,
+            env,
+            limits,
+            context=context,
+            current_sheet=current_sheet,
+            depth=depth + 1,
+        )
+    texts = _infer_text_fragments(
+        arg,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+    if texts is not None:
+        return _numeric_domain_from_text_fragments(texts)
+    return _infer_numeric_domain_result(
+        arg,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+        depth=depth + 1,
+    )
+
+
 def _infer_numeric_domain_result(
     node: AstNode,
     env: CellTypeEnv,
@@ -3265,6 +3712,17 @@ def _infer_numeric_domain_result(
         return _domain_result(None)
 
     if isinstance(node, BinaryOpNode):
+        if node.op == "&":
+            return _numeric_domain_from_text_fragments(
+                _concat_text_fragments(
+                    (node.left, node.right),
+                    env,
+                    limits,
+                    context=ctx,
+                    current_sheet=current_sheet,
+                    depth=depth,
+                )
+            )
         left = _infer_numeric_domain_result(
             node.left, env, limits, context=ctx, current_sheet=current_sheet, depth=depth + 1
         )
@@ -3487,8 +3945,30 @@ def _infer_numeric_domain_result(
                 else:
                     acc = _max_numeric_domains(acc, arg_result.domain, limits)
             return _domain_result(acc)
-        if name == "CONCAT":
-            return _domain_result(None)
+        if name == "VALUE":
+            if len(node.args) != 1:
+                return _domain_result(None)
+            return _infer_value_numeric_domain(
+                node.args[0],
+                env,
+                limits,
+                context=ctx,
+                current_sheet=current_sheet,
+                depth=depth,
+            )
+        if name in {"CONCAT", "CONCATENATE"}:
+            if not node.args:
+                return _domain_result(None)
+            return _numeric_domain_from_text_fragments(
+                _concat_text_fragments(
+                    node.args,
+                    env,
+                    limits,
+                    context=ctx,
+                    current_sheet=current_sheet,
+                    depth=depth,
+                )
+            )
         return _domain_result(None)
 
     return _domain_result(None)
