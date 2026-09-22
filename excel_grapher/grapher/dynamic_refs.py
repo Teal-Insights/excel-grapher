@@ -1828,86 +1828,143 @@ def _range_node_from_bounds(
     return RangeNode(start=start, end=end)
 
 
+@dataclass(frozen=True, slots=True)
+class _IndexAxisEnv:
+    """Type environment used to densify non-literal INDEX row/col selectors."""
+
+    env: CellTypeEnv
+    limits: DynamicRefLimits
+    context: dict[str, int]
+    current_sheet: str
+    depth: int
+
+
+def _singleton_int(domain: _FiniteInts | _IntBounds | None) -> int | None:
+    """Return the only integer in `domain` when it is a singleton."""
+    if isinstance(domain, _FiniteInts):
+        if len(domain.values) != 1:
+            return None
+        return next(iter(domain.values))
+    if isinstance(domain, _IntBounds) and domain.lo == domain.hi:
+        return domain.lo
+    return None
+
+
+def _resolved_index_axis(node: AstNode, axes: _IndexAxisEnv | None) -> int | None:
+    """Return a singleton INDEX axis, including Excel's `0` whole-axis form.
+
+    Literals resolve without `axes`. Non-literals densify only when `axes` is
+    provided and numeric inference yields exactly one integer.
+    """
+    if _is_literal_zero(node):
+        return 0
+    literal = _literal_positive_int(node)
+    if literal is not None:
+        return literal
+    if axes is None:
+        return None
+    result = _infer_numeric_domain_result(
+        node,
+        axes.env,
+        axes.limits,
+        context=axes.context,
+        current_sheet=axes.current_sheet,
+        depth=axes.depth + 1,
+    )
+    if result.diagnostic is not None:
+        return None
+    return _singleton_int(result.domain)
+
+
 def _index_vector_from_bounds(
     bounds: tuple[str, int, int, int, int],
     row_arg: AstNode,
     col_arg: AstNode | None,
+    *,
+    axes: _IndexAxisEnv | None = None,
 ) -> AstNode | None:
     """Map INDEX row/col selectors over static bounds to a rectangular result range.
 
-    Supports omitted axes, literal positive selectors, and Excel's `0` form that
-    returns an entire row/column/array.
+    Supports omitted axes, singleton positive selectors (literals or densified
+    under `axes`), and Excel's `0` form that returns an entire row/column/array.
+    Two-arg `INDEX(array, k)` indexes a 1-D vector. A trailing empty column
+    (`INDEX(array, k,)`) is the 2-D form and selects that row.
     """
     sheet, rlo, rhi, clo, chi = bounds
     nrows = rhi - rlo + 1
     ncols = chi - clo + 1
 
     row_omitted = isinstance(row_arg, EmptyArgNode)
-    col_omitted = col_arg is None or isinstance(col_arg, EmptyArgNode)
-    row_zero = _is_literal_zero(row_arg)
-    col_zero = col_arg is not None and _is_literal_zero(col_arg)
+    col_missing = col_arg is None
+    col_empty = isinstance(col_arg, EmptyArgNode)
+    col_omitted = col_missing or col_empty
+    row_sel = None if row_omitted else _resolved_index_axis(row_arg, axes)
+    col_sel = None if col_omitted else _resolved_index_axis(col_arg, axes)
+    row_zero = row_sel == 0
+    col_zero = col_sel == 0
 
     if row_omitted and col_omitted:
         return None
 
     if row_omitted:
-        assert col_arg is not None
         if col_zero:
             return _range_node_from_bounds(sheet, rlo, rhi, clo, chi)
-        k = _literal_positive_int(col_arg)
-        if k is None or k > ncols:
+        if col_sel is None or col_sel > ncols:
             return None
-        c = clo + k - 1
+        c = clo + col_sel - 1
         return _range_node_from_bounds(sheet, rlo, rhi, c, c)
 
     if col_omitted:
         if row_zero:
             return _range_node_from_bounds(sheet, rlo, rhi, clo, chi)
-        k = _literal_positive_int(row_arg)
-        if k is None:
+        if row_sel is None:
             return None
-        if nrows == 1:
-            if k > ncols:
+        # 2-arg INDEX(array, k) indexes a 1-D vector. A trailing empty
+        # column (`INDEX(array, k,)`) is the 2-D form and selects that row.
+        if col_missing and nrows == 1:
+            if row_sel > ncols:
                 return None
-            c = clo + k - 1
+            c = clo + row_sel - 1
             return _range_node_from_bounds(sheet, rlo, rhi, c, c)
-        if ncols == 1:
-            if k > nrows:
+        if col_missing and ncols == 1:
+            if row_sel > nrows:
                 return None
-            r = rlo + k - 1
+            r = rlo + row_sel - 1
             return _range_node_from_bounds(sheet, r, r, clo, chi)
-        if k > nrows:
+        if row_sel > nrows:
             return None
-        r = rlo + k - 1
+        r = rlo + row_sel - 1
         return _range_node_from_bounds(sheet, r, r, clo, chi)
 
     # Both axes present: 0 selects the full opposite axis (Excel INDEX).
     if row_zero and col_zero:
         return _range_node_from_bounds(sheet, rlo, rhi, clo, chi)
     if row_zero:
-        assert col_arg is not None
-        k = _literal_positive_int(col_arg)
-        if k is None or k > ncols:
+        if col_sel is None or col_sel > ncols:
             return None
-        c = clo + k - 1
+        c = clo + col_sel - 1
         return _range_node_from_bounds(sheet, rlo, rhi, c, c)
     if col_zero:
-        k = _literal_positive_int(row_arg)
-        if k is None or k > nrows:
+        if row_sel is None or row_sel > nrows:
             return None
-        r = rlo + k - 1
+        r = rlo + row_sel - 1
         return _range_node_from_bounds(sheet, r, r, clo, chi)
     return None
 
 
 def _index_vector_lookup_array(
-    node: AstNode, *, allow_shape_preserving: bool = False
+    node: AstNode,
+    *,
+    allow_shape_preserving: bool = False,
+    axes: _IndexAxisEnv | None = None,
 ) -> AstNode | None:
-    """Resolve static INDEX forms to a rectangular range for MATCH lookup geometry.
+    """Resolve INDEX forms to a rectangular range for MATCH lookup geometry.
 
     Handles `INDEX(range,,k)` / `INDEX(range,k[,])` and Excel's `INDEX(...,0[,k])`
-    whole-axis form. When `allow_shape_preserving` is True, also accepts array
-    expressions that keep a static rectangle's shape (e.g. `(range<>0)`).
+    whole-axis form. `k` may be a literal or, when `axes` is provided, any
+    selector that densifies to a singleton integer. When
+    `allow_shape_preserving` is True, also accepts array expressions that keep
+    a static rectangle's shape (e.g. `(range<>0)`).
 
     Value-preserving callers (exact MATCH cell enumeration) must leave
     `allow_shape_preserving` False so projected arrays are not treated as the
@@ -1925,7 +1982,7 @@ def _index_vector_lookup_array(
     if bounds is None:
         return None
     col_arg: AstNode | None = node.args[2] if len(node.args) >= 3 else None
-    return _index_vector_from_bounds(bounds, node.args[1], col_arg)
+    return _index_vector_from_bounds(bounds, node.args[1], col_arg, axes=axes)
 
 
 def _span_strictly_inside(inner: tuple[int, int], outer: tuple[int, int]) -> bool:
@@ -2021,6 +2078,45 @@ def prepare_dynamic_selector_expr(formula: str, *, current_sheet: str) -> str:
     )
 
 
+def _index_dynamic_axis_match_extent(node: AstNode) -> int | None:
+    """Return MATCH lookup length when INDEX shape is known but an axis is dynamic.
+
+    An omitted or `0` axis still yields a vector of known length. A specific
+    (unknown) axis over a 1-D array, or both specific axes over a 2-D array,
+    yields a scalar.
+    """
+    if not isinstance(node, FunctionCallNode) or node.name.upper() != "INDEX":
+        return None
+    if len(node.args) < 2:
+        return None
+    bounds = _array_expr_static_bounds(node.args[0])
+    if bounds is None:
+        return None
+    _sheet, rlo, rhi, clo, chi = bounds
+    nrows = rhi - rlo + 1
+    ncols = chi - clo + 1
+    row_arg = node.args[1]
+    col_arg: AstNode | None = node.args[2] if len(node.args) >= 3 else None
+    row_omitted = isinstance(row_arg, EmptyArgNode)
+    col_missing = col_arg is None
+    col_empty = isinstance(col_arg, EmptyArgNode)
+    row_zero = _is_literal_zero(row_arg)
+    col_zero = col_arg is not None and _is_literal_zero(col_arg)
+    if row_omitted and (col_missing or col_empty):
+        return None
+    if (row_omitted or row_zero) and (col_missing or col_empty or col_zero):
+        return nrows * ncols
+    if row_omitted or row_zero:
+        return nrows
+    if col_missing:
+        if nrows == 1 or ncols == 1:
+            return 1
+        return ncols
+    if col_empty or col_zero:
+        return ncols
+    return 1
+
+
 def _static_match_lookup_extent(node: AstNode) -> int | None:
     """Return N so MATCH position is within [1, N] when lookup_array has static shape."""
     if isinstance(node, CellRefNode):
@@ -2045,11 +2141,23 @@ def _static_match_lookup_extent(node: AstNode) -> int | None:
     vector = _index_vector_lookup_array(node, allow_shape_preserving=True)
     if vector is not None:
         return _static_match_lookup_extent(vector)
-    return None
+    return _index_dynamic_axis_match_extent(node)
 
 
-def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str] | None:
-    """Return sheet-qualified addresses for a one-dimensional MATCH lookup_array (in scan order)."""
+def _ordered_match_lookup_cells(
+    arg: AstNode,
+    *,
+    current_sheet: str,
+    env: CellTypeEnv | None = None,
+    limits: DynamicRefLimits | None = None,
+    context: dict[str, int] | None = None,
+    depth: int = 0,
+) -> list[str] | None:
+    """Return sheet-qualified addresses for a one-dimensional MATCH lookup_array (in scan order).
+
+    When `env` and `limits` are provided, INDEX axes that densify to a singleton
+    integer are treated like literals.
+    """
     from fastpyxl.utils.cell import get_column_letter
 
     if isinstance(arg, CellRefNode):
@@ -2084,9 +2192,27 @@ def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str
                 out.append(format_key(sheet, f"{get_column_letter(c)}{rlo}"))
         return out
     # Value-preserving INDEX only: projected arrays must not expose raw cell domains.
-    vector = _index_vector_lookup_array(arg)
+    axes = (
+        _IndexAxisEnv(
+            env=env,
+            limits=limits,
+            context=context or {},
+            current_sheet=current_sheet,
+            depth=depth,
+        )
+        if env is not None and limits is not None
+        else None
+    )
+    vector = _index_vector_lookup_array(arg, axes=axes)
     if vector is not None:
-        return _ordered_match_lookup_cells(vector, current_sheet=current_sheet)
+        return _ordered_match_lookup_cells(
+            vector,
+            current_sheet=current_sheet,
+            env=env,
+            limits=limits,
+            context=context,
+            depth=depth,
+        )
     return None
 
 
@@ -2251,7 +2377,14 @@ def _infer_exact_match_position_domain(
     """
     if len(node.args) < 2:
         return None
-    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
+    ordered = _ordered_match_lookup_cells(
+        node.args[1],
+        current_sheet=current_sheet,
+        env=env,
+        limits=limits,
+        context=context,
+        depth=depth,
+    )
     if not ordered or len(ordered) > _exact_match_lookup_scan_limit(limits):
         return None
 

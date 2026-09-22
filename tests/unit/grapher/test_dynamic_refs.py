@@ -1686,6 +1686,19 @@ def test_static_match_lookup_extent_resolves_index_empty_row_column_slice() -> N
     ordered_row = dynamic_refs_mod._ordered_match_lookup_cells(row_slice, current_sheet="Out")
     assert ordered_row == ["Trigger!AA2", "Trigger!AB2"]
 
+    from fastpyxl.utils import get_column_letter
+
+    header = parse_ast("=INDEX(Data!A1:T1,1,)")
+    assert dynamic_refs_mod._static_match_lookup_extent(header) == 20
+    assert dynamic_refs_mod._ordered_match_lookup_cells(header, current_sheet="Out") == [
+        f"Data!{get_column_letter(col)}1" for col in range(1, 21)
+    ]
+    vector_index = parse_ast("=INDEX(Data!A1:T1,1)")
+    assert dynamic_refs_mod._static_match_lookup_extent(vector_index) == 1
+    assert dynamic_refs_mod._ordered_match_lookup_cells(vector_index, current_sheet="Out") == [
+        "Data!A1"
+    ]
+
 
 def test_columns_rows_numeric_domain_from_static_range() -> None:
     """COLUMNS/ROWS over a static range yield a singleton integer domain."""
@@ -1833,6 +1846,155 @@ def test_match_true_index_boolean_projection_numeric_domain() -> None:
     dom = dynamic_refs_mod._infer_numeric_domain(match, {}, DynamicRefLimits(), current_sheet="B")
     assert isinstance(dom, dynamic_refs_mod._IntBounds)
     assert dom.lo == 1 and dom.hi == 4
+
+
+def _header_row_env(
+    sheet: str, header_col: int, header: str, *, last_col: int
+) -> dict[str, CellType]:
+    """Singleton string enums for a header row, with `header` at `header_col`."""
+    from fastpyxl.utils import get_column_letter
+
+    env: dict[str, CellType] = {}
+    for col in range(1, last_col + 1):
+        value = header if col == header_col else f"h{col}"
+        env[f"{sheet}!{get_column_letter(col)}1"] = _string_enum(value)
+    return env
+
+
+def test_static_match_lookup_extent_index_dynamic_omitted_axis() -> None:
+    """INDEX(range,,expr) has a known column extent even when expr is dynamic."""
+    lookup = parse_ast('=INDEX(Data!A1:T3,,MATCH("DSA Template ID",Data!A1:Z1,0))')
+    assert dynamic_refs_mod._static_match_lookup_extent(lookup) == 3
+    row = parse_ast("=INDEX(Data!A1:T3,MATCH(Sheet!A1,Data!A1:A3,0),)")
+    assert dynamic_refs_mod._static_match_lookup_extent(row) == 20
+    both = parse_ast("=INDEX(Data!A1:T3,MATCH(Sheet!A1,Data!A1:A3,0),2)")
+    assert dynamic_refs_mod._static_match_lookup_extent(both) == 1
+    vector = parse_ast("=INDEX(Data!A1:A3,MATCH(Sheet!A1,Data!B1:B3,0))")
+    assert dynamic_refs_mod._static_match_lookup_extent(vector) == 1
+    whole_col = parse_ast("=INDEX(Data!A1:T3,0,MATCH(Sheet!A1,Data!A1:A3,0))")
+    assert dynamic_refs_mod._static_match_lookup_extent(whole_col) == 3
+
+
+def test_ordered_match_lookup_cells_index_axis_densified_by_match() -> None:
+    """Exact MATCH may enumerate INDEX(range,,MATCH(header)) once the axis is a singleton.
+
+    Issue #973: `_index_vector_lookup_array` previously required a literal axis, so a
+    densified header MATCH could not expose the selected column's cells.
+    """
+    env = _header_row_env("Data", header_col=20, header="DSA Template ID", last_col=26)
+    env["Data!T2"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    env["Data!T3"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522015})))
+    limits = DynamicRefLimits()
+    lookup = parse_ast('=INDEX(Data!A1:T3,,MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0))')
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(
+        lookup,
+        current_sheet="Sheet",
+        env=env,
+        limits=limits,
+    )
+    assert ordered == ["Data!T1", "Data!T2", "Data!T3"]
+
+
+def test_ordered_match_lookup_cells_index_axis_densified_by_cell() -> None:
+    """A cell-typed singleton column index is equivalent to a literal INDEX axis."""
+    env = {
+        "Sheet!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3}))),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C4,,Sheet!C1)")
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(
+        lookup,
+        current_sheet="Sheet",
+        env=env,
+        limits=DynamicRefLimits(),
+    )
+    assert ordered == ["Data!C1", "Data!C2", "Data!C3", "Data!C4"]
+
+
+def test_ordered_match_lookup_cells_densified_zero_is_whole_axis() -> None:
+    """A densified `0` INDEX axis is Excel's whole-row/column form."""
+    env = {
+        "Sheet!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0}))),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C3,Sheet!A1,2)")
+    ordered = dynamic_refs_mod._ordered_match_lookup_cells(
+        lookup,
+        current_sheet="Sheet",
+        env=env,
+        limits=DynamicRefLimits(),
+    )
+    assert ordered == ["Data!B1", "Data!B2", "Data!B3"]
+
+
+def test_ordered_match_lookup_cells_index_axis_stays_closed_when_not_singleton() -> None:
+    """A multi-value INDEX axis is not a single MATCH lookup vector."""
+    env = {
+        "Sheet!C1": CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({2, 3})),
+        ),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C4,,Sheet!C1)")
+    assert (
+        dynamic_refs_mod._ordered_match_lookup_cells(
+            lookup,
+            current_sheet="Sheet",
+            env=env,
+            limits=DynamicRefLimits(),
+        )
+        is None
+    )
+
+
+def test_match_over_index_header_match_collapses_to_row() -> None:
+    """MATCH(needle, INDEX(range,,MATCH(header))) densifies when every leaf is pinned.
+
+    Issue #973 MCVE: inner header MATCH is 20, so the outer MATCH scans column T.
+    """
+    env = _header_row_env("Data", header_col=20, header="DSA Template ID", last_col=26)
+    env["Data!T2"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    env["Data!T3"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522015})))
+    inner = dynamic_refs_mod._infer_numeric_domain(
+        parse_ast('=MATCH("DSA Template ID",Data!A1:Z1,0)'),
+        env,
+        DynamicRefLimits(),
+        current_sheet="Data",
+    )
+    assert isinstance(inner, dynamic_refs_mod._FiniteInts)
+    assert inner.values == frozenset({20})
+    inner_index = dynamic_refs_mod._infer_numeric_domain(
+        parse_ast('=MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0)'),
+        env,
+        DynamicRefLimits(),
+        current_sheet="Data",
+    )
+    assert isinstance(inner_index, dynamic_refs_mod._FiniteInts)
+    assert inner_index.values == frozenset({20})
+
+    dom = dynamic_refs_mod._infer_numeric_domain(
+        parse_ast(
+            '=MATCH(6522014,INDEX(Data!A1:T3,,MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0)),0)'
+        ),
+        env,
+        DynamicRefLimits(),
+        current_sheet="Sheet",
+    )
+    assert isinstance(dom, dynamic_refs_mod._FiniteInts)
+    assert dom.values == frozenset({2})
+
+
+def test_index_targets_collapse_through_header_match_column() -> None:
+    """INDEX row MATCH over a header-selected column collapses to one cell."""
+    env = _header_row_env("Data", header_col=20, header="DSA Template ID", last_col=26)
+    env["Data!T2"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    env["Data!T3"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522015})))
+    env["Sheet!A1"] = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({6522014})))
+    formula = (
+        "=INDEX(Data!A1:T3,"
+        'MATCH(Sheet!A1,INDEX(Data!A1:T3,,MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0)),0),'
+        'MATCH("DSA Template ID",INDEX(Data!A1:T1,1,),0))'
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Sheet", cell_type_env=env)
+    assert targets == {"Data!T2"}
 
 
 def _build_match_index_first_nonzero_workbook(path: Path) -> None:
