@@ -1595,6 +1595,7 @@ def test_exact_match_numeric_text_needle_uses_lookup_number_domain() -> None:
 
 
 def test_exact_match_number_interval_excludes_cells_outside_needle() -> None:
+    """A certain hit stops the scan, so a later cell that might match is unreachable."""
     formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
     env = _make_env(
         {
@@ -1605,7 +1606,65 @@ def test_exact_match_number_interval_excludes_cells_outside_needle() -> None:
         }
     )
     targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
-    assert targets == {"dump!B2", "dump!B3"}
+    assert targets == {"dump!B2"}
+
+
+def test_exact_match_interval_before_certain_hit_stays_candidate() -> None:
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({5}))),
+            "dump!A1": CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=1, max=10)),
+            "dump!A2": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({5}))),
+            "dump!A3": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({5}))),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+
+
+def test_exact_match_certain_string_hit_drops_later_rows() -> None:
+    """MATCH returns the first hit, including a case-insensitive one."""
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("key"),
+            "dump!A1": _string_enum("KEY"),
+            "dump!A2": _string_enum("key"),
+            "dump!A3": _string_enum("other"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1"}
+
+
+def test_exact_match_untyped_before_certain_hit_stays() -> None:
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("KEY"),
+            "dump!A2": _string_enum("KEY"),
+            "dump!A3": _string_enum("KEY"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+
+
+def test_exact_match_non_finite_text_is_not_a_numeric_hit() -> None:
+    """`nan` and `inf` text does not match a number and does not raise."""
+    formula = "=INDEX(dump!B1:B4,MATCH(calc!A1,dump!A1:A4,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+            "dump!A1": _string_enum("nan"),
+            "dump!A2": _string_enum("inf"),
+            "dump!A3": _string_enum("1e309"),
+            "dump!A4": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B4"}
 
 
 def test_exact_match_bool_and_error_cells_are_not_string_hits() -> None:
@@ -1719,9 +1778,8 @@ _ISSUE_965_FORMULA = (
 def test_string_match_untyped_corner_narrows_index_issue_965() -> None:
     """Issue #965: a string needle narrows INDEX even when one lookup cell is untyped.
 
-    `data!A1` has no domain, so it may equal either needle. Every other lookup
-    cell is a proven miss except the known string and year hits. INDEX keeps
-    the combinations of those possible positions, not the whole year column.
+    `data!A1` has no domain, so it may equal either needle, but not both at once.
+    INDEX keeps each feasible combination and drops the corner cell.
     """
     targets = infer_dynamic_index_targets(
         _ISSUE_965_FORMULA,
@@ -1729,7 +1787,23 @@ def test_string_match_untyped_corner_narrows_index_issue_965() -> None:
         cell_type_env=_issue_965_match_env(header=None),
         limits=DynamicRefLimits(max_cells=50),
     )
-    assert targets == {"data!A1", "data!A3", "data!C1", "data!C3"}
+    assert targets == {"data!A3", "data!C1", "data!C3"}
+
+
+def test_shared_lookup_cell_drops_incompatible_match_pairs() -> None:
+    """One cell cannot be both a hit and a miss for the same needle value."""
+    formula = "=INDEX(data!A1:C3,MATCH(imp!A1,data!A1:A3,0),MATCH(imp!A1,data!A1:C1,0))"
+    env = _make_env(
+        {
+            "imp!A1": _string_enum("K"),
+            "data!A2": _string_enum("K"),
+            "data!A3": _string_enum("no"),
+            "data!B1": _string_enum("K"),
+            "data!C1": _string_enum("no"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="imp", cell_type_env=env)
+    assert targets == {"data!A1", "data!B2"}
 
 
 def test_string_and_year_match_typed_header_is_one_cell() -> None:

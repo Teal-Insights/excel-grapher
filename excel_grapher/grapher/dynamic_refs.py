@@ -8,6 +8,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
+from enum import Enum
 from functools import lru_cache
 from itertools import product
 from pathlib import Path
@@ -2152,39 +2153,36 @@ def _string_values(values: frozenset[object]) -> frozenset[str] | None:
     return frozenset(strings)
 
 
-def _sets_may_exact_match(left: frozenset[object], right: frozenset[object]) -> bool:
-    """Return True when any pair may compare equal under exact MATCH.
-
-    String/string pairs use case-insensitive equality. Other pairs follow
-    `match_cells` (`_values_match`), including numeric coercion.
-    """
-    left_strings = _string_values(left)
-    right_strings = _string_values(right)
-    if left_strings is not None and right_strings is not None:
-        folded = {excel_casefold(value) for value in left_strings}
-        return any(excel_casefold(value) in folded for value in right_strings)
-    for left_value in left:
-        for right_value in right:
-            if _values_match(left_value, right_value):
-                return True
-    return False
-
-
 _BOOL_AS_NUMBER_DOMAIN = _FiniteInts(frozenset({0, 1}))
+
+
+class _ExactMatchVerdict(Enum):
+    """How a lookup cell relates to an exact-MATCH needle."""
+
+    MISS = "miss"
+    MAYBE = "maybe"
+    CERTAIN = "certain"
+
+
+def _match_number(value: object) -> float | None:
+    """Return the float exact MATCH uses for `value`.
+
+    Non-numeric text yields `None`. Non-finite results such as `nan` and `inf`
+    are left for the caller to reject.
+    """
+    if isinstance(value, bool):
+        return 1.0 if value else 0.0
+    if isinstance(value, (int, float)):
+        return float(value)
+    if isinstance(value, str):
+        return try_coerce_string_to_float(value)
+    return None
 
 
 def _scalar_in_int_domain(value: object, domain: _FiniteInts | _IntBounds) -> bool:
     """Return True when `value` may equal an integer in `domain` under MATCH."""
-    if isinstance(value, bool):
-        number = 1.0 if value else 0.0
-    elif isinstance(value, (int, float)):
-        number = float(value)
-    elif isinstance(value, str):
-        coerced = try_coerce_string_to_float(value)
-        if coerced is None:
-            return False
-        number = coerced
-    else:
+    number = _match_number(value)
+    if number is None or not math.isfinite(number):
         return False
     as_int = int(number)
     if as_int != number:
@@ -2202,6 +2200,66 @@ def _values_may_equal_numeric_domain(
     return any(_scalar_in_int_domain(value, domain) for value in values)
 
 
+def _int_domain_singleton(domain: _FiniteInts | _IntBounds) -> int | None:
+    """Return the only integer in `domain` when it has exactly one."""
+    if isinstance(domain, _FiniteInts):
+        if len(domain.values) != 1:
+            return None
+        return next(iter(domain.values))
+    if domain.lo == domain.hi:
+        return domain.lo
+    return None
+
+
+def _values_vs_int_domain_verdict(
+    values: frozenset[object],
+    domain: _FiniteInts | _IntBounds,
+) -> _ExactMatchVerdict:
+    """Compare finite needle values with an integer domain."""
+    if not _values_may_equal_numeric_domain(values, domain):
+        return _ExactMatchVerdict.MISS
+    singleton = _int_domain_singleton(domain)
+    if singleton is None:
+        return _ExactMatchVerdict.MAYBE
+    only = _FiniteInts(frozenset({singleton}))
+    if all(_scalar_in_int_domain(value, only) for value in values):
+        return _ExactMatchVerdict.CERTAIN
+    return _ExactMatchVerdict.MAYBE
+
+
+def _enum_match_verdict(
+    needles: frozenset[object],
+    cell_values: frozenset[object],
+    *,
+    folded_string_needles: frozenset[str] | None,
+) -> _ExactMatchVerdict:
+    """Compare two finite equality sets under exact MATCH."""
+    if not cell_values:
+        return _ExactMatchVerdict.MISS
+    if folded_string_needles is not None:
+        cell_strings = _string_values(cell_values)
+        if cell_strings is not None:
+            cell_folded = {excel_casefold(value) for value in cell_strings}
+            if cell_folded.isdisjoint(folded_string_needles):
+                return _ExactMatchVerdict.MISS
+            if len(cell_folded) == 1 and cell_folded == folded_string_needles:
+                return _ExactMatchVerdict.CERTAIN
+            return _ExactMatchVerdict.MAYBE
+    certain = True
+    any_hit = False
+    for needle in needles:
+        for cell in cell_values:
+            if _values_match(needle, cell):
+                any_hit = True
+            else:
+                certain = False
+    if not any_hit:
+        return _ExactMatchVerdict.MISS
+    if certain:
+        return _ExactMatchVerdict.CERTAIN
+    return _ExactMatchVerdict.MAYBE
+
+
 def _folded_string_needles(needles: frozenset[object]) -> frozenset[str] | None:
     """Return casefolded needles when every needle is a string."""
     strings = _string_values(needles)
@@ -2216,66 +2274,85 @@ def _cell_may_equal_exact_match_values(
     limits: DynamicRefLimits,
     *,
     folded_string_needles: frozenset[str] | None = None,
-) -> bool | None:
-    """Return whether `cell_type` may equal `needles`.
+) -> _ExactMatchVerdict:
+    """Return how `cell_type` compares with `needles`.
 
-    `None` means the cell has no finite domain that decides equality, so it
-    stays a candidate. `False` means every allowed value is unequal.
+    `MAYBE` keeps the cell: its domain does not decide equality. `CERTAIN`
+    means every allowed value equals every needle value, so MATCH cannot
+    continue past it. `MISS` means every allowed value is unequal.
     """
     if cell_type is None:
-        return None
+        return _ExactMatchVerdict.MAYBE
     if cell_type.enum is not None:
         if not cell_type.enum.values:
-            return False
-        if folded_string_needles is not None:
-            cell_strings = _string_values(cell_type.enum.values)
-            if cell_strings is not None:
-                return any(excel_casefold(value) in folded_string_needles for value in cell_strings)
-        return _sets_may_exact_match(needles, cell_type.enum.values)
+            return _ExactMatchVerdict.MISS
+        return _enum_match_verdict(
+            needles,
+            cell_type.enum.values,
+            folded_string_needles=folded_string_needles,
+        )
     if cell_type.kind in (CellKind.NUMBER, CellKind.ANY):
         numeric = _domain_from_cell_type(cell_type, limits)
         if numeric is not None:
-            return _values_may_equal_numeric_domain(needles, numeric)
+            return _values_vs_int_domain_verdict(needles, numeric)
         if cell_type.kind is CellKind.NUMBER and not any(
             _value_may_equal_number(value) for value in needles
         ):
-            return False
-        return None
+            return _ExactMatchVerdict.MISS
+        return _ExactMatchVerdict.MAYBE
     if cell_type.kind is CellKind.ERROR:
-        return False
+        return _ExactMatchVerdict.MISS
     if cell_type.kind is CellKind.BOOL:
-        return _values_may_equal_numeric_domain(needles, _BOOL_AS_NUMBER_DOMAIN)
+        if _values_may_equal_numeric_domain(needles, _BOOL_AS_NUMBER_DOMAIN):
+            return _ExactMatchVerdict.MAYBE
+        return _ExactMatchVerdict.MISS
     if cell_type.kind is CellKind.DATE and not any(
         _value_may_equal_number(value) for value in needles
     ):
-        return False
-    return None
+        return _ExactMatchVerdict.MISS
+    return _ExactMatchVerdict.MAYBE
+
+
+def _numeric_domain_verdict(
+    needle_dom: _FiniteInts | _IntBounds,
+    cell_dom: _FiniteInts | _IntBounds,
+) -> _ExactMatchVerdict:
+    """Compare two integer domains under exact MATCH."""
+    if not _domains_may_equal_exact_match(needle_dom, cell_dom):
+        return _ExactMatchVerdict.MISS
+    needle = _int_domain_singleton(needle_dom)
+    cell = _int_domain_singleton(cell_dom)
+    if needle is not None and needle == cell:
+        return _ExactMatchVerdict.CERTAIN
+    return _ExactMatchVerdict.MAYBE
 
 
 def _cell_may_equal_numeric_needle(
     cell_type: CellType | None,
     needle_dom: _FiniteInts | _IntBounds,
     limits: DynamicRefLimits,
-) -> bool | None:
-    """Return whether `cell_type` may equal a numeric exact-MATCH needle.
+) -> _ExactMatchVerdict:
+    """Return how `cell_type` compares with a numeric exact-MATCH needle.
 
     Missing domains stay possible. String enums that cannot coerce into
-    `needle_dom` are not.
+    `needle_dom` are misses. A singleton on both sides is a certain hit.
     """
     if cell_type is None:
-        return None
+        return _ExactMatchVerdict.MAYBE
     numeric = _domain_from_cell_type(cell_type, limits)
     if numeric is not None:
-        return _domains_may_equal_exact_match(needle_dom, numeric)
+        return _numeric_domain_verdict(needle_dom, numeric)
     if cell_type.enum is not None:
         if not cell_type.enum.values:
-            return False
-        return _values_may_equal_numeric_domain(cell_type.enum.values, needle_dom)
+            return _ExactMatchVerdict.MISS
+        return _values_vs_int_domain_verdict(cell_type.enum.values, needle_dom)
     if cell_type.kind is CellKind.ERROR:
-        return False
+        return _ExactMatchVerdict.MISS
     if cell_type.kind is CellKind.BOOL:
-        return _domains_may_equal_exact_match(needle_dom, _BOOL_AS_NUMBER_DOMAIN)
-    return None
+        if _domains_may_equal_exact_match(needle_dom, _BOOL_AS_NUMBER_DOMAIN):
+            return _ExactMatchVerdict.MAYBE
+        return _ExactMatchVerdict.MISS
+    return _ExactMatchVerdict.MAYBE
 
 
 def _exact_match_position_domain(
@@ -2302,18 +2379,21 @@ def _exact_match_position_domain(
 
 def _refine_exact_match_positions(
     ordered: list[str],
-    may_equal: Callable[[str], bool | None],
+    verdict_of: Callable[[str], _ExactMatchVerdict],
 ) -> _FiniteInts | _IntBounds | None:
     """Drop lookup positions proven unequal to the needle.
 
-    `may_equal` returns `False` for a proven miss and `None` when the cell
-    might still match. One pass, bounded by the caller's scan limit.
+    A certain hit ends the scan: MATCH returns the first match, so later
+    cells are unreachable. One pass, bounded by the caller's scan limit.
     """
     candidates: list[int] = []
     for index, cell_addr in enumerate(ordered, start=1):
-        if may_equal(cell_addr) is False:
+        verdict = verdict_of(cell_addr)
+        if verdict is _ExactMatchVerdict.MISS:
             continue
         candidates.append(index)
+        if verdict is _ExactMatchVerdict.CERTAIN:
+            break
     return _exact_match_position_domain(candidates, len(ordered))
 
 
@@ -2329,7 +2409,7 @@ def _infer_enum_exact_match_position(
         return None
     folded = _folded_string_needles(needles)
 
-    def may_equal(cell_addr: str) -> bool | None:
+    def verdict_of(cell_addr: str) -> _ExactMatchVerdict:
         return _cell_may_equal_exact_match_values(
             _lookup_cell_type(env, cell_addr),
             needles,
@@ -2337,7 +2417,7 @@ def _infer_enum_exact_match_position(
             folded_string_needles=folded,
         )
 
-    return _refine_exact_match_positions(ordered, may_equal)
+    return _refine_exact_match_positions(ordered, verdict_of)
 
 
 def _domains_may_equal_exact_match(
@@ -2395,14 +2475,14 @@ def _infer_exact_match_position_domain(
     if lookup_dom is None:
         return _infer_enum_exact_match_position(node.args[0], ordered, env, limits)
 
-    def may_equal(cell_addr: str) -> bool | None:
+    def verdict_of(cell_addr: str) -> _ExactMatchVerdict:
         return _cell_may_equal_numeric_needle(
             _lookup_cell_type(env, cell_addr),
             lookup_dom,
             limits,
         )
 
-    return _refine_exact_match_positions(ordered, may_equal)
+    return _refine_exact_match_positions(ordered, verdict_of)
 
 
 def _match_is_exact_match_type(node: FunctionCallNode) -> bool:
@@ -3792,6 +3872,267 @@ def _emit_index_targets_from_domains(
     return targets
 
 
+def _finite_needle_values(
+    needle: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+) -> frozenset[object] | None:
+    """Return a small finite needle domain, or None when joint filtering should stop."""
+    literal = _finite_exact_match_values(needle, env)
+    if literal is not None:
+        if _needle_blocks_exact_match_refine(literal) or len(literal) > limits.max_branches:
+            return None
+        return literal
+    result = _infer_numeric_domain_result(
+        needle,
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+    )
+    if result.diagnostic is not None or result.domain is None:
+        return None
+    domain = result.domain
+    if isinstance(domain, _FiniteInts):
+        if len(domain.values) > limits.max_branches:
+            return None
+        return frozenset(domain.values)
+    span = domain.hi - domain.lo + 1
+    if span < 1 or span > limits.max_branches:
+        return None
+    return frozenset(range(domain.lo, domain.hi + 1))
+
+
+def _match_position_list(domain: _FiniteInts | _IntBounds, limit: int) -> list[int] | None:
+    """Return positive positions in `domain` when the list is at most `limit` long."""
+    if isinstance(domain, _FiniteInts):
+        positions = [value for value in domain.values if value >= 1]
+        if len(positions) > limit:
+            return None
+        positions.sort()
+        return positions
+    if domain.hi < max(1, domain.lo):
+        return []
+    start = max(1, domain.lo)
+    span = domain.hi - start + 1
+    if span > limit:
+        return None
+    return list(range(start, domain.hi + 1))
+
+
+def _exact_match_lookup(
+    node: AstNode, *, current_sheet: str
+) -> tuple[FunctionCallNode, list[str]] | None:
+    """Return an exact MATCH call and its lookup cells when both are static."""
+    if not isinstance(node, FunctionCallNode) or node.name.upper() != "MATCH":
+        return None
+    if not _match_is_exact_match_type(node):
+        return None
+    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
+    if not ordered:
+        return None
+    return node, ordered
+
+
+def _lookup_position_index(ordered: list[str]) -> dict[str, int]:
+    """Map each lookup address to its first 1-based scan position."""
+    found: dict[str, int] = {}
+    for index, address in enumerate(ordered, start=1):
+        found.setdefault(normalize_cell_type_env_key(address), index)
+    return found
+
+
+def _axis_requirement(position: int | None, chosen: int) -> bool | None:
+    """Return whether `position` must match for MATCH to return `chosen`.
+
+    `None` means MATCH stops before that cell. `True` is the returned hit.
+    `False` is an earlier cell, which must miss.
+    """
+    if position is None or position > chosen:
+        return None
+    return position == chosen
+
+
+def _untyped_joint_possible(
+    row_must: bool | None,
+    col_must: bool | None,
+    row_needle: object,
+    col_needle: object,
+) -> bool:
+    """Return whether some value can meet both axis constraints."""
+    if row_must is True and col_must is True:
+        return _values_match(row_needle, col_needle)
+    if row_must is True and col_must is False:
+        return not _values_match(row_needle, col_needle)
+    if row_must is False and col_must is True:
+        return not _values_match(row_needle, col_needle)
+    return True
+
+
+def _joint_cell_values(cell_type: CellType, limits: DynamicRefLimits) -> frozenset[object] | None:
+    """Return a finite value set, or None when it is too wide to refute a pair."""
+    if cell_type.enum is not None:
+        if not cell_type.enum.values:
+            return None
+        return cell_type.enum.values
+    if cell_type.kind is CellKind.BOOL:
+        return frozenset({False, True})
+    numeric = _domain_from_cell_type(cell_type, limits)
+    if isinstance(numeric, _FiniteInts):
+        if not numeric.values:
+            return None
+        return frozenset(numeric.values)
+    if isinstance(numeric, _IntBounds):
+        span = numeric.hi - numeric.lo + 1
+        if 1 <= span <= limits.max_branches:
+            return frozenset(range(numeric.lo, numeric.hi + 1))
+    return None
+
+
+def _shared_cell_possible(
+    cell_type: CellType | None,
+    limits: DynamicRefLimits,
+    row_needle: object,
+    col_needle: object,
+    row_must: bool | None,
+    col_must: bool | None,
+) -> bool:
+    """Return False only when `cell_type` cannot meet both axis constraints."""
+    if row_must is None and col_must is None:
+        return True
+    if cell_type is not None and cell_type.enum is None and cell_type.kind is CellKind.ERROR:
+        return row_must is not True and col_must is not True
+    if cell_type is None:
+        return _untyped_joint_possible(row_must, col_must, row_needle, col_needle)
+    values = _joint_cell_values(cell_type, limits)
+    if not values:
+        return True
+    return any(
+        (row_must is None or _values_match(value, row_needle) is row_must)
+        and (col_must is None or _values_match(value, col_needle) is col_must)
+        for value in values
+    )
+
+
+def _pair_possible(
+    shared: list[str],
+    row_index: dict[str, int],
+    col_index: dict[str, int],
+    row_values: frozenset[object],
+    col_values: frozenset[object],
+    row_pos: int,
+    col_pos: int,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+) -> bool:
+    """Return whether one needle assignment makes this INDEX pair feasible."""
+    for row_needle in row_values:
+        for col_needle in col_values:
+            if all(
+                _shared_cell_possible(
+                    _lookup_cell_type(env, address),
+                    limits,
+                    row_needle,
+                    col_needle,
+                    _axis_requirement(row_index[address], row_pos),
+                    _axis_requirement(col_index[address], col_pos),
+                )
+                for address in shared
+            ):
+                return True
+    return False
+
+
+def _joint_exact_match_targets(
+    array_range: ExcelRange,
+    row_ast: AstNode,
+    col_ast: AstNode,
+    row_dom: _FiniteInts | _IntBounds,
+    col_dom: _FiniteInts | _IntBounds,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    context: dict[str, int] | None,
+    current_sheet: str,
+) -> set[str] | None:
+    """Drop INDEX pairs that two exact MATCH calls cannot return together.
+
+    Independent axes over-approximate when one cell is on both lookups: it
+    cannot be a hit for both needles unless one value equals both. Returns
+    None when the filter does not apply or does not remove any pair, so the
+    caller keeps the rectangular emission. An empty result is also refused.
+    """
+    row_match = _exact_match_lookup(row_ast, current_sheet=current_sheet)
+    col_match = _exact_match_lookup(col_ast, current_sheet=current_sheet)
+    if row_match is None or col_match is None:
+        return None
+    row_call, row_ordered = row_match
+    col_call, col_ordered = col_match
+    row_index = _lookup_position_index(row_ordered)
+    col_index = _lookup_position_index(col_ordered)
+    shared = [address for address in row_index if address in col_index]
+    if not shared:
+        return None
+    row_values = _finite_needle_values(
+        row_call.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+    )
+    col_values = _finite_needle_values(
+        col_call.args[0],
+        env,
+        limits,
+        context=context,
+        current_sheet=current_sheet,
+    )
+    if (
+        row_values is None
+        or col_values is None
+        or len(row_values) * len(col_values) > limits.max_branches
+    ):
+        return None
+    cap = max(limits.max_cells, DynamicRefLimits().max_cells)
+    row_positions = _match_position_list(row_dom, cap)
+    col_positions = _match_position_list(col_dom, cap)
+    if row_positions is None or col_positions is None:
+        return None
+    pair_count = len(row_positions) * len(col_positions)
+    if pair_count == 0 or pair_count > cap:
+        return None
+
+    feasible: list[tuple[int, int]] = []
+    for row_pos in row_positions:
+        for col_pos in col_positions:
+            if _pair_possible(
+                shared,
+                row_index,
+                col_index,
+                row_values,
+                col_values,
+                row_pos,
+                col_pos,
+                env,
+                limits,
+            ):
+                feasible.append((row_pos, col_pos))
+    if not feasible or len(feasible) == pair_count:
+        return None
+
+    nrows = array_range.end_row - array_range.start_row + 1
+    ncols = array_range.end_col - array_range.start_col + 1
+    targets: set[str] = set()
+    for row_pos, col_pos in feasible:
+        targets |= _index_pair_to_addresses(array_range, row_pos, col_pos, nrows=nrows, ncols=ncols)
+    if len(targets) > limits.max_cells:
+        _raise_cell_limit(len(targets), limits.max_cells, what="INDEX target cells")
+    return targets
+
+
 def _infer_index_targets_core(
     array_range: ExcelRange,
     row_ast: AstNode,
@@ -3821,6 +4162,20 @@ def _infer_index_targets_core(
     nrows, ncols = array_range.shape
 
     if row_dom is not None and col_dom is not None:
+        if col_ast is not None:
+            joint = _joint_exact_match_targets(
+                array_range,
+                row_ast,
+                col_ast,
+                row_dom,
+                col_dom,
+                cell_type_env,
+                limits,
+                context=eval_context,
+                current_sheet=current_sheet,
+            )
+            if joint is not None:
+                return joint
         _cache_key = (array_range, row_dom, col_dom)
         cached = _emit_index_cache.get(_cache_key)
         if cached is not None:
