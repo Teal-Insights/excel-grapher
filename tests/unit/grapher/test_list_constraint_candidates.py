@@ -187,6 +187,71 @@ def test_single_offset_missing_leaf(tmp_path: Path) -> None:
     assert result == ["Sheet1!C1"]
 
 
+def test_blank_range_leaf_is_not_a_constraint_candidate(tmp_path: Path) -> None:
+    """A leaf declared in blank_ranges is numeric 0, not a missing constraint."""
+    path = tmp_path / "blank_offset_leaf.xlsx"
+    _build_single_offset_missing_leaf(path)
+    config = DynamicRefConfig(cell_type_env=_make_env({}), limits=DynamicRefLimits())
+    result = list_dynamic_ref_constraint_candidates(
+        path,
+        ["Sheet1!A1"],
+        dynamic_refs=config,
+        blank_ranges=("Sheet1!C1",),
+    )
+    assert result == []
+
+
+def test_blank_corner_keeps_candidate_index_scan_within_max_cells(tmp_path: Path) -> None:
+    """Candidate inference drops a blank corner column instead of exceeding max_cells.
+
+    Twelve rows and two surviving columns are 24 cells. One column fits in
+    ``max_cells`` of 20. The corner is absent from the cell-type env.
+    """
+    path = tmp_path / "blank_corner_index.xlsx"
+    wb = xlsxwriter.Workbook(path)
+    data = wb.add_worksheet("data")
+    imported = wb.add_worksheet("imp")
+    data.write(0, 0, "code")
+    for col, year in enumerate((2017, 2018, 2019), start=1):
+        data.write_number(0, col, year)
+    for row in range(1, 12):
+        data.write(row, 0, f"KEY.{row}")
+        for col in range(1, 4):
+            data.write_number(row, col, float(row * col))
+    imported.write(0, 0, "KEY.3")
+    imported.write_number(0, 1, 2018)
+    imported.write_formula(
+        0,
+        2,
+        "=INDEX(data!A1:D12,"
+        "MATCH(imp!A1,INDEX(data!A1:D12,,1),0),"
+        "MATCH(imp!B1,INDEX(data!A1:D12,1,),0))",
+    )
+    wb.close()
+
+    def _pinned(value: int) -> CellType:
+        return CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({value})))
+
+    config = DynamicRefConfig(
+        cell_type_env=_make_env(
+            {
+                "imp!B1": _pinned(2018),
+                "data!B1": _pinned(2017),
+                "data!C1": _pinned(2018),
+                "data!D1": _pinned(2019),
+            }
+        ),
+        limits=DynamicRefLimits(max_cells=20),
+    )
+    result = list_dynamic_ref_constraint_candidates(
+        path,
+        ["imp!C1"],
+        dynamic_refs=config,
+        blank_ranges=("data!A1",),
+    )
+    assert result == []
+
+
 def test_two_offsets_missing_leaves_collected_in_one_call(tmp_path: Path) -> None:
     """Collect missing leaves from multiple OFFSET formulas in one call.
 

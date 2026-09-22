@@ -1351,6 +1351,7 @@ def create_dependency_graph(
                                     named_range_ranges=named_range_ranges,
                                     current_row=_current_row,
                                     current_col=_current_col,
+                                    blank_rects=blank_rects or None,
                                 )
                                 indirect_targets = infer_dynamic_indirect_targets(
                                     formula_for_infer,
@@ -1371,6 +1372,7 @@ def create_dependency_graph(
                                     named_range_ranges=named_range_ranges,
                                     current_row=_current_row,
                                     current_col=_current_col,
+                                    blank_rects=blank_rects or None,
                                 )
                             except DynamicRefError as exc:
                                 cell_key = format_key(current_sheet, current_a1)
@@ -1989,12 +1991,15 @@ def list_dynamic_ref_constraint_candidates(
     max_depth: int = 50,
     max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
     type_analysis_cache: TypeAnalysisCache | None = None,
+    blank_ranges: Iterable[str] | None = None,
     undomained_exact_match: list[str] | None = None,
 ) -> list[str]:
     """Return sorted leaf cells missing dynamic-ref constraint entries.
 
     These are leaf cell addresses that feed dynamic-ref arguments
     (OFFSET/INDIRECT/INDEX) but have no entry in `dynamic_refs.cell_type_env`.
+    Cells in `blank_ranges` are structural numeric zeros, so they are not
+    candidates. INDEX and OFFSET inference uses those same rectangles.
 
     Unlike `create_dependency_graph`, this function does **not** raise
     `DynamicRefError` when constraints are missing.  Instead it collects all
@@ -2024,6 +2029,7 @@ def list_dynamic_ref_constraint_candidates(
         DynamicRefCellLimitError: An inferred OFFSET/INDEX/INDIRECT target set
             exceeds `max_cells`. The scan refuses to return an incomplete list.
     """
+    blank_rects = normalize_blank_range_specs(blank_ranges)
     if isinstance(workbook, fastpyxl.Workbook):
         wb_formulas = workbook
         _owns_wb = False
@@ -2243,13 +2249,17 @@ def list_dynamic_ref_constraint_candidates(
                 cand_limits = (
                     dynamic_refs.limits if dynamic_refs is not None else DynamicRefLimits()
                 )
-                if dynamic_ref_selectors_boundable_without_expand(
+                # Geometry-only selectors need no argument walk. Exact MATCH
+                # still reads the caller cell-type env, the same env graph
+                # build passes when it skips expansion.
+                skip_expand = dynamic_ref_selectors_boundable_without_expand(
                     formula_for_infer_cand,
                     current_sheet=current_sheet,
                     limits=cand_limits,
                     current_row=_current_row,
                     current_col=_current_col,
-                ):
+                )
+                if skip_expand:
                     argument_addrs = set()
 
                 # Walk argument_addrs to statically-reachable leaves.
@@ -2307,6 +2317,8 @@ def list_dynamic_ref_constraint_candidates(
                     )
 
                 missing = leaves_missing_cell_type_constraints(leaves, cell_type_env)
+                if blank_rects:
+                    missing = {a for a in missing if not address_in_blank_ranges(a, blank_rects)}
                 if missing:
                     collected.update(missing)
                     # Skip infer — dynamic targets unknown without full constraints.
@@ -2365,6 +2377,7 @@ def list_dynamic_ref_constraint_candidates(
                                 type_analysis_cache=type_analysis_cache,
                                 workbook_sha256=_wb_sha256_cand,
                                 get_cell_ast=_get_cell_ast,
+                                blank_rects=blank_rects or None,
                             )
 
                     dyn_targets: set[str] = set()
@@ -2380,6 +2393,7 @@ def list_dynamic_ref_constraint_candidates(
                             current_row=_current_row,
                             current_col=_current_col,
                             allow_wide_bounds=True,
+                            blank_rects=blank_rects or None,
                         )
                     with _suppress_recoverable_dynamic_ref_errors():
                         dyn_targets |= infer_dynamic_indirect_targets(
@@ -2402,6 +2416,7 @@ def list_dynamic_ref_constraint_candidates(
                             named_range_ranges=named_range_ranges,
                             current_row=_current_row,
                             current_col=_current_col,
+                            blank_rects=blank_rects or None,
                         )
                     for addr in sort_node_keys(dyn_targets, sheet_order=sheetnames):
                         sh, a1 = parse_address(addr)

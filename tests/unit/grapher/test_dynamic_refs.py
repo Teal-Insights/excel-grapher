@@ -24,6 +24,7 @@ from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher import parser as parser_mod
+from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.dynamic_refs import (
@@ -1774,6 +1775,31 @@ def test_exact_match_numeric_zero_is_not_an_undomained_warning() -> None:
     assert _undomained_match_warnings(caught) == []
 
 
+def test_blank_range_overlap_is_not_an_undomained_warning() -> None:
+    """A blank rectangle is numeric 0, so an overlap is not a missing type.
+
+    The needle can be 0 or 2018, so the blank corner stays a candidate. The
+    untyped neighbor is the only lookup cell kept for lack of a domain.
+    """
+    formula = "=INDEX(data!A1:C1,1,MATCH(imp!K1,data!A1:C1,0))"
+    env = _make_env(
+        {
+            "imp!K1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({0, 2018}))),
+            "data!C1": _number_enum(2018),
+        }
+    )
+    with pytest.warns(ExactMatchUndomainedCellWarning) as recorded:
+        targets = infer_dynamic_index_targets(
+            formula,
+            current_sheet="imp",
+            cell_type_env=env,
+            blank_rects=normalize_blank_range_specs(("data!A1",)),
+        )
+    assert targets == {"data!A1", "data!B1", "data!C1"}
+    assert len(recorded) == 1
+    assert str(recorded[0].message) == ("Exact MATCH kept 1 lookup cell with no domain: data!B1")
+
+
 def test_exact_match_year_header_warns_for_the_untyped_corner_only() -> None:
     """Pinned year scan stops at the certain hit, so later untyped cells are silent.
 
@@ -1966,6 +1992,139 @@ def test_exact_match_numeric_keeps_untyped_lookup_cell() -> None:
     )
     targets = infer_dynamic_index_targets(formula, current_sheet="imp", cell_type_env=env)
     assert targets == {"data!A1", "data!C1"}
+
+
+def test_exact_match_blank_range_cell_is_numeric_zero() -> None:
+    """A lookup cell only in `blank_ranges` is numeric 0 during exact MATCH.
+
+    Issue #979: that is the same singleton argument-env expansion already
+    assigns. A non-zero needle misses it. A needle of 0 is a certain hit, so
+    later cells are unreachable. An untyped cell with no blank declaration
+    stays a candidate. A cell that already has a domain keeps that domain.
+    """
+    formula = "=INDEX(data!A1:C1,1,MATCH(imp!K1,data!A1:C1,0))"
+    blanks = normalize_blank_range_specs(("data!A1",))
+
+    year = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=_make_env(
+            {
+                "imp!K1": _number_enum(2018),
+                "data!C1": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert year == {"data!B1", "data!C1"}
+
+    zero = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=_make_env(
+            {
+                "imp!K1": _number_enum(0),
+                "data!C1": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert zero == {"data!A1"}
+
+    typed = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=_make_env(
+            {
+                "imp!K1": _number_enum(2018),
+                "data!A1": _number_enum(2018),
+                "data!B1": _number_enum(2017),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert typed == {"data!A1"}
+
+
+def test_offset_exact_match_blank_range_cell_is_numeric_zero() -> None:
+    """OFFSET(MATCH) uses the same blank-rectangle rule as INDEX (#979).
+
+    The lookup cell in `blank_rects` is numeric 0. Needle 2018 misses it and
+    lands on the pinned year. Needle 0 is a certain hit on that cell, so the
+    row offset is 0. An untyped lookup cell with no blank declaration stays
+    a candidate.
+    """
+    formula = "=OFFSET(Chart!A1,MATCH(Inputs!A1,Lookup!A1:A3,0)-1,0)"
+    blanks = normalize_blank_range_specs(("Lookup!A1",))
+
+    year = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Chart",
+        cell_type_env=_make_env(
+            {
+                "Inputs!A1": _number_enum(2018),
+                "Lookup!A2": _number_enum(2017),
+                "Lookup!A3": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert year == {"Chart!A3"}
+
+    zero = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Chart",
+        cell_type_env=_make_env(
+            {
+                "Inputs!A1": _number_enum(0),
+                "Lookup!A2": _number_enum(2017),
+                "Lookup!A3": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert zero == {"Chart!A1"}
+
+    untyped = infer_dynamic_offset_targets(
+        formula,
+        current_sheet="Chart",
+        cell_type_env=_make_env(
+            {
+                "Inputs!A1": _number_enum(2018),
+                "Lookup!A3": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert untyped == {"Chart!A2", "Chart!A3"}
+
+
+def test_joint_blank_corner_cannot_satisfy_both_string_needles() -> None:
+    """A shared blank corner is numeric 0 in the joint exact-MATCH filter.
+
+    Every lookup cell misses ``KEY``, so each axis keeps its full extent.
+    An untyped corner would still look able to equal both needles at once.
+    Numeric 0 cannot, so the corner cell is not an INDEX target.
+    """
+    formula = "=INDEX(data!A1:C3,MATCH(imp!R1,data!A1:A3,0),MATCH(imp!C1,data!A1:C1,0))"
+    env = _make_env(
+        {
+            "imp!R1": _string_enum("KEY"),
+            "imp!C1": _string_enum("KEY"),
+            "data!A2": _string_enum("no"),
+            "data!A3": _string_enum("no"),
+            "data!B1": _string_enum("no"),
+            "data!C1": _string_enum("no"),
+        }
+    )
+    targets = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=env,
+        blank_rects=normalize_blank_range_specs(("data!A1",)),
+    )
+    assert "data!A1" not in targets
+    assert targets == {"data!B2", "data!B3", "data!C2", "data!C3"}
 
 
 def test_exact_match_numeric_keeps_numeric_text_enum() -> None:

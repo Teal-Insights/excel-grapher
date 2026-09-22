@@ -26,6 +26,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefTraceEvent,
     dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
+    infer_dynamic_index_targets,
     trace_dynamic_refs,
 )
 
@@ -317,6 +318,98 @@ def test_quoted_sheet_omitted_index_match_skips_expand(tmp_path: Path) -> None:
     assert "'data all'!C3" in deps
     assert "'data all'!B2" not in deps
     assert "'data all'!D2" not in deps
+
+
+def test_quoted_sheet_blank_corner_is_numeric_zero_without_expand(tmp_path: Path) -> None:
+    """A blank_ranges corner is numeric 0 during exact MATCH, without expand (#979).
+
+    Year headers are pinned and the corner is absent from the cell-type env.
+    Needle 2018 misses that 0, so targets are only the 2018 column. Needle 0
+    is a certain hit on the corner. Argument-env expansion still does not run.
+    """
+    excel_path = tmp_path / "quoted-blank-corner.xlsx"
+    wb = Workbook()
+    data = wb.active
+    assert data is not None
+    data.title = "data all"
+    data["A1"] = "code"
+    data["B1"] = 2017
+    data["C1"] = 2018
+    data["D1"] = 2019
+    for row in range(2, 7):
+        data.cell(row, 1, f"KEY.{row}")
+        for col in range(2, 5):
+            data.cell(row, col, float(row * col))
+    imported = wb.create_sheet("Imported data")
+    imported["A1"] = "KEY.3"
+    imported["B1"] = 2018
+    imported["C1"] = (
+        "=INDEX('data all'!A1:D6,"
+        "MATCH(A1,INDEX('data all'!A1:D6,,1),0),"
+        "MATCH(B1,INDEX('data all'!A1:D6,1,),0))"
+    )
+    wb.save(excel_path)
+
+    def _pinned_number(value: int) -> CellType:
+        return CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({value})))
+
+    limits = DynamicRefLimits(max_cells=20)
+    blanks = ("'data all'!A1",)
+    expand_calls = 0
+    original_expand = expand_leaf_env_to_argument_env
+    original_index = infer_dynamic_index_targets
+    captured_targets: list[set[str]] = []
+
+    def counting_expand(*args: object, **kwargs: object):
+        nonlocal expand_calls
+        expand_calls += 1
+        return original_expand(*args, **kwargs)
+
+    def capturing_index(*args: object, **kwargs: object) -> set[str]:
+        targets = original_index(*args, **kwargs)
+        captured_targets.append(set(targets))
+        return targets
+
+    def _targets_for(needle: int) -> set[str]:
+        env = {
+            normalize_cell_type_env_key("'Imported data'!B1"): _pinned_number(needle),
+            normalize_cell_type_env_key("'data all'!B1"): _pinned_number(2017),
+            normalize_cell_type_env_key("'data all'!C1"): _pinned_number(2018),
+            normalize_cell_type_env_key("'data all'!D1"): _pinned_number(2019),
+        }
+        captured_targets.clear()
+        with (
+            patch(
+                "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+                side_effect=counting_expand,
+            ),
+            patch(
+                "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
+                side_effect=counting_expand,
+            ),
+            patch(
+                "excel_grapher.grapher.builder.infer_dynamic_index_targets",
+                side_effect=capturing_index,
+            ),
+        ):
+            create_dependency_graph(
+                excel_path,
+                ["'Imported data'!C1"],
+                load_values=True,
+                blank_ranges=blanks,
+                dynamic_refs=DynamicRefConfig(cell_type_env=env, limits=limits),
+            )
+        assert len(captured_targets) == 1
+        return captured_targets[0]
+
+    year_targets = _targets_for(2018)
+    assert expand_calls == 0
+    assert year_targets == {f"'data all'!C{row}" for row in range(1, 7)}
+
+    zero_targets = _targets_for(0)
+    assert expand_calls == 0
+    assert "'data all'!A1" in zero_targets
+    assert zero_targets == {f"'data all'!A{row}" for row in range(1, 7)}
 
 
 def test_index_cell_selector_still_fail_closes_without_constraint(tmp_path: Path) -> None:
