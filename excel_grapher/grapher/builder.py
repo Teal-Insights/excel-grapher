@@ -1349,6 +1349,7 @@ def create_dependency_graph(
                                     named_range_ranges=named_range_ranges,
                                     current_row=_current_row,
                                     current_col=_current_col,
+                                    blank_rects=blank_rects or None,
                                 )
                                 indirect_targets = infer_dynamic_indirect_targets(
                                     formula_for_infer,
@@ -1369,6 +1370,7 @@ def create_dependency_graph(
                                     named_range_ranges=named_range_ranges,
                                     current_row=_current_row,
                                     current_col=_current_col,
+                                    blank_rects=blank_rects or None,
                                 )
                             except DynamicRefError as exc:
                                 cell_key = format_key(current_sheet, current_a1)

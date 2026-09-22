@@ -308,6 +308,7 @@ def _flat_provenance_one_string(
                         named_range_ranges=named_range_ranges,
                         current_row=_current_row,
                         current_col=_current_col,
+                        blank_rects=blank_rects,
                     )
                     indirect_targets = infer_dynamic_indirect_targets(
                         formula_for_infer,
@@ -328,6 +329,7 @@ def _flat_provenance_one_string(
                         named_range_ranges=named_range_ranges,
                         current_row=_current_row,
                         current_col=_current_col,
+                        blank_rects=blank_rects,
                     )
                     if dynamic_expansion_cache is not None:
                         dynamic_expansion_cache[_cache_key] = (

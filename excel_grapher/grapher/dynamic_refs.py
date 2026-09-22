@@ -117,6 +117,9 @@ DynamicRefTraceFn = Callable[[DynamicRefTraceEvent], None]
 """Callback signature for receiving trace events."""
 
 _active_tracer: ContextVar[DynamicRefTraceFn | None] = ContextVar("_active_tracer", default=None)
+_exact_match_blank_rects: ContextVar[Sequence[BlankRangeRect] | None] = ContextVar(
+    "_exact_match_blank_rects", default=None
+)
 
 
 @contextmanager
@@ -131,6 +134,25 @@ def trace_dynamic_refs(callback: DynamicRefTraceFn) -> Iterator[None]:
         yield
     finally:
         _active_tracer.reset(token)
+
+
+@contextmanager
+def _blank_rects_for_exact_match(
+    blank_rects: Sequence[BlankRangeRect] | None,
+) -> Iterator[None]:
+    """Expose structural blanks to the exact-MATCH scan for one inference call.
+
+    Empty rectangles leave the scan unchanged. A nested call restores the
+    previous rectangles when it exits.
+    """
+    if not blank_rects:
+        yield
+        return
+    token = _exact_match_blank_rects.set(blank_rects)
+    try:
+        yield
+    finally:
+        _exact_match_blank_rects.reset(token)
 
 
 def _emit_trace(event: DynamicRefTraceEvent) -> None:
@@ -1074,6 +1096,7 @@ def infer_dynamic_offset_targets(
     current_row: int | None = None,
     current_col: int | None = None,
     allow_wide_bounds: bool = False,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> set[str]:
     """Infer the union of all possible OFFSET targets for a formula.
 
@@ -1089,10 +1112,41 @@ def infer_dynamic_offset_targets(
       `max_branches` become a bounding rectangle of possible OFFSET results
       instead of raising `DynamicRefError`, so constraint-candidate scanning
       can still reach downstream leaves.
+
+    `blank_rects` applies only inside an exact-MATCH selector: an untyped
+    lookup cell in those rectangles is numeric `0`.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
+    with _blank_rects_for_exact_match(blank_rects):
+        return _infer_dynamic_offset_targets(
+            formula,
+            current_sheet=current_sheet,
+            cell_type_env=cell_type_env,
+            limits=limits,
+            bounds=bounds,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            current_row=current_row,
+            current_col=current_col,
+            allow_wide_bounds=allow_wide_bounds,
+        )
+
+
+def _infer_dynamic_offset_targets(
+    formula: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits | None = None,
+    bounds: WorkbookBoundsProtocol | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+    allow_wide_bounds: bool = False,
+) -> set[str]:
     t0 = time.perf_counter()
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
@@ -1139,15 +1193,46 @@ def infer_dynamic_index_targets(
     named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
     current_row: int | None = None,
     current_col: int | None = None,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> set[str]:
     """Infer the union of all possible standalone INDEX targets for a formula.
 
     INDEX calls that appear as the first argument of OFFSET are skipped - those
     are already handled by `infer_dynamic_offset_targets`.
+
+    `blank_rects` applies only inside the exact-MATCH scan: an untyped lookup
+    cell in those rectangles is numeric `0`. Callers that skip argument-env
+    expansion still do not expand.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return set()
 
+    with _blank_rects_for_exact_match(blank_rects):
+        return _infer_dynamic_index_targets(
+            formula,
+            current_sheet=current_sheet,
+            cell_type_env=cell_type_env,
+            limits=limits,
+            bounds=bounds,
+            named_ranges=named_ranges,
+            named_range_ranges=named_range_ranges,
+            current_row=current_row,
+            current_col=current_col,
+        )
+
+
+def _infer_dynamic_index_targets(
+    formula: str,
+    *,
+    current_sheet: str,
+    cell_type_env: CellTypeEnv,
+    limits: DynamicRefLimits | None = None,
+    bounds: WorkbookBoundsProtocol | None = None,
+    named_ranges: Mapping[str, tuple[str, str]] | None = None,
+    named_range_ranges: Mapping[str, tuple[str, str, str]] | None = None,
+    current_row: int | None = None,
+    current_col: int | None = None,
+) -> set[str]:
     t0 = time.perf_counter()
     lim = limits or DynamicRefLimits()
     out: set[str] = set()
@@ -2622,7 +2707,7 @@ def _infer_enum_exact_match_position(
 
     def verdict_of(cell_addr: str) -> _ExactMatchVerdict:
         return _cell_may_equal_exact_match_values(
-            _lookup_cell_type(env, cell_addr),
+            _lookup_cell_type_for_exact_match(env, cell_addr),
             needles,
             limits,
             folded_string_needles=folded,
@@ -2664,7 +2749,8 @@ def _infer_exact_match_position_domain(
     Numeric needles compare through integer overlap. Other finite enums compare
     through exact MATCH equality. Cells with no deciding domain stay candidates,
     so one untyped lookup cell narrows the axis to that cell plus any real hits
-    instead of the whole vector. A singleton is the common fully-typed case.
+    instead of the whole vector. A cell with no domain that lies in the active
+    blank rectangles is numeric `0`. A singleton is the common fully-typed case.
 
     Lookup addresses are materialized only after the needle has a finite
     domain and the lookup extent fits the scan budget. Callers that only need
@@ -2707,7 +2793,7 @@ def _infer_exact_match_position_domain(
 
     def verdict_of(cell_addr: str) -> _ExactMatchVerdict:
         return _cell_may_equal_numeric_needle(
-            _lookup_cell_type(env, cell_addr),
+            _lookup_cell_type_for_exact_match(env, cell_addr),
             lookup_dom,
             limits,
         )
@@ -2824,6 +2910,22 @@ def _domain_without_zero(
 def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
     """Resolve env entry; keys match `excel_grapher.core.cell_types.normalize_cell_type_env_key`."""
     return lookup_cell_type(env, address)
+
+
+def _lookup_cell_type_for_exact_match(env: CellTypeEnv, address: str) -> CellType | None:
+    """Return the cell type the exact-MATCH scan uses for `address`.
+
+    A cell with no other domain that lies in the active blank rectangles is
+    numeric `0`, the same singleton argument-env expansion assigns. Any other
+    untyped cell stays unknown, so the scan keeps it as a candidate.
+    """
+    cell_type = _lookup_cell_type(env, address)
+    if cell_type is not None:
+        return cell_type
+    rects = _exact_match_blank_rects.get()
+    if rects and address_in_blank_ranges(address, rects):
+        return _BLANK_RANGE_LEAF_TYPE
+    return None
 
 
 def _cell_has_relation(

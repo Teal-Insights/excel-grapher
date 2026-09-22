@@ -24,6 +24,7 @@ from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher import dynamic_refs as dynamic_refs_mod
 from excel_grapher.grapher import parser as parser_mod
+from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
 from excel_grapher.grapher.builder import _format_missing_leaves
 from excel_grapher.grapher.dependency_provenance import DependencyCause
 from excel_grapher.grapher.dynamic_refs import (
@@ -1773,6 +1774,58 @@ def test_exact_match_numeric_keeps_untyped_lookup_cell() -> None:
     )
     targets = infer_dynamic_index_targets(formula, current_sheet="imp", cell_type_env=env)
     assert targets == {"data!A1", "data!C1"}
+
+
+def test_exact_match_blank_range_cell_is_numeric_zero() -> None:
+    """A lookup cell only in `blank_ranges` is numeric 0 during exact MATCH.
+
+    Issue #979: that is the same singleton argument-env expansion already
+    assigns. A non-zero needle misses it. A needle of 0 is a certain hit, so
+    later cells are unreachable. An untyped cell with no blank declaration
+    stays a candidate. A cell that already has a domain keeps that domain.
+    """
+    formula = "=INDEX(data!A1:C1,1,MATCH(imp!K1,data!A1:C1,0))"
+    blanks = normalize_blank_range_specs(("data!A1",))
+
+    year = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=_make_env(
+            {
+                "imp!K1": _number_enum(2018),
+                "data!C1": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert year == {"data!B1", "data!C1"}
+
+    zero = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=_make_env(
+            {
+                "imp!K1": _number_enum(0),
+                "data!C1": _number_enum(2018),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert zero == {"data!A1"}
+
+    typed = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=_make_env(
+            {
+                "imp!K1": _number_enum(2018),
+                "data!A1": _number_enum(2018),
+                "data!B1": _number_enum(2017),
+            }
+        ),
+        blank_rects=blanks,
+    )
+    assert typed == {"data!A1"}
 
 
 def test_exact_match_numeric_keeps_numeric_text_enum() -> None:
