@@ -63,7 +63,7 @@ bindings for a workbook.
    A dynamic-ref candidate is an A1 address; the sidecar still wants a series.
    A scalar `input` with `domain`, or a non-blank `constant`, is enough to
    extract. It need not be export-complete (`validation.catalog: false`).
-6. **Do not** dump burndown rows, sheet geometry, or later `#724` candidates into
+6. **Do not** dump burndown rows, sheet geometry, or coverage shards into
    YAML as a first pass. Walk sheets and tables with domain meaning, and write
    the intended series correctly once.
 7. Run bundled checks (`validate` then `audit`) until resolution is clean.
@@ -74,7 +74,7 @@ bindings for a workbook.
    remaining holes with the same semantic standard (often another matrix).
 8. Optional: `bindings upsert` writes **one** already-reflected series after
    fail-closed checks. A workbook-specific script that upserts many semantic
-   families is allowed. A generic catalog → four-file replace is not.
+   families is allowed. A generic bulk catalog emit → file replace is not.
 9. Return the sidecars plus a short validation summary.
 
 Assets under `assets/` are **pedagogical** (how a series looks). They are **not
