@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.7 (2026-09-22)
+
+### Bug Fixes
+
+- **grapher**: Narrow exact MATCH past partial lookup domains
+  ([#976](https://github.com/Teal-Insights/excel-grapher/pull/976),
+  [`0a6f484`](https://github.com/Teal-Insights/excel-grapher/commit/0a6f4842e114b86728ea0d55fd8dcc29466702c8))
+
+- **grapher**: Stop exact MATCH at a certain hit
+  ([#976](https://github.com/Teal-Insights/excel-grapher/pull/976),
+  [`0a6f484`](https://github.com/Teal-Insights/excel-grapher/commit/0a6f4842e114b86728ea0d55fd8dcc29466702c8))
+
+
 ## v23.6.6 (2026-09-22)
 
 ### Bug Fixes
