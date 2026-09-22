@@ -4924,7 +4924,7 @@ def _pair_possible(
         for col_needle in col_values:
             if all(
                 _shared_cell_possible(
-                    _lookup_cell_type(env, address),
+                    _lookup_cell_type_for_exact_match(env, address),
                     limits,
                     row_needle,
                     col_needle,

@@ -1881,6 +1881,34 @@ def test_offset_exact_match_blank_range_cell_is_numeric_zero() -> None:
     assert untyped == {"Chart!A2", "Chart!A3"}
 
 
+def test_joint_blank_corner_cannot_satisfy_both_string_needles() -> None:
+    """A shared blank corner is numeric 0 in the joint exact-MATCH filter.
+
+    Every lookup cell misses ``KEY``, so each axis keeps its full extent.
+    An untyped corner would still look able to equal both needles at once.
+    Numeric 0 cannot, so the corner cell is not an INDEX target.
+    """
+    formula = "=INDEX(data!A1:C3,MATCH(imp!R1,data!A1:A3,0),MATCH(imp!C1,data!A1:C1,0))"
+    env = _make_env(
+        {
+            "imp!R1": _string_enum("KEY"),
+            "imp!C1": _string_enum("KEY"),
+            "data!A2": _string_enum("no"),
+            "data!A3": _string_enum("no"),
+            "data!B1": _string_enum("no"),
+            "data!C1": _string_enum("no"),
+        }
+    )
+    targets = infer_dynamic_index_targets(
+        formula,
+        current_sheet="imp",
+        cell_type_env=env,
+        blank_rects=normalize_blank_range_specs(("data!A1",)),
+    )
+    assert "data!A1" not in targets
+    assert targets == {"data!B2", "data!B3", "data!C2", "data!C3"}
+
+
 def test_exact_match_numeric_keeps_numeric_text_enum() -> None:
     """Numeric text can equal a number under exact MATCH, so it stays a candidate."""
     formula = "=INDEX(data!A1:B1,1,MATCH(imp!K1,data!A1:B1,0))"
