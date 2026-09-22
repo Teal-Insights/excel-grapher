@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.3 (2026-09-22)
+
+### Bug Fixes
+
+- **export**: Keep domain truthiness stable and cache only requested cells
+  ([#967](https://github.com/Teal-Insights/excel-grapher/pull/967),
+  [`178362e`](https://github.com/Teal-Insights/excel-grapher/commit/178362e57d4dd617c5ed88061a87f362fef2983b))
+
+- **export**: Stop re-parsing sheets while compiling from_workbook domains
+  ([#967](https://github.com/Teal-Insights/excel-grapher/pull/967),
+  [`178362e`](https://github.com/Teal-Insights/excel-grapher/commit/178362e57d4dd617c5ed88061a87f362fef2983b))
+
+
 ## v23.6.2 (2026-09-22)
 
 ### Bug Fixes
