@@ -350,7 +350,11 @@ _BLANK_RANGE_LEAF_TYPE = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=f
 
 
 class _NormalizedCellTypeCache:
-    """Write-through cache that stores `CellTypeEnv` keys in canonical form."""
+    """Write-through view that stores `CellTypeEnv` keys in canonical form.
+
+    Used only when the caller shares a plain `dict`. A `CellTypeEnvDict` is
+    used directly so already-canonical membership stays a raw hash lookup.
+    """
 
     __slots__ = ("_store",)
 
@@ -409,7 +413,9 @@ def expand_leaf_env_to_argument_env(
 
     Returned (and shared-cache) keys are `normalize_cell_type_env_key` of each
     address so `_lookup_cell_type` / `lookup_cell_type` can resolve graph
-    `format_key` addresses after expand (issue #972).
+    `format_key` addresses after expand (issue #972). A `CellTypeEnvDict`
+    shared cache is used in place (no O(|cache|) re-canonicalize); a plain
+    dict is rewritten once, then writes go through a normalizing view.
 
     When `shared_cell_type_cache` is provided, intermediate cell type inferences
     are persisted across multiple calls.  This avoids redundant work when many
@@ -429,8 +435,11 @@ def expand_leaf_env_to_argument_env(
     backing: dict[str, CellType] = (
         shared_cell_type_cache if shared_cell_type_cache is not None else CellTypeEnvDict()
     )
-    canonicalize_cell_type_env_keys(backing)
-    cache = _NormalizedCellTypeCache(backing)
+    if isinstance(backing, CellTypeEnvDict):
+        cache: CellTypeEnvDict | _NormalizedCellTypeCache = backing
+    else:
+        canonicalize_cell_type_env_keys(backing)
+        cache = _NormalizedCellTypeCache(backing)
     in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}

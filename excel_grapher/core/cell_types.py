@@ -75,9 +75,12 @@ class CellTypeEnvDict(dict[str, CellType]):
     """Mutable `CellTypeEnv` that stores keys after `normalize_cell_type_env_key`.
 
     Graph code passes `format_key` addresses (sheet quotes when Excel requires
-    them). Lookups accept that spelling or the unquoted env form; writes always
-    persist the normalized key so `lookup_cell_type` and `env.get(normalized)`
-    agree.
+    them). `in` / `[]` / `get` accept that spelling or the unquoted env form;
+    writes always persist the normalized key so `lookup_cell_type` and
+    `env.get(normalized)` agree.
+
+    `keys()`, `items()`, and iteration yield only the stored (normalized)
+    spelling. `quoted in env` can be true while `quoted in set(env)` is false.
     """
 
     def __init__(
