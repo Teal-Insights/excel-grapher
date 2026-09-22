@@ -1873,7 +1873,10 @@ def _resolved_index_axis(node: AstNode, axes: _IndexAxisEnv | None) -> int | Non
     )
     if result.diagnostic is not None:
         return None
-    return _singleton_int(result.domain)
+    resolved = _singleton_int(result.domain)
+    if resolved is None or resolved < 0:
+        return None
+    return resolved
 
 
 def _index_vector_from_bounds(
@@ -1887,8 +1890,9 @@ def _index_vector_from_bounds(
 
     Supports omitted axes, singleton positive selectors (literals or densified
     under `axes`), and Excel's `0` form that returns an entire row/column/array.
-    Two-arg `INDEX(array, k)` indexes a 1-D vector. A trailing empty column
-    (`INDEX(array, k,)`) is the 2-D form and selects that row.
+    Two-arg `INDEX(array, k)` indexes a 1-D vector, and does not resolve when
+    `array` has more than one row and column (Excel `#REF!`). A trailing empty
+    column (`INDEX(array, k,)`) is the 2-D form and selects that row.
     """
     sheet, rlo, rhi, clo, chi = bounds
     nrows = rhi - rlo + 1
@@ -1931,6 +1935,9 @@ def _index_vector_from_bounds(
                 return None
             r = rlo + row_sel - 1
             return _range_node_from_bounds(sheet, r, r, clo, chi)
+        # Two-arg INDEX on a 2-D block is #REF! in Excel.
+        if col_missing:
+            return None
         if row_sel > nrows:
             return None
         r = rlo + row_sel - 1
@@ -2083,7 +2090,7 @@ def _index_dynamic_axis_match_extent(node: AstNode) -> int | None:
 
     An omitted or `0` axis still yields a vector of known length. A specific
     (unknown) axis over a 1-D array, or both specific axes over a 2-D array,
-    yields a scalar.
+    yields a scalar. Two-arg `INDEX` on a 2-D block has no lookup (`#REF!`).
     """
     if not isinstance(node, FunctionCallNode) or node.name.upper() != "INDEX":
         return None
@@ -2111,7 +2118,7 @@ def _index_dynamic_axis_match_extent(node: AstNode) -> int | None:
     if col_missing:
         if nrows == 1 or ncols == 1:
             return 1
-        return ncols
+        return None
     if col_empty or col_zero:
         return ncols
     return 1

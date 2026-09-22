@@ -1925,6 +1925,33 @@ def test_ordered_match_lookup_cells_densified_zero_is_whole_axis() -> None:
     assert ordered == ["Data!B1", "Data!B2", "Data!B3"]
 
 
+def test_ordered_match_lookup_cells_negative_axis_is_not_a_vector() -> None:
+    """A densified negative INDEX axis is not a lookup vector."""
+    env = {
+        "Sheet!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({-1}))),
+    }
+    lookup = parse_ast("=INDEX(Data!A1:C3,,Sheet!A1)")
+    assert (
+        dynamic_refs_mod._ordered_match_lookup_cells(
+            lookup,
+            current_sheet="Sheet",
+            env=env,
+            limits=DynamicRefLimits(),
+        )
+        is None
+    )
+
+
+def test_two_arg_index_on_block_is_not_a_lookup_vector() -> None:
+    """INDEX(A1:T3,1) is #REF! in Excel; INDEX(A1:T3,1,) is row 1."""
+    block = parse_ast("=INDEX(Data!A1:T3,1)")
+    assert dynamic_refs_mod._ordered_match_lookup_cells(block, current_sheet="Data") is None
+    assert dynamic_refs_mod._static_match_lookup_extent(block) is None
+    row = parse_ast("=INDEX(Data!A1:T3,1,)")
+    assert dynamic_refs_mod._static_match_lookup_extent(row) == 20
+    assert dynamic_refs_mod._ordered_match_lookup_cells(row, current_sheet="Data")[0] == "Data!A1"
+
+
 def test_ordered_match_lookup_cells_index_axis_stays_closed_when_not_singleton() -> None:
     """A multi-value INDEX axis is not a single MATCH lookup vector."""
     env = {

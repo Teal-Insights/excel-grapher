@@ -66,6 +66,49 @@ def test_index_omit_row_returns_column_for_match() -> None:
     assert results["S!E1"] == 2
 
 
+def test_index_one_row_empty_column_matches_explicit_zero() -> None:
+    """INDEX(header,1,) is the row; INDEX(header,1) is the first cell.
+
+    Desktop Excel 16.0 keeps the trailing comma. Exact MATCH of a later header
+    is the column index for the empty-column form and #N/A for the two-arg form.
+    """
+    graph = _make_graph(
+        _make_node("S!A1", None, "h1"),
+        _make_node("S!B1", None, "h2"),
+        _make_node("S!C1", None, "DSA"),
+        _make_node("S!D1", '=MATCH("DSA",INDEX(S!A1:S!C1,1,),0)', None),
+        _make_node("S!D2", '=MATCH("DSA",INDEX(S!A1:S!C1,1),0)', None),
+        _make_node("S!D3", '=MATCH("h1",INDEX(S!A1:S!C1,1),0)', None),
+        _make_node("S!D4", '=MATCH("DSA",INDEX(S!A1:S!C1,1,0),0)', None),
+    )
+    results = evaluate_targets(graph, ["S!D1", "S!D2", "S!D3", "S!D4"])
+    assert results["S!D1"] == 3
+    assert results["S!D2"] == XlError.NA
+    assert results["S!D3"] == 1
+    assert results["S!D4"] == 3
+
+
+def test_index_two_arg_on_block_is_ref() -> None:
+    """Two-arg INDEX on a 2-D block is #REF!; the empty-column form is that row."""
+    graph = _make_graph(
+        _make_node("S!A1", None, 1),
+        _make_node("S!B1", None, 2),
+        _make_node("S!C1", None, 3),
+        _make_node("S!A2", None, 4),
+        _make_node("S!B2", None, 5),
+        _make_node("S!C2", None, 6),
+        _make_node("S!E1", "=INDEX(S!A1:S!C2,1)", None),
+        _make_node("S!E2", "=SUM(INDEX(S!A1:S!C2,1))", None),
+        _make_node("S!E3", "=SUM(INDEX(S!A1:S!C2,1,))", None),
+        _make_node("S!E4", "=SUM(INDEX(S!A1:S!C2,1,0))", None),
+    )
+    results = evaluate_targets(graph, ["S!E1", "S!E2", "S!E3", "S!E4"])
+    assert results["S!E1"] == XlError.REF
+    assert results["S!E2"] == XlError.REF
+    assert results["S!E3"] == 6
+    assert results["S!E4"] == 6
+
+
 def test_index_omit_col_returns_row_for_match() -> None:
     """INDEX(range,k,) returns row k for 2-D arrays."""
     graph = _make_graph(

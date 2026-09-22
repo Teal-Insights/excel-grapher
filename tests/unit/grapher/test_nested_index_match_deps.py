@@ -149,6 +149,14 @@ def test_narrow_static_index_one_row_empty_column_is_the_header() -> None:
         narrow_static_index_lookup_vectors("=INDEX(Data!A1:T1,1)", current_sheet="Data")
         == "=Data!A1"
     )
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T3,1)", current_sheet="Data")
+        == "=INDEX(Data!A1:T3,1)"
+    )
+    assert (
+        narrow_static_index_lookup_vectors("=INDEX(Data!A1:T3,1,)", current_sheet="Data")
+        == "=Data!A1:T1"
+    )
 
 
 def test_narrow_static_index_keeps_dynamic_selectors_and_quoted_sheets() -> None:
