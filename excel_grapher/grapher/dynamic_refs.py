@@ -28,11 +28,14 @@ from excel_grapher.core.cell_types import (
     CellKind,
     CellType,
     CellTypeEnv,
+    CellTypeEnvDict,
     EnumDomain,
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
+    canonicalize_cell_type_env_keys,
     constraints_to_cell_type_env,
+    lookup_cell_type,
     normalize_cell_type_env_key,
 )
 from excel_grapher.core.coercions import excel_casefold, try_coerce_string_to_float
@@ -346,6 +349,30 @@ _BLANK_RANGE_LEAF_TYPE = CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=f
 """Excel blank used as an OFFSET/INDEX selector: numeric `0` (empty cell coerce)."""
 
 
+class _NormalizedCellTypeCache:
+    """Write-through cache that stores `CellTypeEnv` keys in canonical form."""
+
+    __slots__ = ("_store",)
+
+    def __init__(self, store: dict[str, CellType]) -> None:
+        self._store = store
+
+    def __setitem__(self, key: str, value: CellType) -> None:
+        self._store[normalize_cell_type_env_key(key)] = value
+
+    def __getitem__(self, key: str) -> CellType:
+        return self._store[normalize_cell_type_env_key(key)]
+
+    def __contains__(self, key: object) -> bool:
+        return isinstance(key, str) and normalize_cell_type_env_key(key) in self._store
+
+    def get(self, key: str, default: CellType | None = None) -> CellType | None:
+        return self._store.get(normalize_cell_type_env_key(key), default)
+
+    def __len__(self) -> int:
+        return len(self._store)
+
+
 def expand_leaf_env_to_argument_env(
     argument_refs: set[str],
     get_cell_formula: Callable[[str], str | None],
@@ -380,6 +407,10 @@ def expand_leaf_env_to_argument_env(
     ranges collected from the AST align with
     `excel_grapher.grapher.builder.create_dependency_graph` argument-subgraph BFS.
 
+    Returned (and shared-cache) keys are `normalize_cell_type_env_key` of each
+    address so `_lookup_cell_type` / `lookup_cell_type` can resolve graph
+    `format_key` addresses after expand (issue #972).
+
     When `shared_cell_type_cache` is provided, intermediate cell type inferences
     are persisted across multiple calls.  This avoids redundant work when many
     BFS nodes share intermediate formula cells in their argument subgraphs.
@@ -395,9 +426,11 @@ def expand_leaf_env_to_argument_env(
     share A1 text do not collide. The fallback path keys by formula string and
     parses only after a cache miss.
     """
-    cache: dict[str, CellType] = (
-        shared_cell_type_cache if shared_cell_type_cache is not None else {}
+    backing: dict[str, CellType] = (
+        shared_cell_type_cache if shared_cell_type_cache is not None else CellTypeEnvDict()
     )
+    canonicalize_cell_type_env_keys(backing)
+    cache = _NormalizedCellTypeCache(backing)
     in_progress: set[str] = set()
     nr = named_ranges or {}
     nrr = named_range_ranges or {}
@@ -580,13 +613,14 @@ def expand_leaf_env_to_argument_env(
         ref_types: dict[str, CellType] = {}
         bulk_served: list[str] = []
         for r in refs:
-            cached_ct = cache.get(r)
+            norm = normalize_cell_type_env_key(r)
+            cached_ct = cache.get(norm)
             if cached_ct is not None:
-                ref_types[r] = cached_ct
-                bulk_served.append(r)
+                ref_types[norm] = cached_ct
+                bulk_served.append(norm)
                 continue
             # Cycle back-edge (still on the analysis stack) or a worklist miss.
-            ref_types[r] = CellType(kind=CellKind.ANY)
+            ref_types[norm] = CellType(kind=CellKind.ANY)
         if bulk_served:
             _bulk_hits += len(bulk_served)
             _note_progress(bulk_served[-1])
@@ -594,16 +628,17 @@ def expand_leaf_env_to_argument_env(
         return ref_types
 
     def _exit_cell(addr: str, formula: str | None, stored_ast: AstNode | None) -> None:
-        in_progress.discard(addr)
-        if _analysis_stack and _analysis_stack[-1] == addr:
+        norm = normalize_cell_type_env_key(addr)
+        in_progress.discard(norm)
+        if _analysis_stack and _analysis_stack[-1] == norm:
             _analysis_stack.pop()
             if _track_consumed and _analysis_stack:
                 parent = _analysis_stack[-1]
-                child_leaves = _consumed_leaves.get(addr)
+                child_leaves = _consumed_leaves.get(norm)
                 if child_leaves:
                     _consumed_leaves.setdefault(parent, set()).update(child_leaves)
-        if addr in cache and formula is not None and addr not in _loaded_from_persistent:
-            _persist_result(addr, formula, stored_ast, cache[addr])
+        if norm in cache and formula is not None and norm not in _loaded_from_persistent:
+            _persist_result(norm, formula, stored_ast, cache[norm])
 
     def _infer_cell_type(
         addr: str,
@@ -693,11 +728,15 @@ def expand_leaf_env_to_argument_env(
                 f"the formula, or extend numeric abstract analysis to cover it."
             )
         result_values: set[Any] = set()
-        for assignment in product(*(domains[r] for r in refs)):
-            addr_to_val = dict(zip(refs, assignment, strict=False))
+        ordered_refs = list(ref_types)
+        for assignment in product(*(domains[r] for r in ordered_refs)):
+            addr_to_val = dict(zip(ordered_refs, assignment, strict=False))
 
             def get_cell_value(a: str, _av=addr_to_val) -> Any:
-                return _av.get(a)
+                try:
+                    return _av.get(normalize_cell_type_env_key(a))
+                except (IndexError, ValueError):
+                    return _av.get(a)
 
             try:
                 formula_parse = _formula_to_parse(formula)
@@ -728,22 +767,22 @@ def expand_leaf_env_to_argument_env(
         Returns None when `addr` is already typed (or a cycle back-edge).
         """
         nonlocal _calls
-        if addr in cache:
-            _propagate_consumed_leaves_to_ancestors(addr)
+        norm = normalize_cell_type_env_key(addr)
+        if norm in cache:
+            _propagate_consumed_leaves_to_ancestors(norm)
             return None
         _calls += 1
         _note_progress(addr)
-        if addr in in_progress:
+        if norm in in_progress:
             return None
         ct_resolved = _lookup_cell_type(leaf_env, addr)
         if ct_resolved is not None:
-            cache[addr] = ct_resolved
+            cache[norm] = ct_resolved
             if _track_consumed:
-                norm_key = normalize_cell_type_env_key(addr)
-                _consumed_leaves.setdefault(addr, set()).add(norm_key)
-                _record_consumed_leaf(norm_key)
+                _consumed_leaves.setdefault(norm, set()).add(norm)
+                _record_consumed_leaf(norm)
             return None
-        in_progress.add(addr)
+        in_progress.add(norm)
         formula = get_cell_formula(addr)
         stored_ast: AstNode | None = None
         ast_root: AstNode | None = None
@@ -751,11 +790,10 @@ def expand_leaf_env_to_argument_env(
         try:
             if formula is None:
                 if blank_rects and address_in_blank_ranges(addr, blank_rects):
-                    cache[addr] = _BLANK_RANGE_LEAF_TYPE
+                    cache[norm] = _BLANK_RANGE_LEAF_TYPE
                     if _track_consumed:
-                        norm_key = normalize_cell_type_env_key(addr)
-                        _consumed_leaves.setdefault(addr, set()).add(norm_key)
-                        _record_consumed_leaf(norm_key)
+                        _consumed_leaves.setdefault(norm, set()).add(norm)
+                        _record_consumed_leaf(norm)
                     return None
                 raise DynamicRefError(
                     f"Missing constraint for leaf {addr!r} that feeds OFFSET/INDIRECT. "
@@ -764,13 +802,13 @@ def expand_leaf_env_to_argument_env(
             if get_cell_ast is not None:
                 fetched = get_cell_ast(addr)
                 stored_ast = fetched if isinstance(fetched, AstNode) else None
-            _persistent_result = _try_persistent_lookup(addr, formula, stored_ast)
+            _persistent_result = _try_persistent_lookup(norm, formula, stored_ast)
             if _persistent_result is not None:
                 cached_ct, cached_consumed = _persistent_result
-                cache[addr] = cached_ct
-                _consumed_leaves[addr] = set(cached_consumed)
-                _loaded_from_persistent.add(addr)
-                _propagate_consumed_leaves_to_ancestors(addr)
+                cache[norm] = cached_ct
+                _consumed_leaves[norm] = set(cached_consumed)
+                _loaded_from_persistent.add(norm)
+                _propagate_consumed_leaves_to_ancestors(norm)
                 return None
             ast_root = stored_ast
             if ast_root is None:
@@ -789,7 +827,7 @@ def expand_leaf_env_to_argument_env(
                     "constrain an intermediate cell in the chain to cut it short, or "
                     "simplify the chain."
                 )
-            _analysis_stack.append(addr)
+            _analysis_stack.append(norm)
             refs = get_refs_from_formula(formula, _sheet_from_addr(addr))
             if ast_root is not None:
                 refs |= _collect_static_addresses_from_ast(
@@ -893,7 +931,7 @@ def expand_leaf_env_to_argument_env(
             },
         )
     )
-    return cache
+    return backing
 
 
 def dynamic_ref_selectors_boundable_without_expand(
@@ -2437,7 +2475,7 @@ def _domain_without_zero(
 
 def _lookup_cell_type(env: CellTypeEnv, address: str) -> CellType | None:
     """Resolve env entry; keys match `excel_grapher.core.cell_types.normalize_cell_type_env_key`."""
-    return env.get(normalize_cell_type_env_key(address))
+    return lookup_cell_type(env, address)
 
 
 def _cell_has_relation(

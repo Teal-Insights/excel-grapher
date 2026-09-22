@@ -71,6 +71,81 @@ class CellType:
 CellTypeEnv: TypeAlias = Mapping[str, CellType]
 
 
+class CellTypeEnvDict(dict[str, CellType]):
+    """Mutable `CellTypeEnv` that stores keys after `normalize_cell_type_env_key`.
+
+    Graph code passes `format_key` addresses (sheet quotes when Excel requires
+    them). Lookups accept that spelling or the unquoted env form; writes always
+    persist the normalized key so `lookup_cell_type` and `env.get(normalized)`
+    agree.
+    """
+
+    def __init__(
+        self,
+        data: Mapping[str, CellType] | Iterable[tuple[str, CellType]] | None = None,
+    ) -> None:
+        super().__init__()
+        if data:
+            self.update(data)
+
+    def __setitem__(self, key: str, value: CellType) -> None:
+        super().__setitem__(normalize_cell_type_env_key(key), value)
+
+    def __getitem__(self, key: str) -> CellType:
+        found = super().get(key)
+        if found is not None:
+            return found
+        return super().__getitem__(normalize_cell_type_env_key(key))
+
+    def __delitem__(self, key: str) -> None:
+        try:
+            super().__delitem__(key)
+        except KeyError:
+            super().__delitem__(normalize_cell_type_env_key(key))
+
+    def __contains__(self, key: object) -> bool:
+        if not isinstance(key, str):
+            return False
+        if super().__contains__(key):
+            return True
+        try:
+            return super().__contains__(normalize_cell_type_env_key(key))
+        except (IndexError, ValueError):
+            return False
+
+    def get(self, key: object, default: Any = None) -> Any:
+        if not isinstance(key, str):
+            return default
+        if super().__contains__(key):
+            return super().__getitem__(key)
+        try:
+            return super().get(normalize_cell_type_env_key(key), default)
+        except (IndexError, ValueError):
+            return default
+
+    def update(self, *args: Any, **kwargs: Any) -> None:
+        if args:
+            other = args[0]
+            pairs = other.items() if isinstance(other, Mapping) else other
+            for key, value in pairs:
+                self[key] = value
+        for key, value in kwargs.items():
+            self[key] = value
+
+
+def lookup_cell_type(env: Mapping[str, CellType], address: str) -> CellType | None:
+    """Return the env entry for `address` after `normalize_cell_type_env_key`."""
+    return env.get(normalize_cell_type_env_key(address))
+
+
+def canonicalize_cell_type_env_keys(env: dict[str, CellType]) -> None:
+    """Rewrite `env` keys in place to `normalize_cell_type_env_key` form."""
+    stale = [(key, value) for key, value in env.items() if key != normalize_cell_type_env_key(key)]
+    for key, value in stale:
+        del env[key]
+        env[normalize_cell_type_env_key(key)] = value
+
+
 @dataclass(frozen=True, slots=True)
 class Between:
     """Integer interval constraint for Annotated numeric types (discrete / enumerable)."""

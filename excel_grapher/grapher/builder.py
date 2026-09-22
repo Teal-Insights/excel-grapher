@@ -25,6 +25,7 @@ from excel_grapher.core.address_keys import (
 from excel_grapher.core.cell_types import (
     CellType,
     CellTypeEnv,
+    CellTypeEnvDict,
     leaves_missing_cell_type_constraints,
     normalize_cell_type_env_key,
 )
@@ -796,7 +797,7 @@ def create_dependency_graph(
     # Shared cell-type cache for expand_leaf_env_to_argument_env: intermediate
     # formula cells inferred once are reused across BFS nodes, avoiding redundant
     # recursive domain inference when many dynamic-ref formulas share intermediates.
-    _shared_cell_type_cache: dict[str, CellType] = {}
+    _shared_cell_type_cache: dict[str, CellType] = CellTypeEnvDict()
     _dyn_stats = {
         "infer_calls": 0,
         "cache_hits": 0,
@@ -2029,7 +2030,7 @@ def list_dynamic_ref_constraint_candidates(
 
     # Shared across every dynamic-ref call site so intermediates in overlapping
     # argument subgraphs are inferred once, as in `create_dependency_graph`.
-    _shared_cell_type_cache_cand: dict[str, CellType] = {}
+    _shared_cell_type_cache_cand: dict[str, CellType] = CellTypeEnvDict()
     # Worksheet cache: avoid repeated O(#sheets) __getitem__ scans (issue #484).
     _ws_f_cache: dict[str, Worksheet] = {}
     # Memoize static-ref extraction across candidate BFS / argument walks.
