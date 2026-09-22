@@ -1102,6 +1102,36 @@ def test_dynamic_index_requires_domain_for_leaf() -> None:
     assert "Missing CellType" in str(exc_info.value) or "B1" in str(exc_info.value)
 
 
+def test_omitted_index_column_selects_the_whole_matched_row() -> None:
+    """A blank column axis is Excel's whole-row form, not column 1."""
+    formula = "=INDEX(Data!A1:C3,MATCH(Data!E1,Data!A1:A3,0),)"
+    env = _make_env(
+        {
+            "Data!E1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2}))),
+            "Data!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Data!A2": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2}))),
+            "Data!A3": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3}))),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Data", cell_type_env=env)
+    assert targets == {"Data!A2", "Data!B2", "Data!C2"}
+
+
+def test_omitted_index_row_selects_the_whole_matched_column() -> None:
+    """A blank row axis is Excel's whole-column form."""
+    formula = "=INDEX(Data!A1:C3,,MATCH(Data!E1,Data!A1:C1,0))"
+    env = _make_env(
+        {
+            "Data!E1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+            "Data!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2017}))),
+            "Data!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+            "Data!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2019}))),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Data", cell_type_env=env)
+    assert targets == {"Data!B1", "Data!B2", "Data!B3"}
+
+
 def test_dynamic_index_two_args() -> None:
     """INDEX with only 2 args (array, row_num) defaults col to 1."""
     formula = "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1)"

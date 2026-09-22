@@ -1142,6 +1142,17 @@ def infer_dynamic_index_targets(
     return out
 
 
+def _parse_index_axis(expr: str) -> AstNode:
+    """Parse one INDEX row or column selector.
+
+    A blank selector is Excel's whole-axis form (`0`). Two-argument INDEX
+    never calls this for the column; that form still defaults to column 1.
+    """
+    if not expr.strip():
+        return NumberNode(0)
+    return parse_ast("=" + expr)
+
+
 def _infer_single_index_call(
     inner_args: str,
     *,
@@ -1154,7 +1165,7 @@ def _infer_single_index_call(
     current_col: int | None = None,
 ) -> set[str]:
     """Infer targets for a single INDEX(...) call body."""
-    args = _split_top_level_args(inner_args)
+    args = _split_top_level_args(inner_args, keep_empty=True)
     if args is None or len(args) < 2 or len(args) > 3:
         raise DynamicRefError("INDEX expects 2 or 3 arguments (array, row_num, [column_num])")
 
@@ -1163,9 +1174,8 @@ def _infer_single_index_call(
 
     array_expr = _qualify_fragment(args[0], named_ranges, named_range_ranges)
     row_expr = _qualify_fragment(args[1], named_ranges, named_range_ranges)
-    col_expr = (
-        _qualify_fragment(args[2], named_ranges, named_range_ranges) if len(args) >= 3 else ""
-    )
+    has_col = len(args) >= 3
+    col_expr = _qualify_fragment(args[2], named_ranges, named_range_ranges) if has_col else ""
 
     try:
         array_ast = parse_ast("=" + array_expr)
@@ -1173,8 +1183,8 @@ def _infer_single_index_call(
     except (DynamicRefError, FormulaParseError) as exc:
         raise DynamicRefError(f"INDEX array argument must be a static range: {exc}") from exc
 
-    row_ast = parse_ast("=" + row_expr)
-    col_ast = parse_ast("=" + col_expr) if col_expr else None
+    row_ast = _parse_index_axis(row_expr)
+    col_ast = _parse_index_axis(col_expr) if has_col else None
 
     eval_context = (
         {"row": current_row, "column": current_col}
@@ -4491,8 +4501,21 @@ def _enumerate_value_assignments(
     return product(*domains)
 
 
-def _split_top_level_args(s: str) -> list[str] | None:
-    """Minimal top-level argument splitter mirroring parser._split_top_level_args."""
+def _split_top_level_args(s: str, *, keep_empty: bool = False) -> list[str] | None:
+    """Split `s` on top-level commas.
+
+    Mirrors `parser._split_top_level_args`. Empty arguments are dropped unless
+    `keep_empty` is set. INDEX inference keeps blanks so an omitted axis is
+    Excel's whole-axis `0`. OFFSET and static-INDEX classification still drop
+    them.
+
+    Args:
+        s: Argument text inside a call, without the surrounding parentheses.
+        keep_empty: When True, retain blank arguments.
+
+    Returns:
+        Argument strings, or None when parentheses or quotes are unbalanced.
+    """
     buf: list[str] = []
     args: list[str] = []
     depth = 0
@@ -4531,4 +4554,6 @@ def _split_top_level_args(s: str) -> list[str] | None:
     if in_str or depth != 0:
         return None
     args.append("".join(buf).strip())
+    if keep_empty:
+        return args
     return [a for a in args if a != ""]
