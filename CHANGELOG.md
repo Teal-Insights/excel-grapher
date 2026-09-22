@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.5 (2026-09-22)
+
+### Bug Fixes
+
+- **grapher**: Infer integer domains for VALUE and concatenation
+  ([#977](https://github.com/Teal-Insights/excel-grapher/pull/977),
+  [`5c0e408`](https://github.com/Teal-Insights/excel-grapher/commit/5c0e408607c6e898b487885f455cdb39d3126bd4))
+
+- **grapher**: Keep non-canonical concat text out of numeric domains
+  ([#977](https://github.com/Teal-Insights/excel-grapher/pull/977),
+  [`5c0e408`](https://github.com/Teal-Insights/excel-grapher/commit/5c0e408607c6e898b487885f455cdb39d3126bd4))
+
+- **grapher**: Normalize expand CellTypeEnv keys for lookup
+  ([#975](https://github.com/Teal-Insights/excel-grapher/pull/975),
+  [`e416346`](https://github.com/Teal-Insights/excel-grapher/commit/e416346bfa47b2b4880651caeef91dd87f81d8de))
+
+- **grapher**: Skip expand env-key rescan on CellTypeEnvDict
+  ([#975](https://github.com/Teal-Insights/excel-grapher/pull/975),
+  [`e416346`](https://github.com/Teal-Insights/excel-grapher/commit/e416346bfa47b2b4880651caeef91dd87f81d8de))
+
+- **grapher**: Store expand env keys in lookup-normalized form
+  ([#975](https://github.com/Teal-Insights/excel-grapher/pull/975),
+  [`e416346`](https://github.com/Teal-Insights/excel-grapher/commit/e416346bfa47b2b4880651caeef91dd87f81d8de))
+
+
 ## v23.6.4 (2026-09-22)
 
 ### Bug Fixes
