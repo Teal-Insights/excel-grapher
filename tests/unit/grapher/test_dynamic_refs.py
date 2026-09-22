@@ -1102,6 +1102,36 @@ def test_dynamic_index_requires_domain_for_leaf() -> None:
     assert "Missing CellType" in str(exc_info.value) or "B1" in str(exc_info.value)
 
 
+def test_omitted_index_column_selects_the_whole_matched_row() -> None:
+    """A blank column axis is Excel's whole-row form, not column 1."""
+    formula = "=INDEX(Data!A1:C3,MATCH(Data!E1,Data!A1:A3,0),)"
+    env = _make_env(
+        {
+            "Data!E1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2}))),
+            "Data!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({1}))),
+            "Data!A2": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2}))),
+            "Data!A3": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({3}))),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Data", cell_type_env=env)
+    assert targets == {"Data!A2", "Data!B2", "Data!C2"}
+
+
+def test_omitted_index_row_selects_the_whole_matched_column() -> None:
+    """A blank row axis is Excel's whole-column form."""
+    formula = "=INDEX(Data!A1:C3,,MATCH(Data!E1,Data!A1:C1,0))"
+    env = _make_env(
+        {
+            "Data!E1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+            "Data!A1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2017}))),
+            "Data!B1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2018}))),
+            "Data!C1": CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({2019}))),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="Data", cell_type_env=env)
+    assert targets == {"Data!B1", "Data!B2", "Data!B3"}
+
+
 def test_dynamic_index_two_args() -> None:
     """INDEX with only 2 args (array, row_num) defaults col to 1."""
     formula = "=INDEX(Sheet1!A1:Sheet1!A3,Sheet1!B1)"
@@ -1545,6 +1575,47 @@ def test_exact_match_string_unknown_lookup_cell_does_not_collapse() -> None:
     assert targets == {"dump!B1", "dump!B2", "dump!B3"}
 
 
+def test_quoted_sheet_year_match_collapses_without_expanding_the_grid() -> None:
+    """Pinned year headers on a quoted sheet select one column (#968).
+
+    The row MATCH stays the full code-column extent when those cells are not
+    pinned. The rectangle is larger than `max_cells`; the column is not.
+    """
+    formula = (
+        "=INDEX('data all'!A1:D6,"
+        "MATCH('Imported data'!A1,INDEX('data all'!A1:D6,,1),0),"
+        "MATCH('Imported data'!B1,INDEX('data all'!A1:D6,1,),0))"
+    )
+    env = _make_env(
+        {
+            "Imported data!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({2018})),
+            ),
+            "data all!B1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({2017})),
+            ),
+            "data all!C1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({2018})),
+            ),
+            "data all!D1": CellType(
+                kind=CellKind.NUMBER,
+                enum=EnumDomain(values=frozenset({2019})),
+            ),
+        }
+    )
+    limits = DynamicRefLimits(max_cells=20)
+    targets = infer_dynamic_index_targets(
+        formula,
+        current_sheet="Imported data",
+        cell_type_env=env,
+        limits=limits,
+    )
+    assert targets == {f"'data all'!C{row}" for row in range(1, 7)}
+
+
 def test_from_workbook_string_and_year_match_collapses_index(tmp_path: Path) -> None:
     """Singleton string and year needles resolve INDEX to one cell (issue #966)."""
     import fastpyxl
@@ -1679,6 +1750,11 @@ def test_static_match_lookup_extent_resolves_index_empty_row_column_slice() -> N
     assert dynamic_refs_mod._static_match_lookup_extent(col_slice) == 3
     ordered = dynamic_refs_mod._ordered_match_lookup_cells(col_slice, current_sheet="Out")
     assert ordered == ["Trigger!AA1", "Trigger!AA2", "Trigger!AA3"]
+
+    quoted = parse_ast("=INDEX('data all'!A1:C3,,2)")
+    assert isinstance(quoted, FunctionCallNode)
+    quoted_cells = dynamic_refs_mod._ordered_match_lookup_cells(quoted, current_sheet="Out")
+    assert quoted_cells == ["'data all'!B1", "'data all'!B2", "'data all'!B3"]
 
     row_slice = parse_ast("=INDEX(Trigger!AA1:AB3,2,)")
     assert isinstance(row_slice, FunctionCallNode)
