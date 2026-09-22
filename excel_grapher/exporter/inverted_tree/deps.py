@@ -594,8 +594,10 @@ def index_call_is_ref(node: FunctionCallNode, host_cell: CanonicalAddress) -> bo
     if row_sel is None:
         return False
     col_arg = node.args[2] if len(node.args) > 2 else None
-    if col_arg is None or isinstance(col_arg, EmptyArgNode):
+    if col_arg is None:
         col_sel: int | None = None
+    elif isinstance(col_arg, EmptyArgNode):
+        col_sel = 0
     else:
         col_sel = eval_host_selector(col_arg, host_cell)
         if col_sel is None:
