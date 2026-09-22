@@ -909,7 +909,10 @@ def dynamic_ref_selectors_boundable_without_expand(
 
     `MATCH` over a static rectangular lookup, `ROWS`/`COLUMNS`, and numeric
     literals get integer domains from range geometry without reading
-    `cell_type_env`. `INDIRECT`, cell selectors, and OFFSET height/width that
+    `cell_type_env`. An omitted INDEX axis (`EmptyArg`, including
+    `INDEX(array,,k)` and `INDEX(array,k,)`) is that same geometry when another
+    selector densifies. Excel's literal `0` whole-axis form is already a
+    numeric domain. `INDIRECT`, cell selectors, and OFFSET height/width that
     cannot be densified from geometry still need expand.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
@@ -971,7 +974,14 @@ def dynamic_ref_selectors_boundable_without_expand(
                     return False
                 if not isinstance(node.args[0], (CellRefNode, RangeNode)):
                     return False
-                for sel in node.args[1:]:
+                selectors = node.args[1:]
+                # Every selector omitted is the whole array. Infer does not
+                # treat that form as a static slice, so keep the expand path.
+                if not any(not isinstance(sel, EmptyArgNode) for sel in selectors):
+                    return False
+                for sel in selectors:
+                    if isinstance(sel, EmptyArgNode):
+                        continue
                     if not selector_ok(sel, for_offset=False):
                         return False
             elif name == "OFFSET":
@@ -2060,13 +2070,14 @@ def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str
 
     if isinstance(arg, RangeNode):
         try:
-            s1, coord_start = arg.start.split("!", 1)
-            s2, coord_end = arg.end.split("!", 1)
+            # `RangeNode.start` is already quoted when the sheet needs it.
+            # Re-quoting that text would miss `CellTypeEnv` keys.
+            sheet, coord_start = parse_address(arg.start)
+            end_sheet, coord_end = parse_address(arg.end)
         except ValueError:
             return None
-        if s1 != s2:
+        if sheet != end_sheet:
             return None
-        sheet = s1
         row1, col1 = coordinate_to_tuple(coord_start)
         row2, col2 = coordinate_to_tuple(coord_end)
         rlo, rhi = sorted((row1, row2))
@@ -2248,11 +2259,15 @@ def _infer_exact_match_position_domain(
     Numeric domains compare through integer overlap. String and other finite
     enums compare through exact MATCH equality, so a pinned `from_workbook`
     string can collapse to one lookup position.
+
+    Lookup addresses are materialized only after the needle has a finite
+    domain and the lookup extent fits the scan budget. Callers that only need
+    `IntBounds(1, n)` (an empty env, an unpinned needle) never walk the vector.
     """
     if len(node.args) < 2:
         return None
-    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
-    if not ordered or len(ordered) > _exact_match_lookup_scan_limit(limits):
+    extent = _static_match_lookup_extent(node.args[1])
+    if extent is None or extent < 1 or extent > _exact_match_lookup_scan_limit(limits):
         return None
 
     lookup_res = _infer_numeric_domain_result(
@@ -2266,6 +2281,14 @@ def _infer_exact_match_position_domain(
     if lookup_res.diagnostic is not None:
         return None
     lookup_dom = lookup_res.domain
+    if lookup_dom is None:
+        needles = _finite_exact_match_values(node.args[0], env)
+        if needles is None or _needle_blocks_exact_match_refine(needles):
+            return None
+
+    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
+    if not ordered:
+        return None
     if lookup_dom is None:
         return _infer_enum_exact_match_position(node.args[0], ordered, env)
 
