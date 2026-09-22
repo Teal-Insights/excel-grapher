@@ -35,6 +35,7 @@ from excel_grapher.core.cell_types import (
     constraints_to_cell_type_env,
     normalize_cell_type_env_key,
 )
+from excel_grapher.core.coercions import excel_casefold, try_coerce_string_to_float
 from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.expr_eval import Unsupported, evaluate_expr
 from excel_grapher.core.formula_ast import (
@@ -60,6 +61,7 @@ from excel_grapher.core.formula_ast import (
     parse as parse_ast,
 )
 from excel_grapher.core.formula_ast_json import formula_identity_digest
+from excel_grapher.core.lookup_funcs import _values_match
 from excel_grapher.core.range_shorthand import (
     expand_whole_column_span_deps,
     expand_whole_row_span_deps,
@@ -2088,6 +2090,131 @@ def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str
     return None
 
 
+def _exact_match_lookup_scan_limit(limits: DynamicRefLimits) -> int:
+    """Return how many lookup cells exact MATCH may compare.
+
+    `DynamicRefLimits.max_cells` caps emitted targets. A singleton needle can
+    collapse a longer lookup to one position, so the scan budget stays at
+    least the default target cap when the caller tightens `max_cells`.
+    """
+    return max(limits.max_cells, DynamicRefLimits().max_cells)
+
+
+def _match_string_uses_wildcards(value: str) -> bool:
+    """Return True when `value` is not a literal under Excel MATCH type 0.
+
+    Unescaped `*` and `?` are wildcards. A `~` escape of `*`, `?`, or `~`
+    also blocks refinement: this comparison does not unescape the needle.
+    """
+    index = 0
+    while index < len(value):
+        char = value[index]
+        if char == "~" and index + 1 < len(value) and value[index + 1] in "*?~":
+            return True
+        if char in "*?":
+            return True
+        index += 1
+    return False
+
+
+def _finite_exact_match_values(node: AstNode, env: CellTypeEnv) -> frozenset[object] | None:
+    """Return a finite equality domain for an exact MATCH needle, if known."""
+    if isinstance(node, StringNode):
+        return frozenset({node.value})
+    if isinstance(node, CellRefNode):
+        cell_type = _lookup_cell_type(env, node.address)
+        if cell_type is None or cell_type.enum is None or not cell_type.enum.values:
+            return None
+        return cell_type.enum.values
+    return None
+
+
+def _needle_blocks_exact_match_refine(values: frozenset[object]) -> bool:
+    return any(isinstance(value, str) and _match_string_uses_wildcards(value) for value in values)
+
+
+def _value_may_equal_number(value: object) -> bool:
+    """Return True when `value` can compare equal to a number under MATCH."""
+    if isinstance(value, (int, float)):
+        return True
+    if isinstance(value, str):
+        return try_coerce_string_to_float(value) is not None
+    return False
+
+
+def _string_values(values: frozenset[object]) -> frozenset[str] | None:
+    """Return `values` when every member is a string."""
+    strings: list[str] = []
+    for value in values:
+        if not isinstance(value, str):
+            return None
+        strings.append(value)
+    return frozenset(strings)
+
+
+def _sets_may_exact_match(left: frozenset[object], right: frozenset[object]) -> bool:
+    """Return True when any pair may compare equal under exact MATCH.
+
+    String/string pairs use case-insensitive equality. Other pairs follow
+    `match_cells` (`_values_match`), including numeric coercion.
+    """
+    left_strings = _string_values(left)
+    right_strings = _string_values(right)
+    if left_strings is not None and right_strings is not None:
+        folded = {excel_casefold(value) for value in left_strings}
+        return any(excel_casefold(value) in folded for value in right_strings)
+    for left_value in left:
+        for right_value in right:
+            if _values_match(left_value, right_value):
+                return True
+    return False
+
+
+def _cell_may_equal_exact_match_values(
+    cell_type: CellType | None,
+    needles: frozenset[object],
+) -> bool | None:
+    """Return whether `cell_type` may equal `needles`.
+
+    `None` means the cell is not a finite domain, so refinement must stop.
+    A numeric cell with no enum cannot equal a non-numeric string.
+    """
+    if cell_type is None:
+        return None
+    if cell_type.enum is not None:
+        if not cell_type.enum.values:
+            return False
+        return _sets_may_exact_match(needles, cell_type.enum.values)
+    if cell_type.kind is CellKind.NUMBER and not any(
+        _value_may_equal_number(value) for value in needles
+    ):
+        return False
+    return None
+
+
+def _infer_enum_exact_match_position(
+    needle: AstNode,
+    ordered: list[str],
+    env: CellTypeEnv,
+) -> _FiniteInts | None:
+    """Return the only lookup position that may equal a non-numeric needle."""
+    needles = _finite_exact_match_values(needle, env)
+    if needles is None or _needle_blocks_exact_match_refine(needles):
+        return None
+    candidates: list[int] = []
+    for index, cell_addr in enumerate(ordered, start=1):
+        may_equal = _cell_may_equal_exact_match_values(_lookup_cell_type(env, cell_addr), needles)
+        if may_equal is None:
+            return None
+        if may_equal:
+            candidates.append(index)
+            if len(candidates) > 1:
+                return None
+    if len(candidates) == 1:
+        return _FiniteInts(frozenset({candidates[0]}))
+    return None
+
+
 def _domains_may_equal_exact_match(
     a: _FiniteInts | _IntBounds | None,
     b: _FiniteInts | _IntBounds | None,
@@ -2116,11 +2243,16 @@ def _infer_exact_match_position_domain(
     current_sheet: str,
     depth: int,
 ) -> _FiniteInts | None:
-    """If MATCH(...,...,0) has exactly one feasible row/column index, return it."""
+    """If MATCH(...,...,0) has exactly one feasible row/column index, return it.
+
+    Numeric domains compare through integer overlap. String and other finite
+    enums compare through exact MATCH equality, so a pinned `from_workbook`
+    string can collapse to one lookup position.
+    """
     if len(node.args) < 2:
         return None
     ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
-    if not ordered or len(ordered) > limits.max_cells:
+    if not ordered or len(ordered) > _exact_match_lookup_scan_limit(limits):
         return None
 
     lookup_res = _infer_numeric_domain_result(
@@ -2135,7 +2267,7 @@ def _infer_exact_match_position_domain(
         return None
     lookup_dom = lookup_res.domain
     if lookup_dom is None:
-        return None
+        return _infer_enum_exact_match_position(node.args[0], ordered, env)
 
     candidates: list[int] = []
     for idx, cell_addr in enumerate(ordered, start=1):
