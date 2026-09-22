@@ -1456,6 +1456,214 @@ def test_index_match_huge_lookup_array_only_needs_lookup_value_constraint() -> N
     assert targets == {"Sheet1!A1", "Sheet1!A2", "Sheet1!A3"}
 
 
+def _string_enum(value: str) -> CellType:
+    return CellType(kind=CellKind.STRING, enum=EnumDomain(values=frozenset({value})))
+
+
+def test_exact_match_string_enum_collapses_index_when_lookup_exceeds_max_cells() -> None:
+    """Pinned string MATCH collapses INDEX even if the lookup is longer than max_cells.
+
+    Issue #966: exact MATCH compared only numeric domains, so a singleton string
+    needle left the row axis at the full lookup extent.
+    """
+    n_rows = 40
+    formula = "=INDEX(dump!B2:B41,MATCH(calc!A1,dump!A2:A41,0),1)"
+    env: dict[str, CellType] = {
+        "calc!A1": _string_enum("KEY.10.A"),
+    }
+    for row in range(2, n_rows + 2):
+        env[f"dump!A{row}"] = _string_enum(f"KEY.{row}.A")
+        env[f"dump!B{row}"] = CellType(
+            kind=CellKind.NUMBER,
+            enum=EnumDomain(values=frozenset({row})),
+        )
+    targets = infer_dynamic_index_targets(
+        formula,
+        current_sheet="calc",
+        cell_type_env=env,
+        limits=DynamicRefLimits(max_cells=30),
+    )
+    assert targets == {"dump!B10"}
+
+
+def test_exact_match_string_enum_is_case_insensitive() -> None:
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("key"),
+            "dump!A1": _string_enum("other"),
+            "dump!A2": _string_enum("KEY"),
+            "dump!A3": _string_enum("nope"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B2"}
+
+
+def test_exact_match_string_enum_does_not_collapse_when_several_rows_match() -> None:
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": CellType(
+                kind=CellKind.STRING,
+                enum=EnumDomain(values=frozenset({"A", "B"})),
+            ),
+            "dump!A1": _string_enum("A"),
+            "dump!A2": _string_enum("B"),
+            "dump!A3": _string_enum("C"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2", "dump!B3"}
+
+
+def test_exact_match_string_wildcard_needle_does_not_collapse() -> None:
+    """Unescaped MATCH wildcards stay at the full lookup extent."""
+    formula = "=INDEX(dump!B1:B2,MATCH(calc!A1,dump!A1:A2,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("K*"),
+            "dump!A1": _string_enum("K*"),
+            "dump!A2": _string_enum("other"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+
+
+def test_exact_match_string_unknown_lookup_cell_does_not_collapse() -> None:
+    """A lookup cell with no finite domain blocks singleton refinement."""
+    formula = "=INDEX(dump!B1:B3,MATCH(calc!A1,dump!A1:A3,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("KEY"),
+            "dump!A1": _string_enum("other"),
+            "dump!A3": _string_enum("KEY"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2", "dump!B3"}
+
+
+def test_from_workbook_string_and_year_match_collapses_index(tmp_path: Path) -> None:
+    """Singleton string and year needles resolve INDEX to one cell (issue #966)."""
+    import fastpyxl
+
+    n_body = 40
+    array = "dump!A1:D41"
+    path = tmp_path / "book.xlsx"
+    workbook = fastpyxl.Workbook()
+    dump = workbook.active
+    assert dump is not None
+    dump.title = "dump"
+    dump["A1"] = "code"
+    dump["B1"] = 2017
+    dump["C1"] = 2018
+    dump["D1"] = 2019
+    for row in range(2, n_body + 2):
+        dump.cell(row, 1, f"KEY.{row}.A")
+        for col, mult in enumerate((10, 11, 12), start=2):
+            dump.cell(row, col, row * mult)
+    calc = workbook.create_sheet("calc")
+    calc["A1"] = "KEY.10.A"
+    calc["B1"] = 2018
+    calc["C1"] = (
+        f"=INDEX({array},MATCH(calc!A1,INDEX({array},,1),0),MATCH(calc!B1,INDEX({array},1,),0))"
+    )
+    workbook.save(path)
+    workbook.close()
+
+    def measure(*, dtype: str, read: str) -> dict[str, object]:
+        return {"concept": "OBS_VALUE", "dtype": dtype, "bind": {"kind": "data_cell", "read": read}}
+
+    def constant(
+        series_id: str,
+        *,
+        sheet: str,
+        data_range: str,
+        dtype: str,
+        read: str,
+        domain: dict[str, object],
+    ) -> dict[str, object]:
+        a1 = data_range.split("!")[-1]
+        return {
+            "id": series_id,
+            "sheet": sheet,
+            "data_range": data_range,
+            "layout": "series" if ":" in a1 else "scalar",
+            "constant": {},
+            "domain": domain,
+            "structure": {"measure": measure(dtype=dtype, read=read), "dimensions": []},
+            "key": [],
+        }
+
+    bindings = {
+        "schema_version": "1.21.0",
+        "series": [
+            constant(
+                "row_needle",
+                sheet="calc",
+                data_range="calc!A1",
+                dtype="string",
+                read="string",
+                domain={"from_workbook": True},
+            ),
+            constant(
+                "col_needle",
+                sheet="calc",
+                data_range="calc!B1",
+                dtype="int",
+                read="int",
+                domain={"from_workbook": True},
+            ),
+            constant(
+                "codes",
+                sheet="dump",
+                data_range="dump!A1:A41",
+                dtype="string",
+                read="string",
+                domain={"from_workbook": True},
+            ),
+            constant(
+                "years",
+                sheet="dump",
+                data_range="dump!B1:D1",
+                dtype="int",
+                read="int",
+                domain={"from_workbook": True},
+            ),
+            constant(
+                "observations",
+                sheet="dump",
+                data_range="dump!B2:D41",
+                dtype="float",
+                read="float",
+                domain={"real_between": {"min": -1.0e15, "max": 1.0e15}},
+            ),
+        ],
+    }
+    limits = DynamicRefLimits(max_cells=30)
+    config = DynamicRefConfig.from_bindings(bindings, path, limits=limits)
+    formula = (
+        f"=INDEX({array},MATCH(calc!A1,INDEX({array},,1),0),MATCH(calc!B1,INDEX({array},1,),0))"
+    )
+    targets = infer_dynamic_index_targets(
+        formula,
+        current_sheet="calc",
+        cell_type_env=config.cell_type_env,
+        limits=limits,
+    )
+    assert targets == {"dump!C10"}
+
+    graph = create_dependency_graph(
+        path,
+        targets=["calc!C1"],
+        dynamic_refs=config,
+        load_values=True,
+    )
+    assert "dump!C10" in graph.get_dependencies("calc!C1")
+
+
 def test_match_domain_collection_skips_lookup_array_but_full_closure_keeps_upstream() -> None:
     ast = parse_ast("=MATCH(Sheet1!B1,OFFSET(Sheet1!Z1,0,0,5,1),0)")
     need = dynamic_refs_mod._collect_addresses_needing_domain(ast)
