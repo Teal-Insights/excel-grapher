@@ -97,6 +97,15 @@ def test_omitted_index_axis_match_is_boundable_without_env() -> None:
     )
 
 
+def test_nested_static_index_array_is_boundable_without_env() -> None:
+    """INDEX(INDEX(array,,k), MATCH) narrows to a static column before the check."""
+    formula = "=INDEX(INDEX(Data!A1:C3,,2),MATCH(Data!E1,Data!A1:A3,0))"
+    assert dynamic_ref_selectors_boundable_without_expand(
+        formula,
+        current_sheet="Data",
+    )
+
+
 def test_omitted_index_axis_without_densifiable_sibling_is_not_boundable() -> None:
     """An omitted axis still needs the other selector to be known from geometry."""
     assert not dynamic_ref_selectors_boundable_without_expand(

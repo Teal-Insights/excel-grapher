@@ -912,11 +912,20 @@ def dynamic_ref_selectors_boundable_without_expand(
     `cell_type_env`. An omitted INDEX axis (`EmptyArg`, including
     `INDEX(array,,k)` and `INDEX(array,k,)`) is that same geometry when another
     selector densifies. Excel's literal `0` whole-axis form is already a
-    numeric domain. `INDIRECT`, cell selectors, and OFFSET height/width that
-    cannot be densified from geometry still need expand.
+    numeric domain. Nested static INDEX slices are rewritten to rectangular
+    refs first, so `INDEX(INDEX(array,,k), MATCH(...))` is checked as a range
+    array. `INDIRECT`, cell selectors, and OFFSET height/width that cannot be
+    densified from geometry still need expand.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return False
+    if "INDEX" in formula.upper():
+        narrowed = narrow_static_index_lookup_vectors(formula, current_sheet)
+        if narrowed and not narrowed.startswith("="):
+            narrowed = "=" + narrowed
+        if narrowed != formula:
+            formula = narrowed
+            ast = None
     lim = limits or DynamicRefLimits()
     eval_context = (
         {"row": current_row, "column": current_col}
