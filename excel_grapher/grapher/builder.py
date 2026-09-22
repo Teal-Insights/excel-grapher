@@ -22,13 +22,21 @@ from excel_grapher.core.address_keys import (
     sort_node_keys,
     sort_sheet_a1_pairs,
 )
-from excel_grapher.core.cell_types import CellType, leaves_missing_cell_type_constraints
+from excel_grapher.core.cell_types import (
+    CellType,
+    CellTypeEnv,
+    leaves_missing_cell_type_constraints,
+    normalize_cell_type_env_key,
+)
 from excel_grapher.core.formula_ast import (
     AstNode,
+    CellRefNode,
     FormulaStyle,
+    RangeNode,
     intern_formula_ast,
     parse_preserving_axes_optional,
     render_formula,
+    resolve_cell_ref,
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
 
@@ -222,6 +230,36 @@ def _index_offset_lookup_bases(
     return tuple(bases)
 
 
+def _shape_instance_cache_token(
+    params: tuple[object, ...],
+    cell_type_env: CellTypeEnv,
+    *,
+    anchor: str,
+) -> tuple[object, ...]:
+    """Return the per-copy facts that can change INDEX/OFFSET targets.
+
+    Cell holes contribute only their domain, so row-wise copies with the same
+    selector domain still share inference. Range holes contribute resolved
+    corners, so a shifted MATCH lookup does not reuse another row's collapsed
+    targets. Relative axes are resolved against `anchor` (the formula cell).
+    """
+    tokens: list[object] = []
+    for leaf in params:
+        if isinstance(leaf, CellRefNode):
+            addr = resolve_cell_ref(leaf.ref, anchor)
+            tokens.append(cell_type_env.get(normalize_cell_type_env_key(addr)))
+        elif isinstance(leaf, RangeNode):
+            tokens.append(
+                (
+                    resolve_cell_ref(leaf.start_ref, anchor),
+                    resolve_cell_ref(leaf.end_ref, anchor),
+                )
+            )
+        else:
+            tokens.append(leaf)
+    return tuple(tokens)
+
+
 def _dynamic_shape_cache_key(
     formula_for_infer: str,
     current_sheet: str,
@@ -230,19 +268,27 @@ def _dynamic_shape_cache_key(
     *,
     has_indirect: bool,
     formula_ast: AstNode | None,
+    cell_type_env: CellTypeEnv | None = None,
 ) -> tuple[object, ...]:
-    """Key inferred INDEX/OFFSET targets by `FormulaShape` and lookup bases.
+    """Key inferred INDEX/OFFSET targets by shape, bases, and selector domains.
 
-    Host A1 is omitted so row-wise copies over a fixed array share inference.
-    `INDIRECT` and any `ROW(` / `COLUMN(` call stay per-cell: their targets
-    depend on host position, string domains, or the referenced address.
+    Host A1 is omitted so row-wise copies over a fixed array share inference
+    when their selector domains match. Distinct exact-MATCH pins do not share
+    a collapsed target set. `INDIRECT` and any `ROW(` / `COLUMN(` call stay
+    per-cell: their targets depend on host position or the referenced address.
     """
     if has_indirect or formula_ast is None or _ROW_OR_COLUMN_CALL_PATTERN.search(formula_for_infer):
         return (formula_for_infer, current_sheet, current_a1)
+    shape = fingerprint_formula_shape(formula_ast)
     return (
-        fingerprint_formula_shape(formula_ast).shape_key,
+        shape.shape_key,
         lookup_bases,
         current_sheet,
+        _shape_instance_cache_token(
+            shape.params,
+            cell_type_env or {},
+            anchor=format_key(current_sheet, current_a1),
+        ),
     )
 
 
@@ -625,19 +671,21 @@ def create_dependency_graph(
     cell-type cache.  The first formula that needs a given set of argument
     cells pays for expansion; later formulas whose argument refs are already
     typed skip the expand call and reuse the env (issue #528).  INDEX / OFFSET
-    *target* inference is keyed by `FormulaShape.shape_key` plus lookup bases
-    so row-wise copies over a fixed array share the inferred set (issue #716).
-    Shifted arrays (distinct INDEX/OFFSET first-arg text) miss that cache
-    and keep per-cell deps. `INDIRECT` and any `ROW(` / `COLUMN(` call stay
-    per-cell.
+    *target* inference is keyed by `FormulaShape.shape_key`, lookup bases, and
+    the domains of that shape's cell parameters so row-wise copies over a fixed
+    array share the inferred set when those domains match (issue #716).
+    Distinct selector domains (different exact-MATCH pins) do not share a
+    collapsed target set. Shifted arrays (distinct INDEX/OFFSET first-arg text,
+    or a shifted lookup range) miss that cache and keep per-cell deps.
+    `INDIRECT` and any `ROW(` / `COLUMN(` call stay per-cell.
 
     Provenance collection (`capture_dependency_provenance=True`) reads the
     per-cell `_dyn_cache` of inferred targets filled during extraction.
-    INDEX/OFFSET targets are also keyed by `FormulaShape.shape_key` plus lookup
-    bases (the INDEX array / OFFSET base), so row-wise copies over a fixed
-    array share inference (issue #716).  Host A1 stays in the key for
-    `INDIRECT` and any `ROW(` / `COLUMN(` call, where the shifted array,
-    host position, or referenced address actually changes the target set.
+    That cache uses the same shape, lookup-base, and selector-domain key, so
+    row-wise copies share inference only when those domains match (issue #716).
+    Host A1 stays in the key for `INDIRECT` and any `ROW(` / `COLUMN(` call,
+    where the shifted array, host position, or referenced address actually
+    changes the target set.
 
     Top-level IF/IFS/CHOOSE/SWITCH provenance is accumulated during
     `extract_deps_with_guards` (the same walk that builds guards). Other
@@ -1199,6 +1247,7 @@ def create_dependency_graph(
                             _lookup_bases,
                             has_indirect=_has_indirect,
                             formula_ast=formula_ast,
+                            cell_type_env=dynamic_refs.cell_type_env,
                         )
                         if _cache_key in _dyn_cache:
                             offset_targets, indirect_targets, index_targets = _dyn_cache[_cache_key]
