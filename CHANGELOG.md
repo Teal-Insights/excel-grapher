@@ -7,6 +7,35 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.6.4 (2026-09-22)
+
+### Bug Fixes
+
+- Bound omitted INDEX axes without expanding large MATCH lookups
+  ([#978](https://github.com/Teal-Insights/excel-grapher/pull/978),
+  [`f17d18e`](https://github.com/Teal-Insights/excel-grapher/commit/f17d18ec606dbb8690fb8eca2de3a6d2df429118))
+
+- Bound omitted INDEX axes without expanding quoted-sheet MATCH
+  ([#978](https://github.com/Teal-Insights/excel-grapher/pull/978),
+  [`f17d18e`](https://github.com/Teal-Insights/excel-grapher/commit/f17d18ec606dbb8690fb8eca2de3a6d2df429118))
+
+- Distinguish shape-cached INDEX targets by selector domain
+  ([#978](https://github.com/Teal-Insights/excel-grapher/pull/978),
+  [`f17d18e`](https://github.com/Teal-Insights/excel-grapher/commit/f17d18ec606dbb8690fb8eca2de3a6d2df429118))
+
+- Map omitted INDEX axes to whole-axis selectors
+  ([#978](https://github.com/Teal-Insights/excel-grapher/pull/978),
+  [`f17d18e`](https://github.com/Teal-Insights/excel-grapher/commit/f17d18ec606dbb8690fb8eca2de3a6d2df429118))
+
+- Narrow nested static INDEX before the boundable check
+  ([#978](https://github.com/Teal-Insights/excel-grapher/pull/978),
+  [`f17d18e`](https://github.com/Teal-Insights/excel-grapher/commit/f17d18ec606dbb8690fb8eca2de3a6d2df429118))
+
+- Resolve whole-column shape-cache keys against the host cell
+  ([#978](https://github.com/Teal-Insights/excel-grapher/pull/978),
+  [`f17d18e`](https://github.com/Teal-Insights/excel-grapher/commit/f17d18ec606dbb8690fb8eca2de3a6d2df429118))
+
+
 ## v23.6.3 (2026-09-22)
 
 ### Bug Fixes

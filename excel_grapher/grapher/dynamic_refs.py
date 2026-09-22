@@ -910,11 +910,23 @@ def dynamic_ref_selectors_boundable_without_expand(
 
     `MATCH` over a static rectangular lookup, `ROWS`/`COLUMNS`, and numeric
     literals get integer domains from range geometry without reading
-    `cell_type_env`. `INDIRECT`, cell selectors, and OFFSET height/width that
-    cannot be densified from geometry still need expand.
+    `cell_type_env`. An omitted INDEX axis (`EmptyArg`, including
+    `INDEX(array,,k)` and `INDEX(array,k,)`) is that same geometry when another
+    selector densifies. Excel's literal `0` whole-axis form is already a
+    numeric domain. Nested static INDEX slices are rewritten to rectangular
+    refs first, so `INDEX(INDEX(array,,k), MATCH(...))` is checked as a range
+    array. `INDIRECT`, cell selectors, and OFFSET height/width that cannot be
+    densified from geometry still need expand.
     """
     if not isinstance(formula, str) or not formula.startswith("="):
         return False
+    if "INDEX" in formula.upper():
+        narrowed = narrow_static_index_lookup_vectors(formula, current_sheet)
+        if narrowed and not narrowed.startswith("="):
+            narrowed = "=" + narrowed
+        if narrowed != formula:
+            formula = narrowed
+            ast = None
     lim = limits or DynamicRefLimits()
     eval_context = (
         {"row": current_row, "column": current_col}
@@ -972,7 +984,14 @@ def dynamic_ref_selectors_boundable_without_expand(
                     return False
                 if not isinstance(node.args[0], (CellRefNode, RangeNode)):
                     return False
-                for sel in node.args[1:]:
+                selectors = node.args[1:]
+                # Every selector omitted is the whole array. Infer does not
+                # treat that form as a static slice, so keep the expand path.
+                if not any(not isinstance(sel, EmptyArgNode) for sel in selectors):
+                    return False
+                for sel in selectors:
+                    if isinstance(sel, EmptyArgNode):
+                        continue
                     if not selector_ok(sel, for_offset=False):
                         return False
             elif name == "OFFSET":
@@ -1133,6 +1152,17 @@ def infer_dynamic_index_targets(
     return out
 
 
+def _parse_index_axis(expr: str) -> AstNode:
+    """Parse one INDEX row or column selector.
+
+    A blank selector is Excel's whole-axis form (`0`). Two-argument INDEX
+    never calls this for the column; that form still defaults to column 1.
+    """
+    if not expr.strip():
+        return NumberNode(0)
+    return parse_ast("=" + expr)
+
+
 def _infer_single_index_call(
     inner_args: str,
     *,
@@ -1145,7 +1175,7 @@ def _infer_single_index_call(
     current_col: int | None = None,
 ) -> set[str]:
     """Infer targets for a single INDEX(...) call body."""
-    args = _split_top_level_args(inner_args)
+    args = _split_top_level_args(inner_args, keep_empty=True)
     if args is None or len(args) < 2 or len(args) > 3:
         raise DynamicRefError("INDEX expects 2 or 3 arguments (array, row_num, [column_num])")
 
@@ -1154,9 +1184,8 @@ def _infer_single_index_call(
 
     array_expr = _qualify_fragment(args[0], named_ranges, named_range_ranges)
     row_expr = _qualify_fragment(args[1], named_ranges, named_range_ranges)
-    col_expr = (
-        _qualify_fragment(args[2], named_ranges, named_range_ranges) if len(args) >= 3 else ""
-    )
+    has_col = len(args) >= 3
+    col_expr = _qualify_fragment(args[2], named_ranges, named_range_ranges) if has_col else ""
 
     try:
         array_ast = parse_ast("=" + array_expr)
@@ -1164,8 +1193,8 @@ def _infer_single_index_call(
     except (DynamicRefError, FormulaParseError) as exc:
         raise DynamicRefError(f"INDEX array argument must be a static range: {exc}") from exc
 
-    row_ast = parse_ast("=" + row_expr)
-    col_ast = parse_ast("=" + col_expr) if col_expr else None
+    row_ast = _parse_index_axis(row_expr)
+    col_ast = _parse_index_axis(col_expr) if has_col else None
 
     eval_context = (
         {"row": current_row, "column": current_col}
@@ -2061,13 +2090,14 @@ def _ordered_match_lookup_cells(arg: AstNode, *, current_sheet: str) -> list[str
 
     if isinstance(arg, RangeNode):
         try:
-            s1, coord_start = arg.start.split("!", 1)
-            s2, coord_end = arg.end.split("!", 1)
+            # `RangeNode.start` is already quoted when the sheet needs it.
+            # Re-quoting that text would miss `CellTypeEnv` keys.
+            sheet, coord_start = parse_address(arg.start)
+            end_sheet, coord_end = parse_address(arg.end)
         except ValueError:
             return None
-        if s1 != s2:
+        if sheet != end_sheet:
             return None
-        sheet = s1
         row1, col1 = coordinate_to_tuple(coord_start)
         row2, col2 = coordinate_to_tuple(coord_end)
         rlo, rhi = sorted((row1, row2))
@@ -2454,11 +2484,15 @@ def _infer_exact_match_position_domain(
     through exact MATCH equality. Cells with no deciding domain stay candidates,
     so one untyped lookup cell narrows the axis to that cell plus any real hits
     instead of the whole vector. A singleton is the common fully-typed case.
+
+    Lookup addresses are materialized only after the needle has a finite
+    domain and the lookup extent fits the scan budget. Callers that only need
+    `IntBounds(1, n)` (an empty env, an unpinned needle) never walk the vector.
     """
     if len(node.args) < 2:
         return None
-    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
-    if not ordered or len(ordered) > _exact_match_lookup_scan_limit(limits):
+    extent = _static_match_lookup_extent(node.args[1])
+    if extent is None or extent < 1 or extent > _exact_match_lookup_scan_limit(limits):
         return None
 
     lookup_res = _infer_numeric_domain_result(
@@ -2472,6 +2506,14 @@ def _infer_exact_match_position_domain(
     if lookup_res.diagnostic is not None:
         return None
     lookup_dom = lookup_res.domain
+    if lookup_dom is None:
+        needles = _finite_exact_match_values(node.args[0], env)
+        if needles is None or _needle_blocks_exact_match_refine(needles):
+            return None
+
+    ordered = _ordered_match_lookup_cells(node.args[1], current_sheet=current_sheet)
+    if not ordered:
+        return None
     if lookup_dom is None:
         return _infer_enum_exact_match_position(node.args[0], ordered, env, limits)
 
@@ -4941,8 +4983,21 @@ def _enumerate_value_assignments(
     return product(*domains)
 
 
-def _split_top_level_args(s: str) -> list[str] | None:
-    """Minimal top-level argument splitter mirroring parser._split_top_level_args."""
+def _split_top_level_args(s: str, *, keep_empty: bool = False) -> list[str] | None:
+    """Split `s` on top-level commas.
+
+    Mirrors `parser._split_top_level_args`. Empty arguments are dropped unless
+    `keep_empty` is set. INDEX inference keeps blanks so an omitted axis is
+    Excel's whole-axis `0`. OFFSET and static-INDEX classification still drop
+    them.
+
+    Args:
+        s: Argument text inside a call, without the surrounding parentheses.
+        keep_empty: When True, retain blank arguments.
+
+    Returns:
+        Argument strings, or None when parentheses or quotes are unbalanced.
+    """
     buf: list[str] = []
     args: list[str] = []
     depth = 0
@@ -4981,4 +5036,6 @@ def _split_top_level_args(s: str) -> list[str] | None:
     if in_str or depth != 0:
         return None
     args.append("".join(buf).strip())
+    if keep_empty:
+        return args
     return [a for a in args if a != ""]

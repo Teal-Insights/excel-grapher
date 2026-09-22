@@ -10,7 +10,13 @@ import pytest
 from fastpyxl import Workbook
 from fastpyxl.utils.cell import get_column_letter
 
-from excel_grapher.core.cell_types import RealBetween
+from excel_grapher.core.cell_types import (
+    CellKind,
+    CellType,
+    EnumDomain,
+    RealBetween,
+    normalize_cell_type_env_key,
+)
 from excel_grapher.core.formula_ast import parse as parse_ast
 from excel_grapher.grapher.builder import create_dependency_graph
 from excel_grapher.grapher.dynamic_refs import (
@@ -65,6 +71,50 @@ def test_offset_cell_height_is_not_boundable_without_env() -> None:
     assert not dynamic_ref_selectors_boundable_without_expand(
         formula,
         current_sheet="Sheet1",
+    )
+
+
+def test_omitted_index_axis_match_is_boundable_without_env() -> None:
+    """INDEX(array,,k) / INDEX(array,k,) inside MATCH are geometry (#968)."""
+    formula = (
+        "=INDEX('data all'!A2:BH239,"
+        "MATCH('Imported data'!D62,INDEX('data all'!A2:BH239,,2),0),"
+        "MATCH('Imported data'!K59,INDEX('data all'!A2:BH239,1,),0))"
+    )
+    assert dynamic_ref_selectors_boundable_without_expand(
+        formula,
+        current_sheet="Imported data",
+        limits=DynamicRefLimits(),
+        current_row=62,
+        current_col=11,
+    )
+    whole_column = (
+        "=INDEX('data all'!A2:C4,MATCH('Imported data'!A1,INDEX('data all'!A2:C4,0,1),0),1)"
+    )
+    assert dynamic_ref_selectors_boundable_without_expand(
+        whole_column,
+        current_sheet="Imported data",
+    )
+
+
+def test_nested_static_index_array_is_boundable_without_env() -> None:
+    """INDEX(INDEX(array,,k), MATCH) narrows to a static column before the check."""
+    formula = "=INDEX(INDEX(Data!A1:C3,,2),MATCH(Data!E1,Data!A1:A3,0))"
+    assert dynamic_ref_selectors_boundable_without_expand(
+        formula,
+        current_sheet="Data",
+    )
+
+
+def test_omitted_index_axis_without_densifiable_sibling_is_not_boundable() -> None:
+    """An omitted axis still needs the other selector to be known from geometry."""
+    assert not dynamic_ref_selectors_boundable_without_expand(
+        "=INDEX('data all'!A1:C10,,'Imported data'!D1)",
+        current_sheet="Imported data",
+    )
+    assert not dynamic_ref_selectors_boundable_without_expand(
+        "=INDEX('data all'!A1:C10,,)",
+        current_sheet="Imported data",
     )
 
 
@@ -193,6 +243,80 @@ def test_index_match_does_not_require_lookup_formula_leaf_constraints(
     )
     assert "Sheet1!B2" in graph.get_dependencies("Sheet1!C1")
     assert "Sheet1!B4" in graph.get_dependencies("Sheet1!C1")
+
+
+def test_quoted_sheet_omitted_index_match_skips_expand(tmp_path: Path) -> None:
+    """Omitted-axis INDEX/MATCH keeps the lazy env and stays under `max_cells` (#968).
+
+    The 6x4 grid exceeds `max_cells`. Year headers are pinned; code cells are
+    not, so the row MATCH stays unbounded. The untyped corner stays a year
+    candidate and the certain 2018 hit stops the scan, so targets are columns
+    A and C. Argument-env expansion still does not run.
+    """
+    excel_path = tmp_path / "quoted-index-match.xlsx"
+    wb = Workbook()
+    data = wb.active
+    assert data is not None
+    data.title = "data all"
+    data["A1"] = "code"
+    data["B1"] = 2017
+    data["C1"] = 2018
+    data["D1"] = 2019
+    for row in range(2, 7):
+        data.cell(row, 1, f"KEY.{row}")
+        for col in range(2, 5):
+            data.cell(row, col, float(row * col))
+    imported = wb.create_sheet("Imported data")
+    imported["A1"] = "KEY.3"
+    imported["B1"] = 2018
+    imported["C1"] = (
+        "=INDEX('data all'!A1:D6,"
+        "MATCH(A1,INDEX('data all'!A1:D6,,1),0),"
+        "MATCH(B1,INDEX('data all'!A1:D6,1,),0))"
+    )
+    wb.save(excel_path)
+
+    def _pinned_number(value: int) -> CellType:
+        return CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset({value})))
+
+    env = {
+        normalize_cell_type_env_key("'Imported data'!B1"): _pinned_number(2018),
+        normalize_cell_type_env_key("'data all'!B1"): _pinned_number(2017),
+        normalize_cell_type_env_key("'data all'!C1"): _pinned_number(2018),
+        normalize_cell_type_env_key("'data all'!D1"): _pinned_number(2019),
+    }
+    limits = DynamicRefLimits(max_cells=20)
+    expand_calls = 0
+    original_expand = expand_leaf_env_to_argument_env
+
+    def counting_expand(*args: object, **kwargs: object):
+        nonlocal expand_calls
+        expand_calls += 1
+        return original_expand(*args, **kwargs)
+
+    with (
+        patch(
+            "excel_grapher.grapher.builder.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+        patch(
+            "excel_grapher.grapher.provenance_collect.expand_leaf_env_to_argument_env",
+            side_effect=counting_expand,
+        ),
+    ):
+        graph = create_dependency_graph(
+            excel_path,
+            ["'Imported data'!C1"],
+            load_values=True,
+            dynamic_refs=DynamicRefConfig(cell_type_env=env, limits=limits),
+        )
+
+    deps = set(graph.get_dependencies("'Imported data'!C1"))
+    assert expand_calls == 0
+    assert "'data all'!A3" in deps
+    assert "'data all'!C3" in deps
+    assert "'data all'!B2" not in deps
+    assert "'data all'!D2" not in deps
 
 
 def test_index_cell_selector_still_fail_closes_without_constraint(tmp_path: Path) -> None:
