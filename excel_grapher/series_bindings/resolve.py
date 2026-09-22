@@ -115,8 +115,9 @@ class _WorkbookValues:
     """Lazy cached value reader for bind cells outside the dependency graph.
 
     Opens the workbook in `read_only` mode so unused sheets are never bound.
-    Each touched sheet is streamed only through the last requested row; the
-    rest of that sheet and every unread sheet stay unparsed.
+    Each call streams a sheet only through the deepest requested row that is
+    not already cached, and stores those coordinates. A coordinate that was
+    not requested streams the sheet again. Unread sheets stay unparsed.
     """
 
     def __init__(self, path: Path | str, *, data_only: bool = True) -> None:
@@ -138,7 +139,11 @@ class _WorkbookValues:
         return self._workbook_cache
 
     def prefetch(self, addresses: Iterable[str], *, graph: DependencyGraph | None = None) -> None:
-        """Stream each touched sheet only through the last requested row."""
+        """Cache `addresses`, streaming each sheet through its deepest miss.
+
+        Coordinates already cached are not read again. When `graph` is set,
+        addresses that are graph nodes are skipped.
+        """
         wanted_by_sheet: dict[str, set[str]] = {}
         for address in addresses:
             if graph is not None and address in graph:
@@ -146,13 +151,16 @@ class _WorkbookValues:
             sheet, coord = parse_address(address)
             wanted_by_sheet.setdefault(sheet, set()).add(coord)
         for sheet, wanted in wanted_by_sheet.items():
+            if not wanted:
+                continue
             cached = self._sheet_values.get(sheet)
-            if cached is not None and wanted <= cached.keys():
+            missing = wanted if cached is None else wanted - cached.keys()
+            if not missing:
                 continue
             values = _stream_sheet_values(
                 self._workbook(),
                 sheet,
-                wanted,
+                missing,
                 data_only=self._data_only,
             )
             self._sheet_values.setdefault(sheet, {}).update(values)
@@ -186,7 +194,11 @@ def _stream_sheet_values(
     *,
     data_only: bool = True,
 ) -> dict[str, Any]:
-    """Stream one worksheet until every requested coordinate's row is passed."""
+    """Stream one worksheet through the deepest requested row.
+
+    Only requested coordinates are returned. A requested coordinate the
+    parser omits is `None`.
+    """
     from fastpyxl.worksheet._reader import WorkSheetParser
 
     if not wanted:

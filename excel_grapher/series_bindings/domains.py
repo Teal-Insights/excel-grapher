@@ -284,7 +284,9 @@ class SeriesDomainIndex(Mapping[str, CellType]):
     Lookup scans per-sheet covering rectangles from the manifest (O(#series)
     per miss) and memoizes `CellType` per address. `from_workbook` values come
     from graph node values when attached, otherwise from a streaming workbook
-    read on first miss.
+    read. The first such read prefetches every off-graph `from_workbook` cell,
+    one stream per sheet. Truthiness reports declared covers and does not
+    change after expansion. `len` is the number of compiled entries.
     """
 
     def __init__(
@@ -304,6 +306,7 @@ class SeriesDomainIndex(Mapping[str, CellType]):
         self._keyed: dict[str, dict[Any, str]] | None = None
         self._memo: dict[str, CellType] = {}
         self._expanded: dict[str, CellType] | None = None
+        self._from_workbook_prefetched = False
         named_range_ranges = None if graph is None else graph.named_range_ranges
         self._covers: list[_Cover] = []
         needed: set[str] = set()
@@ -408,11 +411,8 @@ class SeriesDomainIndex(Mapping[str, CellType]):
                 return node.value
         if self._workbook is None:
             return None
-        if self._reader is None:
-            from excel_grapher.series_bindings.resolve import _WorkbookValues
-
-            self._reader = _WorkbookValues(self._workbook)
-        return self._reader.read(address)
+        self._prefetch_from_workbook_once()
+        return self._workbook_reader().read(address)
 
     def _cell_type_for(self, series: dict[str, Any], address: str) -> CellType | None:
         domain = compile_domain_spec(series)
@@ -458,17 +458,60 @@ class SeriesDomainIndex(Mapping[str, CellType]):
             meta.append(RELATION_TYPES[kind](partner_addr))
         return tuple(meta)
 
-    def _materialize(self) -> dict[str, CellType]:
-        if self._expanded is not None:
-            return self._expanded
-        env: dict[str, CellType] = {}
+    def _workbook_reader(self) -> Any:
+        if self._workbook is None:
+            raise RuntimeError("from_workbook reads require a workbook path")
+        if self._reader is None:
+            from excel_grapher.series_bindings.resolve import _WorkbookValues
+
+            self._reader = _WorkbookValues(self._workbook)
+        return self._reader
+
+    def _series_addresses(self) -> list[tuple[dict[str, Any], list[str]]]:
+        compiled: list[tuple[dict[str, Any], list[str]]] = []
         seen_ids: set[str] = set()
         for cover in self._covers:
             if cover.series_id in seen_ids:
                 continue
             seen_ids.add(cover.series_id)
             series = self._indexed[cover.series_id]
-            for address in expand_bound_series_addresses(series, workbook=self._workbook):
+            compiled.append(
+                (series, list(expand_bound_series_addresses(series, workbook=self._workbook)))
+            )
+        return compiled
+
+    def _prefetch_off_graph(self, compiled: list[tuple[dict[str, Any], list[str]]]) -> None:
+        """Read every off-graph `from_workbook` cell, one stream per sheet."""
+        if self._workbook is None:
+            return
+        pending: list[str] = []
+        for series, addresses in compiled:
+            domain = compile_domain_spec(series)
+            if domain is None or domain.get("from_workbook") is not True:
+                continue
+            for address in addresses:
+                if self._graph is not None and address in self._graph:
+                    continue
+                pending.append(address)
+        if pending:
+            self._workbook_reader().prefetch(pending, graph=self._graph)
+
+    def _prefetch_from_workbook_once(
+        self, compiled: list[tuple[dict[str, Any], list[str]]] | None = None
+    ) -> None:
+        if self._from_workbook_prefetched:
+            return
+        self._prefetch_off_graph(self._series_addresses() if compiled is None else compiled)
+        self._from_workbook_prefetched = True
+
+    def _materialize(self) -> dict[str, CellType]:
+        if self._expanded is not None:
+            return self._expanded
+        compiled = self._series_addresses()
+        self._prefetch_from_workbook_once(compiled)
+        env: dict[str, CellType] = {}
+        for series, addresses in compiled:
+            for address in addresses:
                 norm = normalize_cell_type_env_key(address)
                 cell_type = self._memo.get(norm) or self._cell_type_for(series, norm)
                 if cell_type is not None:
@@ -476,6 +519,15 @@ class SeriesDomainIndex(Mapping[str, CellType]):
                     env[norm] = cell_type
         self._expanded = env
         return env
+
+    def __bool__(self) -> bool:
+        """Return whether any series declares a domain, without reading values.
+
+        Stays the same after `len` and iteration. Blank `from_workbook` cells
+        still count. `len` is the compiled size and can be zero while this is
+        true.
+        """
+        return bool(self._covers)
 
     def __getitem__(self, key: str) -> CellType:
         cell_type = self.domain_for(str(key))
@@ -507,8 +559,10 @@ def cell_type_env_from_bindings(
 
     Returns:
         A `SeriesDomainIndex` keyed like `constraints_to_cell_type_env` output.
-        Address lookup compiles one cell; iteration and `len` expand the whole
-        domain. Callers that need a fully expanded dict can write `dict(index)`.
+        Address lookup compiles one cell. The first `from_workbook` miss
+        prefetches every off-graph value, one stream per sheet. Iteration and
+        `len` expand the whole domain. Callers that need a fully expanded dict
+        can write `dict(index)`.
 
     Raises:
         SeriesRelationError: A relation partner is missing, incomparable,
