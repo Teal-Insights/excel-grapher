@@ -9,6 +9,7 @@ import pytest
 import yaml
 
 from excel_grapher.cli import main
+from excel_grapher.grapher.dynamic_refs import ExactMatchUndomainedCellWarning
 from excel_grapher.series_bindings.versions import CURRENT_SCHEMA_VERSION
 from tests.unit.exporter.inverted_tree.helpers import series_entry, write_workbook
 
@@ -100,3 +101,92 @@ def test_main_candidates_missing_workbook(tmp_path: Path) -> None:
     missing = tmp_path / "missing.xlsx"
     exit_code = main(["bindings", "candidates", str(missing), "--target", "Outputs!A1"])
     assert exit_code == 1
+
+
+def test_main_candidates_undomained_match_is_opt_in(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Default candidates JSON stays the must-bind list.
+
+    `--undomained-match` returns the corner exact MATCH kept, not the lookup.
+    """
+    workbook = write_workbook(
+        tmp_path / "year.xlsx",
+        {
+            "data": {
+                "A1": "corner",
+                "B1": 2017,
+                "C1": 2018,
+                "D1": 2019,
+                "A2": "no",
+                "A3": "yes",
+                "B2": 1,
+                "C2": 2,
+                "B3": 3,
+                "C3": 4,
+            },
+            "calc": {
+                "A1": "yes",
+                "B1": 2018,
+                "C1": (
+                    "=INDEX(data!A1:C3,MATCH(calc!A1,data!A1:A3,0),MATCH(calc!B1,data!A1:C1,0))"
+                ),
+            },
+        },
+    )
+    bindings = tmp_path / "year.bindings.yaml"
+    document = {
+        "schema_version": CURRENT_SCHEMA_VERSION,
+        "series": [
+            series_entry(
+                "result",
+                "calc!C1",
+                layout="scalar",
+                direction="output",
+                compute_name="compute_result",
+            ),
+            series_entry(
+                "row_needle",
+                "calc!A1",
+                dtype="string",
+                domain={"enum": ["yes"]},
+            ),
+            series_entry(
+                "year_needle",
+                "calc!B1",
+                dtype="int",
+                domain={"enum": [2018]},
+            ),
+            series_entry("miss", "data!A2", dtype="string", domain={"enum": ["no"]}),
+            series_entry("hit", "data!A3", dtype="string", domain={"enum": ["yes"]}),
+            series_entry("year_2017", "data!B1", dtype="int", domain={"enum": [2017]}),
+            series_entry("year_2018", "data!C1", dtype="int", domain={"enum": [2018]}),
+        ],
+    }
+    bindings.write_text(yaml.safe_dump(document, sort_keys=False), encoding="utf-8")
+
+    with pytest.warns(ExactMatchUndomainedCellWarning, match="data!A1"):
+        exit_code = main(
+            ["bindings", "candidates", str(workbook), "--bindings", str(bindings), "--json"]
+        )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert json.loads(captured.out) == []
+
+    with pytest.warns(ExactMatchUndomainedCellWarning, match="data!A1"):
+        exit_code = main(
+            [
+                "bindings",
+                "candidates",
+                str(workbook),
+                "--bindings",
+                str(bindings),
+                "--json",
+                "--undomained-match",
+                "--strict",
+            ]
+        )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    payload = json.loads(captured.out)
+    assert payload == {"missing": [], "undomained_exact_match": ["data!A1"]}

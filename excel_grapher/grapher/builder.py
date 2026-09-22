@@ -60,6 +60,8 @@ from .dynamic_refs import (
     DynamicRefTraceEvent,
     GlobalWorkbookBounds,
     _emit_trace,
+    _pop_undomained_exact_match_sink,
+    _push_undomained_exact_match_sink,
     clear_index_target_cache,
     dynamic_ref_selectors_boundable_without_expand,
     expand_leaf_env_to_argument_env,
@@ -1987,6 +1989,7 @@ def list_dynamic_ref_constraint_candidates(
     max_depth: int = 50,
     max_range_cells: int = DEFAULT_MAX_RANGE_CELLS,
     type_analysis_cache: TypeAnalysisCache | None = None,
+    undomained_exact_match: list[str] | None = None,
 ) -> list[str]:
     """Return sorted leaf cells missing dynamic-ref constraint entries.
 
@@ -1996,6 +1999,13 @@ def list_dynamic_ref_constraint_candidates(
     Unlike `create_dependency_graph`, this function does **not** raise
     `DynamicRefError` when constraints are missing.  Instead it collects all
     missing leaf addresses in a single pass and returns them sorted.
+
+    `undomained_exact_match`, when provided, receives lookup cells that exact
+    MATCH kept only because they have no cell type. That list is not merged
+    into the returned must-bind addresses. Proven misses, cells after a
+    certain hit, and lookups whose needle was never scanned are omitted. The
+    scan still warns via `ExactMatchUndomainedCellWarning`. An empty
+    `dynamic_refs` skips inference, so the collection stays empty.
 
     When `dynamic_refs` is `None` the function treats it as an empty constraint
     environment: all leaf cells that feed dynamic-ref arguments are returned as
@@ -2051,6 +2061,7 @@ def list_dynamic_ref_constraint_candidates(
     def _cell_value(sheet: str, a1: str) -> object | None:
         return _get_ws_f(sheet)[a1].value
 
+    sink_token = _push_undomained_exact_match_sink(undomained_exact_match)
     try:
         named_range_maps = build_named_range_map(wb_formulas)
         named_ranges = named_range_maps.cell_map
@@ -2308,11 +2319,14 @@ def list_dynamic_ref_constraint_candidates(
                     formula_for_infer = formula_for_infer_cand
                     expanded_env = dynamic_refs.cell_type_env
                     with _suppress_recoverable_dynamic_ref_errors():
+                        # An empty argument set is the static-geometry skip. Keep the
+                        # authored env above so exact MATCH classifies lookup cells.
+                        # Expanding no refs would replace that env with the shared cache.
                         if all_refs and all(
                             addr in _shared_cell_type_cache_cand for addr in all_refs
                         ):
                             expanded_env = _shared_cell_type_cache_cand
-                        else:
+                        elif all_refs:
 
                             def _get_cell_formula(addr: str) -> str | None:
                                 sh2, a1_2 = parse_address(addr)
@@ -2414,6 +2428,7 @@ def list_dynamic_ref_constraint_candidates(
         )
 
     finally:
+        _pop_undomained_exact_match_sink(sink_token)
         if _owns_wb:
             wb_formulas.close()
 
