@@ -1,6 +1,6 @@
 [project]
 name = "excel-grapher-author-bindings"
-version = "23.7.0"
+version = "23.7.1"
 description = "Agent skill for authoring excel-grapher series-binding sidecars"
 readme = "README.md"
 license = "MIT"

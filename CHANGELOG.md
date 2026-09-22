@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.7.1 (2026-09-22)
+
+### Bug Fixes
+
+- **grapher**: Honor blank ranges when listing dynamic-ref candidates
+  ([#981](https://github.com/Teal-Insights/excel-grapher/pull/981),
+  [`f443828`](https://github.com/Teal-Insights/excel-grapher/commit/f443828deae68c5cd8b05a551a0b5fa5df2d7c54))
+
+- **grapher**: Treat blank_ranges as numeric 0 during exact MATCH
+  ([#981](https://github.com/Teal-Insights/excel-grapher/pull/981),
+  [`f443828`](https://github.com/Teal-Insights/excel-grapher/commit/f443828deae68c5cd8b05a551a0b5fa5df2d7c54))
+
+- **grapher**: Treat blank_ranges as numeric 0 in exact MATCH
+  ([#981](https://github.com/Teal-Insights/excel-grapher/pull/981),
+  [`f443828`](https://github.com/Teal-Insights/excel-grapher/commit/f443828deae68c5cd8b05a551a0b5fa5df2d7c54))
+
+- **grapher**: Type shared blank corners as numeric 0 in joint MATCH
+  ([#981](https://github.com/Teal-Insights/excel-grapher/pull/981),
+  [`f443828`](https://github.com/Teal-Insights/excel-grapher/commit/f443828deae68c5cd8b05a551a0b5fa5df2d7c54))
+
+### Testing
+
+- **grapher**: Lock blank rectangles for OFFSET exact MATCH
+  ([#981](https://github.com/Teal-Insights/excel-grapher/pull/981),
+  [`f443828`](https://github.com/Teal-Insights/excel-grapher/commit/f443828deae68c5cd8b05a551a0b5fa5df2d7c54))
+
+
 ## v23.7.0 (2026-09-22)
 
 ### Features
