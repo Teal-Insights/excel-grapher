@@ -80,6 +80,7 @@ from excel_grapher.series_bindings.normalize import is_override_input
 from excel_grapher.series_bindings.resolve import (
     _bind_source_addresses,
     _execute_bind,
+    _structure_source_addresses,
     _WorkbookValues,
 )
 
@@ -975,19 +976,34 @@ def _bind_column_key(
     bind: Mapping[str, Any],
     address: CanonicalAddress,
     graph: DependencyGraph | None,
+    *,
+    read_as: str,
+    evaluate_addresses: set[str],
+    evaluators: dict[int, Any],
 ) -> object:
-    """Return the column key `bind` assigns to `address`."""
+    """Return the column key `bind` assigns to `address`.
+
+    `read_as` is the landing series' effective key type. A bind that omits
+    `read` would otherwise coerce with `auto` and disagree with catalog keys.
+    `evaluate_addresses` is the catalog's labeller set, so an uncached formula
+    header is evaluated the same way as series resolution.
+    """
+    applied = dict(bind)
+    if read_as and "read" not in applied:
+        applied["read"] = read_as
     reader = _OFFSET_COLUMN_READER.get()
-    sources = _bind_source_addresses(dict(bind), str(address))
+    sources = _bind_source_addresses(applied, str(address))
     if reader is None:
         if sources:
             raise ValueError(f"OFFSET column key at {address} needs the bindings workbook")
         reader = cast(_WorkbookValues, _UnusedColumnReader())
     return _execute_bind(
-        dict(bind),
+        applied,
         graph=graph,
         reader=reader,
         data_address=str(address),
+        evaluate_addresses=evaluate_addresses,
+        evaluators=evaluators,
     )
 
 
@@ -1005,23 +1021,61 @@ class _OffsetColumnLayout:
     anchor_col: int
     field_name: str
     bind: Mapping[str, Any]
+    read_as: str
     columns: tuple[tuple[int, CanonicalAddress, BoundSeries], ...]
 
 
-def _offset_column_layout(
+def _key_read_as(series: BoundSeries, field: str) -> str:
+    """Return the catalog read mode for `field` on `series`."""
+    try:
+        index = series.key_fields.index(field)
+    except ValueError:
+        return "auto"
+    if index < len(series.key_types) and series.key_types[index]:
+        return series.key_types[index]
+    bind = series.dimension_bind(field) or {}
+    return str(bind.get("read", "auto"))
+
+
+def _labeller_evaluate_addresses(catalog: SeriesCatalog) -> set[str]:
+    """Return labeller cells and header sources the catalog may evaluate."""
+    addresses: set[str] = set()
+    for series in catalog.series.values():
+        if not series.axis_labels:
+            continue
+        cells = [
+            str(cell)
+            for cell in (
+                series.authored_cells if series.authored_cells is not None else series.cells
+            )
+        ]
+        addresses.update(cells)
+        addresses.update(_structure_source_addresses(dict(series.raw), cells))
+    return addresses
+
+
+@dataclass(frozen=True, slots=True)
+class _DynamicColumnMove:
+    """A dynamic `OFFSET(cell, 0, cols)` whose anchor has no column axis."""
+
+    anchor: CanonicalAddress
+    anchor_series: BoundSeries
+    sheet: str
+    row: int
+    anchor_col: int
+    landings: tuple[CanonicalAddress, ...]
+    rects: tuple[BlankRangeRect, ...]
+
+
+def _dynamic_column_move(
     node: FunctionCallNode,
     host_cell: CanonicalAddress,
     catalog: SeriesCatalog,
     graph: DependencyGraph | None,
     *,
     blank_rects: Sequence[BlankRangeRect] | None = None,
-    host_series_id: str | None = None,
-) -> _OffsetColumnLayout | None:
-    """Return bound columns for a dynamic column-only `OFFSET`, or `None`.
-
-    `None` means the formula is not a cross-series column step. An unbound
-    column between the anchor and a landing fails closed.
-    """
+) -> _DynamicColumnMove | None:
+    """Return a column-only dynamic `OFFSET`, or `None` when it is some other call."""
     if len(node.args) != 3 or not isinstance(node.args[0], CellRefNode):
         return None
     if ast_literal_int(node.args[1]) != 0 or ast_literal_int(node.args[2]) is not None:
@@ -1035,47 +1089,130 @@ def _offset_column_layout(
     if not landings:
         return None
     sheet, row, anchor_col = parse_cell_coords(anchor)
-    landing_cols = [parse_cell_coords(landing)[2] for landing in landings]
-    first = min(anchor_col, min(landing_cols))
-    last = max(anchor_col, max(landing_cols))
+    return _DynamicColumnMove(
+        anchor,
+        anchor_series,
+        sheet,
+        row,
+        anchor_col,
+        tuple(landings),
+        rects,
+    )
+
+
+def anchor_only_column_target(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+) -> tuple[BoundSeries, CanonicalAddress] | None:
+    """Return the anchor when every in-domain landing stays on its column.
+
+    A language domain of `{0}` never leaves the anchor. The caller reads that
+    cell. A domain that reaches another column is a span, not this case.
+    """
+    move = _dynamic_column_move(
+        node,
+        host_cell,
+        catalog,
+        graph,
+        blank_rects=blank_rects,
+    )
+    if move is None:
+        return None
+    columns = {parse_cell_coords(landing)[2] for landing in move.landings}
+    if columns != {move.anchor_col}:
+        return None
+    return move.anchor_series, move.anchor
+
+
+def _offset_column_layout(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+    host_series_id: str | None = None,
+) -> _OffsetColumnLayout | None:
+    """Return bound columns for a dynamic column-only `OFFSET`, or `None`.
+
+    `None` means the formula is not a cross-series column step, or every
+    in-domain landing stays on the anchor column. A column step that reaches
+    another column fails closed when a worksheet column in the span is unbound,
+    the landing series do not share one column key, or that key has no bind.
+    """
+    move = _dynamic_column_move(
+        node,
+        host_cell,
+        catalog,
+        graph,
+        blank_rects=blank_rects,
+    )
+    if move is None:
+        return None
+    landing_cols = [parse_cell_coords(landing)[2] for landing in move.landings]
+    first = min(move.anchor_col, min(landing_cols))
+    last = max(move.anchor_col, max(landing_cols))
     if first == last:
         return None
     columns: list[tuple[int, CanonicalAddress, BoundSeries]] = []
     for col in range(first, last + 1):
-        address = as_canonical(format_cell_key(sheet, get_column_letter(col), row))
-        if address_in_blank_ranges(address, rects) or catalog.series_for(address) is None:
+        address = as_canonical(format_cell_key(move.sheet, get_column_letter(col), move.row))
+        if address_in_blank_ranges(address, move.rects) or catalog.series_for(address) is None:
             raise _offset_column_error(
                 host_series_id,
                 host_cell,
-                f"OFFSET column offset into series {anchor_series.series_id!r} "
+                f"OFFSET column offset into series {move.anchor_series.series_id!r} "
                 f"crosses unbound cell {address}",
             )
         columns.append((col, address, catalog.require_series_for(address)))
     field_name: str | None = None
     bind: Mapping[str, Any] | None = None
+    read_as: str | None = None
     for col, _address, series in columns:
-        if col == anchor_col:
+        if col == move.anchor_col:
             continue
         fields = _column_key_fields(series)
         if len(fields) != 1:
             if not fields:
                 continue
-            return None
+            raise _offset_column_error(
+                host_series_id,
+                host_cell,
+                f"OFFSET column offset into series {move.anchor_series.series_id!r} "
+                f"uses more than one column key on {series.series_id!r}",
+            )
         name = fields[0]
         series_bind = series.dimension_bind(name) or {}
+        series_read = _key_read_as(series, name)
         if field_name is None:
             field_name = name
             bind = series_bind
+            read_as = series_read
             continue
-        if name != field_name or dict(series_bind) != dict(bind or {}):
-            return None
-    if field_name is None or bind is None:
-        return None
+        if name != field_name or dict(series_bind) != dict(bind or {}) or series_read != read_as:
+            raise _offset_column_error(
+                host_series_id,
+                host_cell,
+                f"OFFSET column offset into series {move.anchor_series.series_id!r} "
+                "column key bind differs across the landing series",
+            )
+    if field_name is None or bind is None or read_as is None:
+        raise _offset_column_error(
+            host_series_id,
+            host_cell,
+            f"OFFSET column offset into series {move.anchor_series.series_id!r} "
+            "has no column key on the landing cells",
+        )
     return _OffsetColumnLayout(
-        anchor_series.series_id,
-        anchor_col,
+        move.anchor_series.series_id,
+        move.anchor_col,
         field_name,
         dict(bind),
+        read_as,
         tuple(columns),
     )
 
@@ -1099,8 +1236,9 @@ def resolve_offset_column_span(
     sequence starts at the anchor even when that series has no column field.
 
     Raises:
-        InvertedTreeExportError: The move is a column step but a worksheet
-            column between the anchor and a landing is unbound, or two columns
+        InvertedTreeExportError: The move reaches another column, and a
+            worksheet column in the span is unbound, the landing series do not
+            share one column key, a column key is missing, or two columns
             share one key.
     """
     layout = _offset_column_layout(
@@ -1116,6 +1254,8 @@ def resolve_offset_column_span(
     members: list[OffsetColumnMember] = []
     seen: dict[object, CanonicalAddress] = {}
     anchor_index: int | None = None
+    labellers = _labeller_evaluate_addresses(catalog)
+    evaluators: dict[int, Any] = {}
     for col, address, series in layout.columns:
         point = series.key_point_for(address)
         try:
@@ -1123,10 +1263,20 @@ def resolve_offset_column_span(
                 _key_field_axis(series, layout.field_name) == "col"
             ):
                 if point is None or layout.field_name not in point.as_mapping():
-                    return None
+                    raise ValueError(
+                        f"OFFSET column offset into series {layout.anchor_series_id!r} "
+                        f"has no {layout.field_name!r} key at {address}"
+                    )
                 raw_key = point[layout.field_name]
             else:
-                raw_key = _bind_column_key(layout.bind, address, graph)
+                raw_key = _bind_column_key(
+                    layout.bind,
+                    address,
+                    graph,
+                    read_as=layout.read_as,
+                    evaluate_addresses=labellers,
+                    evaluators=evaluators,
+                )
             key = _column_key_value(raw_key)
         except ValueError as exc:
             raise _offset_column_error(host_series_id, host_cell, str(exc)) from exc
