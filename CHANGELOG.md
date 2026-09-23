@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.7.3 (2026-09-23)
+
+### Bug Fixes
+
+- **export**: Lower INDEX/MATCH tables that include off-graph series
+  ([`cbee61e`](https://github.com/Teal-Insights/excel-grapher/commit/cbee61e827e47e7935cba38f53590698bf9dfec7))
+
+- **export**: Validate off-graph parameters of retained formulas
+  ([`80db944`](https://github.com/Teal-Insights/excel-grapher/commit/80db944bf114db4765ebde1e2b18d5fcbe9f792d))
+
+### Testing
+
+- **export**: Annotate off-graph lookup helpers for ty
+  ([`1e1a4cf`](https://github.com/Teal-Insights/excel-grapher/commit/1e1a4cfff3311519d18d77390ba16eef5df4a0cb))
+
+
 ## v23.7.2 (2026-09-23)
 
 ### Bug Fixes
