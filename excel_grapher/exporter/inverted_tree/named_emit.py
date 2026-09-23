@@ -38,6 +38,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
 from excel_grapher.exporter.inverted_tree.deps import (
     leaf_closure,
     node_formula_ast,
+    offset_column_workbook,
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -2765,9 +2766,10 @@ def _emit_named_modules(
 ) -> dict[str, str]:
     named_axes = NamedAxes.plan(_axes_to_plan(catalog, deps))
     literal_tables: dict[str, dict[tuple[object, ...], object]] = {}
-    internals = emit_named_internals(
-        catalog, deps, scc_map, graph, named_axes, literal_tables, domains
-    )
+    with offset_column_workbook(workbook):
+        internals = emit_named_internals(
+            catalog, deps, scc_map, graph, named_axes, literal_tables, domains
+        )
     validation = emit_named_validation(catalog, domains, deps)
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
     model = emit_named_model(catalog, deps, scc_map, domains)
@@ -2807,15 +2809,29 @@ def inventory_named_emission(
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
     graph: DependencyGraph,
+    workbook: Path | str | None = None,
 ) -> list[dict[str, object]]:
     """Attempt every formula body and report the series that cannot be lowered.
 
     Each entry names the series, its recurrence group when it has one, and
     the export error. An empty list means the whole model lowers to named
-    computation.
+    computation. `workbook` supplies anchor column keys for a column-only
+    `OFFSET` whose anchor series has no column axis.
     """
     named_axes = NamedAxes.plan(_axes_to_plan(catalog, deps))
     failures: list[dict[str, object]] = []
+    with offset_column_workbook(workbook):
+        return _inventory_named_emission(catalog, deps, scc_map, graph, named_axes, failures)
+
+
+def _inventory_named_emission(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps],
+    scc_map: Mapping[str, tuple[str, ...]],
+    graph: DependencyGraph,
+    named_axes: NamedAxes,
+    failures: list[dict[str, object]],
+) -> list[dict[str, object]]:
     for series in _retained_formula_series(catalog):
         scc = scc_map.get(series.series_id, (series.series_id,))
         try:
