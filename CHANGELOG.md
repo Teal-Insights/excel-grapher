@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.8.0 (2026-09-23)
+
+### Bug Fixes
+
+- **export**: Fail closed on column OFFSET spans that cannot be stepped
+  ([`a3f36b6`](https://github.com/Teal-Insights/excel-grapher/commit/a3f36b620f18622b6884c24965a49c5812140305))
+
+- **export**: Type the column-key reader passed to bind execution
+  ([`e1a0023`](https://github.com/Teal-Insights/excel-grapher/commit/e1a0023a2c5ab283fcb7646f09275c8396f6fc6c))
+
+### Features
+
+- **export**: Lower column OFFSET off a series with no column axis
+  ([`3528488`](https://github.com/Teal-Insights/excel-grapher/commit/352848830fc00c3622bf989261772c6bff0a8d03))
+
+### Testing
+
+- **export**: Type the column OFFSET helpers for ty
+  ([`b1a09da`](https://github.com/Teal-Insights/excel-grapher/commit/b1a09da17ea18b38634566710135fdfef2625eec))
+
+
 ## v23.7.3 (2026-09-23)
 
 ### Bug Fixes
