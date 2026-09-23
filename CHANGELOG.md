@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.8.1 (2026-09-23)
+
+### Bug Fixes
+
+- **export**: Lower COUNT of a multi-cell range
+  ([`cecaa82`](https://github.com/Teal-Insights/excel-grapher/commit/cecaa82b393dd2697f17ec4e47f713ba6a33ab7b))
+
+- **export**: Skip omitted COUNT arguments
+  ([`f8d2858`](https://github.com/Teal-Insights/excel-grapher/commit/f8d28580e14aa781dac68c711881f0e49b70367f))
+
+
 ## v23.8.0 (2026-09-23)
 
 ### Bug Fixes
