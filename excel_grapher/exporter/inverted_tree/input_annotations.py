@@ -11,7 +11,7 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.series_bindings.input_coerce import input_value_map_from_series
 
 if TYPE_CHECKING:
-    from collections.abc import Mapping
+    from collections.abc import Collection, Mapping
 
     from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
     from excel_grapher.grapher.graph import DependencyGraph
@@ -38,6 +38,8 @@ class _Marker:
 def public_input_annotations(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
+    *,
+    include: Collection[str] = (),
 ) -> dict[str, str]:
     """Return element annotations for public inputs constrained on the graph.
 
@@ -46,10 +48,13 @@ def public_input_annotations(
     fails closed. `input.value_map` workbook needles stay off the annotation;
     callers are still checked against the map keys. A missing `cell_type_env`
     yields no annotations; the check does not expand a lazy domain index.
+    Series in `include` are considered even when `graph_cells` is empty; cells
+    absent from the env stay unclassified and produce no annotation.
 
     Args:
         catalog: Bound series for this export.
         graph: Graph whose `cell_type_env` holds the extracted domains.
+        include: Input ids emitted despite an empty graph intersection.
 
     Returns:
         Series id to a `Literal` or `Annotated` element annotation. Inputs
@@ -62,11 +67,16 @@ def public_input_annotations(
     env = graph.cell_type_env
     if env is None:
         return {}
+    included = set(include)
     annotations: dict[str, str] = {}
     for series in catalog.series.values():
         if series.direction != "input":
             continue
-        if series.graph_cells is not None and not series.graph_cells:
+        if (
+            series.graph_cells is not None
+            and not series.graph_cells
+            and series.series_id not in included
+        ):
             continue
         rendered = _annotation_for_series(series, env)
         if rendered is not None:

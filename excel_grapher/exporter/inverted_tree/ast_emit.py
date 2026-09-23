@@ -725,11 +725,17 @@ def _named_keys(
             keys.append(repr(target))
             continue
         owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
-        layout = ctx.layout_axis(owner_axis)
         runtime = ctx.runtime_labeller_for(owner_axis)
         if variable is not None and current == target:
             keys.append(variable)
             continue
+        # An unplanned axis has no emitted constant to index.
+        if runtime is not None and (
+            ctx.named_axes is None or not ctx.named_axes.contains(owner_axis)
+        ):
+            keys.append(repr(target))
+            continue
+        layout = ctx.layout_axis(owner_axis)
         if type(target) is int:
             driver = _integer_driver(ctx, key_field, field_axis)
             if driver is not None:

@@ -139,18 +139,20 @@ def _generated_helper_imports(used: set[str]) -> list[str]:
 
 
 def named_codegen_fingerprint(catalog: SeriesCatalog, *, include: Collection[str] = ()) -> str:
-    """Identify the representation, authored provenance, and graph projection."""
+    """Identify the representation, authored provenance, and graph projection.
+
+    `include` names series with an empty graph intersection that this export
+    still emits. Their fingerprint `required` members are the authored domain,
+    matching the schema written for those tensors.
+    """
     included = set(include)
     entries = []
     for series in catalog.series.values():
-        if (
-            series.graph_cells is not None
-            and not series.graph_cells
-            and series.series_id not in included
-        ):
+        off_graph = series.graph_cells is not None and not series.graph_cells
+        if off_graph and series.series_id not in included:
             continue
         domain = series.tensor_domain
-        required = series.required_coordinates
+        required = frozenset(domain) if off_graph else series.required_coordinates
         entries.append(
             {
                 "series_id": series.series_id,
@@ -1413,15 +1415,16 @@ def _input_check(
 
 
 def _input_check_functions(
-    catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
+    deps: Mapping[str, SeriesDeps] | None = None,
 ) -> tuple[list[str], list[str], set[str]]:
     """Collect non-trivial input check sources and the runtime helpers they use."""
     checks: list[str] = []
     checked: list[str] = []
     used: set[str] = set()
-    for series in _retained(catalog):
-        if series.direction != "input":
-            continue
+    for series_id in _input_series_ids(catalog, deps):
+        series = catalog.get(series_id)
         body, check_used, extras = _input_check(series, catalog, domains)
         if len(body) == 1 and body[0] == f"    return {series.series_id}":
             continue
@@ -1440,9 +1443,13 @@ def _input_check_functions(
     return checks, checked, used
 
 
-def emit_named_validation(catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS) -> str:
+def emit_named_validation(
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
+    deps: Mapping[str, SeriesDeps] | None = None,
+) -> str:
     """Emit input schema, dtype, domain, and value-map checks for `Model` construction."""
-    checks, checked, used = _input_check_functions(catalog, domains)
+    checks, checked, used = _input_check_functions(catalog, domains, deps)
     lines = [
         '"""Input schema, domain, and value-map checks for bound Model arguments."""',
         "",
@@ -1520,21 +1527,30 @@ def _model_recurrence_group(
 def _input_series_ids(
     catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None
 ) -> tuple[str, ...]:
-    """Retained input series ids in catalog order.
+    """Input series ids in catalog order.
 
-    Inputs with an empty graph intersection that a retained formula still
-    reads are appended. Lookup emission names them even though they are not
-    graph leaves.
+    Includes retained inputs and inputs with an empty graph intersection that
+    a retained formula still names. Lookup emission reads those tensors even
+    though they are not graph leaves.
     """
-    ids = [series.series_id for series in _retained(catalog) if series.direction == "input"]
-    if deps is None:
-        return tuple(ids)
-    seen = set(ids)
-    for series in _off_graph_lookup_series(catalog, deps):
-        if series.direction == "input" and series.series_id not in seen:
-            ids.append(series.series_id)
-            seen.add(series.series_id)
-    return tuple(ids)
+    extras = (
+        set()
+        if deps is None
+        else {
+            series.series_id
+            for series in _off_graph_lookup_series(catalog, deps)
+            if series.direction == "input"
+        }
+    )
+    selected: list[str] = []
+    for series_id in catalog.order:
+        series = catalog.get(series_id)
+        if series.direction != "input":
+            continue
+        on_graph = series.graph_cells is None or bool(series.graph_cells)
+        if on_graph or series_id in extras:
+            selected.append(series_id)
+    return tuple(selected)
 
 
 def _input_name_set(names: Sequence[str]) -> str:
@@ -2064,11 +2080,12 @@ def _retained(catalog: SeriesCatalog) -> list[BoundSeries]:
 def _off_graph_lookup_series(
     catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps]
 ) -> list[BoundSeries]:
-    """Inputs and constants outside the graph that a retained formula reads.
+    """Inputs and constants with no graph cells that a retained formula names.
 
-    `INDEX`/`MATCH` still walks the Excel rectangle when `graph_cells` is
-    empty (`intersect_graph_leaves: false`). Those series are parameters, so
-    their tensors and axes have to be emitted with the retained catalog.
+    Formula lowering walks the authored expression, which can name a series
+    whose `graph_cells` is empty (`intersect_graph_leaves: false`). Those
+    series are parameters of the retained formula, so their tensors and axes
+    are emitted with the retained catalog.
     """
     referenced: set[str] = set()
     for series in _retained_formula_series(catalog):
@@ -2715,7 +2732,12 @@ def emit_named_modules(
     excel_source: str,
 ) -> dict[str, str]:
     """Assemble the standalone named package."""
-    domains = public_input_annotations(catalog, graph)
+    off_graph_inputs = tuple(
+        series.series_id
+        for series in _off_graph_lookup_series(catalog, deps)
+        if series.direction == "input"
+    )
+    domains = public_input_annotations(catalog, graph, include=off_graph_inputs)
     return _emit_named_modules(
         catalog,
         deps,
@@ -2746,7 +2768,7 @@ def _emit_named_modules(
     internals = emit_named_internals(
         catalog, deps, scc_map, graph, named_axes, literal_tables, domains
     )
-    validation = emit_named_validation(catalog, domains)
+    validation = emit_named_validation(catalog, domains, deps)
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
     model = emit_named_model(catalog, deps, scc_map, domains)
     api = emit_named_api(catalog, deps, constant_sets, domains)
