@@ -34,6 +34,7 @@ from excel_grapher.exporter.inverted_tree.excel import (
     xl_max,
     xl_mul,
     xl_ne,
+    xl_normdist,
     xl_not,
     xl_or,
     xl_pow,
@@ -354,6 +355,24 @@ def test_xl_and_or_not_scalars_and_ranges() -> None:
     assert exc.value.code == "#DIV/0!"
     with pytest.raises(XlError) as exc:
         xl_not("#VALUE!")
+    assert exc.value.code == "#VALUE!"
+
+
+def test_xl_normdist_cdf_density_and_num_error() -> None:
+    assert xl_normdist(0, 0, 1, True) == pytest.approx(0.5)
+    assert xl_normdist(0, 0, 1, 1) == pytest.approx(0.5)
+    assert xl_normdist(0, 0, 1, False) == pytest.approx(1.0 / math.sqrt(2.0 * math.pi))
+    with pytest.raises(XlError) as exc:
+        xl_normdist(0, 0, 0, True)
+    assert exc.value.code == "#NUM!"
+    with pytest.raises(XlError) as exc:
+        xl_normdist(0, 0, -1, 1)
+    assert exc.value.code == "#NUM!"
+    with pytest.raises(XlError) as exc:
+        xl_normdist("#DIV/0!", 0, 1, True)
+    assert exc.value.code == "#DIV/0!"
+    with pytest.raises(XlError) as exc:
+        xl_normdist(0, 0, 1)
     assert exc.value.code == "#VALUE!"
 
 
