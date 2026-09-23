@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.7.2 (2026-09-23)
+
+### Bug Fixes
+
+- **export**: Skip address-only ROW/COLUMN refs in inverted-tree deps
+  ([#987](https://github.com/Teal-Insights/excel-grapher/pull/987),
+  [`7ff3f04`](https://github.com/Teal-Insights/excel-grapher/commit/7ff3f041abfe03a0b3c145fab32171a16c2e20f0))
+
+### Documentation
+
+- Minor skill language cleanup
+  ([`54adfbf`](https://github.com/Teal-Insights/excel-grapher/commit/54adfbffde22916dfcb9d102189f772e5732b65d))
+
+
 ## v23.7.1 (2026-09-22)
 
 ### Bug Fixes
