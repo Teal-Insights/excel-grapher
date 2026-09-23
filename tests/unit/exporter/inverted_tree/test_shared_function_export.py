@@ -87,7 +87,6 @@ def test_row_geometry_tracks_series_members(
         },
     )
     document = bindings_document(
-        series_entry("base_year", "Engine!C2", direction="constant"),
         series_entry(
             "result",
             "Engine!D2:D4",
@@ -100,6 +99,6 @@ def test_row_geometry_tracks_series_members(
     package = load_package(modules, tmp_path)
     result = invoke_public_compute(package, package.compute_result, {})
     assert tuple(result.domain) == ((2020,), (2021,), (2022,))
-    internal = package.internals.result(**({"base_year": 2020} if "C$2" in expression else {}))
+    internal = package.internals.result()
     assert tuple(internal[year] for year in (2020, 2021, 2022)) == expected
     assert tuple(result[year] for year in (2020, 2021, 2022)) == expected

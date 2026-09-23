@@ -18,6 +18,7 @@ from excel_grapher.core.address_keys import (
     parse_cell_coords,
 )
 from excel_grapher.core.addressing import index_excel_range
+from excel_grapher.core.excel_function_meta import is_ref_only_arg
 from excel_grapher.core.excel_function_names import (
     normalize_excel_function_name as _normalize_excel_function_name,
 )
@@ -462,6 +463,26 @@ def iter_ref_addresses(
     raise InvertedTreeExportError(
         f"expected a range, whole-column, or whole-row ref, got {type(node).__name__}"
     )
+
+
+def _ref_only_argument_is_address_shaped(node: AstNode) -> bool:
+    """True when a ref-only argument has no nested function call.
+
+    Matches `ref_only_function_spans`: `ROW($B$1)` and `ROWS(A1:A2)` use only
+    address or shape, so they are not value dependencies. A nested call such
+    as `ROW(INDEX(...))` stays visible.
+    """
+    match node:
+        case FunctionCallNode():
+            return False
+        case BinaryOpNode():
+            return _ref_only_argument_is_address_shaped(
+                node.left
+            ) and _ref_only_argument_is_address_shaped(node.right)
+        case UnaryOpNode():
+            return _ref_only_argument_is_address_shaped(node.operand)
+        case _:
+            return True
 
 
 def ast_literal_int(node: AstNode) -> int | None:
@@ -1226,7 +1247,9 @@ class _DepCollector:
         if name == "MATCH":
             self._visit_match(node, host_cell=host_cell, host_index=host_index)
             return
-        for arg in node.args:
+        for index, arg in enumerate(node.args):
+            if is_ref_only_arg(name, index) and _ref_only_argument_is_address_shaped(arg):
+                continue
             self.visit(arg, host_cell=host_cell, host_index=host_index)
 
     def _visit_offset(
