@@ -16,7 +16,7 @@ import ast
 import hashlib
 import json
 import re
-from collections.abc import Mapping, Sequence
+from collections.abc import Collection, Mapping, Sequence
 from pathlib import Path
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Any, cast
@@ -138,11 +138,16 @@ def _generated_helper_imports(used: set[str]) -> list[str]:
     return lines
 
 
-def named_codegen_fingerprint(catalog: SeriesCatalog) -> str:
+def named_codegen_fingerprint(catalog: SeriesCatalog, *, include: Collection[str] = ()) -> str:
     """Identify the representation, authored provenance, and graph projection."""
+    included = set(include)
     entries = []
     for series in catalog.series.values():
-        if series.graph_cells is not None and not series.graph_cells:
+        if (
+            series.graph_cells is not None
+            and not series.graph_cells
+            and series.series_id not in included
+        ):
             continue
         domain = series.tensor_domain
         required = series.required_coordinates
@@ -1512,9 +1517,24 @@ def _model_recurrence_group(
     return lines
 
 
-def _input_series_ids(catalog: SeriesCatalog) -> tuple[str, ...]:
-    """Retained input series ids in catalog order."""
-    return tuple(series.series_id for series in _retained(catalog) if series.direction == "input")
+def _input_series_ids(
+    catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None
+) -> tuple[str, ...]:
+    """Retained input series ids in catalog order.
+
+    Inputs with an empty graph intersection that a retained formula still
+    reads are appended. Lookup emission names them even though they are not
+    graph leaves.
+    """
+    ids = [series.series_id for series in _retained(catalog) if series.direction == "input"]
+    if deps is None:
+        return tuple(ids)
+    seen = set(ids)
+    for series in _off_graph_lookup_series(catalog, deps):
+        if series.direction == "input" and series.series_id not in seen:
+            ids.append(series.series_id)
+            seen.add(series.series_id)
+    return tuple(ids)
 
 
 def _input_name_set(names: Sequence[str]) -> str:
@@ -1579,10 +1599,12 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
 
 
 def _model_from_defaults(
-    catalog: SeriesCatalog, domains: Mapping[str, str] = _NO_DOMAINS
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
+    deps: Mapping[str, SeriesDeps] | None = None,
 ) -> list[str]:
     """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
-    inputs = [catalog.get(sid) for sid in _input_series_ids(catalog)]
+    inputs = [catalog.get(sid) for sid in _input_series_ids(catalog, deps)]
     lines = ["", "    @classmethod"]
     if not inputs:
         lines.extend(
@@ -1664,9 +1686,9 @@ class _SnapshotInputs(_BoundInputs):
         return cls(**values)'''
 
 
-def _model_init(catalog: SeriesCatalog) -> list[str]:
+def _model_init(catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None) -> list[str]:
     """Install bound leaves; skip CHECKS when the bundle is already validated."""
-    input_ids = _input_series_ids(catalog)
+    input_ids = _input_series_ids(catalog, deps)
     return [
         "",
         "    def __init__(self, bundle: _BoundInputs | None = None, /, **inputs: Any) -> None:",
@@ -1760,7 +1782,7 @@ def _model_class(
     domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> list[str]:
     """Lines of the memoized `Model` class."""
-    input_ids = _input_series_ids(catalog)
+    input_ids = _input_series_ids(catalog, deps)
     inputs = [catalog.get(sid) for sid in input_ids]
     model = [
         "class Model(_BoundInputs):",
@@ -1778,8 +1800,8 @@ def _model_class(
     for series in inputs:
         model.append(f"    {series.series_id}: {_annotation(series, domains)}")
     model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
-    model.extend(_model_init(catalog))
-    model.extend(_model_from_defaults(catalog, domains))
+    model.extend(_model_init(catalog, deps))
+    model.extend(_model_from_defaults(catalog, domains, deps))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
@@ -2039,16 +2061,81 @@ def _retained(catalog: SeriesCatalog) -> list[BoundSeries]:
     ]
 
 
+def _off_graph_lookup_series(
+    catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps]
+) -> list[BoundSeries]:
+    """Inputs and constants outside the graph that a retained formula reads.
+
+    `INDEX`/`MATCH` still walks the Excel rectangle when `graph_cells` is
+    empty (`intersect_graph_leaves: false`). Those series are parameters, so
+    their tensors and axes have to be emitted with the retained catalog.
+    """
+    referenced: set[str] = set()
+    for series in _retained_formula_series(catalog):
+        info = deps.get(series.series_id)
+        if info is not None:
+            referenced.update(info.param_ids)
+    selected: list[BoundSeries] = []
+    for series_id in catalog.order:
+        if series_id not in referenced:
+            continue
+        series = catalog.get(series_id)
+        if series.direction not in {"input", "constant"}:
+            continue
+        if series.graph_cells is None or series.graph_cells:
+            continue
+        selected.append(series)
+    return selected
+
+
+def _data_series(
+    catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None
+) -> list[BoundSeries]:
+    """Retained series plus off-graph lookup parameters."""
+    retained = _retained(catalog)
+    if not deps:
+        return retained
+    seen = {series.series_id for series in retained}
+    return [
+        *retained,
+        *(
+            series
+            for series in _off_graph_lookup_series(catalog, deps)
+            if series.series_id not in seen
+        ),
+    ]
+
+
+def _axes_to_plan(catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps]) -> list[Any]:
+    """Axes of retained series and of off-graph series a lookup rectangle names."""
+    seen: set[str] = set()
+    axes: list[Any] = []
+    for series in _data_series(catalog, deps):
+        if series.series_id in seen or series.single_valued:
+            continue
+        seen.add(series.series_id)
+        axes.extend(series.tensor_domain.axes)
+    return axes
+
+
 def _retained_formula_series(catalog: SeriesCatalog) -> list[BoundSeries]:
     return [series for series in _retained(catalog) if series.is_formula_series]
 
 
-def _read_defaults(catalog: SeriesCatalog, workbook: Path | str) -> dict[str, dict[str, object]]:
+def _read_defaults(
+    catalog: SeriesCatalog,
+    workbook: Path | str,
+    series_list: Sequence[BoundSeries] | None = None,
+) -> dict[str, dict[str, object]]:
     """Read authored workbook values for every input and constant series."""
     from excel_grapher.exporter.inverted_tree.emit import _coerce_cached_value
 
     defaults: dict[str, dict[str, object]] = {}
-    leaves = [series for series in _retained(catalog) if series.direction in {"input", "constant"}]
+    leaves = [
+        series
+        for series in (_retained(catalog) if series_list is None else series_list)
+        if series.direction in {"input", "constant"}
+    ]
     with _WorkbookValues(workbook) as reader:
         reader.prefetch(
             cell for series in leaves for cell in (series.authored_cells or series.cells)
@@ -2357,12 +2444,13 @@ def emit_named_data(
     literal_tables: Mapping[str, Mapping[tuple[object, ...], object]],
     constant_lines: Sequence[str] = (),
     domains: Mapping[str, str] = _NO_DOMAINS,
+    deps: Mapping[str, SeriesDeps] | None = None,
 ) -> str:
     """Emit shared axes, bound series, provenance, and workbook defaults."""
     from excel_grapher.exporter.inverted_tree.emit import _py_literal
 
-    retained = _retained(catalog)
-    defaults = _read_defaults(catalog, workbook)
+    retained = _data_series(catalog, deps)
+    defaults = _read_defaults(catalog, workbook, retained)
     labelled = _labelled_axes_map(catalog)
     tensor_names = [
         "Axis",
@@ -2383,6 +2471,12 @@ def emit_named_data(
             "coordinate_runs",
             "define_series",
         ]
+    off_graph_ids = tuple(
+        series.series_id
+        for series in retained
+        if series.graph_cells is not None and not series.graph_cells
+    )
+    fingerprint = named_codegen_fingerprint(catalog, include=off_graph_ids)
     lines = [
         '"""Authored domains, validated tensor types, and workbook defaults."""',
         "from __future__ import annotations",
@@ -2393,7 +2487,7 @@ def emit_named_data(
         "from .runtime import span",
         f"from .tensor import {', '.join(tensor_names)}",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
-        f"CODEGEN_FINGERPRINT = {named_codegen_fingerprint(catalog)!r}",
+        f"CODEGEN_FINGERPRINT = {fingerprint!r}",
         "",
     ]
     for constant, axis in named_axes.items():
@@ -2437,6 +2531,10 @@ def emit_named_data(
         required_coords = series.required_coordinates
         required = tuple(coord for coord in domain if coord in required_coords)
         required_differs = len(required) != len(domain)
+        if series.graph_cells is not None and not series.graph_cells:
+            # No graph cell is required, but the lookup still passes the
+            # authored tensor. An empty required domain cannot form a schema.
+            required_differs = False
         runtime = any(
             catalog.runtime_labeller(axis.name, axis.keys) is not None for axis in domain.axes
         )
@@ -2643,12 +2741,7 @@ def _emit_named_modules(
     runtime_source: str,
     excel_source: str,
 ) -> dict[str, str]:
-    named_axes = NamedAxes.plan(
-        axis
-        for series in _retained(catalog)
-        if not series.single_valued
-        for axis in series.tensor_domain.axes
-    )
+    named_axes = NamedAxes.plan(_axes_to_plan(catalog, deps))
     literal_tables: dict[str, dict[tuple[object, ...], object]] = {}
     internals = emit_named_internals(
         catalog, deps, scc_map, graph, named_axes, literal_tables, domains
@@ -2657,7 +2750,9 @@ def _emit_named_modules(
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
     model = emit_named_model(catalog, deps, scc_map, domains)
     api = emit_named_api(catalog, deps, constant_sets, domains)
-    data = emit_named_data(catalog, workbook, named_axes, literal_tables, constant_lines, domains)
+    data = emit_named_data(
+        catalog, workbook, named_axes, literal_tables, constant_lines, domains, deps
+    )
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
 
     export_runtime = Path(__file__).parents[1] / "export_runtime"
@@ -2697,12 +2792,7 @@ def inventory_named_emission(
     the export error. An empty list means the whole model lowers to named
     computation.
     """
-    named_axes = NamedAxes.plan(
-        axis
-        for series in _retained(catalog)
-        if not series.single_valued
-        for axis in series.tensor_domain.axes
-    )
+    named_axes = NamedAxes.plan(_axes_to_plan(catalog, deps))
     failures: list[dict[str, object]] = []
     for series in _retained_formula_series(catalog):
         scc = scc_map.get(series.series_id, (series.series_id,))

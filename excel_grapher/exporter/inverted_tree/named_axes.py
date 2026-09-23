@@ -152,6 +152,10 @@ class NamedAxes:
         self._axes[name] = axis
         return name
 
+    def contains(self, axis: Axis) -> bool:
+        """Return whether `plan` or `register` assigned `axis` a constant."""
+        return _axis_key(axis) in self._names
+
     def constant(self, axis: Axis) -> str:
         """Return the constant name of a registered axis."""
         return self._names[_axis_key(axis)]

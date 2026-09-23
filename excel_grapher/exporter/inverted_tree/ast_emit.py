@@ -1302,8 +1302,10 @@ def _named_range_view(
     host coordinate, or one key. Fields that vary down the worksheet form
     the row product and fields that vary across it the column product; the
     range lowers only when that product reproduces the cells in worksheet
-    order. Nested layouts select keys per field name. Lookup tables whose
-    measure dtype would stringify workbook values wrap the view in
+    order. Nested layouts select keys per field name. An axis that
+    `NamedAxes.plan` did not register returns `None` so the caller emits
+    per-cell callbacks. Lookup tables whose measure dtype would stringify
+    workbook values wrap the view in
     `xl_typed_range` so bound-series `overrides` still apply. Other callers
     skip the view.
     """
@@ -1340,6 +1342,10 @@ def _named_range_view(
     col_fields: list[str] = []
     for position, key_field in enumerate(owner.key_fields):
         axis = domain.axes[position]
+        # Lookup rectangles can include a bound series that `plan` skipped
+        # (no graph cells). Per-cell callbacks then keep the worksheet shape.
+        if not ctx.named_axes.contains(axis):
+            return None
         keys = ctx.named_axes.emitted(axis).keys
         seen = tuple(dict.fromkeys(point[key_field] for point in points))
         if not seen or seen[0] not in keys or seen[-1] not in keys:
