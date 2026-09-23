@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import math
+import types
 from pathlib import Path
 
 import pytest
@@ -18,14 +18,9 @@ from tests.unit.exporter.inverted_tree.helpers import (
     write_workbook,
 )
 
-_STANDARD_DENSITY = 1.0 / math.sqrt(2.0 * math.pi)
 
-
-def _normdist_workbook(tmp_path: Path, formula: str, *, z: float = 0) -> Path:
-    return write_workbook(
-        tmp_path / "normdist.xlsx",
-        {"out": {"A1": z, "B1": formula}},
-    )
+def _normdist_workbook(path: Path, formula: str, *, z: float = 0) -> Path:
+    return write_workbook(path, {"out": {"A1": z, "B1": formula}})
 
 
 def _normdist_bindings() -> dict:
@@ -35,8 +30,8 @@ def _normdist_bindings() -> dict:
     )
 
 
-def _scalar_workbook(tmp_path: Path, formula: str) -> Path:
-    return write_workbook(tmp_path / "normdist_scalar.xlsx", {"out": {"A1": formula}})
+def _scalar_workbook(path: Path, formula: str) -> Path:
+    return write_workbook(path, {"out": {"A1": formula}})
 
 
 def _scalar_bindings() -> dict:
@@ -45,8 +40,41 @@ def _scalar_bindings() -> dict:
     )
 
 
+def _sum_workbook(path: Path, *, left: float, right: float) -> Path:
+    return write_workbook(
+        path,
+        {"out": {"A1": left, "B1": right, "C1": "=NORMDIST(A1+B1,0,1,1)*100"}},
+    )
+
+
+def _sum_bindings() -> dict:
+    return bindings_document(
+        series_entry("left", "out!A1", layout="scalar", direction="input"),
+        series_entry("right", "out!B1", layout="scalar", direction="input"),
+        series_entry("distress_probability", "out!C1", layout="scalar", direction="output"),
+    )
+
+
+def _evaluator_value(workbook: Path, cell: str) -> object:
+    return FormulaEvaluator(create_dependency_graph(workbook, [cell], load_values=True)).evaluate(
+        [cell]
+    )[cell]
+
+
+def _assert_matches_evaluator(
+    pkg: types.ModuleType, workbook: Path, cell: str, **kwargs: object
+) -> object:
+    got = invoke_public_compute(pkg, pkg.compute_distress_probability, kwargs)
+    expected = _evaluator_value(workbook, cell)
+    if isinstance(expected, float) and isinstance(got, float):
+        assert got == pytest.approx(expected)
+    else:
+        assert got == expected
+    return got
+
+
 def test_normdist_lowers_true_cumulative_to_xl_normdist(tmp_path: Path) -> None:
-    workbook = _scalar_workbook(tmp_path, "=NORMDIST(0,0,1,TRUE)")
+    workbook = _scalar_workbook(tmp_path / "normdist_scalar.xlsx", "=NORMDIST(0,0,1,TRUE)")
     modules = generate_inverted(workbook, _scalar_bindings())
     assert "xl_normdist(0, 0, 1, True)" in modules["internals.py"]
     assert "def xl_normdist" in modules["excel.py"]
@@ -54,49 +82,47 @@ def test_normdist_lowers_true_cumulative_to_xl_normdist(tmp_path: Path) -> None:
     assert invoke_public_compute(pkg, pkg.compute_distress_probability, {}) == pytest.approx(0.5)
 
 
-def _standard_cdf(z: float) -> float:
-    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
-
-
 def test_normdist_cumulative_one_matches_evaluator(tmp_path: Path) -> None:
     formula = "=NORMDIST(A1,0,1,1)*100"
-    workbook = _normdist_workbook(tmp_path, formula, z=0)
+    workbook = _normdist_workbook(tmp_path / "normdist.xlsx", formula, z=0)
     modules = generate_inverted(workbook, _normdist_bindings())
-    assert "xl_normdist(" in modules["internals.py"]
+    assert "xl_mul(xl_normdist(z, 0, 1, 1), 100)" in modules["internals.py"]
     pkg = load_package(modules, tmp_path, name="normdist_cdf")
-    expected = FormulaEvaluator(
-        create_dependency_graph(workbook, ["out!B1"], load_values=True)
-    ).evaluate(["out!B1"])
-    got = invoke_public_compute(pkg, pkg.compute_distress_probability, dict(z=0))
-    assert got == pytest.approx(expected["out!B1"])
-    assert got == pytest.approx(50.0)
-    assert invoke_public_compute(
-        pkg, pkg.compute_distress_probability, dict(z=1.96)
-    ) == pytest.approx(_standard_cdf(1.96) * 100)
+    assert _assert_matches_evaluator(pkg, workbook, "out!B1", z=0) == pytest.approx(50.0)
+    shifted = _normdist_workbook(tmp_path / "normdist_z.xlsx", formula, z=1.96)
+    _assert_matches_evaluator(pkg, shifted, "out!B1", z=1.96)
 
 
-def test_normdist_density_and_nonpositive_stdev(tmp_path: Path) -> None:
-    density = _normdist_workbook(tmp_path, "=NORMDIST(A1,0,1,FALSE)", z=0)
+def test_normdist_density_matches_evaluator(tmp_path: Path) -> None:
+    formula = "=NORMDIST(A1,0,1,FALSE)"
+    workbook = _normdist_workbook(tmp_path / "normdist_pdf.xlsx", formula, z=0)
     pkg = load_package(
-        generate_inverted(density, _normdist_bindings()),
+        generate_inverted(workbook, _normdist_bindings()),
         tmp_path,
         name="normdist_pdf",
     )
-    assert invoke_public_compute(pkg, pkg.compute_distress_probability, dict(z=0)) == pytest.approx(
-        _STANDARD_DENSITY
-    )
+    _assert_matches_evaluator(pkg, workbook, "out!B1", z=0)
+    shifted = _normdist_workbook(tmp_path / "normdist_pdf_z.xlsx", formula, z=1.96)
+    _assert_matches_evaluator(pkg, shifted, "out!B1", z=1.96)
 
-    for formula, name in (
-        ("=NORMDIST(A1,0,0,TRUE)", "normdist_zero_sd"),
-        ("=NORMDIST(A1,0,-1,1)", "normdist_neg_sd"),
-    ):
-        workbook = _normdist_workbook(tmp_path, formula)
-        package = load_package(
-            generate_inverted(workbook, _normdist_bindings()),
-            tmp_path,
-            name=name,
-        )
-        assert (
-            invoke_public_compute(package, package.compute_distress_probability, dict(z=0))
-            == "#NUM!"
-        )
+
+@pytest.mark.parametrize(
+    "formula",
+    ["=NORMDIST(A1,0,0,TRUE)", "=NORMDIST(A1,0,-1,1)"],
+)
+def test_normdist_nonpositive_stdev_matches_evaluator(tmp_path: Path, formula: str) -> None:
+    workbook = _normdist_workbook(tmp_path / "normdist_num.xlsx", formula)
+    pkg = load_package(
+        generate_inverted(workbook, _normdist_bindings()),
+        tmp_path,
+        name="normdist_num",
+    )
+    assert _assert_matches_evaluator(pkg, workbook, "out!B1", z=0) == "#NUM!"
+
+
+def test_normdist_of_sum_matches_evaluator(tmp_path: Path) -> None:
+    workbook = _sum_workbook(tmp_path / "normdist_sum.xlsx", left=1.2, right=0.76)
+    modules = generate_inverted(workbook, _sum_bindings())
+    assert "xl_mul(xl_normdist(xl_add(left, right), 0, 1, 1), 100)" in modules["internals.py"]
+    pkg = load_package(modules, tmp_path, name="normdist_sum")
+    _assert_matches_evaluator(pkg, workbook, "out!C1", left=1.2, right=0.76)
