@@ -105,7 +105,19 @@ _RUNTIME_FUNCTIONS = frozenset(
     if name.startswith("xl_") and callable(value)
 )
 _AGGREGATE_FUNCTIONS = frozenset(
-    {"SUM", "SUMPRODUCT", "AVERAGE", "MAX", "MIN", "NPV", "STDEV", "RANK", "LARGE", "COUNTIF"}
+    {
+        "SUM",
+        "SUMPRODUCT",
+        "AVERAGE",
+        "MAX",
+        "MIN",
+        "NPV",
+        "STDEV",
+        "RANK",
+        "LARGE",
+        "COUNT",
+        "COUNTIF",
+    }
 )
 _RANGE_REDUCE_FUNCTIONS = _AGGREGATE_FUNCTIONS | frozenset({"AND", "OR"})
 _LOOKUP_TABLE_FUNCTIONS = frozenset({"VLOOKUP", "HLOOKUP", "LOOKUP", "XLOOKUP"})

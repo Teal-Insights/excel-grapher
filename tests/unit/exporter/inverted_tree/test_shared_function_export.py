@@ -21,6 +21,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
         ("=RANK(A2,A1:A3)", 2.0),
         ("=LARGE(A1:A3,2)", 2.0),
         ("=STDEV(A1:A3)", 1.0),
+        ("=COUNT(A1:A3)", 3.0),
         ('=COUNTIF(A1:A3,">1")', 2.0),
         ("=ROUND(1.25,1)", 1.3),
         ("=ROUNDDOWN(-1.29,1)", -1.2),

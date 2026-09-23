@@ -22,6 +22,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
+    assert_package_matches_evaluator,
     bindings_document,
     call_compute,
     generate_inverted,
@@ -906,6 +907,94 @@ def test_sum_if_whole_column_fails_closed(tmp_path: Path) -> None:
     )
     with pytest.raises(InvertedTreeExportError, match=r"whole-column"):
         generate_inverted(workbook, document)
+
+
+def test_count_of_bound_series_emits_xl_count(tmp_path: Path) -> None:
+    """COUNT of a bound series lowers to xl_count over the same view as SUM."""
+    workbook = write_workbook(
+        tmp_path / "a27_count.xlsx",
+        {
+            "values": {"A1": 2020, "B1": 2021, "A2": 10, "B2": 12},
+            "out": {"A1": '=IF(COUNT(values!A2:B2)=2,values!B2/values!A2-1,"..")'},
+        },
+    )
+    document = bindings_document(
+        series_entry("capital", "values!A2:B2", layout="series", direction="input", header_row=1),
+        series_entry("growth", "out!A1", layout="scalar", direction="output"),
+    )
+    modules = generate_inverted(workbook, document)
+    source = modules["internals.py"]
+    assert "_growth_table_0 = view(capital, cols=data.TIME_PERIOD_AXIS.keys)" in source
+    assert "xl_eq(xl_count(_growth_table_0), 2)" in source
+    assert "def xl_count" in modules["excel.py"]
+    pkg = load_package(modules, tmp_path, name="a27_count")
+    assert invoke_public_compute(
+        pkg, pkg.compute_growth, dict(capital=pkg.data.CAPITAL.with_nested((10.0, 12.0)))
+    ) == pytest.approx(0.2)
+    assert (
+        invoke_public_compute(
+            pkg, pkg.compute_growth, dict(capital=pkg.data.CAPITAL.with_nested((10.0, None)))
+        )
+        == ".."
+    )
+    assert (
+        invoke_public_compute(
+            pkg, pkg.compute_growth, dict(capital=pkg.data.CAPITAL.with_nested((10.0, "..")))
+        )
+        == ".."
+    )
+    _package_matches_output(tmp_path, workbook, document, "a27_count_eval", "out!A1", pkg=pkg)
+
+
+def test_count_of_series_window_takes_only_the_range(tmp_path: Path) -> None:
+    """COUNT of a window uses the same span view SUM builds."""
+    workbook = write_workbook(
+        tmp_path / "a27_count_window.xlsx",
+        {
+            "Inputs": {
+                "A1": 2024,
+                "B1": 2025,
+                "C1": 2026,
+                "A2": 1.0,
+                "B2": 2.0,
+                "C2": 100.0,
+            },
+            "Outputs": {"Z1": "=COUNT(Inputs!A2:B2)"},
+        },
+    )
+    document = bindings_document(
+        series_entry("src", "Inputs!A2:C2", layout="series", direction="input", header_row=1),
+        series_entry("out", "Outputs!Z1", layout="scalar", direction="output"),
+    )
+    modules = generate_inverted(workbook, document)
+    source = modules["internals.py"]
+    assert "_out_table_0 = view(src, cols=span(data.TIME_PERIOD_AXIS, 2024, 2025))" in source
+    assert "xl_count(_out_table_0)" in source
+    assert "2026" not in source
+    pkg = load_package(modules, tmp_path, name="a27_count_window")
+    assert (
+        invoke_public_compute(
+            pkg, pkg.compute_out, dict(src=pkg.data.SRC.with_nested((1.0, None, 100.0)))
+        )
+        == 1
+    )
+    _package_matches_output(tmp_path, workbook, document, "a27_count_window_eval", "Outputs!Z1")
+
+
+def test_count_blank_neighbor_matches_evaluator(tmp_path: Path) -> None:
+    """A blank neighbor is not numeric, so the growth rate stays `..`."""
+    workbook = write_workbook(
+        tmp_path / "a27_count_blank.xlsx",
+        {
+            "values": {"A1": 2020, "B1": 2021, "A2": 10},
+            "out": {"A1": '=IF(COUNT(values!A2:B2)=2,values!B2/values!A2-1,"..")'},
+        },
+    )
+    document = bindings_document(
+        series_entry("capital", "values!A2:B2", layout="series", direction="input", header_row=1),
+        series_entry("growth", "out!A1", layout="scalar", direction="output"),
+    )
+    assert_package_matches_evaluator(workbook, document, tmp_path, "a27_count_blank")
 
 
 def test_sum_if_at_operator_has_no_formula_ast(tmp_path: Path) -> None:

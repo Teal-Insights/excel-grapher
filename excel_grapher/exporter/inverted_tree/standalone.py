@@ -31,6 +31,7 @@ _MODULES = (
     ("export_runtime.error_funcs", _EXPORT_RUNTIME / "error_funcs.py"),
     ("export_runtime.lookup", _EXPORT_RUNTIME / "lookup.py"),
     ("export_runtime.math", _EXPORT_RUNTIME / "math.py"),
+    ("export_runtime.info", _EXPORT_RUNTIME / "info.py"),
     ("export_runtime.text", _EXPORT_RUNTIME / "text.py"),
     ("series_bindings.input_coerce", _PACKAGE_ROOT / "series_bindings" / "input_coerce.py"),
 )
