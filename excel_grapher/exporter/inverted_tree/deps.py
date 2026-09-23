@@ -979,13 +979,14 @@ def _bind_column_key(
     """Return the column key `bind` assigns to `address`."""
     reader = _OFFSET_COLUMN_READER.get()
     sources = _bind_source_addresses(dict(bind), str(address))
-    if sources and reader is None:
-        raise ValueError(f"OFFSET column key at {address} needs the bindings workbook")
-    active = reader if reader is not None else _UnusedColumnReader()
+    if reader is None:
+        if sources:
+            raise ValueError(f"OFFSET column key at {address} needs the bindings workbook")
+        reader = cast(_WorkbookValues, _UnusedColumnReader())
     return _execute_bind(
         dict(bind),
         graph=graph,
-        reader=active,  # type: ignore[arg-type]
+        reader=reader,
         data_address=str(address),
     )
 
