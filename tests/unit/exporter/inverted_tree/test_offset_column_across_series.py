@@ -7,7 +7,9 @@ landings, starting at the anchor column.
 
 from __future__ import annotations
 
+import types
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 import yaml
@@ -15,6 +17,7 @@ import yaml
 from excel_grapher import CodeGenerator, DynamicRefConfig, create_dependency_graph
 from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.series_bindings import load_series_bindings
 from tests.unit.exporter.inverted_tree.helpers import invoke_public_compute, load_package
 
@@ -219,7 +222,7 @@ def _export(
     matrix: bool,
     provenance: bool,
     english_range: str = "phrases!C2:C3",
-) -> tuple[dict[str, str], object]:
+) -> tuple[dict[str, str], DependencyGraph]:
     workbook_path = directory / "mcve.xlsx"
     bindings_path = directory / "bindings.yaml"
     _write_workbook(workbook_path, formula)
@@ -245,10 +248,10 @@ def _export(
     return modules, graph
 
 
-def _selected(pkg: object, language_index: int) -> object:
+def _selected(pkg: types.ModuleType, language_index: int) -> object:
     return invoke_public_compute(
         pkg,
-        pkg.compute_selected_phrase,  # type: ignore[attr-defined]
+        pkg.compute_selected_phrase,
         {"language_index": language_index},
     )
 
@@ -396,12 +399,12 @@ def test_unbound_column_offset_fails_closed(tmp_path: Path) -> None:
 
 def _export_document(
     directory: Path,
-    document: dict[str, object],
+    document: dict[str, Any],
     *,
     formula: str,
     provenance: bool = False,
     headers: tuple[object, ...] | None = None,
-) -> tuple[dict[str, str], object]:
+) -> tuple[dict[str, str], DependencyGraph]:
     workbook_path = directory / "mcve.xlsx"
     bindings_path = directory / "bindings.yaml"
     _write_workbook(workbook_path, formula, headers=headers)
@@ -426,12 +429,13 @@ def _export_document(
 
 def _split_document(
     *, languages: list[int], english_range: str = "phrases!C2:C3"
-) -> dict[str, object]:
+) -> dict[str, Any]:
     loaded = yaml.safe_load(
         _bindings(languages=languages, matrix=False, english_range=english_range)
     )
-    assert isinstance(loaded, dict)
-    return loaded
+    if not isinstance(loaded, dict):
+        raise AssertionError("bindings document is not a mapping")
+    return cast(dict[str, Any], loaded)
 
 
 @pytest.mark.parametrize("languages", [[2], [1, 2, 3]])
@@ -475,7 +479,7 @@ def test_zero_only_domain_reads_the_anchor(tmp_path: Path) -> None:
 
 def test_interior_unbound_column_fails_closed(tmp_path: Path) -> None:
     document = _split_document(languages=[0, 2])
-    for series in document["series"]:  # type: ignore[attr-defined]
+    for series in document["series"]:
         assert isinstance(series, dict)
         if series["id"] == "translated_phrase":
             series["data_range"] = "phrases!E2:F3"
@@ -512,7 +516,7 @@ def test_one_cell_without_a_landing_column_key_fails_closed(tmp_path: Path) -> N
     document = _split_document(languages=[0, 1, 2, 3], english_range="phrases!C3")
     series = [
         entry
-        for entry in document["series"]  # type: ignore[attr-defined]
+        for entry in document["series"]
         if isinstance(entry, dict) and entry["id"] != "translated_phrase"
     ]
     for column, series_id in (
@@ -552,7 +556,7 @@ def test_one_cell_disagreeing_column_binds_fail_closed(tmp_path: Path) -> None:
     document = _split_document(languages=[0, 1, 2, 3], english_range="phrases!C3")
     translated = next(
         entry
-        for entry in document["series"]  # type: ignore[attr-defined]
+        for entry in document["series"]
         if isinstance(entry, dict) and entry["id"] == "translated_phrase"
     )
     assert isinstance(translated, dict)
@@ -569,10 +573,10 @@ def test_one_cell_disagreeing_column_binds_fail_closed(tmp_path: Path) -> None:
             dimension["bind"]["header_row"] = 2
     document["series"] = [
         entry
-        for entry in document["series"]  # type: ignore[attr-defined]
+        for entry in document["series"]
         if isinstance(entry, dict) and entry["id"] != "translated_phrase"
     ]
-    document["series"].extend([french, rest])  # type: ignore[attr-defined]
+    document["series"].extend([french, rest])
     with pytest.raises(InvertedTreeExportError, match="column key"):
         _export_document(
             tmp_path,
@@ -583,7 +587,7 @@ def test_one_cell_disagreeing_column_binds_fail_closed(tmp_path: Path) -> None:
 
 def test_omitted_read_uses_the_landing_series_key_type(tmp_path: Path) -> None:
     document = _split_document(languages=[0, 1, 2, 3])
-    for series in document["series"]:  # type: ignore[attr-defined]
+    for series in document["series"]:
         assert isinstance(series, dict)
         if series["id"] != "translated_phrase":
             continue
