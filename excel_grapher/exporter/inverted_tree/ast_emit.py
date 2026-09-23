@@ -42,10 +42,12 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     fit_affine_map,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
+    OffsetColumnSpan,
     PositionalRangeCell,
     SeriesDeps,
     _attach_index_label_cells,
     addresses_outside_blank_ranges,
+    ast_literal_int,
     covering_series_for_index_window,
     current_blank_rects,
     index_call_is_ref,
@@ -55,6 +57,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     normalize_excel_function_name,
     offset_index_destination,
     range_ref_label,
+    resolve_offset_column_span,
     resolve_offset_destination_series,
     resolve_positional_range,
     try_formula_ast,
@@ -1542,6 +1545,99 @@ def _axis_positions_are_worksheet_positions(table: BoundSeries) -> dict[str, str
     return axes
 
 
+def _emit_series_point(
+    series: BoundSeries,
+    point: KeyPoint | None,
+    ctx: EmitContext,
+    *,
+    column_field: str | None = None,
+    column_key: object = None,
+) -> str:
+    """Emit a named read of one bound observation."""
+    name = ctx.param(series.series_id)
+    if not series.key_fields:
+        return name
+    if point is None:
+        raise _host_export_error(ctx, f"{series.series_id} has no key for this cell")
+    keys = _named_keys(series, point, ctx)
+    if column_field is not None and column_field in series.key_fields:
+        keys[series.key_fields.index(column_field)] = repr(column_key)
+    return f"{name}[{', '.join(keys)}]"
+
+
+def _emit_literal_column_landing(
+    node: FunctionCallNode,
+    ctx: EmitContext,
+    anchor_series: BoundSeries,
+) -> str | None:
+    """Emit a constant column `OFFSET` as the landing series' own keys.
+
+    A literal displacement has one destination cell. Indexing that cell folds
+    the step. `None` leaves the dynamic column-span path, or the caller's
+    failure, in charge.
+    """
+    if len(node.args) != 3 or ast_literal_int(node.args[1]) != 0:
+        return None
+    cols = ast_literal_int(node.args[2])
+    if cols is None or cols == 0:
+        return None
+    resolved = resolve_offset_destination_series(
+        node,
+        ctx.host_cell,
+        ctx.catalog,
+        ctx.graph,
+        blank_rects=ctx.blank_rects,
+    )
+    if resolved is None:
+        return None
+    series, cell = resolved
+    if series.series_id == anchor_series.series_id:
+        return None
+    return _emit_series_point(series, series.key_point_for(cell), ctx)
+
+
+def _try_cross_series_column_offset(
+    node: FunctionCallNode,
+    ctx: EmitContext,
+    anchor_series: BoundSeries,
+    cols: str,
+) -> str | None:
+    """Lower a pure column `OFFSET` that leaves the anchor series, if it applies."""
+    literal = _emit_literal_column_landing(node, ctx, anchor_series)
+    if literal is not None:
+        return literal
+    span = resolve_offset_column_span(
+        node,
+        ctx.host_cell,
+        ctx.catalog,
+        ctx.graph,
+        blank_rects=ctx.blank_rects,
+        host_series_id=ctx.host.series_id,
+    )
+    if span is None:
+        return None
+    return _emit_offset_column_span(span, cols, ctx)
+
+
+def _emit_offset_column_span(span: OffsetColumnSpan, cols: str, ctx: EmitContext) -> str:
+    """Emit a column span as `axis_step` from the anchor key into a dispatch."""
+    pairs: list[str] = []
+    keys: list[object] = []
+    for member in span.members:
+        point = member.series.key_point_for(member.address)
+        expr = _emit_series_point(
+            member.series,
+            point,
+            ctx,
+            column_field=span.column_field,
+            column_key=member.column_key,
+        )
+        pairs.append(f"{member.column_key!r}: {expr}")
+        keys.append(member.column_key)
+    stepped = f"{ctx.use('axis_step')}({tuple(keys)!r}, {span.anchor_key!r}, {cols})"
+    return f"{{{', '.join(pairs)}}}[{stepped}]"
+
+
 def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     """Emit `OFFSET(anchor, rows, cols)` as a step along the producer's axes."""
     if isinstance(node.args[0], FunctionCallNode):
@@ -1567,6 +1663,12 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     if table.single_valued or table.is_scalar:
         if static == {"row", "col"}:
             return name
+        # A one-cell anchor has no column of its own. A pure column move can
+        # still land on a neighboring series that enumerates that axis.
+        if "col" not in static and "row" in static:
+            lowered = _try_cross_series_column_offset(node, ctx, table, cols)
+            if lowered is not None:
+                return lowered
         # The constrained reference set is this one cell; any other
         # displacement is outside the bound model, as `xl_at` reports.
         return f"{ctx.use('at_anchor')}({name}, {rows}, {cols})"
@@ -1576,6 +1678,10 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
     field_axes = _axis_positions_are_worksheet_positions(table)
     moved = {axis for axis in ("row", "col") if axis not in static}
     if moved - set(field_axes.values()):
+        if moved == {"col"}:
+            lowered = _try_cross_series_column_offset(node, ctx, table, cols)
+            if lowered is not None:
+                return lowered
         raise _host_export_error(
             ctx,
             f"OFFSET row offset into non-matrix series {table.series_id!r} is not supported"

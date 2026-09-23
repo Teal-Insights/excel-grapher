@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Iterator, Mapping, Sequence
+from contextlib import contextmanager
 from contextvars import ContextVar, Token
 from dataclasses import dataclass, field, replace
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
 from fastpyxl.utils.cell import get_column_letter
@@ -75,7 +77,11 @@ from excel_grapher.grapher.blank_ranges import (
 from excel_grapher.semantic_model.types import AccessClass
 from excel_grapher.series_bindings.geometry import parse_value_map
 from excel_grapher.series_bindings.normalize import is_override_input
-from excel_grapher.series_bindings.resolve import _bind_source_addresses
+from excel_grapher.series_bindings.resolve import (
+    _bind_source_addresses,
+    _execute_bind,
+    _WorkbookValues,
+)
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -799,6 +805,346 @@ def resolve_offset_destination_series(
     return covered, targets[0]
 
 
+_OFFSET_COLUMN_READER: ContextVar[_WorkbookValues | None] = ContextVar(
+    "excel_grapher_offset_column_reader",
+    default=None,
+)
+
+
+@contextmanager
+def offset_column_workbook(workbook: Path | str | None) -> Iterator[None]:
+    """Open `workbook` for anchor column-key reads during one emit.
+
+    A column-only `OFFSET` whose anchor series has no column axis reads the
+    anchor column with the landing series' column bind. The reader stays open
+    for the whole emit so each formula does not reload the workbook.
+    """
+    if workbook is None:
+        yield
+        return
+    reader = _WorkbookValues(workbook)
+    token = _OFFSET_COLUMN_READER.set(reader)
+    try:
+        yield
+    finally:
+        _OFFSET_COLUMN_READER.reset(token)
+        reader.close()
+
+
+@dataclass(frozen=True, slots=True)
+class OffsetColumnMember:
+    """One worksheet column of a column-only `OFFSET` span."""
+
+    address: CanonicalAddress
+    series: BoundSeries
+    column_key: object
+
+
+@dataclass(frozen=True, slots=True)
+class OffsetColumnSpan:
+    """Contiguous columns from the anchor through every in-domain landing.
+
+    `members` follows worksheet order. `anchor_index` is the anchor column.
+    `column_field` is the key the landing series enumerates. The anchor column
+    carries that same key even when its own series does not declare the field,
+    so a later `axis_step` counts worksheet columns from the anchor. Columns
+    between the anchor and the farthest landing stay on the span when the
+    selector domain skips them: the displacement is a worksheet distance.
+    """
+
+    column_field: str
+    members: tuple[OffsetColumnMember, ...]
+    anchor_index: int
+
+    @property
+    def anchor_key(self) -> object:
+        """Column key of the anchor column, the origin of `axis_step`."""
+        return self.members[self.anchor_index].column_key
+
+
+def _column_key_fields(series: BoundSeries) -> tuple[str, ...]:
+    return tuple(field for field in series.key_fields if _key_field_axis(series, field) == "col")
+
+
+def _offset_column_error(
+    host_series_id: str | None,
+    host_cell: CanonicalAddress,
+    message: str,
+) -> InvertedTreeExportError:
+    if host_series_id is None:
+        return InvertedTreeExportError(f"cell {host_cell}: {message}")
+    return InvertedTreeExportError(f"series {host_series_id!r} cell {host_cell}: {message}")
+
+
+def _offset_argument_cells(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+) -> set[CanonicalAddress]:
+    found: set[CanonicalAddress] = set()
+    for arg in node.args[1:]:
+        for ref in _iter_cell_ref_nodes(arg):
+            found.add(as_canonical(resolve_cell_ref(ref, host_cell)))
+    return found
+
+
+def _offset_provenance_captured(
+    graph: DependencyGraph,
+    host_cell: CanonicalAddress,
+) -> bool:
+    for dep in graph.get_dependencies(host_cell):
+        if graph.get_edge_attrs(host_cell, dep).provenance is not None:
+            return True
+    return False
+
+
+def _infer_offset_landings(
+    graph: DependencyGraph,
+    host_cell: CanonicalAddress,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None,
+) -> list[CanonicalAddress] | None:
+    """Return inferred `OFFSET` targets, or `None` when the domain is unknown."""
+    node = graph.get_node(host_cell)
+    formula = None if node is None else node.normalized_formula
+    env = graph.cell_type_env
+    if not formula or env is None:
+        return None
+    from excel_grapher.grapher.dynamic_refs import DynamicRefError, infer_dynamic_offset_targets
+
+    sheet = parse_cell_coords(host_cell)[0]
+    try:
+        found = infer_dynamic_offset_targets(
+            formula,
+            current_sheet=sheet,
+            cell_type_env=env,
+            blank_rects=blank_rects,
+        )
+    except DynamicRefError:
+        return None
+    return [as_canonical(address) for address in found]
+
+
+def _same_row_landings(
+    anchor: CanonicalAddress,
+    targets: Sequence[CanonicalAddress],
+    excluded: set[CanonicalAddress],
+) -> list[CanonicalAddress]:
+    sheet, row, _col = parse_cell_coords(anchor)
+    landings: list[CanonicalAddress] = []
+    for target in targets:
+        if target in excluded:
+            continue
+        target_sheet, target_row, _target_col = parse_cell_coords(target)
+        if target_sheet != sheet or target_row != row:
+            continue
+        landings.append(as_canonical(target))
+    return landings
+
+
+def _in_domain_column_landings(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    anchor: CanonicalAddress,
+    graph: DependencyGraph | None,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None,
+) -> list[CanonicalAddress] | None:
+    """Return same-row in-domain landings, or `None` when they are unknown."""
+    if graph is None:
+        return None
+    excluded = _offset_argument_cells(node, host_cell)
+    if _offset_provenance_captured(graph, host_cell):
+        targets: list[CanonicalAddress] | None = offset_target_addresses(
+            graph, host_cell, exclude=tuple(excluded)
+        )
+    else:
+        targets = _infer_offset_landings(graph, host_cell, blank_rects=blank_rects)
+    if targets is None:
+        return None
+    return _same_row_landings(anchor, targets, excluded)
+
+
+class _UnusedColumnReader:
+    """Stand-in reader for binds that do not touch the workbook."""
+
+    def read(self, address: str) -> Any:
+        raise InvertedTreeExportError(f"OFFSET column key at {address} needs the bindings workbook")
+
+
+def _bind_column_key(
+    bind: Mapping[str, Any],
+    address: CanonicalAddress,
+    graph: DependencyGraph | None,
+) -> object:
+    """Return the column key `bind` assigns to `address`."""
+    reader = _OFFSET_COLUMN_READER.get()
+    sources = _bind_source_addresses(dict(bind), str(address))
+    if sources and reader is None:
+        raise ValueError(f"OFFSET column key at {address} needs the bindings workbook")
+    active = reader if reader is not None else _UnusedColumnReader()
+    return _execute_bind(
+        dict(bind),
+        graph=graph,
+        reader=active,  # type: ignore[arg-type]
+        data_address=str(address),
+    )
+
+
+def _column_key_value(key: object) -> str | int:
+    if isinstance(key, bool) or not isinstance(key, str | int):
+        raise ValueError(f"OFFSET column key {key!r} must be a string or integer")
+    return key
+
+
+@dataclass(frozen=True, slots=True)
+class _OffsetColumnLayout:
+    """Bound columns of a cross-series column `OFFSET`, before key reads."""
+
+    anchor_series_id: str
+    anchor_col: int
+    field_name: str
+    bind: Mapping[str, Any]
+    columns: tuple[tuple[int, CanonicalAddress, BoundSeries], ...]
+
+
+def _offset_column_layout(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+    host_series_id: str | None = None,
+) -> _OffsetColumnLayout | None:
+    """Return bound columns for a dynamic column-only `OFFSET`, or `None`.
+
+    `None` means the formula is not a cross-series column step. An unbound
+    column between the anchor and a landing fails closed.
+    """
+    if len(node.args) != 3 or not isinstance(node.args[0], CellRefNode):
+        return None
+    if ast_literal_int(node.args[1]) != 0 or ast_literal_int(node.args[2]) is not None:
+        return None
+    anchor = as_canonical(resolve_cell_ref(node.args[0], host_cell))
+    anchor_series = catalog.series_for(anchor)
+    if anchor_series is None or _column_key_fields(anchor_series):
+        return None
+    rects = current_blank_rects() if blank_rects is None else tuple(blank_rects)
+    landings = _in_domain_column_landings(node, host_cell, anchor, graph, blank_rects=rects)
+    if not landings:
+        return None
+    sheet, row, anchor_col = parse_cell_coords(anchor)
+    landing_cols = [parse_cell_coords(landing)[2] for landing in landings]
+    first = min(anchor_col, min(landing_cols))
+    last = max(anchor_col, max(landing_cols))
+    if first == last:
+        return None
+    columns: list[tuple[int, CanonicalAddress, BoundSeries]] = []
+    for col in range(first, last + 1):
+        address = as_canonical(format_cell_key(sheet, get_column_letter(col), row))
+        if address_in_blank_ranges(address, rects) or catalog.series_for(address) is None:
+            raise _offset_column_error(
+                host_series_id,
+                host_cell,
+                f"OFFSET column offset into series {anchor_series.series_id!r} "
+                f"crosses unbound cell {address}",
+            )
+        columns.append((col, address, catalog.require_series_for(address)))
+    field_name: str | None = None
+    bind: Mapping[str, Any] | None = None
+    for col, _address, series in columns:
+        if col == anchor_col:
+            continue
+        fields = _column_key_fields(series)
+        if len(fields) != 1:
+            if not fields:
+                continue
+            return None
+        name = fields[0]
+        series_bind = series.dimension_bind(name) or {}
+        if field_name is None:
+            field_name = name
+            bind = series_bind
+            continue
+        if name != field_name or dict(series_bind) != dict(bind or {}):
+            return None
+    if field_name is None or bind is None:
+        return None
+    return _OffsetColumnLayout(
+        anchor_series.series_id,
+        anchor_col,
+        field_name,
+        dict(bind),
+        tuple(columns),
+    )
+
+
+def resolve_offset_column_span(
+    node: FunctionCallNode,
+    host_cell: CanonicalAddress,
+    catalog: SeriesCatalog,
+    graph: DependencyGraph | None,
+    *,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+    host_series_id: str | None = None,
+) -> OffsetColumnSpan | None:
+    """Return a cross-series column span for `OFFSET(cell, 0, cols)`.
+
+    The anchor series must not already enumerate a column axis. `cols` is not
+    a literal. In-domain landings share one column key. `None` means this
+    pattern does not apply; the caller keeps its existing failure.
+
+    The anchor column uses the landing series' column bind, so the key
+    sequence starts at the anchor even when that series has no column field.
+
+    Raises:
+        InvertedTreeExportError: The move is a column step but a worksheet
+            column between the anchor and a landing is unbound, or two columns
+            share one key.
+    """
+    layout = _offset_column_layout(
+        node,
+        host_cell,
+        catalog,
+        graph,
+        blank_rects=blank_rects,
+        host_series_id=host_series_id,
+    )
+    if layout is None:
+        return None
+    members: list[OffsetColumnMember] = []
+    seen: dict[object, CanonicalAddress] = {}
+    anchor_index: int | None = None
+    for col, address, series in layout.columns:
+        point = series.key_point_for(address)
+        try:
+            if layout.field_name in series.key_fields and (
+                _key_field_axis(series, layout.field_name) == "col"
+            ):
+                if point is None or layout.field_name not in point.as_mapping():
+                    return None
+                raw_key = point[layout.field_name]
+            else:
+                raw_key = _bind_column_key(layout.bind, address, graph)
+            key = _column_key_value(raw_key)
+        except ValueError as exc:
+            raise _offset_column_error(host_series_id, host_cell, str(exc)) from exc
+        previous = seen.get(key)
+        if previous is not None:
+            raise _offset_column_error(
+                host_series_id,
+                host_cell,
+                f"OFFSET column key {key!r} is shared by {previous} and {address}",
+            )
+        seen[key] = address
+        if col == layout.anchor_col:
+            anchor_index = len(members)
+        members.append(OffsetColumnMember(address, series, key))
+    if anchor_index is None:
+        return None
+    return OffsetColumnSpan(layout.field_name, tuple(members), anchor_index)
+
+
 def covering_series_for_index_window(
     node: FunctionCallNode,
     host_cell: CanonicalAddress,
@@ -1266,6 +1612,24 @@ class _DepCollector:
         base = node.args[0]
         if isinstance(base, FunctionCallNode):
             self._visit_offset_from_expr(node, host_cell=host_cell, host_index=host_index)
+            return
+        layout = _offset_column_layout(
+            node,
+            host_cell,
+            self.catalog,
+            self.graph,
+            blank_rects=self.blank_rects,
+            host_series_id=self.host.series_id,
+        )
+        if layout is not None:
+            seen: set[str] = set()
+            for _col, address, series in layout.columns:
+                if series.series_id in seen:
+                    continue
+                seen.add(series.series_id)
+                self.emit_lookup(series, host_cell, address, "dynamic")
+            for arg in node.args[1:]:
+                self.visit(arg, host_cell=host_cell, host_index=host_index)
             return
         resolved = resolve_offset_destination_series(
             node,

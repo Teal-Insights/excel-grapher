@@ -369,7 +369,9 @@ def generate_package(
                 "formula_cells": sum(len(s.cells) for s in catalog.formula_series()),
             }
             started = time.perf_counter()
-            failures = inventory_named_emission(catalog, deps, scc_map, graph)
+            failures = inventory_named_emission(
+                catalog, deps, scc_map, graph, workbook=paths["workbook"]
+            )
             timings["inventory_seconds"] = time.perf_counter() - started
             report["lowering_failures"] = failures
             report["lowering_failure_kinds"] = dict(
