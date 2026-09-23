@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.8.2 (2026-09-23)
+
+### Bug Fixes
+
+- **export**: Lower NORMDIST in inverted-tree export
+  ([`f0725b6`](https://github.com/Teal-Insights/excel-grapher/commit/f0725b61f4b7f9650b416f77a92cc7c78d4e522c))
+
+### Testing
+
+- **export**: Compare NORMDIST export to the evaluator
+  ([`099f30c`](https://github.com/Teal-Insights/excel-grapher/commit/099f30ca11f84cefb80b1e1eaa681dc315dbcba1))
+
+
 ## v23.8.1 (2026-09-23)
 
 ### Bug Fixes
