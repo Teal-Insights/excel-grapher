@@ -8,6 +8,7 @@ emission still walks the whole Excel range, so a constant with
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from excel_grapher import (
     CodeGenerator,
@@ -418,7 +419,7 @@ def test_unplanned_lookup_axis_falls_back_instead_of_raising(tmp_path: Path) -> 
     assert _named_range_view(RangeNode("Data!B2", "Data!C2"), ctx) is None
 
 
-def _eval_lookup_table(pkg: object, internals: str, name: str = "_looked_up_table_0") -> object:
+def _eval_lookup_table(pkg: Any, internals: str, name: str = "_looked_up_table_0") -> object:
     """Evaluate one generated lookup table against the package's series."""
     marker = f"{name} = "
     expression = next(
@@ -512,7 +513,7 @@ def test_unplanned_axis_callbacks_read_off_graph_values(tmp_path: Path) -> None:
         tmp_path, workbook_path, bindings_path, "Calc!B2"
     )
     pkg = load_package(modules, tmp_path, name="off_graph_callbacks")
-    namespace = {
+    namespace: dict[str, Any] = {
         "lazy_table": pkg.runtime.lazy_table,
         "view": pkg.runtime.view,
         "span": pkg.runtime.span,
@@ -603,8 +604,16 @@ def test_fingerprint_required_covers_emitted_off_graph_domain(tmp_path: Path) ->
         named_codegen_fingerprint(catalog, include=("text_attributes",))
     payload = captured["payload"]
     assert isinstance(payload, dict)
-    entry = next(item for item in payload["series"] if item["series_id"] == "text_attributes")
-    assert len(entry["required"]) == len(catalog.get("text_attributes").tensor_domain)
+    series = payload["series"]
+    assert isinstance(series, list)
+    entry = next(
+        item
+        for item in series
+        if isinstance(item, dict) and item.get("series_id") == "text_attributes"
+    )
+    required = entry["required"]
+    assert isinstance(required, list)
+    assert len(required) == len(catalog.get("text_attributes").tensor_domain)
 
 
 def test_off_graph_input_is_checked_in_catalog_order(tmp_path: Path) -> None:
