@@ -49,6 +49,7 @@ from excel_grapher.exporter.export_runtime.error_funcs import xl_iserror as _sha
 from excel_grapher.exporter.export_runtime.error_funcs import xl_isna as _shared_isna
 from excel_grapher.exporter.export_runtime.error_funcs import xl_isnumber as _shared_isnumber
 from excel_grapher.exporter.export_runtime.error_funcs import xl_istext as _shared_istext
+from excel_grapher.exporter.export_runtime.info import xl_count as _shared_count
 from excel_grapher.exporter.export_runtime.lookup import xl_hlookup as _shared_hlookup
 from excel_grapher.exporter.export_runtime.lookup import xl_lookup as _shared_lookup
 from excel_grapher.exporter.export_runtime.lookup import xl_xlookup as _shared_xlookup
@@ -602,6 +603,11 @@ def xl_large(*args: object) -> object:
 def xl_stdev(*args: object) -> object:
     """Compute STDEV with the shared statistical implementation."""
     return _shared_value(_shared_stdev, *args)
+
+
+def xl_count(*args: object) -> object:
+    """Count numeric values with the shared COUNT implementation."""
+    return _shared_value(_shared_count, *args)
 
 
 def xl_countif(*args: object) -> object:
