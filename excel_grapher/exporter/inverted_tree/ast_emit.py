@@ -47,6 +47,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
     _attach_index_label_cells,
     addresses_outside_blank_ranges,
+    anchor_only_column_target,
     ast_literal_int,
     covering_series_for_index_window,
     current_blank_rects,
@@ -55,6 +56,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     iter_range_addresses,
     iter_ref_addresses,
     normalize_excel_function_name,
+    offset_cell_destination,
     offset_index_destination,
     range_ref_label,
     resolve_offset_column_span,
@@ -1589,6 +1591,17 @@ def _emit_literal_column_landing(
         blank_rects=ctx.blank_rects,
     )
     if resolved is None:
+        dest = offset_cell_destination(node, ctx.host_cell)
+        if (
+            dest is not None
+            and not address_in_blank_ranges(dest, ctx.blank_rects)
+            and ctx.catalog.series_for(dest) is None
+        ):
+            raise _host_export_error(
+                ctx,
+                f"OFFSET column offset into series {anchor_series.series_id!r} "
+                f"crosses unbound cell {dest}",
+            )
         return None
     series, cell = resolved
     if series.series_id == anchor_series.series_id:
@@ -1602,7 +1615,13 @@ def _try_cross_series_column_offset(
     anchor_series: BoundSeries,
     cols: str,
 ) -> str | None:
-    """Lower a pure column `OFFSET` that leaves the anchor series, if it applies."""
+    """Lower a pure column `OFFSET` off a series with no column axis.
+
+    A literal step folds to the landing cell. A dynamic step dispatches on
+    the column span, or reads the anchor when the domain never leaves it.
+    An unbound landing, or landing series that do not share one column key,
+    fails closed.
+    """
     literal = _emit_literal_column_landing(node, ctx, anchor_series)
     if literal is not None:
         return literal
@@ -1614,9 +1633,19 @@ def _try_cross_series_column_offset(
         blank_rects=ctx.blank_rects,
         host_series_id=ctx.host.series_id,
     )
-    if span is None:
+    if span is not None:
+        return _emit_offset_column_span(span, cols, ctx)
+    anchor = anchor_only_column_target(
+        node,
+        ctx.host_cell,
+        ctx.catalog,
+        ctx.graph,
+        blank_rects=ctx.blank_rects,
+    )
+    if anchor is None:
         return None
-    return _emit_offset_column_span(span, cols, ctx)
+    series, address = anchor
+    return _emit_series_point(series, series.key_point_for(address), ctx)
 
 
 def _emit_offset_column_span(span: OffsetColumnSpan, cols: str, ctx: EmitContext) -> str:
