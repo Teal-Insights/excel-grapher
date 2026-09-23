@@ -844,7 +844,7 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
         return _emit_row(node, ctx)
     if name == "COLUMN":
         return _emit_column(node, ctx)
-    if name == "COLUMNS":
+    if name in {"COLUMNS", "ROWS"}:
         return _emit_reference_geometry(node, ctx)
     if name == "INDIRECT":
         return _emit_indirect(node, ctx)
@@ -876,7 +876,7 @@ def _emit_function(node: FunctionCallNode, ctx: EmitContext) -> str:
 def _emit_reference_geometry(node: FunctionCallNode, ctx: EmitContext) -> str:
     """Lower reference metadata without evaluating the referenced cell values."""
     name = normalize_excel_function_name(node.name)
-    if len(node.args) > 1 or (name == "COLUMNS" and not node.args):
+    if len(node.args) > 1 or (name in {"COLUMNS", "ROWS"} and not node.args):
         return f"{ctx.use('xl_raise')}('#VALUE!')"
     ref = node.args[0] if node.args else None
     if ref is not None and not isinstance(
@@ -900,6 +900,8 @@ def _emit_reference_geometry(node: FunctionCallNode, ctx: EmitContext) -> str:
         _sheet, row, col = parse_cell_coords(addresses[0])
         if name == "COLUMNS":
             return abs(parse_cell_coords(addresses[-1])[2] - col) + 1
+        if name == "ROWS":
+            return abs(parse_cell_coords(addresses[-1])[1] - row) + 1
         return row if name == "ROW" else col
 
     return str(coordinate(ctx.host_cell))
