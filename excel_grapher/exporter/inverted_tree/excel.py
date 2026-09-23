@@ -21,6 +21,7 @@ from excel_grapher.core.math_funcs import (
     exp_number,
     max_cells,
     min_cells,
+    normdist_value,
     sum_cells,
 )
 from excel_grapher.core.operators import xl_add as _core_add
@@ -342,6 +343,19 @@ def xl_exp(*args: object) -> object:
     for arg in args:
         _raise_stored_error(arg)
     return _adapt_core(exp_number(*cast(tuple[CellValue, ...], args)))
+
+
+def xl_normdist(*args: object) -> object:
+    """Excel `NORMDIST` via `core.math_funcs.normdist_value`.
+
+    Cumulative `TRUE` or `1` is the CDF. A non-positive standard deviation
+    raises `#NUM!`.
+    """
+    for arg in args:
+        _raise_stored_error(arg)
+    if len(args) != 4:
+        raise XlError("#VALUE!")
+    return _adapt_core(normdist_value(*cast(tuple[CellValue, ...], args)))
 
 
 def xl_abs(*args: object) -> object:
