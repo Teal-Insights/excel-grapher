@@ -1070,12 +1070,19 @@ def _emit_aggregate(node: FunctionCallNode, ctx: EmitContext) -> str:
             "inverted-tree runtime helper"
         )
     array_ctx = replace(ctx, array_context=True)
-    args = ", ".join(_emit_aggregate_arg(arg, array_ctx) for arg in node.args)
+    args = ", ".join(_emit_aggregate_arg(arg, array_ctx, name) for arg in node.args)
     ctx.use(func)
     return f"{func}({args})"
 
 
-def _emit_aggregate_arg(node: AstNode, ctx: EmitContext) -> str:
+def _emit_aggregate_arg(node: AstNode, ctx: EmitContext, function_name: str) -> str:
+    """Lower one aggregate argument.
+
+    An omitted `COUNT` argument is blank, so it does not add to the count.
+    Other aggregates keep the scalar lowering, where a missing argument is `0`.
+    """
+    if function_name == "COUNT" and isinstance(node, EmptyArgNode):
+        return "None"
     if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
         return _emit_range_values(node, ctx)
     return emit_expr(node, ctx)

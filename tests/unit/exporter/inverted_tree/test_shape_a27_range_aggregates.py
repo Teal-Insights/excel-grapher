@@ -997,6 +997,48 @@ def test_count_blank_neighbor_matches_evaluator(tmp_path: Path) -> None:
     assert_package_matches_evaluator(workbook, document, tmp_path, "a27_count_blank")
 
 
+@pytest.mark.parametrize("formula", ["=COUNT(A1,)", "=COUNT(,1)", "=COUNT(,)"])
+def test_count_empty_argument_is_not_counted(tmp_path: Path, formula: str) -> None:
+    """An omitted COUNT argument is blank, so it does not add to the count."""
+    workbook = write_workbook(
+        tmp_path / "a27_count_empty.xlsx",
+        {"Engine": {"A1": 5, "B5": formula}},
+    )
+    document = bindings_document(
+        series_entry("v0", "Engine!A1", direction="constant"),
+        series_entry("result", "Engine!B5", direction="output"),
+    )
+    modules = generate_inverted(workbook, document)
+    count_line = next(
+        line.strip()
+        for line in modules["internals.py"].splitlines()
+        if "xl_count(" in line and not line.strip().startswith("from ")
+    )
+    assert "None" in count_line
+    assert_package_matches_evaluator(workbook, document, tmp_path, "a27_count_empty")
+
+
+def test_count_skips_error_cell_in_bound_series(tmp_path: Path) -> None:
+    """An error in a bound series is not counted and does not abort COUNT."""
+    workbook = write_workbook(
+        tmp_path / "a27_count_error.xlsx",
+        {
+            "values": {"A1": 2020, "B1": 2021, "A2": 10, "B2": "#DIV/0!"},
+            "out": {"A1": "=COUNT(values!A2:B2)"},
+        },
+    )
+    document = bindings_document(
+        series_entry("capital", "values!A2:B2", layout="series", direction="input", header_row=1),
+        series_entry("out", "out!A1", layout="scalar", direction="output"),
+    )
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    modules = generate_inverted(workbook, document)
+    pkg = load_package(modules, tmp_path, name="a27_count_error")
+    got = invoke_public_compute(pkg, pkg.compute_out, named_input_kwargs(pkg, catalog, graph))
+    assert got == 1
+    assert_package_matches_evaluator(workbook, document, tmp_path, "a27_count_error_eval")
+
+
 def test_sum_if_at_operator_has_no_formula_ast(tmp_path: Path) -> None:
     workbook = write_workbook(
         tmp_path / "a27_sum_if_at.xlsx",
