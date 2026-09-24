@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
+import pytest
+
 from excel_grapher.core.cell_types import (
     Between,
     CellKind,
@@ -51,6 +53,37 @@ def test_constraints_mapping_builds_expected_cell_type_env() -> None:
     assert d1.kind is CellKind.STRING
     assert d1.enum == EnumDomain(values=frozenset({"NORTH", "SOUTH"}))
     assert d1.interval is None
+
+
+def test_constraints_mapping_unions_literal_with_real_interval() -> None:
+    schema: dict[str, Any] = {
+        "Sheet1!A1": Literal["n.a."] | Annotated[float, RealBetween(-1.0e15, 1.0e15)],
+    }
+    env: CellTypeEnv = constraints_to_cell_type_env(schema, {"Sheet1!A1": "n.a."})
+    cell = env["Sheet1!A1"]
+    assert cell.kind is CellKind.ANY
+    assert cell.enum == EnumDomain(values=frozenset({"n.a."}))
+    assert cell.real_interval == RealIntervalDomain(min=-1.0e15, max=1.0e15)
+    assert cell.interval is None
+
+
+def test_numeric_union_is_not_enumerated_as_its_enum_arm() -> None:
+    from excel_grapher.grapher.dynamic_refs import DynamicRefError, _build_domains
+
+    schema: dict[str, Any] = {
+        "Sheet1!A1": Literal[0, 1] | Annotated[int, Between(0, 3)],
+    }
+    env = constraints_to_cell_type_env(schema, {})
+    with pytest.raises(DynamicRefError, match="union"):
+        _build_domains(["Sheet1!A1"], env, DynamicRefLimits())
+
+
+def test_constraints_mapping_rejects_two_interval_arms() -> None:
+    schema: dict[str, Any] = {
+        "Sheet1!A1": Annotated[int, Between(0, 1)] | Annotated[float, RealBetween(0.0, 1.0)],
+    }
+    with pytest.raises(ValueError, match="between and real_between"):
+        constraints_to_cell_type_env(schema, {})
 
 
 def test_constraints_mapping_supports_float_between() -> None:

@@ -17,6 +17,7 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     NotEqualCell,
     RealBetween,
+    RealIntervalDomain,
     constraints_to_cell_type_env,
 )
 from excel_grapher.grapher import create_dependency_graph, write_workbook
@@ -334,6 +335,24 @@ def test_include_cell_validation_false_omits_rules(tmp_path: Path) -> None:
         include_cell_validation=False,
     )
     assert _validation_rows(dest) == []
+
+
+def test_union_domain_writes_literal_or_interval_formula(tmp_path: Path) -> None:
+    graph = DependencyGraph()
+    graph.add_node(make_cell_node("Inputs", "A", 1, value="n.a."))
+    graph.sheet_order = ["Inputs"]
+    graph.cell_type_env = {
+        "Inputs!A1": CellType(
+            kind=CellKind.ANY,
+            enum=EnumDomain(values=frozenset({"n.a."})),
+            real_interval=RealIntervalDomain(min=-1.0, max=1.0),
+        )
+    }
+    dest = tmp_path / "out.xlsx"
+    write_workbook(graph, dest)
+    row = _covers(_validation_rows(dest), "A1")[0]
+    assert row["type"] == "custom"
+    assert row["formula1"] == 'OR(A1="n.a.",AND(ISNUMBER(A1),A1>=-1,A1<=1))'
 
 
 def test_cell_type_env_validates_value_leaves_only(tmp_path: Path) -> None:

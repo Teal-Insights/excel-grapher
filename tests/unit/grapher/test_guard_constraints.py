@@ -77,6 +77,54 @@ def test_guard_constraints_cell_cell_equality_contradicts_its_negation() -> None
     assert seed.add(Not(eq)) is None
 
 
+def test_union_domain_allows_either_arm_and_does_not_pin() -> None:
+    from excel_grapher.core.cell_types import CellKind, CellType, EnumDomain, RealIntervalDomain
+
+    env = {
+        "Inputs!A1": CellType(
+            kind=CellKind.ANY,
+            enum=EnumDomain(values=frozenset({"n.a."})),
+            real_interval=RealIntervalDomain(min=-1.0, max=1.0),
+        )
+    }
+    seeded = GuardConstraints().seed_cell_type_env(env)
+    assert seeded is not None
+    assert seeded.equalities == ()
+    assert (
+        seeded.add(
+            Compare(left=CellRef(key="Inputs!A1"), op="=", right=Literal(value="n.a.")),
+            cell_type_env=env,
+        )
+        is not None
+    )
+    assert (
+        seeded.add(
+            Compare(left=CellRef(key="Inputs!A1"), op="=", right=Literal(value=0.5)),
+            cell_type_env=env,
+        )
+        is not None
+    )
+    assert (
+        seeded.add(
+            Compare(left=CellRef(key="Inputs!A1"), op="=", right=Literal(value="nope")),
+            cell_type_env=env,
+        )
+        is None
+    )
+    assert (
+        seeded.add(
+            Compare(left=CellRef(key="Inputs!A1"), op="=", right=Literal(value=2.0)),
+            cell_type_env=env,
+        )
+        is None
+    )
+    forbidden = seeded.add(
+        Compare(left=CellRef(key="Inputs!A1"), op="<>", right=Literal(value="n.a.")),
+        cell_type_env=env,
+    )
+    assert forbidden is not None
+
+
 def test_guard_constraints_accepts_literal_on_either_side() -> None:
     left_lit = Compare(left=Literal(value=0), op="=", right=CellRef(key="Sheet1!A1"))
     seed = GuardConstraints().add(left_lit)

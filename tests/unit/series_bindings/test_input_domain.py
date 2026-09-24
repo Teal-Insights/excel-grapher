@@ -172,12 +172,39 @@ def test_schema_accepts_enum_between_and_real_between_domains() -> None:
         assert bindings["series"][0]["input"]["domain"] == domain
 
 
-def test_schema_rejects_empty_enum_and_mixed_domain_keys() -> None:
+def test_schema_accepts_enum_union_with_one_interval() -> None:
+    sentinel = {"enum": ["n.a."], "real_between": {"min": -1.0e15, "max": 1.0e15}}
+    bindings = validate_bindings_document(_scalar_float_doc(domain=sentinel))
+    assert bindings["series"][0]["domain"] == sentinel
+
+    years = {"enum": ["n.a."], "between": {"min": 0, "max": 10}}
+    doc = _scalar_float_doc(domain=years)
+    doc["series"][0]["structure"]["measure"]["dtype"] = "int"
+    doc["series"][0]["structure"]["measure"]["bind"]["read"] = "int"
+    bindings = validate_bindings_document(doc)
+    assert bindings["series"][0]["domain"] == years
+
+
+def test_schema_rejects_empty_enum_and_invalid_domain_unions() -> None:
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(_scalar_string_doc(domain={"enum": []}))
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(
-            _scalar_float_doc(domain={"enum": ["a"], "real_between": {"min": 0}})
+            _scalar_float_doc(
+                domain={
+                    "enum": ["n.a."],
+                    "between": {"min": 0, "max": 1},
+                    "real_between": {"min": 0},
+                }
+            )
+        )
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(
+            _scalar_float_doc(domain={"between": {"min": 0}, "real_between": {"min": 0}})
+        )
+    with pytest.raises(SeriesBindingsSchemaError):
+        validate_bindings_document(
+            _scalar_float_doc(domain={"enum": ["n.a."], "from_workbook": True})
         )
     with pytest.raises(SeriesBindingsSchemaError):
         validate_bindings_document(_scalar_float_doc(domain={"real_between": {}}))
@@ -402,6 +429,77 @@ def test_require_input_domain_rejects_int_for_bool_enum() -> None:
         require_input_domain(1, domain, series_id="flag")
     with pytest.raises(ValueError, match=r"flag out of domain"):
         require_input_domain(0, domain, series_id="flag")
+
+
+def test_require_input_domain_accepts_sentinel_or_interval() -> None:
+    domain = {
+        "enum": frozenset({"n.a."}),
+        "real_between": {"min": -1.0e15, "max": 1.0e15},
+    }
+    require_input_domain("n.a.", domain, series_id="sentinel")
+    require_input_domain(0, domain, series_id="sentinel")
+    require_input_domain(1.5, domain, series_id="sentinel")
+    require_input_domain(("n.a.", 2.0), domain, series_id="sentinel")
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        require_input_domain("nope", domain, series_id="sentinel")
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        require_input_domain(1.0e16, domain, series_id="sentinel")
+    with pytest.raises(ValueError, match=r"sentinel\[1\] out of domain"):
+        require_input_domain(("n.a.", "nope"), domain, series_id="sentinel")
+
+    years = {"enum": frozenset({"n.a."}), "between": {"min": 0, "max": 10}}
+    require_input_domain("n.a.", years, series_id="years")
+    require_input_domain(10, years, series_id="years")
+    with pytest.raises(ValueError, match=r"years out of domain"):
+        require_input_domain(1.5, years, series_id="years")
+    with pytest.raises(ValueError, match=r"years out of domain"):
+        require_input_domain(11, years, series_id="years")
+
+
+def test_measure_domain_from_series_rejects_both_intervals() -> None:
+    with pytest.raises(ValueError, match="between and real_between"):
+        measure_domain_from_series(
+            {
+                "domain": {
+                    "between": {"min": 0, "max": 1},
+                    "real_between": {"min": 0.0, "max": 1.0},
+                }
+            }
+        )
+
+
+def test_measure_domain_from_series_keeps_union_arms() -> None:
+    series = {
+        "domain": {"enum": ["n.a."], "real_between": {"min": -1.0, "max": 1.0}},
+    }
+    assert measure_domain_from_series(series) == {
+        "enum": frozenset({"n.a."}),
+        "real_between": {"min": -1.0, "max": 1.0},
+    }
+
+
+def test_validate_rejects_union_interval_dtype_mismatch(tmp_path: Path) -> None:
+    report = _report_for_domain_dtype(
+        tmp_path,
+        dtype="float",
+        domain={"enum": ["n.a."], "between": {"min": 0, "max": 1}},
+    )
+    assert report["ok"] is False
+    assert any(issue["code"] == "domain_dtype_mismatch" for issue in report["issues"])
+
+
+def test_validate_rejects_value_map_combined_with_union_domain(tmp_path: Path) -> None:
+    workbook = _write_scalar_input_workbook(tmp_path / "workbook.xlsx", 0)
+    graph = create_dependency_graph(workbook, ["Inputs!A1"], load_values=True)
+    doc = _scalar_numeric_doc(
+        dtype="float",
+        domain={"enum": ["n.a."], "real_between": {"min": 0, "max": 1}},
+    )
+    doc["series"][0]["input"]["value_map"] = {"n.a.": "n.a.", "ok": "1"}
+    bindings = validate_bindings_document(doc)
+    report = validate_series_bindings(graph, bindings, workbook=workbook)
+    assert report["ok"] is False
+    assert any(issue["code"] == "invalid_input_value_map" for issue in report["issues"])
 
 
 def test_require_input_domain_scalar_and_sequence() -> None:

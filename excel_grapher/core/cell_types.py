@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import types
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
-from typing import Any, TypeAlias, get_args, get_origin
+from typing import Any, TypeAlias, Union, get_args, get_origin
 
 from fastpyxl.utils.cell import coordinate_from_string
 
@@ -165,8 +166,30 @@ class RealBetween:
     max: float | int | None = None
 
 
+def is_union_domain(cell_type: CellType) -> bool:
+    """Return whether `cell_type` is an enum unioned with one interval.
+
+    Membership is the enum or the interval. A singleton enum on a union is
+    not an extract-only pin.
+
+    Args:
+        cell_type: Cell constraint to inspect.
+
+    Returns:
+        True when `enum` is set together with `interval` or `real_interval`.
+    """
+    has_enum = cell_type.enum is not None
+    has_interval = cell_type.interval is not None
+    has_real = cell_type.real_interval is not None
+    return has_enum and (has_interval or has_real)
+
+
 def _cell_type_from_annotation(annotated_type: Any) -> CellType:
-    """Build a `CellType` from a constraint annotation (Annotated / Literal / plain type)."""
+    """Build a `CellType` from a constraint annotation (Annotated / Literal / plain type).
+
+    `Literal[...] | Annotated[..., Between|RealBetween]` stores both the enum
+    and the interval. The two interval kinds cannot share one cell.
+    """
     # Import here to avoid forcing Annotated / Literal into __all__ of core.
     from typing import Annotated, Literal
 
@@ -181,10 +204,13 @@ def _cell_type_from_annotation(annotated_type: Any) -> CellType:
             base_type = args[0]
             metadata = list(args[1:])
 
+    origin = get_origin(base_type)
+    if origin is Union or origin is types.UnionType:
+        return _cell_type_from_union(get_args(base_type), metadata)
+
     int_domain, real_domain = _interval_domains_from_metadata(metadata)
     relations = _relations_from_metadata(metadata)
 
-    origin = get_origin(base_type)
     enum_domain: EnumDomain | None = None
     if origin is Literal:
         literal_values = get_args(base_type)
@@ -201,6 +227,62 @@ def _cell_type_from_annotation(annotated_type: Any) -> CellType:
         enum=enum_domain,
         relations=relations,
     )
+
+
+def _cell_type_from_union(arms: tuple[Any, ...], metadata: list[object]) -> CellType:
+    """Merge union arms into one `CellType`.
+
+    Raises:
+        ValueError: An arm is unconstrained while another is not, or the arms
+            carry two different intervals, including `between` with
+            `real_between`.
+    """
+    parts = [_cell_type_from_annotation(arm) for arm in arms]
+    open_arms = [_arm_is_open(part) for part in parts]
+    if any(open_arms) and not all(open_arms):
+        raise ValueError(
+            "union domain mixes a constrained arm with an unconstrained type; "
+            "declare Between or RealBetween on the numeric arm"
+        )
+    relations = list(_relations_from_metadata(metadata))
+    for part in parts:
+        relations.extend(part.relations)
+    if all(open_arms):
+        kinds = {part.kind for part in parts}
+        kind = kinds.pop() if len(kinds) == 1 else CellKind.ANY
+        return CellType(kind=kind, relations=tuple(relations))
+
+    int_domain, real_domain = _interval_domains_from_metadata(metadata)
+    enums: list[object] = []
+    kinds: list[CellKind] = []
+    for part in parts:
+        kinds.append(part.kind)
+        if part.enum is not None:
+            enums.extend(part.enum.values)
+        int_domain = _merge_interval(int_domain, part.interval, "between")
+        real_domain = _merge_interval(real_domain, part.real_interval, "real_between")
+    if int_domain is not None and real_domain is not None:
+        raise ValueError("union domain cannot combine between and real_between constraints")
+    kind = kinds[0] if len(set(kinds)) == 1 else CellKind.ANY
+    return CellType(
+        kind=kind,
+        interval=int_domain,
+        real_interval=real_domain,
+        enum=EnumDomain(values=frozenset(enums)) if enums else None,
+        relations=tuple(relations),
+    )
+
+
+def _arm_is_open(cell_type: CellType) -> bool:
+    return cell_type.enum is None and cell_type.interval is None and cell_type.real_interval is None
+
+
+def _merge_interval(current: Any, new: Any, label: str) -> Any:
+    if new is None:
+        return current
+    if current is not None and current != new:
+        raise ValueError(f"union domain cannot combine multiple {label} constraints")
+    return new
 
 
 def constraints_to_cell_type_env(
