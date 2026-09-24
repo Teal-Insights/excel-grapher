@@ -1,9 +1,11 @@
 """Compile series bindings into the `CellTypeEnv` dynamic-ref inference consumes.
 
 `domain` is series-level (`enum` / `between` / `real_between` / `from_workbook`).
-`input.domain` is accepted and normalized to that key. `constant` implies
-`from_workbook`. Series-level `relations` name a partner series; each declaring
-cell compiles to `GreaterThanCell` or `NotEqualCell` at the same key.
+`enum` may be combined with exactly one of `between` or `real_between`; that
+union is `Literal[...] | Annotated[..., Between|RealBetween]`. `input.domain`
+is accepted and normalized to that key. `constant` implies `from_workbook`.
+Series-level `relations` name a partner series; each declaring cell compiles
+to `GreaterThanCell` or `NotEqualCell` at the same key.
 
 Rules:
 
@@ -155,19 +157,29 @@ def compile_domain_spec(series: dict[str, Any]) -> dict[str, Any] | None:
 
 
 def _input_domain_annotation(series: dict[str, Any]) -> Any | None:
-    """Return the typing annotation equivalent to a series' compiled domain."""
+    """Return the typing annotation equivalent to a series' compiled domain.
+
+    `enum` together with one interval is a union: the literal arm or the
+    interval arm. `between` and `real_between` cannot share a domain.
+    """
     domain = compile_domain_spec(series)
     if domain is None or domain.get("from_workbook") is True:
         return None
+    if "between" in domain and "real_between" in domain:
+        raise ValueError("union domain cannot combine between and real_between constraints")
+    enum_annotation = None
+    interval_annotation = None
     if "enum" in domain:
-        return _RuntimeLiteral[tuple(domain["enum"])]
+        enum_annotation = _RuntimeLiteral[tuple(domain["enum"])]
     if "between" in domain:
         bounds = domain["between"]
-        return Annotated[int, Between(bounds.get("min"), bounds.get("max"))]
-    if "real_between" in domain:
+        interval_annotation = Annotated[int, Between(bounds.get("min"), bounds.get("max"))]
+    elif "real_between" in domain:
         bounds = domain["real_between"]
-        return Annotated[float, RealBetween(bounds.get("min"), bounds.get("max"))]
-    return None
+        interval_annotation = Annotated[float, RealBetween(bounds.get("min"), bounds.get("max"))]
+    if enum_annotation is not None and interval_annotation is not None:
+        return enum_annotation | interval_annotation
+    return enum_annotation if enum_annotation is not None else interval_annotation
 
 
 def _python_type_for_series(series: Mapping[str, Any]) -> type:

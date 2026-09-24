@@ -836,6 +836,7 @@ Generated code imports `datetime` and emits `datetime.datetime(...)` literals on
 | **1.19.0** | Series-level `domain` (`enum`, `between`, `real_between`, `from_workbook`). `input.domain` is accepted and normalized to that key. `constant` implies `from_workbook`. Compiles to the `CellTypeEnv` dynamic-ref inference consumes. |
 | **1.20.0** | `bind.kind: row_index` and `column_letter` key each observation by the data cell's own 1-based row index or column letter, without a `values` map. |
 | **1.21.0** | `validation.catalog: false` marks an extract-only series: it still compiles into `CellTypeEnv` / `DynamicRefConfig.from_bindings`, but inverted-tree omits it from the catalog and `data.py` tensors. Fail closed if that series uniquely owns an on-graph formula cell. |
+| **1.22.0** | `domain` may union `enum` with exactly one of `between` or `real_between`. A value matches when it is an enum member or lies in the interval (a text sentinel beside a numeric range). Measure dtype follows the interval arm. |
 
 ## Runtime axis labels (1.17.0)
 
@@ -976,9 +977,10 @@ series:
 ```
 
 Kinds: `enum`, `between`, `real_between`, plus `from_workbook: true` (each cell
-in the range gets a singleton from the cached value). Exactly one kind per
-`domain`. The constrained range is the series (`data_range` minus
-`exclude_rows` / `exclude_columns`).
+in the range gets a singleton from the cached value). One kind per `domain`,
+or `enum` together with exactly one of `between` or `real_between` (1.22.0).
+The constrained range is the series (`data_range` minus `exclude_rows` /
+`exclude_columns`).
 
 Direction defaults: `constant` implies `from_workbook`. `input` uses `domain`,
 else the values of `value_map` (workbook needles; map keys remain the public
@@ -1073,6 +1075,27 @@ input:
 or `number`. Bind validation and inverted-tree export fail closed when the
 domain kind does not match the measure dtype (for example a 0–1 share
 authored as `dtype: float` with `between` instead of `real_between`).
+
+## Union domains (1.22.0)
+
+A cell can hold a text sentinel when a number is unavailable and a number
+when it is present, with the formula guarding the type
+(`=IF(ISNUMBER(A1), A1, 0)`). Declare both arms on one `domain`. A value
+matches when it is an enum member or lies in the interval:
+
+```yaml
+input:
+  domain:
+    enum: ["n.a."]
+    real_between: {min: -1.0e15, max: 1.0e15}
+```
+
+The generated argument type is
+`Literal["n.a."] | Annotated[float, RealBetween(...)]` when the binding
+domain is on the graph's cell-type env. Measure dtype follows the interval
+arm (`int` for `between`, `float` or `number` for `real_between`). `between`
+and `real_between` cannot be combined, and `from_workbook` stays a pin by
+itself. `input.value_map` cannot be combined with a union.
 
 Domain checks run on each required `compute_*` / `Model` argument
 (scalar or every sequence member) before the evaluation walk, after the same

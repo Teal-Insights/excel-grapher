@@ -257,7 +257,20 @@ def _validate_input_value_map(series: dict[str, Any]) -> list[ValidationIssue]:
             )
         )
     domain = declared_domain(series)
-    if isinstance(domain, dict) and "enum" in domain:
+    if (
+        isinstance(domain, dict)
+        and "enum" in domain
+        and ("between" in domain or "real_between" in domain)
+    ):
+        issues.append(
+            _issue(
+                "error",
+                "invalid_input_value_map",
+                "input.value_map cannot be combined with an enum and interval union domain",
+                series_id=series_id,
+            )
+        )
+    elif isinstance(domain, dict) and "enum" in domain:
         values = domain["enum"]
         if isinstance(values, (list, tuple, set, frozenset)):
             missing = [value for value in values if value not in mapping]
@@ -921,6 +934,15 @@ def _validate_input_domain_dtype(series: dict[str, Any]) -> list[ValidationIssue
         return []
     series_id = str(series.get("id", "")) or None
     dtype = authored_measure_dtype(series)
+    if "between" in domain and "real_between" in domain:
+        return [
+            _issue(
+                "error",
+                "domain_dtype_mismatch",
+                "domain cannot combine between and real_between",
+                series_id=series_id,
+            )
+        ]
     if "between" in domain:
         if dtype in _INTEGER_MEASURE_DTYPES:
             return []

@@ -14,7 +14,12 @@ from excel_grapher.core.address_keys import (
     format_range_key,
     parse_node_key,
 )
-from excel_grapher.core.cell_types import CellTypeEnv, normalize_cell_type_env_key
+from excel_grapher.core.cell_types import (
+    CellType,
+    CellTypeEnv,
+    is_union_domain,
+    normalize_cell_type_env_key,
+)
 
 from .node import NodeKey
 
@@ -480,6 +485,10 @@ def _value_allowed_by_env(env: CellTypeEnv | None, key: NodeKey, val: Any) -> bo
     cell_type = env.get(_constraint_key(key))
     if cell_type is None:
         return True
+    if is_union_domain(cell_type):
+        if _enum_member(cell_type, val):
+            return True
+        return _interval_allows(cell_type, val)
     if cell_type.enum is not None and val not in cell_type.enum.values:
         return False
     if isinstance(val, bool) or not isinstance(val, (int, float)):
@@ -506,7 +515,55 @@ def _enum_remaining(env: CellTypeEnv | None, key: NodeKey, forbidden: set[Any]) 
     cell_type = env.get(_constraint_key(key))
     if cell_type is None or cell_type.enum is None:
         return True
+    if is_union_domain(cell_type):
+        if cell_type.enum.values - forbidden:
+            return True
+        return _union_interval_remains(cell_type, forbidden)
     return bool(cell_type.enum.values - forbidden)
+
+
+def _enum_member(cell_type: CellType, value: Any) -> bool:
+    """Return whether `value` matches an enum member without bool/int confusion."""
+    if cell_type.enum is None:
+        return False
+    return any(type(value) is type(item) and value == item for item in cell_type.enum.values)
+
+
+def _interval_allows(cell_type: CellType, value: Any) -> bool:
+    """Return whether `value` lies in the cell's integer or real interval."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    if cell_type.interval is not None:
+        low, high = cell_type.interval.min, cell_type.interval.max
+        if low is not None and value < low:
+            return False
+        if high is not None and value > high:
+            return False
+    if cell_type.real_interval is not None:
+        low, high = cell_type.real_interval.min, cell_type.real_interval.max
+        if low is not None and float(value) < low:
+            return False
+        if high is not None and float(value) > high:
+            return False
+    return cell_type.interval is not None or cell_type.real_interval is not None
+
+
+def _union_interval_remains(cell_type: CellType, forbidden: set[Any]) -> bool:
+    """Return whether a union's interval still contains a value outside `forbidden`."""
+    interval = cell_type.interval
+    if interval is not None and interval.min is not None and interval.max is not None:
+        span = interval.max - interval.min + 1
+        if span > len(forbidden):
+            return True
+        return any(value not in forbidden for value in range(interval.min, interval.max + 1))
+    if interval is not None:
+        return True
+    real = cell_type.real_interval
+    if real is None:
+        return False
+    if real.min is not None and real.max is not None and real.min == real.max:
+        return real.min not in forbidden
+    return True
 
 
 @dataclass(frozen=True)
@@ -532,6 +589,8 @@ class GuardConstraints:
         out: GuardConstraints | None = self
         for key, cell_type in env.items():
             if cell_type.enum is None or len(cell_type.enum.values) != 1:
+                continue
+            if is_union_domain(cell_type):
                 continue
             value = next(iter(cell_type.enum.values))
             assert out is not None

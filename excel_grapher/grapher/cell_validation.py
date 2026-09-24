@@ -1,8 +1,9 @@
 """Excel data-validation rules for constrained inputs on write-back.
 
 Input domains (`enum`, `between`, `real_between`, `from_workbook`,
-`value_map` needles, and series relations) become worksheet data
-validations. When `series_bindings` is set, input-series domains are
+an enum unioned with one interval, `value_map` needles, and series
+relations) become worksheet data validations. When `series_bindings` is
+set, input-series domains are
 applied and constant/output/internal cells are skipped; extract-time
 `cell_type_env` domains still apply to unbound value leaves, and matching
 cells must agree. Without bindings, value cells in `cell_type_env` are
@@ -26,6 +27,7 @@ from excel_grapher.core.cell_types import (
     CellType,
     GreaterThanCell,
     NotEqualCell,
+    is_union_domain,
     normalize_cell_type_env_key,
 )
 from excel_grapher.grapher.graph import DependencyGraph, GraphReadView
@@ -313,14 +315,20 @@ def _rule_for(address: str, cell_type: CellType, *, written: set[str]) -> _Rule:
     has_real = real is not None and (real.min is not None or real.max is not None)
     if has_interval and has_real:
         raise _fail(address, "integer and real intervals cannot both be written")
+    relation_clauses = _relation_clauses(
+        address, coord, cell_type, host_sheet=sheet, written=written
+    )
+    if is_union_domain(cell_type):
+        return _union_rule(
+            address,
+            coord,
+            cell_type,
+            relation_clauses=relation_clauses,
+        )
     if cell_type.enum is not None and (has_interval or has_real):
         raise _fail(address, "enum and interval domains cannot both be written")
     if cell_type.enum is not None and not cell_type.enum.values:
         raise _fail(address, "enum domain is empty")
-
-    relation_clauses = _relation_clauses(
-        address, coord, cell_type, host_sheet=sheet, written=written
-    )
     if cell_type.enum is not None:
         present, allow_blank = _split_blanks(cell_type.enum.values)
         if not present:
@@ -367,6 +375,45 @@ def _rule_for(address: str, cell_type: CellType, *, written: set[str]) -> _Rule:
     if has_real and real is not None:
         return _checked(address, _native_interval(address, real.min, real.max, decimal=True))
     raise _fail(address, "constraint has no Excel data-validation form")
+
+
+def _union_rule(
+    address: str,
+    coord: str,
+    cell_type: CellType,
+    *,
+    relation_clauses: list[str],
+) -> _Rule:
+    """Write a custom formula that accepts the enum or the numeric interval."""
+    assert cell_type.enum is not None
+    present, allow_blank = _split_blanks(cell_type.enum.values)
+    terms = [_enum_term(address, coord, value) for value in present]
+    if cell_type.interval is not None:
+        bounds = _bound_clauses(
+            address,
+            coord,
+            cell_type.interval.min,
+            cell_type.interval.max,
+            whole=True,
+        )
+    elif cell_type.real_interval is not None:
+        bounds = _bound_clauses(
+            address,
+            coord,
+            cell_type.real_interval.min,
+            cell_type.real_interval.max,
+            whole=False,
+        )
+    else:
+        bounds = []
+    terms.append(_and([f"ISNUMBER({coord})", *bounds]) if bounds else f"ISNUMBER({coord})")
+    membership = _or(terms)
+    if relation_clauses:
+        membership = _and([membership, *relation_clauses])
+    return _checked(
+        address,
+        _Rule("custom", None, membership, None, allow_blank, _CUSTOM_ERROR),
+    )
 
 
 def _relation_clauses(

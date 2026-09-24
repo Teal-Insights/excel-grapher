@@ -21,12 +21,17 @@ _MarkerKind = Literal["public", "pin", "open"]
 
 @dataclass(frozen=True, slots=True)
 class _PublicDomain:
-    """One caller-facing constraint shared by every cell of an input series."""
+    """One caller-facing constraint shared by every cell of an input series.
 
-    kind: Literal["enum", "between", "real_between"]
+    `kind="union"` is an enum arm plus one interval arm (`interval_kind`).
+    A value matches either arm.
+    """
+
+    kind: Literal["enum", "between", "real_between", "union"]
     enum: frozenset[object] | None = None
     minimum: int | float | None = None
     maximum: int | float | None = None
+    interval_kind: Literal["between", "real_between"] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,8 +62,8 @@ def public_input_annotations(
         include: Input ids emitted despite an empty graph intersection.
 
     Returns:
-        Series id to a `Literal` or `Annotated` element annotation. Inputs
-        with no public domain are omitted.
+        Series id to a `Literal`, `Annotated`, or union element annotation.
+        Inputs with no public domain are omitted.
 
     Raises:
         InvertedTreeExportError: A public input spans incompatible domains, or
@@ -140,10 +145,40 @@ def _classify(cell_type: CellType | None, *, series_id: str, address: str) -> _M
         kinds.append("between")
     if cell_type.real_interval is not None:
         kinds.append("real_between")
-    if len(kinds) > 1:
+    if cell_type.interval is not None and cell_type.real_interval is not None:
         raise InvertedTreeExportError(
             f"series {series_id!r}: incompatible constraint domains on {address} "
             f"({' and '.join(kinds)})"
+        )
+    if cell_type.enum is not None and (
+        cell_type.interval is not None or cell_type.real_interval is not None
+    ):
+        values = cell_type.enum.values
+        if not values:
+            raise InvertedTreeExportError(
+                f"series {series_id!r}: incompatible constraint domains on {address} (empty enum)"
+            )
+        if cell_type.interval is not None:
+            return _Marker(
+                "public",
+                _PublicDomain(
+                    "union",
+                    enum=frozenset(values),
+                    minimum=cell_type.interval.min,
+                    maximum=cell_type.interval.max,
+                    interval_kind="between",
+                ),
+            )
+        assert cell_type.real_interval is not None
+        return _Marker(
+            "public",
+            _PublicDomain(
+                "union",
+                enum=frozenset(values),
+                minimum=cell_type.real_interval.min,
+                maximum=cell_type.real_interval.max,
+                interval_kind="real_between",
+            ),
         )
     if cell_type.enum is not None:
         values = cell_type.enum.values
@@ -188,12 +223,13 @@ def _is_value_map_needle(series: BoundSeries, domain: _PublicDomain) -> bool:
 
 
 def _check_measure_dtype(series: BoundSeries, domain: _PublicDomain) -> None:
-    if domain.kind == "between" and series.python_dtype != "int":
+    kind = domain.interval_kind if domain.kind == "union" else domain.kind
+    if kind == "between" and series.python_dtype != "int":
         raise InvertedTreeExportError(
             f"series {series.series_id!r}: constraint Between requires integer "
             f"measure dtype, got {series.dtype!r}"
         )
-    if domain.kind == "real_between" and series.python_dtype != "float":
+    if kind == "real_between" and series.python_dtype != "float":
         raise InvertedTreeExportError(
             f"series {series.series_id!r}: constraint RealBetween requires float "
             f"measure dtype, got {series.dtype!r}"
@@ -223,6 +259,13 @@ def _label(marker: _Marker) -> str:
 
 
 def _domain_text(domain: _PublicDomain) -> str:
+    if domain.kind == "union":
+        assert domain.interval_kind is not None
+        literal = _domain_text(_PublicDomain("enum", enum=domain.enum))
+        interval = _domain_text(
+            _PublicDomain(domain.interval_kind, minimum=domain.minimum, maximum=domain.maximum)
+        )
+        return f"{literal} | {interval}"
     if domain.kind == "enum":
         assert domain.enum is not None
         rendered = ", ".join(_render_member(value) for value in _sorted_members(domain.enum))
@@ -232,6 +275,13 @@ def _domain_text(domain: _PublicDomain) -> str:
 
 
 def _render(domain: _PublicDomain) -> str:
+    if domain.kind == "union":
+        assert domain.interval_kind is not None
+        literal = _render(_PublicDomain("enum", enum=domain.enum))
+        interval = _render(
+            _PublicDomain(domain.interval_kind, minimum=domain.minimum, maximum=domain.maximum)
+        )
+        return f"{literal} | {interval}"
     if domain.kind == "enum":
         assert domain.enum is not None
         members = ", ".join(_render_member(value) for value in _sorted_members(domain.enum))

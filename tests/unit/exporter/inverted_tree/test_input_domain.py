@@ -213,6 +213,95 @@ def test_compute_float_real_between_coerces_int_like_setters(tmp_path: Path) -> 
         pkg.ResultInputs(share=1.1)
 
 
+def test_union_domain_accepts_workbook_sentinel_and_numbers(tmp_path: Path) -> None:
+    """A text sentinel and a real interval are one caller-facing input domain."""
+    bounds = {"min": -1.0e15, "max": 1.0e15}
+    workbook = write_workbook(
+        tmp_path / "sentinel.xlsx",
+        {
+            "Inputs": {"A1": "n.a."},
+            "Outputs": {"B1": "=IF(ISNUMBER(Inputs!A1), Inputs!A1, 0)"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "sentinel",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="float",
+            domain={"enum": ["n.a."], "real_between": bounds},
+        ),
+        series_entry(
+            "result",
+            "Outputs!B1",
+            layout="scalar",
+            direction="output",
+            dtype="float",
+            compute_name="compute_result",
+        ),
+        schema_version="1.22.0",
+    )
+    modules = generate_inverted(workbook, document)
+    validation = modules["validation.py"]
+    assert "require_input_domain(sentinel" in validation
+    assert '"n.a."' in validation or "'n.a.'" in validation
+    assert "real_between" in validation
+    pkg = load_package(modules, tmp_path, name="sentinel_union")
+    assert pkg.compute_result(pkg.ResultInputs.from_defaults()) == 0
+    assert pkg.compute_result(pkg.ResultInputs(sentinel=3.5)) == 3.5
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        pkg.ResultInputs(sentinel="nope")
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        pkg.ResultInputs(sentinel=1.0e16)
+
+
+def test_union_domain_annotation_when_bindings_supply_cell_types(tmp_path: Path) -> None:
+    from excel_grapher.grapher.dynamic_refs import DynamicRefConfig
+
+    bounds = {"min": -1.0, "max": 1.0}
+    workbook = write_workbook(
+        tmp_path / "sentinel.xlsx",
+        {
+            "Inputs": {"A1": "n.a."},
+            "Outputs": {"B1": "=IF(ISNUMBER(Inputs!A1), Inputs!A1, 0)"},
+        },
+    )
+    document = bindings_document(
+        series_entry(
+            "sentinel",
+            "Inputs!A1",
+            layout="scalar",
+            direction="input",
+            dtype="float",
+            domain={"enum": ["n.a."], "real_between": bounds},
+        ),
+        series_entry(
+            "result",
+            "Outputs!B1",
+            layout="scalar",
+            direction="output",
+            dtype="float",
+            compute_name="compute_result",
+        ),
+        schema_version="1.22.0",
+    )
+    bindings = validate_bindings_document(document)
+    modules = generate_inverted(
+        workbook,
+        document,
+        dynamic_refs=DynamicRefConfig.from_bindings(bindings, workbook),
+    )
+    assert 'Literal["n.a."]' in modules["model.py"]
+    assert "Annotated[float, RealBetween(" in modules["model.py"]
+    assert " | " in modules["model.py"]
+    pkg = load_package(modules, tmp_path, name="sentinel_annotated")
+    assert pkg.compute_result(pkg.ResultInputs.from_defaults()) == 0
+    assert pkg.compute_result(pkg.ResultInputs(sentinel=-0.25)) == -0.25
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        pkg.ResultInputs(sentinel="nope")
+
+
 def test_compute_series_float_coerces_int_members(tmp_path: Path) -> None:
     workbook = _rate_workbook(tmp_path)
     modules = generate_inverted(workbook, _rate_bindings())

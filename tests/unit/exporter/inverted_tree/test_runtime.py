@@ -109,6 +109,24 @@ def test_require_aligned_rejects_empty_call() -> None:
         require_aligned()
 
 
+def test_require_annotated_domain_accepts_literal_or_interval() -> None:
+    from typing import Annotated
+
+    from excel_grapher.exporter.inverted_tree.runtime import (
+        RealBetween,
+        require_annotated_domain,
+    )
+
+    annotation = Literal["n.a."] | Annotated[float, RealBetween(-1.0, 1.0)]
+    require_annotated_domain("n.a.", annotation, series_id="sentinel")
+    require_annotated_domain(0.25, annotation, series_id="sentinel")
+    require_annotated_domain(1, annotation, series_id="sentinel")
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        require_annotated_domain("nope", annotation, series_id="sentinel")
+    with pytest.raises(ValueError, match=r"sentinel out of domain"):
+        require_annotated_domain(1.5, annotation, series_id="sentinel")
+
+
 def test_require_annotated_domain_rejects_int_for_bool_literal() -> None:
     from excel_grapher.exporter.inverted_tree.runtime import require_annotated_domain
 

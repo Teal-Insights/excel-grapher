@@ -37,6 +37,7 @@ from excel_grapher.core.cell_types import (
     NotEqualCell,
     canonicalize_cell_type_env_keys,
     constraints_to_cell_type_env,
+    is_union_domain,
     lookup_cell_type,
     normalize_cell_type_env_key,
 )
@@ -1936,6 +1937,8 @@ def _domain_from_cell_type(
 ) -> _FiniteInts | _IntBounds | None:
     if ct is None:
         return None
+    if is_union_domain(ct):
+        return None
     if ct.kind not in (CellKind.NUMBER, CellKind.ANY):
         return None
     if ct.enum is not None:
@@ -2487,6 +2490,8 @@ def _finite_exact_match_values(node: AstNode, env: CellTypeEnv) -> frozenset[obj
         cell_type = _lookup_cell_type(env, node.address)
         if cell_type is None or cell_type.enum is None or not cell_type.enum.values:
             return None
+        if is_union_domain(cell_type):
+            return None
         return cell_type.enum.values
     return None
 
@@ -2644,6 +2649,16 @@ def _cell_may_equal_exact_match_values(
     """
     if cell_type is None:
         return _ExactMatchVerdict.MAYBE
+    if is_union_domain(cell_type):
+        return _union_match_verdict(
+            _cell_may_equal_exact_match_values(
+                _enum_arm(cell_type),
+                needles,
+                limits,
+                folded_string_needles=folded_string_needles,
+            ),
+            _cell_may_equal_exact_match_values(_interval_arm(cell_type), needles, limits),
+        )
     if cell_type.enum is not None:
         if not cell_type.enum.values:
             return _ExactMatchVerdict.MISS
@@ -2700,6 +2715,11 @@ def _cell_may_equal_numeric_needle(
     """
     if cell_type is None:
         return _ExactMatchVerdict.MAYBE
+    if is_union_domain(cell_type):
+        return _union_match_verdict(
+            _cell_may_equal_numeric_needle(_enum_arm(cell_type), needle_dom, limits),
+            _cell_may_equal_numeric_needle(_interval_arm(cell_type), needle_dom, limits),
+        )
     numeric = _domain_from_cell_type(cell_type, limits)
     if numeric is not None:
         return _numeric_domain_verdict(needle_dom, numeric)
@@ -4991,8 +5011,34 @@ def _untyped_joint_possible(
     return True
 
 
+def _union_match_verdict(left: _ExactMatchVerdict, right: _ExactMatchVerdict) -> _ExactMatchVerdict:
+    """Combine two arm verdicts. A miss requires both arms to miss."""
+    if left is _ExactMatchVerdict.MISS and right is _ExactMatchVerdict.MISS:
+        return _ExactMatchVerdict.MISS
+    if left is _ExactMatchVerdict.CERTAIN and right is _ExactMatchVerdict.CERTAIN:
+        return _ExactMatchVerdict.CERTAIN
+    return _ExactMatchVerdict.MAYBE
+
+
+def _enum_arm(cell_type: CellType) -> CellType:
+    """Return the enum arm of a union, without its interval."""
+    return CellType(kind=cell_type.kind, enum=cell_type.enum, relations=cell_type.relations)
+
+
+def _interval_arm(cell_type: CellType) -> CellType:
+    """Return the interval arm of a union as a numeric cell."""
+    return CellType(
+        kind=CellKind.NUMBER,
+        interval=cell_type.interval,
+        real_interval=cell_type.real_interval,
+        relations=cell_type.relations,
+    )
+
+
 def _joint_cell_values(cell_type: CellType, limits: DynamicRefLimits) -> frozenset[object] | None:
     """Return a finite value set, or None when it is too wide to refute a pair."""
+    if is_union_domain(cell_type):
+        return None
     if cell_type.enum is not None:
         if not cell_type.enum.values:
             return None
@@ -5682,6 +5728,11 @@ def _build_domains(
             ct = _lookup_cell_type(env, addr)
             if ct is None:
                 raise DynamicRefError(f"Missing CellType for {addr!r}")
+            if is_union_domain(ct):
+                raise DynamicRefError(
+                    f"CellType for {addr!r} is a union domain; "
+                    "OFFSET/INDEX/INDIRECT enumeration needs a single enum or integer interval"
+                )
             if ct.kind is not CellKind.NUMBER:
                 raise DynamicRefError(f"CellType for {addr!r} must be numeric, got {ct.kind!r}")
             vals: list[int]
@@ -5907,6 +5958,11 @@ def _build_value_domains(
             ct = _lookup_cell_type(env, addr)
             if ct is None:
                 raise DynamicRefError(f"Missing CellType for {addr!r}")
+            if is_union_domain(ct):
+                raise DynamicRefError(
+                    f"CellType for {addr!r} is a union domain; "
+                    "OFFSET/INDEX/INDIRECT enumeration needs a single enum or integer interval"
+                )
             values: list[Any]
             if ct.enum is not None:
                 values = list(ct.enum.values)

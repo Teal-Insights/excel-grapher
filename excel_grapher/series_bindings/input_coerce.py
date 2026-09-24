@@ -258,17 +258,27 @@ def _apply_measure_dtype(
 
 def _format_measure_domain(domain: Mapping[str, Any]) -> str:
     """Render a measure domain for error messages."""
+    parts: list[str] = []
     if "enum" in domain:
         values = domain["enum"]
         rendered = ", ".join(repr(value) for value in sorted(values, key=repr))
-        return f"{{{rendered}}}"
+        parts.append(f"{{{rendered}}}")
     if "between" in domain:
         bounds = domain["between"]
-        return f"between(min={bounds.get('min')!r}, max={bounds.get('max')!r})"
+        parts.append(f"between(min={bounds.get('min')!r}, max={bounds.get('max')!r})")
     if "real_between" in domain:
         bounds = domain["real_between"]
-        return f"real_between(min={bounds.get('min')!r}, max={bounds.get('max')!r})"
-    return repr(dict(domain))
+        parts.append(f"real_between(min={bounds.get('min')!r}, max={bounds.get('max')!r})")
+    if not parts:
+        return repr(dict(domain))
+    if len(parts) == 1:
+        return parts[0]
+    return " or ".join(parts)
+
+
+def _is_union_measure_domain(domain: Mapping[str, Any]) -> bool:
+    """Return whether `domain` offers more than one alternative arm."""
+    return sum(key in domain for key in ("enum", "between", "real_between")) > 1
 
 
 def _in_closed_bounds(value: int | float, bounds: Mapping[str, Any]) -> bool:
@@ -288,8 +298,8 @@ def _is_real_number(value: object) -> TypeGuard[int | float]:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
-def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
-    """Return whether `value` is inside a measure domain declaration."""
+def _value_in_single_arm(value: object, domain: Mapping[str, Any]) -> bool:
+    """Return whether `value` matches one enum or interval arm."""
     if "enum" in domain:
         return _enum_contains(value, domain["enum"])
     if "between" in domain:
@@ -301,6 +311,21 @@ def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
             return False
         return _in_closed_bounds(value, domain["real_between"])
     return True
+
+
+def _value_in_measure_domain(value: object, domain: Mapping[str, Any]) -> bool:
+    """Return whether `value` is inside a measure domain declaration.
+
+    A union matches when any arm matches. A type that an interval arm rejects
+    can still match the enum arm.
+    """
+    if _is_union_measure_domain(domain):
+        return any(
+            _value_in_single_arm(value, {key: domain[key]})
+            for key in ("enum", "between", "real_between")
+            if key in domain
+        )
+    return _value_in_single_arm(value, domain)
 
 
 def _enum_contains(value: object, allowed: object) -> bool:
@@ -327,12 +352,13 @@ def _reject_out_of_domain(
     """Raise `ValueError` when a non-null `value` is outside `domain`."""
     if value is None:
         return
-    if "between" in domain and not _is_between_int(value):
-        raise ValueError(f"{label} has type {type(value).__name__}; between requires int")
-    if "real_between" in domain and not _is_real_number(value):
-        raise ValueError(
-            f"{label} has type {type(value).__name__}; real_between requires int or float"
-        )
+    if not _is_union_measure_domain(domain):
+        if "between" in domain and not _is_between_int(value):
+            raise ValueError(f"{label} has type {type(value).__name__}; between requires int")
+        if "real_between" in domain and not _is_real_number(value):
+            raise ValueError(
+                f"{label} has type {type(value).__name__}; real_between requires int or float"
+            )
     if not _value_in_measure_domain(value, domain):
         raise ValueError(
             f"{label} out of domain: {value!r} not in {_format_measure_domain(domain)}"
@@ -426,11 +452,14 @@ def require_input_domain(
     Args:
         value: One measure, or a catalog-order sequence of measures.
         domain: Normalized `enum` / `between` / `real_between` declaration.
+            A mapping with `enum` and exactly one interval is a union: a value
+            matches when it is an enum member or lies in the interval.
         series_id: Binding series id used in the error message.
 
     Raises:
         ValueError: When any non-`None` member is outside `domain`, or has a
             type the domain kind does not accept (`between` requires `int`).
+            Union mismatches name the whole domain, not the first failing arm.
     """
     if _is_measure_sequence(value):
         for index, member in enumerate(value):
@@ -456,6 +485,8 @@ def measure_domain_from_series(series: Mapping[str, Any]) -> dict[str, Any] | No
     `from_workbook` is a cell-env pin, not a `compute_*` argument domain.
     When `input.value_map` is present and `domain` is omitted, the domain
     is the map keys so callers are checked against public values.
+    An `enum` combined with `between` or `real_between` is preserved as a
+    union. Both interval kinds together are rejected.
     """
     domain = series.get("domain")
     if not isinstance(domain, dict):
@@ -464,22 +495,25 @@ def measure_domain_from_series(series: Mapping[str, Any]) -> dict[str, Any] | No
     if isinstance(domain, dict):
         if "from_workbook" in domain:
             return None
+        compiled: dict[str, Any] = {}
         if "enum" in domain:
             values = domain["enum"]
             if not isinstance(values, (list, tuple, set, frozenset)):
                 return None
-            return {"enum": frozenset(values)}
+            compiled["enum"] = frozenset(values)
         if "between" in domain:
             bounds = domain["between"]
             if not isinstance(bounds, dict):
                 return None
-            return {"between": dict(bounds)}
+            compiled["between"] = dict(bounds)
         if "real_between" in domain:
             bounds = domain["real_between"]
             if not isinstance(bounds, dict):
                 return None
-            return {"real_between": dict(bounds)}
-        return None
+            compiled["real_between"] = dict(bounds)
+        if "between" in compiled and "real_between" in compiled:
+            raise ValueError("union domain cannot combine between and real_between constraints")
+        return compiled or None
     mapping = input_value_map_from_series(series)
     if mapping is not None:
         return {"enum": frozenset(mapping)}
