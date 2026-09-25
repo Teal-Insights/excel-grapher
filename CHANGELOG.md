@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.9.0 (2026-09-25)
+
+### Bug Fixes
+
+- **bindings**: Keep union enum members ahead of float coercion
+  ([`3fcb42c`](https://github.com/Teal-Insights/excel-grapher/commit/3fcb42ce090ad6130637610a6976f58e3f878b02))
+
+### Features
+
+- **bindings**: Accept an enum unioned with a numeric interval
+  ([`831f5e5`](https://github.com/Teal-Insights/excel-grapher/commit/831f5e531bb134eb9cc401bf7a1943b57882d66f))
+
+### Testing
+
+- **bindings**: Avoid subscripting an untyped coerced tuple
+  ([`0c5306d`](https://github.com/Teal-Insights/excel-grapher/commit/0c5306d570cde84299a464a4794dc5772fe4ff73))
+
+
 ## v23.8.2 (2026-09-23)
 
 ### Bug Fixes
