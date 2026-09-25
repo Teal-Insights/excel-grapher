@@ -10,18 +10,16 @@ cells **inside the current bound graph closure** (not a full workbook walk),
 not a generator of candidate series.
 
 The author-bindings skill is a **separate distribution artifact**. It is not
-inside the `excel-grapher` wheel. Agents load a copied folder, not a Python
-extra. Canonical files live at `skills/author-bindings/` (tests copy that tree
-to `.agents/skills/author-bindings/` and `.cursor/skills/author-bindings/` in
-this repository). From a git clone or the `excel-grapher` sdist:
+inside the `excel-grapher` wheel. Consumers copy it into their own project.
+Canonical files live at `skills/author-bindings/`. This repository does not
+keep an installed copy. From a git clone or the `excel-grapher` sdist:
 
 ```bash
 mkdir -p .agents/skills
 cp -R skills/author-bindings .agents/skills/author-bindings
 ```
 
-Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
-`.claude/skills/author-bindings`. User-level installs go under
+Claude Code uses `.claude/skills/author-bindings`. User-level installs go under
 `~/.agents/skills/author-bindings`.
 
 The optional `excel-grapher-author-bindings` package is a **file source** for
