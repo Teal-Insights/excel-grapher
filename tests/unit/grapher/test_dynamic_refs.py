@@ -19,6 +19,7 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
+    RealIntervalDomain,
 )
 from excel_grapher.core.formula_ast import AstNode, FunctionCallNode
 from excel_grapher.core.formula_ast import parse as parse_ast
@@ -2153,6 +2154,55 @@ def test_exact_match_numeric_excludes_non_numeric_string_enum() -> None:
     )
     targets = infer_dynamic_index_targets(formula, current_sheet="imp", cell_type_env=env)
     assert targets == {"data!C1"}
+
+
+def _sentinel_or_real() -> CellType:
+    return CellType(
+        kind=CellKind.ANY,
+        enum=EnumDomain(values=frozenset({"n.a."})),
+        real_interval=RealIntervalDomain(min=-1.0, max=1.0),
+    )
+
+
+def test_exact_match_union_keeps_number_inside_the_interval() -> None:
+    """A numeric needle must not miss a sentinel-or-real cell that can hold it."""
+    formula = "=INDEX(dump!B1:B2,MATCH(calc!A1,dump!A1:A2,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _number_enum(0),
+            "dump!A1": _sentinel_or_real(),
+            "dump!A2": _number_enum(0),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+
+
+def test_exact_match_union_string_hit_does_not_stop_the_scan() -> None:
+    """The enum arm can match while the interval arm cannot, so the cell is not certain."""
+    formula = "=INDEX(dump!B1:B2,MATCH(calc!A1,dump!A1:A2,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("N.A."),
+            "dump!A1": _sentinel_or_real(),
+            "dump!A2": _string_enum("N.A."),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B1", "dump!B2"}
+
+
+def test_exact_match_union_misses_unrelated_text() -> None:
+    formula = "=INDEX(dump!B1:B2,MATCH(calc!A1,dump!A1:A2,0),1)"
+    env = _make_env(
+        {
+            "calc!A1": _string_enum("nope"),
+            "dump!A1": _sentinel_or_real(),
+            "dump!A2": _string_enum("nope"),
+        }
+    )
+    targets = infer_dynamic_index_targets(formula, current_sheet="calc", cell_type_env=env)
+    assert targets == {"dump!B2"}
 
 
 def _issue_965_match_env(*, header: CellType | None) -> dict[str, CellType]:

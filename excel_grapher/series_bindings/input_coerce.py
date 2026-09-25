@@ -223,21 +223,38 @@ def _apply_key_dtypes(
     return coerced
 
 
+def _union_enum(domain: Mapping[str, Any] | None) -> object | None:
+    """Return the enum arm when `domain` is an enum unioned with one interval."""
+    if domain is None or not _is_union_measure_domain(domain):
+        return None
+    return domain.get("enum")
+
+
 def _apply_measure_dtype(
     records: Records,
     *,
     measure_field: str,
     measure_dtype: str | None,
+    measure_domain: Mapping[str, Any] | None = None,
 ) -> Records:
-    """Validate and coerce measure values against the binding measure dtype."""
+    """Validate and coerce measure values against the binding measure dtype.
+
+    Enum members of a union are kept as passed. Dtype coercion runs only for
+    values that are not already members, so an integer code is not rewritten
+    to `float` before the type-strict enum check.
+    """
     if measure_dtype is None:
         return records
+    enum = _union_enum(measure_domain)
     validated: list[dict[str, object]] = []
     for index, record in enumerate(records):
         if measure_field not in record:
             validated.append(record)
             continue
         raw = record[measure_field]
+        if enum is not None and _enum_contains(raw, enum):
+            validated.append(record)
+            continue
         try:
             value = validate_binding_scalar(raw, measure_dtype)
         except TypeError as exc:
@@ -343,6 +360,12 @@ def _is_measure_sequence(value: object) -> TypeGuard[Sequence[object]]:
     return isinstance(value, Sequence) and not isinstance(value, (str, bytes, bytearray))
 
 
+def _reject_combined_intervals(domain: Mapping[str, Any]) -> None:
+    """Reject a domain that declares both integer and real intervals."""
+    if "between" in domain and "real_between" in domain:
+        raise ValueError("union domain cannot combine between and real_between constraints")
+
+
 def _reject_out_of_domain(
     value: object,
     domain: Mapping[str, Any],
@@ -350,6 +373,7 @@ def _reject_out_of_domain(
     label: str,
 ) -> None:
     """Raise `ValueError` when a non-null `value` is outside `domain`."""
+    _reject_combined_intervals(domain)
     if value is None:
         return
     if not _is_union_measure_domain(domain):
@@ -365,52 +389,69 @@ def _reject_out_of_domain(
         )
 
 
-def _coerce_one(value: object, dtype: str) -> object:
-    """Rewrite `int` to `float` when `dtype` is `float`; otherwise return `value`."""
+def _coerce_one(value: object, dtype: str, enum: object | None = None) -> object:
+    """Rewrite `int` to `float` when `dtype` is `float`, keeping enum members.
+
+    A value that is already a member of `enum` is returned unchanged so a
+    later type-strict domain check still sees the caller's type.
+    """
+    if enum is not None and _enum_contains(value, enum):
+        return value
     if dtype == "float" and not isinstance(value, bool) and isinstance(value, int):
         return float(value)
     return value
 
 
-def _coerce_named_tensor(value: object, dtype: str) -> object | None:
+def _coerce_named_tensor(value: object, dtype: str, enum: object | None = None) -> object | None:
     """Rewrite tensor members when `value` looks like a generated `Series`."""
     domain = getattr(value, "domain", None)
     items = getattr(value, "items", None)
     if domain is None or not callable(items) or _is_mapping(value):
         return None
-    coerced = tuple(_coerce_one(member, dtype) for _coord, member in items())
+    coerced = tuple(_coerce_one(member, dtype, enum) for _coord, member in items())
     replace = getattr(value, "with_values", None)
     if callable(replace):
         return replace(coerced)
     return cast(Any, type(value))(domain, coerced)
 
 
-def coerce_input_measure(value: object, dtype: str, *, series_id: str) -> object:
+def coerce_input_measure(
+    value: object,
+    dtype: str,
+    *,
+    series_id: str,
+    enum: object | None = None,
+) -> object:
     """Rewrite a public compute input using setter dtype rules.
 
     `int` becomes `float` when `dtype` is `float`. Sequences and tensors are
     rewritten memberwise. Other measure values (`str` error codes, bools,
     `None`) pass through. `float` is never narrowed to `int`.
 
+    When `enum` is the literal arm of a union, members are returned unchanged.
+    A value that is not a member is coerced, then the domain check can still
+    accept it through the interval or through an enum member of the coerced type.
+
     Args:
         value: One measure, a catalog-order sequence, or a named tensor.
         dtype: Binding measure dtype (`float`, `int`, `number`, ...).
         series_id: Binding series id; reserved for type-error messages.
+        enum: Optional union enum. Members keep the caller's runtime type.
 
     Returns:
         The value, possibly after a safe `int` -> `float` coercion.
     """
-    tensor = _coerce_named_tensor(value, dtype)
+    tensor = _coerce_named_tensor(value, dtype, enum)
     if tensor is not None:
         return tensor
     if _is_measure_sequence(value):
-        members = [_coerce_one(member, dtype) for member in value]
+        members = [_coerce_one(member, dtype, enum) for member in value]
         if isinstance(value, tuple):
             return tuple(members)
         if isinstance(value, list):
             return members
         return type(value)(members)
-    return _coerce_one(value, dtype)
+    return _coerce_one(value, dtype, enum)
 
 
 def apply_input_value_map(
@@ -457,10 +498,12 @@ def require_input_domain(
         series_id: Binding series id used in the error message.
 
     Raises:
-        ValueError: When any non-`None` member is outside `domain`, or has a
+        ValueError: When `domain` combines `between` and `real_between`, when
+            any non-`None` member is outside `domain`, or when a value has a
             type the domain kind does not accept (`between` requires `int`).
             Union mismatches name the whole domain, not the first failing arm.
     """
+    _reject_combined_intervals(domain)
     if _is_measure_sequence(value):
         for index, member in enumerate(value):
             _reject_out_of_domain(member, domain, label=f"{series_id}[{index}]")
@@ -731,8 +774,9 @@ def coerce_setter_input(
         strict: When true, reject unknown DataFrame columns.
         key_dtypes: Optional read modes per key field applied to all input shapes.
         measure_dtype: Optional binding dtype enforced for `measure_field` values.
-        measure_domain: Optional `input.domain` (`enum` / `between` / `real_between`)
-            enforced after dtype coercion.
+        measure_domain: Optional `input.domain` (`enum` / `between` / `real_between`).
+            Union enum members are kept as passed; other values are checked
+            after dtype coercion.
         value_map: Optional `input.value_map` applied after the domain check.
         empty_measure: How to treat rows with missing/NaN measure values.
         requires_address: When true, reject DataFrame input (records must carry addresses).
@@ -755,6 +799,7 @@ def coerce_setter_input(
             records,
             measure_field=measure_field,
             measure_dtype=measure_dtype,
+            measure_domain=measure_domain,
         )
         records = _apply_measure_domain(
             records,
@@ -791,6 +836,7 @@ def coerce_setter_input(
         records,
         measure_field=measure_field,
         measure_dtype=measure_dtype,
+        measure_domain=measure_domain,
     )
     records = _apply_measure_domain(
         records,

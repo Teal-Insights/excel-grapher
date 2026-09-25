@@ -810,7 +810,7 @@
       "description": "Closed integer interval; at least one of min or max is required."
     },
     "InputDomain": {
-      "description": "Allowed measure values. One kind: enum, between, real_between, or from_workbook; or a union of enum with exactly one of between or real_between (1.22.0). enum/between/real_between, including each arm of a union, are enforced on compute_* / Model arguments after dtype coercion. A union value matches when it is an enum member or lies in the interval. from_workbook pins each bound cell to its cached workbook value (dynamic-ref env only) and cannot be combined with another kind. `between` requires measure dtype `int`; `real_between` requires `float` or `number`. Bind validation and export fail closed on a mismatch. A union cannot combine between with real_between.",
+      "description": "Allowed measure values. One kind: enum, between, real_between, or from_workbook; or a union of enum with exactly one of between or real_between (1.22.0). enum/between/real_between are enforced on compute_* / Model arguments. A union enum member is matched against the caller's original value, before int-to-float coercion; other values are checked after that coercion. A union value matches when it is an enum member or lies in the interval. from_workbook pins each bound cell to its cached workbook value (dynamic-ref env only) and cannot be combined with another kind. `between` requires measure dtype `int`; `real_between` requires `float` or `number`. Bind validation and export fail closed on a mismatch. A union cannot combine between with real_between.",
       "oneOf": [
         {
           "type": "object",
