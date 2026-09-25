@@ -528,3 +528,247 @@ def test_emit_named_data_binds_required_coordinates_once(
     assert "define_series(" in data
     assert accesses["n"] < n, accesses
     assert accesses["n"] <= 2, accesses
+
+
+def _index_blank_workbook(
+    tmp_path: Path,
+    *,
+    n_formulas: int,
+    n_rows: int,
+    n_blanks: int,
+    unbound: str | None = None,
+) -> tuple[Path, tuple[str, ...], dict]:
+    """Absolute INDEX/MATCH copies over a table punched by blank rows.
+
+    Mirrors the #999 MCVE: a non-literal INDEX column is not one covering
+    series, so plan and emit walk the same absolute rectangle per formula.
+    """
+    n_cols = 4
+    last = n_rows + 1
+    end_col = get_column_letter(n_cols)
+    table: dict[str, object] = {}
+    for row in range(2, last + 1):
+        table[f"A{row}"] = f"k{row}"
+        for col in range(2, n_cols + 1):
+            table[f"{get_column_letter(col)}{row}"] = float(row + col)
+    unbound_column = ""
+    unbound_row = 0
+    if unbound is not None:
+        unbound_cell = unbound.split("!", 1)[1]
+        unbound_column = "".join(ch for ch in unbound_cell if ch.isalpha())
+        unbound_row = int("".join(ch for ch in unbound_cell if ch.isdigit()))
+        table[unbound_cell] = 99.0
+    engine: dict[str, object] = {}
+    outputs: dict[str, object] = {}
+    formula = (
+        f"=INDEX(Table!$A$2:${end_col}${last},"
+        f"MATCH(Inputs!$B$1,Table!$A$2:$A${last},0),Inputs!$C$1)"
+    )
+    for index in range(n_formulas):
+        row = index + 2
+        engine[f"A{row}"] = f"f{index}"
+        engine[f"B{row}"] = formula
+        outputs[f"A{row}"] = f"f{index}"
+        outputs[f"B{row}"] = f"=Engine!B{row}"
+    blanks = tuple(f"Table!A{row}:{end_col}{row}" for row in range(2, 2 + n_blanks))
+    series = [
+        series_entry("lookup_key", "Inputs!B1", layout="scalar", direction="input", dtype="string"),
+        series_entry("col_index", "Inputs!C1", layout="scalar", direction="input", dtype="int"),
+        series_entry(
+            "labels",
+            f"Table!A2:A{last}",
+            layout="series",
+            direction="input",
+            dtype="string",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+    ]
+    for col in range(2, n_cols + 1):
+        letter = get_column_letter(col)
+        if unbound_column == letter:
+            continue
+        series.append(
+            series_entry(
+                f"col_{col}",
+                f"Table!{letter}2:{letter}{last}",
+                layout="series",
+                direction="input",
+                label_column="A",
+                key_concept="COUNTRY",
+                key_read="string",
+            )
+        )
+    if unbound_column:
+        # Leave the valued cell outside every series. Neighbor cells in that
+        # column stay bound so the window is not an entirely empty table.
+        above = unbound_row - 1
+        below = unbound_row + 1
+        if above >= 2:
+            series.append(
+                series_entry(
+                    "unbound_above",
+                    f"Table!{unbound_column}2:{unbound_column}{above}",
+                    layout="series",
+                    direction="input",
+                    label_column="A",
+                    key_concept="COUNTRY",
+                    key_read="string",
+                )
+            )
+        if below <= last:
+            series.append(
+                series_entry(
+                    "unbound_below",
+                    f"Table!{unbound_column}{below}:{unbound_column}{last}",
+                    layout="series",
+                    direction="input",
+                    label_column="A",
+                    key_concept="COUNTRY",
+                    key_read="string",
+                )
+            )
+    series.append(
+        series_entry(
+            "resolved",
+            f"Engine!B2:B{n_formulas + 1}",
+            layout="series",
+            direction="internal",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        )
+    )
+    series.append(
+        series_entry(
+            "published",
+            f"Outputs!B2:B{n_formulas + 1}",
+            layout="series",
+            direction="output",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        )
+    )
+    document = bindings_document(*series)
+    workbook = write_workbook(
+        tmp_path / f"index_blanks_{n_formulas}_{n_rows}_{n_blanks}.xlsx",
+        {
+            "Inputs": {"B1": "k2", "C1": 2},
+            "Table": table,
+            "Engine": engine,
+            "Outputs": outputs,
+        },
+    )
+    return workbook, blanks, document
+
+
+def _prepare_index_blank_collect(
+    tmp_path: Path, *, n_formulas: int, n_rows: int, n_blanks: int
+) -> tuple[object, object, tuple]:
+    from excel_grapher.exporter.inverted_tree.catalog import build_catalog
+    from excel_grapher.grapher import create_dependency_graph
+    from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
+    from excel_grapher.series_bindings import validate_bindings_document
+    from excel_grapher.series_bindings.workflow import all_series_targets
+
+    workbook, blanks, document = _index_blank_workbook(
+        tmp_path, n_formulas=n_formulas, n_rows=n_rows, n_blanks=n_blanks
+    )
+    bindings = validate_bindings_document(document)
+    graph = create_dependency_graph(
+        workbook,
+        all_series_targets(bindings, workbook=workbook),
+        load_values=True,
+        use_cached_dynamic_refs=True,
+        capture_dependency_provenance=True,
+        blank_ranges=blanks,
+    )
+    catalog = build_catalog(bindings, workbook=workbook, graph=graph, blank_ranges=blanks)
+    return catalog, graph, normalize_blank_range_specs(blanks)
+
+
+def test_absolute_index_blank_checks_do_not_scale_with_copies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Identical absolute ranges are resolved once, from corners (#999)."""
+    from excel_grapher.core import address_keys as address_keys_mod
+    from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
+    from excel_grapher.exporter.inverted_tree.deps import collect_catalog_edges
+    from excel_grapher.grapher import blank_ranges as blank_ranges_mod
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    n_rows = 30
+    n_blanks = 10
+    area = 4 * n_rows
+    small_parts = _prepare_index_blank_collect(
+        tmp_path, n_formulas=2, n_rows=n_rows, n_blanks=n_blanks
+    )
+    large_parts = _prepare_index_blank_collect(
+        tmp_path, n_formulas=6, n_rows=n_rows, n_blanks=n_blanks
+    )
+    counts = {"parse": 0, "blank": 0}
+    original_parse = address_keys_mod.parse_cell_coords
+    original_blank = blank_ranges_mod.address_in_blank_ranges
+
+    def counting_parse(address: str) -> tuple[str, int, int]:
+        counts["parse"] += 1
+        return original_parse(address)
+
+    def counting_blank(address: str, rects: object) -> bool:
+        counts["blank"] += 1
+        return original_blank(address, rects)
+
+    monkeypatch.setattr(address_keys_mod, "parse_cell_coords", counting_parse)
+    monkeypatch.setattr(blank_ranges_mod, "parse_cell_coords", counting_parse)
+    monkeypatch.setattr(deps_mod, "parse_cell_coords", counting_parse)
+    monkeypatch.setattr(catalog_mod, "parse_cell_coords", counting_parse)
+    monkeypatch.setattr(blank_ranges_mod, "address_in_blank_ranges", counting_blank)
+    monkeypatch.setattr(deps_mod, "address_in_blank_ranges", counting_blank)
+
+    def collect(parts: tuple[object, object, tuple]) -> None:
+        catalog, graph, rects = parts
+        assert isinstance(catalog, SeriesCatalog)
+        assert isinstance(graph, DependencyGraph)
+        edges = collect_catalog_edges(catalog, graph, blank_rects=rects)
+        assert any(edge.producer_id == "col_2" for edge in edges.edges)
+
+    collect(small_parts)
+    small_parse, small_blank = counts["parse"], counts["blank"]
+    counts["parse"] = 0
+    counts["blank"] = 0
+    collect(large_parts)
+    assert counts["parse"] - small_parse < area, (small_parse, counts["parse"], area)
+    assert counts["blank"] - small_blank < area, (small_blank, counts["blank"], area)
+
+
+def test_unbound_nonblank_in_blank_window_still_fail_closes(tmp_path: Path) -> None:
+    """A valued unbound cell stays missing when neighboring rows are blank."""
+    from excel_grapher.exporter.inverted_tree.catalog import build_catalog
+    from excel_grapher.exporter.inverted_tree.deps import collect_catalog_edges
+    from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
+    from excel_grapher.grapher import create_dependency_graph
+    from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
+    from excel_grapher.series_bindings import validate_bindings_document
+    from excel_grapher.series_bindings.workflow import all_series_targets
+
+    workbook, blanks, document = _index_blank_workbook(
+        tmp_path,
+        n_formulas=2,
+        n_rows=6,
+        n_blanks=1,
+        unbound="Table!C4",
+    )
+    bindings = validate_bindings_document(document)
+    graph = create_dependency_graph(
+        workbook,
+        all_series_targets(bindings, workbook=workbook),
+        load_values=True,
+        use_cached_dynamic_refs=True,
+        capture_dependency_provenance=True,
+        blank_ranges=blanks,
+    )
+    catalog = build_catalog(bindings, workbook=workbook, graph=graph, blank_ranges=blanks)
+    with pytest.raises(InvertedTreeExportError, match="Table!C4"):
+        collect_catalog_edges(catalog, graph, blank_rects=normalize_blank_range_specs(blanks))

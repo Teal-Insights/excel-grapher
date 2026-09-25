@@ -5,7 +5,7 @@ from __future__ import annotations
 import importlib.util
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import TypeAlias
+from typing import TypeAlias, cast
 
 import fastpyxl.utils.cell
 
@@ -47,14 +47,103 @@ def normalize_blank_range_specs(specs: Iterable[str] | None) -> tuple[BlankRange
     return tuple(parse_blank_range_spec(str(s)) for s in specs)
 
 
+# Identity cache: blank-rect tuples are immutable, so the sheet groups stay valid
+# for the life of the tuple. Lists are grouped per call and not cached.
+_SHEET_INDEX: dict[
+    int, tuple[tuple[BlankRangeRect, ...], dict[str, tuple[BlankRangeRect, ...]]]
+] = {}
+_SHEET_INDEX_LIMIT = 16
+
+
+def _rects_by_sheet(
+    rects: Sequence[BlankRangeRect],
+) -> dict[str, tuple[BlankRangeRect, ...]]:
+    """Group `rects` by sheet.
+
+    Repeated lookups of the same tuple reuse one grouping. The returned
+    mapping is cached for tuples; callers must not mutate it.
+    """
+    if isinstance(rects, tuple):
+        rect_tuple = cast("tuple[BlankRangeRect, ...]", rects)
+        cached = _SHEET_INDEX.get(id(rect_tuple))
+        if cached is not None and cached[0] is rect_tuple:
+            return cached[1]
+    else:
+        rect_tuple = None
+    grouped: dict[str, list[BlankRangeRect]] = {}
+    for rect in rects:
+        grouped.setdefault(rect[0], []).append(rect)
+    frozen = {sheet: tuple(items) for sheet, items in grouped.items()}
+    if rect_tuple is not None:
+        if len(_SHEET_INDEX) >= _SHEET_INDEX_LIMIT:
+            _SHEET_INDEX.clear()
+        _SHEET_INDEX[id(rect_tuple)] = (rect_tuple, frozen)
+    return frozen
+
+
 def cell_in_blank_ranges(sheet: str, row: int, col: int, rects: Sequence[BlankRangeRect]) -> bool:
     """True if (sheet, row, col) lies in any declared blank rectangle."""
-    for sh, r1, c1, r2, c2 in rects:
-        if sh != sheet:
-            continue
+    for _sh, r1, c1, r2, c2 in _rects_by_sheet(rects).get(sheet, ()):
         if r1 <= row <= r2 and c1 <= col <= c2:
             return True
     return False
+
+
+def _merge_spans(spans: list[tuple[int, int]]) -> tuple[tuple[int, int], ...]:
+    """Merge inclusive intervals that touch or overlap."""
+    if not spans:
+        return ()
+    spans.sort()
+    merged: list[tuple[int, int]] = [spans[0]]
+    for lo, hi in spans[1:]:
+        prev_lo, prev_hi = merged[-1]
+        if lo <= prev_hi + 1:
+            merged[-1] = (prev_lo, max(prev_hi, hi))
+        else:
+            merged.append((lo, hi))
+    return tuple(merged)
+
+
+def column_in_spans(col: int, spans: tuple[tuple[int, int], ...]) -> bool:
+    """True when `col` lies in a sorted, merged list of inclusive intervals."""
+    for lo, hi in spans:
+        if col < lo:
+            return False
+        if col <= hi:
+            return True
+    return False
+
+
+def row_blank_spans(
+    sheet: str,
+    row1: int,
+    col1: int,
+    row2: int,
+    col2: int,
+    rects: Sequence[BlankRangeRect],
+) -> dict[int, tuple[tuple[int, int], ...]]:
+    """Merged blank column intervals inside an inclusive rectangle, by row.
+
+    The rectangle is tested against blank rectangles by its corners. Rows
+    outside the intersection are omitted. Callers clip queries to this
+    rectangle, so a blank rect that extends past it does not allocate the
+    exterior.
+    """
+    if row1 > row2:
+        row1, row2 = row2, row1
+    if col1 > col2:
+        col1, col2 = col2, col1
+    if not rects:
+        return {}
+    pending: dict[int, list[tuple[int, int]]] = {}
+    for _sheet, r1, c1, r2, c2 in overlapping_blank_rects(sheet, row1, col1, row2, col2, rects):
+        lo_c = c1 if c1 > col1 else col1
+        hi_c = c2 if c2 < col2 else col2
+        lo_r = r1 if r1 > row1 else row1
+        hi_r = r2 if r2 < row2 else row2
+        for row in range(lo_r, hi_r + 1):
+            pending.setdefault(row, []).append((lo_c, hi_c))
+    return {row: _merge_spans(spans) for row, spans in pending.items()}
 
 
 def address_in_blank_ranges(address: str, rects: Sequence[BlankRangeRect]) -> bool:
@@ -95,7 +184,7 @@ def range_overlaps_blank_ranges(start: str, end: str, rects: Sequence[BlankRange
     probe = range_rect(start, end)
     if probe is None:
         return False
-    return any(_rects_overlap(probe, rect) for rect in rects)
+    return any(_rects_overlap(probe, rect) for rect in _rects_by_sheet(rects).get(probe[0], ()))
 
 
 def overlapping_blank_rects(
@@ -110,7 +199,9 @@ def overlapping_blank_rects(
     if not rects:
         return ()
     probe = (sheet, row1, col1, row2, col2)
-    return tuple(rect for rect in rects if _rects_overlap(probe, rect))
+    return tuple(
+        rect for rect in _rects_by_sheet(rects).get(sheet, ()) if _rects_overlap(probe, rect)
+    )
 
 
 def blank_rects_for_addresses(

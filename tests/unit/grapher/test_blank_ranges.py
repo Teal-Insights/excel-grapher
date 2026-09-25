@@ -32,3 +32,17 @@ def test_cell_in_blank_ranges() -> None:
     assert cell_in_blank_ranges("S", 3, 2, rects)
     assert not cell_in_blank_ranges("S", 1, 1, rects)
     assert not cell_in_blank_ranges("T", 2, 1, rects)
+
+
+def test_row_blank_spans_match_cell_membership() -> None:
+    """Blank membership inside a rectangle is the clipped row intervals."""
+    from excel_grapher.grapher.blank_ranges import row_blank_spans
+
+    rects = normalize_blank_range_specs(
+        ["Table!A2:H2", "Table!C4:D6", "Table!H1:A3", "Other!A1:B9"]
+    )
+    spans = row_blank_spans("Table", 8, 8, 1, 1, rects)
+    for row in range(1, 9):
+        for col in range(1, 9):
+            covered = any(lo <= col <= hi for lo, hi in spans.get(row, ()))
+            assert covered is cell_in_blank_ranges("Table", row, col, rects)
