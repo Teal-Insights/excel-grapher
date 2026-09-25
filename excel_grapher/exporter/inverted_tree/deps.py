@@ -122,34 +122,48 @@ def current_blank_rects() -> tuple[BlankRangeRect, ...]:
 
 
 # One `generate_modules` / `collect_catalog_edges` walk. Keys are absolute
-# rectangles plus the identity of the catalog, graph, and blank-rect tuple.
+# rectangles plus the identity of the catalog, graph, and blank-rect set.
 _PositionalKey = tuple[str, int, int, int, int, int, int, int]
-_POSITIONAL_CACHE: ContextVar[dict[_PositionalKey, tuple] | None] = ContextVar(
+_RangeKey = tuple[str, int, int, int, int]
+
+
+@dataclass
+class _RangeCache:
+    """Resolutions reused for one export or edge-collection walk.
+
+    Blank-rect tokens are a counter local to this object. Equal tuples share
+    a token, and discarding the cache drops the tokens with it, so a later
+    walk cannot reuse an address that used to identify a different rect set.
+    """
+
+    results: dict[_PositionalKey, tuple] = field(default_factory=dict)
+    rect_tokens: dict[tuple[BlankRangeRect, ...], int] = field(default_factory=dict)
+    rect_ids: dict[int, tuple[tuple[BlankRangeRect, ...], int]] = field(default_factory=dict)
+    ranges: dict[_RangeKey, tuple[CanonicalAddress, ...]] = field(default_factory=dict)
+    next_token: int = 1
+
+
+_POSITIONAL_CACHE: ContextVar[_RangeCache | None] = ContextVar(
     "excel_grapher_positional_range_cache",
     default=None,
 )
-_RECT_TOKENS: dict[tuple[BlankRangeRect, ...], int] = {}
-_RECT_TOKEN_IDS: dict[int, tuple[tuple[BlankRangeRect, ...], int]] = {}
-_RECT_TOKEN_LIMIT = 16
 
 
-def _rects_token(rects: Sequence[BlankRangeRect]) -> int:
-    """Stable token for equal blank-rect tuples, including distinct objects."""
+def _rects_token(rects: Sequence[BlankRangeRect], cache: _RangeCache) -> int:
+    """Token for `rects` within `cache`, shared by equal tuples."""
     rect_tuple = cast("tuple[BlankRangeRect, ...]", rects) if isinstance(rects, tuple) else None
     if rect_tuple is not None:
-        cached = _RECT_TOKEN_IDS.get(id(rect_tuple))
+        cached = cache.rect_ids.get(id(rect_tuple))
         if cached is not None and cached[0] is rect_tuple:
             return cached[1]
     frozen: tuple[BlankRangeRect, ...] = rect_tuple if rect_tuple is not None else tuple(rects)
-    token = _RECT_TOKENS.get(frozen)
+    token = cache.rect_tokens.get(frozen)
     if token is None:
-        if len(_RECT_TOKENS) >= _RECT_TOKEN_LIMIT:
-            _RECT_TOKENS.clear()
-            _RECT_TOKEN_IDS.clear()
-        token = id(frozen)
-        _RECT_TOKENS[frozen] = token
+        token = cache.next_token
+        cache.next_token += 1
+        cache.rect_tokens[frozen] = token
     if rect_tuple is not None:
-        _RECT_TOKEN_IDS[id(rect_tuple)] = (rect_tuple, token)
+        cache.rect_ids[id(rect_tuple)] = (rect_tuple, token)
     return token
 
 
@@ -162,7 +176,7 @@ def positional_range_cache() -> Iterator[None]:
     if _POSITIONAL_CACHE.get() is not None:
         yield
         return
-    token = _POSITIONAL_CACHE.set({})
+    token = _POSITIONAL_CACHE.set(_RangeCache())
     try:
         yield
     finally:
@@ -373,8 +387,8 @@ def resolve_positional_rectangle(
     cache = _POSITIONAL_CACHE.get()
     key: _PositionalKey | None = None
     if cache is not None:
-        key = (sheet, row1, col1, row2, col2, _rects_token(rects), id(catalog), id(graph))
-        cached = cache.get(key)
+        key = (sheet, row1, col1, row2, col2, _rects_token(rects, cache), id(catalog), id(graph))
+        cached = cache.results.get(key)
         if cached is not None:
             return cached
     result = _classify_positional(
@@ -383,7 +397,7 @@ def resolve_positional_rectangle(
         graph,
     )
     if cache is not None and key is not None:
-        cache[key] = result
+        cache.results[key] = result
     return result
 
 
@@ -558,18 +572,27 @@ def _member_access(
 
 
 def iter_range_addresses(start: str, end: str) -> list[CanonicalAddress]:
-    """Expand a same-sheet A1 range into canonical cell addresses (row-major)."""
-    sheet1, row1, col1 = parse_cell_coords(start)
-    sheet2, row2, col2 = parse_cell_coords(end)
-    if sheet1 != sheet2:
-        raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported")
-    r1, r2 = min(row1, row2), max(row1, row2)
-    c1, c2 = min(col1, col2), max(col1, col2)
-    return [
-        as_canonical(format_cell_key(sheet1, get_column_letter(col), row))
-        for row in range(r1, r2 + 1)
-        for col in range(c1, c2 + 1)
-    ]
+    """Expand a same-sheet A1 range into canonical cell addresses (row-major).
+
+    While `positional_range_cache` is active, each absolute rectangle is
+    expanded once. The returned list is a fresh copy.
+    """
+    sheet, row1, col1, row2, col2 = _same_sheet_bounds(start, end)
+    cache = _POSITIONAL_CACHE.get()
+    key = (sheet, row1, col1, row2, col2)
+    if cache is not None:
+        cached = cache.ranges.get(key)
+        if cached is not None:
+            return list(cached)
+    letters = [get_column_letter(col) for col in range(col1, col2 + 1)]
+    addresses = tuple(
+        as_canonical(format_cell_key(sheet, letters[offset], row))
+        for row in range(row1, row2 + 1)
+        for offset, _col in enumerate(letters)
+    )
+    if cache is not None:
+        cache.ranges[key] = addresses
+    return list(addresses)
 
 
 def iter_cross_sheet_addresses(
