@@ -537,6 +537,8 @@ def _index_blank_workbook(
     n_rows: int,
     n_blanks: int,
     unbound: str | None = None,
+    column_literal: int | None = None,
+    split_column: int | None = None,
 ) -> tuple[Path, tuple[str, ...], dict]:
     """Absolute INDEX/MATCH copies over a table punched by blank rows.
 
@@ -560,9 +562,10 @@ def _index_blank_workbook(
         table[unbound_cell] = 99.0
     engine: dict[str, object] = {}
     outputs: dict[str, object] = {}
+    column_arg = "Inputs!$C$1" if column_literal is None else str(column_literal)
     formula = (
         f"=INDEX(Table!$A$2:${end_col}${last},"
-        f"MATCH(Inputs!$B$1,Table!$A$2:$A${last},0),Inputs!$C$1)"
+        f"MATCH(Inputs!$B$1,Table!$A$2:$A${last},0),{column_arg})"
     )
     for index in range(n_formulas):
         row = index + 2
@@ -585,9 +588,34 @@ def _index_blank_workbook(
             key_read="string",
         ),
     ]
+    split_at = 2 + max(n_rows // 2, 1)
     for col in range(2, n_cols + 1):
         letter = get_column_letter(col)
         if unbound_column == letter:
+            continue
+        if split_column == col:
+            series.append(
+                series_entry(
+                    f"col_{col}a",
+                    f"Table!{letter}2:{letter}{split_at}",
+                    layout="series",
+                    direction="input",
+                    label_column="A",
+                    key_concept="COUNTRY",
+                    key_read="string",
+                )
+            )
+            series.append(
+                series_entry(
+                    f"col_{col}b",
+                    f"Table!{letter}{split_at + 1}:{letter}{last}",
+                    layout="series",
+                    direction="input",
+                    label_column="A",
+                    key_concept="COUNTRY",
+                    key_read="string",
+                )
+            )
             continue
         series.append(
             series_entry(
@@ -665,7 +693,13 @@ def _index_blank_workbook(
 
 
 def _prepare_index_blank_collect(
-    tmp_path: Path, *, n_formulas: int, n_rows: int, n_blanks: int
+    tmp_path: Path,
+    *,
+    n_formulas: int,
+    n_rows: int,
+    n_blanks: int,
+    column_literal: int | None = None,
+    split_column: int | None = None,
 ) -> tuple[object, object, tuple]:
     from excel_grapher.exporter.inverted_tree.catalog import build_catalog
     from excel_grapher.grapher import create_dependency_graph
@@ -674,7 +708,12 @@ def _prepare_index_blank_collect(
     from excel_grapher.series_bindings.workflow import all_series_targets
 
     workbook, blanks, document = _index_blank_workbook(
-        tmp_path, n_formulas=n_formulas, n_rows=n_rows, n_blanks=n_blanks
+        tmp_path,
+        n_formulas=n_formulas,
+        n_rows=n_rows,
+        n_blanks=n_blanks,
+        column_literal=column_literal,
+        split_column=split_column,
     )
     bindings = validate_bindings_document(document)
     graph = create_dependency_graph(
@@ -772,3 +811,97 @@ def test_unbound_nonblank_in_blank_window_still_fail_closes(tmp_path: Path) -> N
     catalog = build_catalog(bindings, workbook=workbook, graph=graph, blank_ranges=blanks)
     with pytest.raises(InvertedTreeExportError, match="Table!C4"):
         collect_catalog_edges(catalog, graph, blank_rects=normalize_blank_range_specs(blanks))
+
+
+def test_generate_resolves_each_absolute_window_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Plan and emit share one resolution per absolute rectangle (#999)."""
+    counts = {"n": 0}
+    original = deps_mod._rectangle_entries
+
+    def counting(*args: object, **kwargs: object) -> object:
+        counts["n"] += 1
+        return original(*args, **kwargs)
+
+    monkeypatch.setattr(deps_mod, "_rectangle_entries", counting)
+    workbook, blanks, document = _index_blank_workbook(
+        tmp_path, n_formulas=6, n_rows=30, n_blanks=10
+    )
+    generate_inverted(workbook, document, blank_ranges=blanks)
+    # INDEX window and MATCH column. A second phase would double this.
+    assert counts["n"] == 2, counts["n"]
+
+
+def test_literal_index_column_does_not_rebuild_the_parent_per_copy(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A literal INDEX column reuses one parent expansion (#999)."""
+    from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
+    from excel_grapher.exporter.inverted_tree.deps import collect_catalog_edges
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    n_rows = 24
+    area = 4 * n_rows
+    counts = {"format": 0, "column": 0}
+    original_format = deps_mod.format_cell_key
+    original_column = deps_mod._DepCollector._visit_index_worksheet_column
+
+    def counting_format(sheet: str, column: str, row: int) -> str:
+        counts["format"] += 1
+        return original_format(sheet, column, row)
+
+    def counting_column(self: object, *args: object, **kwargs: object) -> bool:
+        counts["column"] += 1
+        return original_column(self, *args, **kwargs)
+
+    monkeypatch.setattr(deps_mod, "format_cell_key", counting_format)
+    monkeypatch.setattr(deps_mod._DepCollector, "_visit_index_worksheet_column", counting_column)
+
+    def collect(n_formulas: int) -> int:
+        counts["format"] = 0
+        counts["column"] = 0
+        parts = _prepare_index_blank_collect(
+            tmp_path,
+            n_formulas=n_formulas,
+            n_rows=n_rows,
+            n_blanks=8,
+            column_literal=2,
+            split_column=2,
+        )
+        catalog, graph, rects = parts
+        assert isinstance(catalog, SeriesCatalog)
+        assert isinstance(graph, DependencyGraph)
+        collect_catalog_edges(catalog, graph, blank_rects=rects)
+        assert counts["column"] > 0
+        return counts["format"]
+
+    small = collect(2)
+    large = collect(6)
+    assert large - small < area, (small, large, area)
+
+
+def test_positional_cache_distinguishes_blank_sets(tmp_path: Path) -> None:
+    """Equal blank-rect tuples share a resolution; different sets do not."""
+    from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog
+    from excel_grapher.exporter.inverted_tree.deps import (
+        positional_range_cache,
+        resolve_positional_rectangle,
+    )
+    from excel_grapher.grapher.blank_ranges import normalize_blank_range_specs
+    from excel_grapher.grapher.graph import DependencyGraph
+
+    catalog, graph, rects = _prepare_index_blank_collect(
+        tmp_path, n_formulas=2, n_rows=8, n_blanks=2
+    )
+    assert isinstance(catalog, SeriesCatalog)
+    assert isinstance(graph, DependencyGraph)
+    other = normalize_blank_range_specs(("Other!A1",))
+    with positional_range_cache():
+        first = resolve_positional_rectangle("Table!A2", "Table!B4", catalog, rects, graph)
+        again = resolve_positional_rectangle("Table!A2", "Table!B4", catalog, tuple(rects), graph)
+        elsewhere = resolve_positional_rectangle("Table!A2", "Table!B4", catalog, other, graph)
+    assert first is again
+    assert elsewhere is not first
+    assert any(cell.blank for cell in first[0])
+    assert not any(cell.blank for cell in elsewhere[0])
