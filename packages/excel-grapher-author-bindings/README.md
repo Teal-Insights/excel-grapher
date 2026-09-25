@@ -16,7 +16,7 @@ mkdir -p .agents/skills
 cp -R skills/author-bindings .agents/skills/author-bindings
 ```
 
-Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
+Copy it into the consumer project. Claude Code uses
 `.claude/skills/author-bindings`. User-level installs go under
 `~/.agents/skills/author-bindings`.
 

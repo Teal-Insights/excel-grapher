@@ -38,9 +38,14 @@ def _sync_skill_tree(source: Path, dest: Path) -> None:
 
 
 def test_generate_agent_facing_skill_copies() -> None:
-    for dest in (_AGENTS_COPY, _CURSOR_COPY, _EXTRA_PACKAGE_COPY):
-        _sync_skill_tree(_CANONICAL, dest)
-        assert _skill_files(dest) == _skill_files(_CANONICAL)
+    """Sync the consumer package from the canonical tree.
+
+    This repository does not install the skill for its own agents.
+    """
+    _sync_skill_tree(_CANONICAL, _EXTRA_PACKAGE_COPY)
+    assert _skill_files(_EXTRA_PACKAGE_COPY) == _skill_files(_CANONICAL)
+    assert not _AGENTS_COPY.exists()
+    assert not _CURSOR_COPY.exists()
 
 
 def test_skill_install_is_copy_into_agents_skills() -> None:
@@ -54,6 +59,7 @@ def test_skill_install_is_copy_into_agents_skills() -> None:
     root_readme = (_REPO_ROOT / "README.md").read_text(encoding="utf-8")
     for text in (skill, guide, extra_readme, root_readme, _INSTALL_HINT):
         assert ".agents/skills/author-bindings" in text
+        assert ".cursor/skills/author-bindings" not in text
         assert "uv add excel-grapher --extra skills" not in text
         assert "excel-grapher[skills]" not in text
     assert "mkdir -p .agents/skills" in skill

@@ -9,9 +9,9 @@ from pathlib import Path
 
 _INSTALL_HINT = (
     "The author-bindings skill is not part of the excel-grapher wheel. "
-    "Copy skills/author-bindings from the source tree / sdist into "
-    ".agents/skills/author-bindings (Cursor also loads .cursor/skills/; "
-    "Claude Code uses .claude/skills/). To obtain the files via Python, "
+    "Copy skills/author-bindings from the source tree / sdist into the consumer "
+    "project at .agents/skills/author-bindings. Claude Code uses "
+    ".claude/skills/author-bindings. To obtain the files via Python, "
     "install the excel-grapher-author-bindings package."
 )
 
@@ -32,9 +32,10 @@ def author_bindings_skill_dir() -> Iterator[Path]:
     """Yield the author-bindings skill directory.
 
     The skill is a separate distribution artifact, not part of the
-    `excel-grapher` wheel. Agents load a copied folder under
-    `.agents/skills/author-bindings` (or `.cursor/skills` / `.claude/skills`).
-    This helper locates the canonical files so callers can copy them.
+    `excel-grapher` wheel. Consumers copy it into their own project at
+    `.agents/skills/author-bindings`. Claude Code uses
+    `.claude/skills/author-bindings`. This helper locates the canonical
+    files so callers can copy them.
 
     Resolution order:
 

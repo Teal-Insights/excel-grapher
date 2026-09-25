@@ -70,16 +70,15 @@ The default install is correct without NumPy. Install the **`fast`** extra when
 evaluating large workbooks and you want vectorized operator / `SUMPRODUCT`
 acceleration. Exported standalone code stays NumPy-free either way.
 
-The author-bindings agent skill is **not** in the library wheel. Agents load a
-copied folder, not a Python extra. From a git clone or the `excel-grapher` sdist:
+The author-bindings agent skill is **not** in the library wheel. Copy it into
+the consumer project. From a git clone or the `excel-grapher` sdist:
 
 ```bash
 mkdir -p .agents/skills
 cp -R skills/author-bindings .agents/skills/author-bindings
 ```
 
-Cursor also loads `.cursor/skills/author-bindings`. Claude Code uses
-`.claude/skills/author-bindings`. User-level installs go under
+Claude Code uses `.claude/skills/author-bindings`. User-level installs go under
 `~/.agents/skills/author-bindings`. The optional
 `excel-grapher-author-bindings` package is only a file source for that copy.
 
