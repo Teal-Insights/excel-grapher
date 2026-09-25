@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.9.1 (2026-09-25)
+
+### Bug Fixes
+
+- **export**: Keep blank-range cache tokens on the export walk
+  ([`b2e0f43`](https://github.com/Teal-Insights/excel-grapher/commit/b2e0f43677beb1470bdfe50429469e0425441f16))
+
+- **export**: Key lockstep string-map cache by slot map
+  ([`4284f97`](https://github.com/Teal-Insights/excel-grapher/commit/4284f97fc8e1a8bd4ab638b6d08fc6d415ee0db1))
+
+- **export**: Resolve blank ranges from rectangle corners
+  ([`cf221fe`](https://github.com/Teal-Insights/excel-grapher/commit/cf221feddbd8645c1c5696d9c0436b4eb6fc1120))
+
+### Documentation
+
+- **bindings**: Document which data_range gaps authors must fix
+  ([`317dc9f`](https://github.com/Teal-Insights/excel-grapher/commit/317dc9fae6549992ec332f6b01a4909a4f7f462c))
+
+- **bindings**: Drop in-repo author-bindings skill installs
+  ([`25cfd4c`](https://github.com/Teal-Insights/excel-grapher/commit/25cfd4ce30408f74e22656d06e447db51908c6f6))
+
+### Performance Improvements
+
+- **export**: Index labeller lookup and cache lockstep string maps
+  ([`782ec2b`](https://github.com/Teal-Insights/excel-grapher/commit/782ec2b7994d7d1669c75e120f8f4fe5523b9f9d))
+
+### Testing
+
+- **export**: Count keyed series scans in labeller lookup
+  ([`7215cf2`](https://github.com/Teal-Insights/excel-grapher/commit/7215cf27acf2f652853b6669a1e420bee933d5e7))
+
+- **grapher**: Detect intern-pool collection with a weakref
+  ([`6d81107`](https://github.com/Teal-Insights/excel-grapher/commit/6d81107f769868b42166f85e4648e66e10e3ddfc))
+
+
 ## v23.9.0 (2026-09-25)
 
 ### Bug Fixes
