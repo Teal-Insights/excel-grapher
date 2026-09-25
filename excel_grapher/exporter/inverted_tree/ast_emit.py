@@ -573,15 +573,16 @@ def _lockstep_string_map(
 
     A constant producer field (every host maps to the same label) stays a
     literal, not a remap through the host key. The result, including `None`,
-    is cached on the host series for the producer and both fields.
+    is cached on the host series for the producer, both fields, and this slot
+    map. The slot map is retained so a later map cannot reuse its identity.
     """
     cache = ctx.host._emit_cache
-    cache_key = ("lockstep_string_map", producer.series_id, producer_field, host_field)
+    cache_key = ("lockstep_string_map", producer.series_id, producer_field, host_field, id(slots))
     cached = cache.get(cache_key, _UNSET)
     if cached is not _UNSET:
-        return cached
+        return cached[1]
     mapping = _lockstep_string_pairs(ctx, producer, producer_field, slots, host_field)
-    cache[cache_key] = mapping
+    cache[cache_key] = (slots, mapping)
     return mapping
 
 
