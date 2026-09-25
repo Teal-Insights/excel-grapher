@@ -72,7 +72,8 @@ from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.blank_ranges import (
     BlankRangeRect,
     address_in_blank_ranges,
-    blank_rects_for_addresses,
+    column_in_spans,
+    row_blank_spans,
 )
 from excel_grapher.semantic_model.types import AccessClass
 from excel_grapher.series_bindings.geometry import parse_value_map
@@ -120,18 +121,103 @@ def current_blank_rects() -> tuple[BlankRangeRect, ...]:
     return _BLANK_RECTS.get()
 
 
+# One `generate_modules` / `collect_catalog_edges` walk. Keys are absolute
+# rectangles plus the identity of the catalog, graph, and blank-rect tuple.
+_PositionalKey = tuple[str, int, int, int, int, int, int, int]
+_POSITIONAL_CACHE: ContextVar[dict[_PositionalKey, tuple] | None] = ContextVar(
+    "excel_grapher_positional_range_cache",
+    default=None,
+)
+_RECT_TOKENS: dict[tuple[BlankRangeRect, ...], int] = {}
+_RECT_TOKEN_IDS: dict[int, tuple[tuple[BlankRangeRect, ...], int]] = {}
+_RECT_TOKEN_LIMIT = 16
+
+
+def _rects_token(rects: Sequence[BlankRangeRect]) -> int:
+    """Stable token for equal blank-rect tuples, including distinct objects."""
+    rect_tuple = cast("tuple[BlankRangeRect, ...]", rects) if isinstance(rects, tuple) else None
+    if rect_tuple is not None:
+        cached = _RECT_TOKEN_IDS.get(id(rect_tuple))
+        if cached is not None and cached[0] is rect_tuple:
+            return cached[1]
+    frozen: tuple[BlankRangeRect, ...] = rect_tuple if rect_tuple is not None else tuple(rects)
+    token = _RECT_TOKENS.get(frozen)
+    if token is None:
+        if len(_RECT_TOKENS) >= _RECT_TOKEN_LIMIT:
+            _RECT_TOKENS.clear()
+            _RECT_TOKEN_IDS.clear()
+        token = id(frozen)
+        _RECT_TOKENS[frozen] = token
+    if rect_tuple is not None:
+        _RECT_TOKEN_IDS[id(rect_tuple)] = (rect_tuple, token)
+    return token
+
+
+@contextmanager
+def positional_range_cache() -> Iterator[None]:
+    """Reuse absolute-range resolutions for the current export walk.
+
+    Nested calls share the cache already installed by `generate_modules`.
+    """
+    if _POSITIONAL_CACHE.get() is not None:
+        yield
+        return
+    token = _POSITIONAL_CACHE.set({})
+    try:
+        yield
+    finally:
+        _POSITIONAL_CACHE.reset(token)
+
+
+def _blank_masks(
+    coords: Sequence[tuple[str, int, int]],
+    rects: Sequence[BlankRangeRect],
+) -> dict[str, dict[int, tuple[tuple[int, int], ...]]]:
+    """Row/column blank intervals covering the bounding box of `coords`."""
+    if not rects or not coords:
+        return {}
+    bounds: dict[str, list[int]] = {}
+    for sheet, row, col in coords:
+        previous = bounds.get(sheet)
+        if previous is None:
+            bounds[sheet] = [row, col, row, col]
+            continue
+        previous[0] = min(previous[0], row)
+        previous[1] = min(previous[1], col)
+        previous[2] = max(previous[2], row)
+        previous[3] = max(previous[3], col)
+    return {
+        sheet: row_blank_spans(sheet, row1, col1, row2, col2, rects)
+        for sheet, (row1, col1, row2, col2) in bounds.items()
+    }
+
+
+def _coord_is_blank(
+    sheet: str,
+    row: int,
+    col: int,
+    masks: dict[str, dict[int, tuple[tuple[int, int], ...]]],
+) -> bool:
+    return column_in_spans(col, masks.get(sheet, {}).get(row, ()))
+
+
 def addresses_outside_blank_ranges(
     addresses: Sequence[CanonicalAddress],
     blank_rects: Sequence[BlankRangeRect] | None = None,
 ) -> list[CanonicalAddress]:
     """Drop addresses that lie in declared structural blank rectangles."""
     rects = current_blank_rects() if blank_rects is None else blank_rects
-    if not rects:
+    if not rects or not addresses:
         return list(addresses)
-    relevant = blank_rects_for_addresses(addresses, rects)
-    if not relevant:
+    parsed = [(address, *parse_cell_coords(address)) for address in addresses]
+    masks = _blank_masks([(sheet, row, col) for _address, sheet, row, col in parsed], rects)
+    if not any(masks.values()):
         return list(addresses)
-    return [addr for addr in addresses if not address_in_blank_ranges(addr, relevant)]
+    return [
+        address
+        for address, sheet, row, col in parsed
+        if not _coord_is_blank(sheet, row, col, masks)
+    ]
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,32 +255,18 @@ def _is_excel_blank_cell(
     return node.value is None
 
 
-def resolve_positional_range(
-    addresses: Sequence[CanonicalAddress],
+def _classify_positional(
+    entries: Iterable[tuple[CanonicalAddress, bool]],
     catalog: SeriesCatalog,
-    blank_rects: Sequence[BlankRangeRect] | None = None,
-    graph: DependencyGraph | None = None,
+    graph: DependencyGraph | None,
 ) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
-    """Map each address to a bound catalog cell or a positional blank.
-
-    Returns `(cells, missing)`. `missing` lists addresses that are neither
-    bound, declared blank, nor an empty off-catalog hole in a window that
-    already has a bound cell. Worksheet order and rectangle size are
-    preserved; blanks stay in `cells` so MATCH/INDEX positions do not
-    shift. Unique cell ownership (`covering_series`) is unchanged.
-
-    An entirely unbound window still fails closed so empty VLOOKUP tables
-    require `blank_ranges`. On-graph formula cells and valued leaves
-    without a series are always missing.
-    """
-    rects = current_blank_rects() if blank_rects is None else blank_rects
-    relevant = blank_rects_for_addresses(addresses, rects) if rects else ()
+    """Map `(address, declared_blank)` pairs to positional cells and gaps."""
     cells: list[PositionalRangeCell] = []
     missing: list[CanonicalAddress] = []
     unbound_blanks: list[CanonicalAddress] = []
     owned = False
-    for address in addresses:
-        if relevant and address_in_blank_ranges(address, relevant):
+    for address, declared_blank in entries:
+        if declared_blank:
             cells.append(PositionalRangeCell(address, None, None, True))
             continue
         owner = catalog.series_for(address)
@@ -212,6 +284,107 @@ def resolve_positional_range(
     if unbound_blanks and not owned:
         missing.extend(unbound_blanks)
     return tuple(cells), tuple(missing)
+
+
+def resolve_positional_range(
+    addresses: Sequence[CanonicalAddress],
+    catalog: SeriesCatalog,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+    graph: DependencyGraph | None = None,
+) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
+    """Map each address to a bound catalog cell or a positional blank.
+
+    Returns `(cells, missing)`. `missing` lists addresses that are neither
+    bound, declared blank, nor an empty off-catalog hole in a window that
+    already has a bound cell. Worksheet order and rectangle size are
+    preserved; blanks stay in `cells` so MATCH/INDEX positions do not
+    shift. Unique cell ownership (`covering_series`) is unchanged.
+
+    Declared blanks are decided from each address's coordinates against the
+    bounding-box intersection, not by parsing the address again per rect.
+
+    An entirely unbound window still fails closed so empty VLOOKUP tables
+    require `blank_ranges`. On-graph formula cells and valued leaves
+    without a series are always missing.
+    """
+    rects = current_blank_rects() if blank_rects is None else blank_rects
+    if not rects:
+        return _classify_positional(((address, False) for address in addresses), catalog, graph)
+    parsed = [(address, *parse_cell_coords(address)) for address in addresses]
+    masks = _blank_masks([(sheet, row, col) for _address, sheet, row, col in parsed], rects)
+    return _classify_positional(
+        ((address, _coord_is_blank(sheet, row, col, masks)) for address, sheet, row, col in parsed),
+        catalog,
+        graph,
+    )
+
+
+def _same_sheet_bounds(start: str, end: str) -> tuple[str, int, int, int, int]:
+    """Return ordered `(sheet, row1, col1, row2, col2)` for a same-sheet range."""
+    sheet1, row1, col1 = parse_cell_coords(start)
+    sheet2, row2, col2 = parse_cell_coords(end)
+    if sheet1 != sheet2:
+        raise InvertedTreeExportError(f"cross-sheet range {start}:{end} is not supported")
+    r1, r2 = (row1, row2) if row1 <= row2 else (row2, row1)
+    c1, c2 = (col1, col2) if col1 <= col2 else (col2, col1)
+    return sheet1, r1, c1, r2, c2
+
+
+def _rectangle_entries(
+    sheet: str,
+    row1: int,
+    col1: int,
+    row2: int,
+    col2: int,
+    rects: Sequence[BlankRangeRect],
+) -> Iterator[tuple[CanonicalAddress, bool]]:
+    """Yield row-major `(address, declared_blank)` pairs for one rectangle."""
+    spans = row_blank_spans(sheet, row1, col1, row2, col2, rects) if rects else {}
+    letters = [get_column_letter(col) for col in range(col1, col2 + 1)]
+    for row in range(row1, row2 + 1):
+        row_spans = spans.get(row, ())
+        for offset, col in enumerate(range(col1, col2 + 1)):
+            address = as_canonical(format_cell_key(sheet, letters[offset], row))
+            yield address, column_in_spans(col, row_spans)
+
+
+def resolve_positional_rectangle(
+    start: str,
+    end: str,
+    catalog: SeriesCatalog,
+    blank_rects: Sequence[BlankRangeRect] | None = None,
+    graph: DependencyGraph | None = None,
+) -> tuple[tuple[PositionalRangeCell, ...], tuple[CanonicalAddress, ...]]:
+    """Map same-sheet `start:end` to positional cells.
+
+    Blank membership uses the range corners. While `positional_range_cache`
+    is active, an absolute rectangle is resolved once per catalog, graph,
+    and blank-rect set.
+
+    Returns:
+        `(cells, missing)` in worksheet row-major order. `missing` lists
+        unbound cells that are not declared blanks or empty off-catalog holes.
+
+    Raises:
+        InvertedTreeExportError: `start` and `end` are on different sheets.
+    """
+    rects = current_blank_rects() if blank_rects is None else blank_rects
+    sheet, row1, col1, row2, col2 = _same_sheet_bounds(start, end)
+    cache = _POSITIONAL_CACHE.get()
+    key: _PositionalKey | None = None
+    if cache is not None:
+        key = (sheet, row1, col1, row2, col2, _rects_token(rects), id(catalog), id(graph))
+        cached = cache.get(key)
+        if cached is not None:
+            return cached
+    result = _classify_positional(
+        _rectangle_entries(sheet, row1, col1, row2, col2, rects),
+        catalog,
+        graph,
+    )
+    if cache is not None and key is not None:
+        cache[key] = result
+    return result
 
 
 def _label_values_for_window(
@@ -1614,12 +1787,11 @@ class _DepCollector:
     def emit_cell(
         self, address: CanonicalAddress, host_cell: CanonicalAddress, host_index: int
     ) -> None:
-        if (
-            address_in_blank_ranges(address, self.blank_rects)
-            and self.catalog.series_for(address) is None
-        ):
-            return
-        owner = self.catalog.require_series_for(address)
+        owner = self.catalog.series_for(address)
+        if owner is None:
+            if self.blank_rects and address_in_blank_ranges(address, self.blank_rects):
+                return
+            owner = self.catalog.require_series_for(address)
         if owner.series_id == self.host.series_id:
             if address == self.host.cells[host_index]:
                 return
@@ -1653,17 +1825,15 @@ class _DepCollector:
             access=access,
         )
 
-    def _visit_range_addresses(
+    def _consume_positional_range(
         self,
-        addresses: list[CanonicalAddress],
+        cells: Sequence[PositionalRangeCell],
+        missing: Sequence[CanonicalAddress],
         host_cell: CanonicalAddress,
         *,
-        ref: AstNode | None = None,
-        access: AccessClass = "whole",
+        ref: AstNode | None,
+        access: AccessClass,
     ) -> None:
-        cells, missing = resolve_positional_range(
-            addresses, self.catalog, self.blank_rects, self.graph
-        )
         if missing:
             label = f"range {range_ref_label(ref, host_cell)}" if ref is not None else "range"
             raise InvertedTreeExportError(
@@ -1677,6 +1847,43 @@ class _DepCollector:
             seen.add(cell.series_id)
             self.emit_lookup(self.catalog.get(cell.series_id), host_cell, cell.address, access)
 
+    def _visit_range_addresses(
+        self,
+        addresses: list[CanonicalAddress],
+        host_cell: CanonicalAddress,
+        *,
+        ref: AstNode | None = None,
+        access: AccessClass = "whole",
+    ) -> None:
+        cells, missing = resolve_positional_range(
+            addresses, self.catalog, self.blank_rects, self.graph
+        )
+        self._consume_positional_range(cells, missing, host_cell, ref=ref, access=access)
+
+    def _visit_formula_ref(
+        self,
+        node: AstNode,
+        host_cell: CanonicalAddress,
+        *,
+        access: AccessClass = "whole",
+    ) -> None:
+        """Record dependencies of a range ref, resolving same-sheet rectangles once."""
+        if isinstance(node, RangeNode):
+            start = resolve_cell_ref(node.start_ref, host_cell)
+            end = resolve_cell_ref(node.end_ref, host_cell)
+            if parse_cell_coords(start)[0] == parse_cell_coords(end)[0]:
+                cells, missing = resolve_positional_rectangle(
+                    start, end, self.catalog, self.blank_rects, self.graph
+                )
+                self._consume_positional_range(cells, missing, host_cell, ref=node, access=access)
+                return
+        self._visit_range_addresses(
+            iter_ref_addresses(node, host_cell, self.graph),
+            host_cell,
+            ref=node,
+            access=access,
+        )
+
     def _visit_lookup_array(
         self,
         node: AstNode,
@@ -1684,12 +1891,7 @@ class _DepCollector:
         host_index: int,
     ) -> None:
         if isinstance(node, (RangeNode, WholeColumnNode, WholeRowNode)):
-            self._visit_range_addresses(
-                iter_ref_addresses(node, host_cell, self.graph),
-                host_cell,
-                ref=node,
-                access="dynamic",
-            )
+            self._visit_formula_ref(node, host_cell, access="dynamic")
             return
         if isinstance(node, CellRefNode):
             address = as_canonical(resolve_cell_ref(node, host_cell))
@@ -1709,11 +1911,7 @@ class _DepCollector:
                 address = as_canonical(resolve_cell_ref(node, host_cell))
                 self.emit_cell(address, host_cell, host_index)
             case RangeNode() | WholeColumnNode() | WholeRowNode():
-                self._visit_range_addresses(
-                    iter_ref_addresses(node, host_cell, self.graph),
-                    host_cell,
-                    ref=node,
-                )
+                self._visit_formula_ref(node, host_cell)
             case FunctionCallNode():
                 self._visit_function(node, host_cell=host_cell, host_index=host_index)
             case BinaryOpNode():
@@ -1928,12 +2126,7 @@ class _DepCollector:
             ):
                 return
             else:
-                self._visit_range_addresses(
-                    iter_range_addresses(start, end),
-                    host_cell,
-                    ref=node.args[0],
-                    access="dynamic",
-                )
+                self._visit_formula_ref(node.args[0], host_cell, access="dynamic")
         else:
             self.visit(node.args[0], host_cell=host_cell, host_index=host_index)
 
@@ -1952,16 +2145,17 @@ class _DepCollector:
         start = as_canonical(resolve_cell_ref(node.start_ref, host_cell))
         end = as_canonical(resolve_cell_ref(node.end_ref, host_cell))
         parent = iter_range_addresses(start, end)
-        first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
-        selected = [
-            address
-            for address in parent
-            if parse_cell_coords(address)[2] == first_col + col_index - 1
-        ]
+        _sheet, _row1, col1 = parse_cell_coords(start)
+        _sheet2, _row2, col2 = parse_cell_coords(end)
+        width = abs(col2 - col1) + 1
+        offset = col_index - 1
+        if offset < 0 or offset >= width:
+            return False
+        selected = parent[offset::width]
         if not selected:
             return False
-        cells, missing = resolve_positional_range(
-            selected, self.catalog, self.blank_rects, self.graph
+        cells, missing = resolve_positional_rectangle(
+            selected[0], selected[-1], self.catalog, self.blank_rects, self.graph
         )
         cells, missing = _attach_index_label_cells(
             selected, parent, cells, missing, self.catalog, self.graph
@@ -2134,6 +2328,16 @@ def collect_catalog_edges(
     blank_rects: tuple[BlankRangeRect, ...] | None = None,
 ) -> CatalogEdges:
     """Walk each formula series once and return catalog-wide classified edges."""
+    with positional_range_cache():
+        return _collect_catalog_edges(catalog, graph, blank_rects=blank_rects)
+
+
+def _collect_catalog_edges(
+    catalog: SeriesCatalog,
+    graph: DependencyGraph,
+    *,
+    blank_rects: tuple[BlankRangeRect, ...] | None = None,
+) -> CatalogEdges:
     by_consumer: dict[str, tuple[DependenceEdge, ...]] = {}
     collected: list[DependenceEdge] = []
     for series in catalog.formula_series():

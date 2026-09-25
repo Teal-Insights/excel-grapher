@@ -17,6 +17,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     collect_all_deps,
     collect_catalog_edges,
     leaf_closure,
+    positional_range_cache,
     reset_blank_rects,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -372,23 +373,24 @@ def generate_inverted_tree_modules(
     blank_rects = normalize_blank_range_specs(blank_ranges)
     token = bind_blank_rects(blank_rects)
     try:
-        catalog, deps, scc_map = plan_inverted_tree(
-            graph,
-            series_bindings=series_bindings,
-            bindings_workbook=bindings_workbook,
-            blank_ranges=blank_ranges,
-        )
-        runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
-        excel_py = _EXCEL_PATH.read_text(encoding="utf-8")
-        return emit_named_modules(
-            catalog,
-            deps,
-            scc_map,
-            graph,
-            bindings_workbook,
-            init_source=emit_init_module(catalog),
-            runtime_source=runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
-            excel_source=excel_py if excel_py.endswith("\n") else excel_py + "\n",
-        )
+        with positional_range_cache():
+            catalog, deps, scc_map = plan_inverted_tree(
+                graph,
+                series_bindings=series_bindings,
+                bindings_workbook=bindings_workbook,
+                blank_ranges=blank_ranges,
+            )
+            runtime_py = _RUNTIME_PATH.read_text(encoding="utf-8")
+            excel_py = _EXCEL_PATH.read_text(encoding="utf-8")
+            return emit_named_modules(
+                catalog,
+                deps,
+                scc_map,
+                graph,
+                bindings_workbook,
+                init_source=emit_init_module(catalog),
+                runtime_source=runtime_py if runtime_py.endswith("\n") else runtime_py + "\n",
+                excel_source=excel_py if excel_py.endswith("\n") else excel_py + "\n",
+            )
     finally:
         reset_blank_rects(token)

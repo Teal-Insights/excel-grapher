@@ -62,6 +62,7 @@ from excel_grapher.exporter.inverted_tree.deps import (
     resolve_offset_column_span,
     resolve_offset_destination_series,
     resolve_positional_range,
+    resolve_positional_rectangle,
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
@@ -283,9 +284,8 @@ def _emit_address(
     rather than a `CoordinateError`. A numeric formula whose whole body is
     a blank ref becomes `0` at the measure boundary.
     """
-    if (
-        address_in_blank_ranges(address, ctx.blank_rects)
-        and ctx.catalog.series_for(address) is None
+    if ctx.catalog.series_for(address) is None and address_in_blank_ranges(
+        address, ctx.blank_rects
     ):
         return "None"
     return _emit_named_address(address, ctx, ref=ref)
@@ -1481,6 +1481,20 @@ def _emit_range_table(node: AstNode, ctx: EmitContext) -> str:
     named_view = _named_range_view(node, ctx)
     if named_view is not None:
         return named_view
+    if isinstance(node, RangeNode):
+        start = resolve_cell_ref(node.start_ref, ctx.host_cell)
+        end = resolve_cell_ref(node.end_ref, ctx.host_cell)
+        if parse_cell_coords(start)[0] == parse_cell_coords(end)[0]:
+            cells, missing = resolve_positional_rectangle(
+                start, end, ctx.catalog, ctx.blank_rects, ctx.graph
+            )
+            if missing:
+                label = range_ref_label(node, ctx.host_cell)
+                raise _host_export_error(
+                    ctx,
+                    f"range {label} is not a bound series (unbound cells: {list(missing[:8])})",
+                )
+            return _positional_table_source(cells, ctx)
     addresses = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
     if not addresses:
         raise _host_export_error(ctx, "range is empty")
@@ -1868,12 +1882,23 @@ def _emit_worksheet_column(node: RangeNode, ctx: EmitContext, col_literal: int) 
     """
     start = as_canonical(resolve_cell_ref(node.start_ref, ctx.host_cell))
     end = as_canonical(resolve_cell_ref(node.end_ref, ctx.host_cell))
-    first_col = min(parse_cell_coords(start)[2], parse_cell_coords(end)[2])
-    selected = [
-        address
-        for address in iter_ref_addresses(node, ctx.host_cell, ctx.graph)
-        if parse_cell_coords(address)[2] == first_col + col_literal - 1
-    ]
+    _sheet, _row1, col1 = parse_cell_coords(start)
+    _sheet2, _row2, col2 = parse_cell_coords(end)
+    if _sheet != _sheet2:
+        first_col = min(col1, col2)
+        parent = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+        selected = [
+            address
+            for address in parent
+            if parse_cell_coords(address)[2] == first_col + col_literal - 1
+        ]
+    else:
+        width = abs(col2 - col1) + 1
+        offset = col_literal - 1
+        if offset < 0 or offset >= width:
+            return None
+        parent = iter_range_addresses(start, end)
+        selected = parent[offset::width]
     if not selected:
         return None
     # A proven column selection must not introduce dependencies on
@@ -1881,8 +1906,12 @@ def _emit_worksheet_column(node: RangeNode, ctx: EmitContext, col_literal: int) 
     column_view = _named_range_view(RangeNode(selected[0], selected[-1]), ctx)
     if column_view is not None:
         return column_view
-    cells, missing = resolve_positional_range(selected, ctx.catalog, ctx.blank_rects, ctx.graph)
-    parent = iter_ref_addresses(node, ctx.host_cell, ctx.graph)
+    if parse_cell_coords(selected[0])[0] == parse_cell_coords(selected[-1])[0]:
+        cells, missing = resolve_positional_rectangle(
+            selected[0], selected[-1], ctx.catalog, ctx.blank_rects, ctx.graph
+        )
+    else:
+        cells, missing = resolve_positional_range(selected, ctx.catalog, ctx.blank_rects, ctx.graph)
     cells, missing = _attach_index_label_cells(
         selected, parent, cells, missing, ctx.catalog, ctx.graph
     )
