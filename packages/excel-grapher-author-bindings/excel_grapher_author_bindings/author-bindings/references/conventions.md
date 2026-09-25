@@ -56,10 +56,40 @@ Audit reports `duplicate_internal_cell_binding` and `duplicate_formula_cell_bind
 
 ## Graph coverage
 
-Bound `data_range` cells must be on-graph. `bindings burndown` and `bindings
-audit` build that graph from the current sidecar's `data_range` targets, so
-the worklist is residual **inside the bound closure**, not every formula on
-every sheet. Widening a shard past the previous end requires widening
-extraction targets / overlapping internals so those cells stay in the
-dependency graph. Structural blanks are `blank_ranges`, not inputs/constants.
-Do not put user-fillable cells in `blank_ranges`.
+An interior hole and a leading or trailing off-graph section are the same case.
+Legality depends on the series direction and what each `data_range` cell is,
+not on where the gap sits in the rectangle.
+
+A cell is one of:
+
+- **On-graph value.** The closure reaches it, and it is not a formula.
+- **On-graph formula.** The closure reaches it, and it has a formula.
+- **Outside the closure.** This extraction never reaches it.
+- **Structural blank.** A formula in the closure names it, but it is listed in
+  `blank_ranges`, so it is omitted from the graph. A series rectangle may cover
+  it; the key is then removed from that series. Do not author an input or
+  constant whose only job is that blank. Do not put user-fillable cells in
+  `blank_ranges`.
+
+| Cell in `data_range` | Input (leaf) | Input (`mode: override`) | Constant | Internal | Output |
+| --- | --- | --- | --- | --- | --- |
+| On-graph value | Allowed. This is what an input binds. | Allowed alongside formulas. | Allowed. The range needs at least one, or `no_leaf_constant_targets`. | Allowed. Stays baked. `leaf_in_formula_series` is a warning; double-bind as an input or constant only when callers must supply the value. | Same as internal. |
+| On-graph formula | Must fix: `non_leaf_input_overlap`. Narrow to value cells, or use `mode: override`. | Allowed. The range needs at least one, or `no_formula_override_targets`. | Must fix: `non_leaf_constant_overlap`. | Allowed. The range needs at least one, or `no_formula_internal_targets`. | Allowed. Export fails when the range has no on-graph formula (`data_range has no graph formula cells`). |
+| Outside the closure | Allowed. `partial_graph_overlap` is a warning. Do not narrow `data_range` to clear it. The cell stays on the published series. | Allowed. Same warning. It is not an override target. | Allowed. Same warning. The published constant still includes it. | Allowed. Same warning. `layout: series` drops the cell from the helper. `layout: matrix` keeps it in the rectangle. | Same as internal. |
+| Structural blank | Coverage is allowed. The key leaves the series. It does not count as the required value or formula. | Same. | Same. It does not satisfy `no_leaf_constant_targets`. | Same. It does not satisfy `no_formula_internal_targets`. | Same. It does not satisfy the export formula requirement. |
+
+`partial_graph_overlap` and `leaf_in_formula_series` do not fail resolution.
+Do not narrow `data_range` to clear them.
+
+Two exceptions:
+
+- A constant with `validation.intersect_graph_leaves: false` may lie entirely
+  outside the closure. That is a lookup table, not a structural blank.
+- A series with `axis_labels` must keep every remaining cell inside the
+  closure. An outside-closure header cell fails export.
+
+`bindings burndown` and `bindings audit` build the graph from the current
+sidecar's `data_range` targets, so the worklist is residual **inside the bound
+closure**, not every formula on every sheet. Widening a shard past the previous
+end requires widening extraction targets / overlapping internals so those cells
+stay in the dependency graph.

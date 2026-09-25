@@ -53,7 +53,10 @@ bindings for a workbook.
    using cached dynamic refs, author extract-time domains before the graph
    exists. See [references/validation-loop.md](references/validation-loop.md).
    Do not start from a Python `CONSTRAINTS` table.
-4. Cross-check proposed series against the extracted graph:
+4. Cross-check proposed series against the extracted graph. Cell kind and
+   direction decide whether a gap is legal; see
+   [Graph coverage](references/conventions.md#graph-coverage). Do not narrow
+   `data_range` to clear `partial_graph_overlap` or `leaf_in_formula_series`.
    - `input` / `constant` overlap **leaves**
    - `output` overlap **target / formula output** nodes
    - `internal` overlap **formula** nodes
@@ -67,6 +70,8 @@ bindings for a workbook.
    YAML as a first pass. Walk sheets and tables with domain meaning, and write
    the intended series correctly once.
 7. Run bundled checks (`validate` then `audit`) until resolution is clean.
+   `partial_graph_overlap` and `leaf_in_formula_series` are warnings. They do
+   not fail resolution, and they are not a reason to shrink `data_range`.
    Use `burndown` only as a **coverage worklist** for remaining holes *inside
    the current bound graph closure* (the dependency graph built from bound
    `data_range` targets). It is **not** a full workbook walk. Empty shards
@@ -119,6 +124,6 @@ Thin wrappers: `scripts/audit.sh`, `scripts/burndown.sh`, `scripts/upsert.sh`.
 
 ## Progressive disclosure
 
-- [references/conventions.md](references/conventions.md) — directions, layouts, keys, dimension `id` vs `concept`
+- [references/conventions.md](references/conventions.md) — directions, layouts, keys, dimension `id` vs `concept`, graph coverage
 - [references/pitfalls.md](references/pitfalls.md) — fill, measure shards, shared names, blanks, unique-address ownership
 - [references/validation-loop.md](references/validation-loop.md) — candidates → validate → undomained → audit → burndown → upsert
