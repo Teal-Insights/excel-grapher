@@ -627,3 +627,16 @@ def test_lockstep_string_map_caches_remap_per_field() -> None:
     assert again == found
     assert other is None
     assert slots.walks == 3
+
+
+def test_lockstep_string_map_cache_is_per_slot_map() -> None:
+    """A different slot map for the same fields is computed on its own."""
+    ctx, producer = _lockstep_pair(4)
+    swapped = _CountingSlots({0: 1, 1: 0, 2: 2, 3: 3})
+    identity = _CountingSlots({index: index for index in range(4)})
+    found = _lockstep_string_map(ctx, producer, "INSTRUMENT", swapped, "INSTRUMENT")
+    again = _lockstep_string_map(ctx, producer, "INSTRUMENT", identity, "INSTRUMENT")
+    assert found == {"COM1": "COM2", "COM2": "COM1", "COM3": "COM3", "COM4": "COM4"}
+    assert again is None
+    assert swapped.walks == 1
+    assert identity.walks == 1
