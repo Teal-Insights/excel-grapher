@@ -106,6 +106,18 @@ def test_skill_documents_authoring_loop_without_tiny_dsa() -> None:
     assert "use_cached_dynamic_refs=False" in joined
     assert "SeriesRelationError" in joined
     assert "BLANK_RANGES" in joined
+    assert "partial_graph_overlap" in joined
+    assert "leaf_in_formula_series" in joined
+    assert "non_leaf_input_overlap" in joined
+    assert "non_leaf_constant_overlap" in joined
+    assert "no_formula_override_targets" in joined
+    assert "no_leaf_constant_targets" in joined
+    assert "no_formula_internal_targets" in joined
+    assert "data_range has no graph formula cells" in joined
+    assert "intersect_graph_leaves: false" in joined
+    assert "axis_labels" in joined
+    assert "do not narrow" in lowered
+    assert "must be on-graph" not in lowered
     assert "bindings emit" not in lowered
     assert "author_bindings" not in lowered
 
