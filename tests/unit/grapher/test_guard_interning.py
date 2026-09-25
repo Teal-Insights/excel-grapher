@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import gc
+import weakref
 
 import pytest
 
@@ -84,12 +85,14 @@ def test_unreferenced_interned_guards_can_be_collected() -> None:
     """Pool entries are weak: dropping all strong refs frees the interned tree."""
     marker = "unique-gc-marker-zz999"
     expr = intern_guard(Compare(CellRef("Sheet1!ZZ999"), "=", Literal(marker)))
-    expr_id = id(expr)
+    # `id()` is the address. After the object is freed, CPython may recycle that
+    # address for the next equal tree, so an id inequality does not prove the
+    # pooled instance was collected.
+    ref = weakref.ref(expr)
     del expr
     gc.collect()
+    assert ref() is None
     revived = intern_guard(Compare(CellRef("Sheet1!ZZ999"), "=", Literal(marker)))
-    # Old pooled object was collected; this is a new interned instance.
-    assert id(revived) != expr_id
     twin = intern_guard(Compare(CellRef("Sheet1!ZZ999"), "=", Literal(marker)))
     assert twin is revived
 
