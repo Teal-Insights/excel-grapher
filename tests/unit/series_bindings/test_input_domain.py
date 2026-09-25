@@ -495,8 +495,8 @@ def test_coerce_input_measure_keeps_union_enum_members() -> None:
         enum=enum,
     )
     assert members == (-999, 0.0, "n.a.")
-    assert type(members[0]) is int
-    assert type(members[1]) is float
+    assert isinstance(members, tuple)
+    assert [type(member) for member in members] == [int, float, str]
 
 
 def test_coerce_setter_input_keeps_union_enum_members() -> None:
