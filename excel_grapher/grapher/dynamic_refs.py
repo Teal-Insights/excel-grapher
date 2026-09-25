@@ -5716,6 +5716,32 @@ def _collect_static_addresses_from_ast(
     return addrs
 
 
+def _finite_integer_union_values(cell_type: CellType, limits: DynamicRefLimits) -> list[int] | None:
+    """Return the sorted integers of an enum-plus-`between` union.
+
+    `None` means the union is not a finite integer domain: a text sentinel,
+    a real interval, a boolean member, or both interval kinds.
+    """
+    if cell_type.enum is None or cell_type.interval is None or cell_type.real_interval is not None:
+        return None
+    values: set[int] = set()
+    for item in cell_type.enum.values:
+        if isinstance(item, bool) or not isinstance(item, int):
+            return None
+        values.add(item)
+    values.update(_interval_to_values(cell_type.interval, limits))
+    return sorted(values)
+
+
+def _union_enumeration_error(addr: str) -> DynamicRefError:
+    """Error when a union cannot be listed as concrete dynamic-ref values."""
+    return DynamicRefError(
+        f"CellType for {addr!r} is a union domain; "
+        "OFFSET/INDEX/INDIRECT enumeration needs a finite integer union "
+        "or a single enum or integer interval"
+    )
+
+
 def _build_domains(
     addrs: Iterable[str],
     env: CellTypeEnv,
@@ -5729,14 +5755,13 @@ def _build_domains(
             if ct is None:
                 raise DynamicRefError(f"Missing CellType for {addr!r}")
             if is_union_domain(ct):
-                raise DynamicRefError(
-                    f"CellType for {addr!r} is a union domain; "
-                    "OFFSET/INDEX/INDIRECT enumeration needs a single enum or integer interval"
-                )
-            if ct.kind is not CellKind.NUMBER:
+                union_vals = _finite_integer_union_values(ct, limits)
+                if union_vals is None:
+                    raise _union_enumeration_error(addr)
+                vals = union_vals
+            elif ct.kind is not CellKind.NUMBER:
                 raise DynamicRefError(f"CellType for {addr!r} must be numeric, got {ct.kind!r}")
-            vals: list[int]
-            if ct.enum is not None:
+            elif ct.enum is not None:
                 vals = [int(v) for v in ct.enum.values]
             elif ct.interval is not None:
                 vals = _interval_to_values(ct.interval, limits)
@@ -5958,13 +5983,13 @@ def _build_value_domains(
             ct = _lookup_cell_type(env, addr)
             if ct is None:
                 raise DynamicRefError(f"Missing CellType for {addr!r}")
-            if is_union_domain(ct):
-                raise DynamicRefError(
-                    f"CellType for {addr!r} is a union domain; "
-                    "OFFSET/INDEX/INDIRECT enumeration needs a single enum or integer interval"
-                )
             values: list[Any]
-            if ct.enum is not None:
+            if is_union_domain(ct):
+                union_vals = _finite_integer_union_values(ct, limits)
+                if union_vals is None:
+                    raise _union_enumeration_error(addr)
+                values = union_vals
+            elif ct.enum is not None:
                 values = list(ct.enum.values)
             elif ct.interval is not None:
                 values = _interval_to_values(ct.interval, limits)

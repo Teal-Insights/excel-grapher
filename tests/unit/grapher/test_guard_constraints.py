@@ -4,7 +4,7 @@ import random
 from typing import Annotated
 from typing import Literal as TypingLiteral
 
-from excel_grapher.core.cell_types import Between, constraints_to_cell_type_env
+from excel_grapher.core.cell_types import Between, RealBetween, constraints_to_cell_type_env
 from excel_grapher.grapher.guard import (
     CellRef,
     Compare,
@@ -78,15 +78,10 @@ def test_guard_constraints_cell_cell_equality_contradicts_its_negation() -> None
 
 
 def test_union_domain_allows_either_arm_and_does_not_pin() -> None:
-    from excel_grapher.core.cell_types import CellKind, CellType, EnumDomain, RealIntervalDomain
-
-    env = {
-        "Inputs!A1": CellType(
-            kind=CellKind.ANY,
-            enum=EnumDomain(values=frozenset({"n.a."})),
-            real_interval=RealIntervalDomain(min=-1.0, max=1.0),
-        )
-    }
+    env = constraints_to_cell_type_env(
+        {"Inputs!A1": TypingLiteral["n.a."] | Annotated[float, RealBetween(-1.0, 1.0)]},
+        {},
+    )
     seeded = GuardConstraints().seed_cell_type_env(env)
     assert seeded is not None
     assert seeded.equalities == ()

@@ -456,6 +456,94 @@ def test_require_input_domain_accepts_sentinel_or_interval() -> None:
         require_input_domain(11, years, series_id="years")
 
 
+def test_require_input_domain_rejects_both_intervals() -> None:
+    domain = {
+        "between": {"min": 0, "max": 1},
+        "real_between": {"min": 10.0, "max": 20.0},
+    }
+    with pytest.raises(ValueError, match="between and real_between"):
+        require_input_domain(0, domain, series_id="share")
+
+
+def test_coerce_input_measure_keeps_union_enum_members() -> None:
+    """An integer code is an enum member, so float coercion must not rewrite it."""
+    enum = frozenset({-999, "n.a."})
+    domain = {"enum": enum, "real_between": {"min": 0.0, "max": 1.0}}
+    kept = coerce_input_measure(-999, dtype="float", series_id="code", enum=enum)
+    assert kept == -999
+    assert type(kept) is int
+    require_input_domain(kept, domain, series_id="code")
+    sentinel = coerce_input_measure("n.a.", dtype="float", series_id="code", enum=enum)
+    assert sentinel == "n.a."
+    require_input_domain(sentinel, domain, series_id="code")
+    measured = coerce_input_measure(0, dtype="float", series_id="code", enum=enum)
+    assert measured == 0.0
+    assert type(measured) is float
+    require_input_domain(measured, domain, series_id="code")
+    floated = coerce_input_measure(
+        -999,
+        dtype="float",
+        series_id="code",
+        enum=frozenset({-999.0, "n.a."}),
+    )
+    assert floated == -999.0
+    assert type(floated) is float
+    members = coerce_input_measure(
+        (-999, 0, "n.a."),
+        dtype="float",
+        series_id="code",
+        enum=enum,
+    )
+    assert members == (-999, 0.0, "n.a.")
+    assert type(members[0]) is int
+    assert type(members[1]) is float
+
+
+def test_coerce_setter_input_keeps_union_enum_members() -> None:
+    domain = {"enum": frozenset({-999, "n.a."}), "real_between": {"min": 0.0, "max": 1.0}}
+    assert coerce_setter_input(
+        -999,
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="float",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": -999}]
+    assert coerce_setter_input(
+        "n.a.",
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="float",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": "n.a."}]
+    assert coerce_setter_input(
+        0,
+        layout="scalar",
+        key_fields=(),
+        measure_field="OBS_VALUE",
+        key_order=None,
+        strict=True,
+        measure_dtype="float",
+        measure_domain=domain,
+    ) == [{"OBS_VALUE": 0.0}]
+    with pytest.raises(ValueError, match="out of domain"):
+        coerce_setter_input(
+            -1000,
+            layout="scalar",
+            key_fields=(),
+            measure_field="OBS_VALUE",
+            key_order=None,
+            strict=True,
+            measure_dtype="float",
+            measure_domain=domain,
+        )
+
+
 def test_measure_domain_from_series_rejects_both_intervals() -> None:
     with pytest.raises(ValueError, match="between and real_between"):
         measure_domain_from_series(

@@ -1332,6 +1332,39 @@ def _binding_dtype(series: BoundSeries) -> str:
     return {"str": "string", "integer": "int", "date": "datetime"}.get(raw, raw)
 
 
+def _union_enum_literal(domain: Mapping[str, Any] | None) -> str | None:
+    """Return a generated `enum=` literal for a union domain, if it has one."""
+    if domain is None or "enum" not in domain:
+        return None
+    if "between" not in domain and "real_between" not in domain:
+        return None
+    return _python_literal(domain["enum"])
+
+
+def _coerce_input_lines(
+    series: BoundSeries,
+    series_id: str,
+    quoted_id: str,
+    measure_domain: Mapping[str, Any] | None,
+) -> list[str]:
+    """Emit dtype coercion, preserving union enum members."""
+    dtype_lit = _python_literal(_binding_dtype(series))
+    enum_literal = _union_enum_literal(measure_domain)
+    if enum_literal is None:
+        return [
+            f"    {series_id} = coerce_input_measure("
+            f"{series_id}, dtype={dtype_lit}, series_id={quoted_id})"
+        ]
+    return [
+        f"    {series_id} = coerce_input_measure(",
+        f"        {series_id},",
+        f"        dtype={dtype_lit},",
+        f"        series_id={quoted_id},",
+        f"        enum={enum_literal},",
+        "    )",
+    ]
+
+
 def _input_check(
     series: BoundSeries,
     catalog: SeriesCatalog,
@@ -1356,11 +1389,9 @@ def _input_check(
             lines.append(f"    {schema}.bind({bind}).validate({series_id})")
         else:
             lines.append(f"    {schema}.validate({series_id})")
+    measure_domain = measure_domain_from_series(series.raw)
     used.add("coerce_input_measure")
-    lines.append(
-        f"    {series_id} = coerce_input_measure("
-        f"{series_id}, dtype={_python_literal(_binding_dtype(series))}, series_id={quoted_id})"
-    )
+    lines.extend(_coerce_input_lines(series, series_id, quoted_id, measure_domain))
     element = _constraint_element(series, domains)
     if element is not None:
         used.add("require_annotated_domain")
@@ -1382,7 +1413,7 @@ def _input_check(
                     indent="        ",
                 )
             )
-    domain = None if element is not None else measure_domain_from_series(series.raw)
+    domain = None if element is not None else measure_domain
     if domain is not None:
         used.add("require_input_domain")
         domain_literal = _python_literal(domain)

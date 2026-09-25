@@ -1097,12 +1097,38 @@ arm (`int` for `between`, `float` or `number` for `real_between`). `between`
 and `real_between` cannot be combined, and `from_workbook` stays a pin by
 itself. `input.value_map` cannot be combined with a union.
 
+An integer code in `enum` is compared to the value the caller passed, before
+`int` is rewritten to `float`. `compute_*(code=-999)` stays an `int` when
+`-999` is a member. A number that matches only the interval is still coerced
+(`0` becomes `0.0` when the measure dtype is `float`). Membership is
+type-strict: `1` is not `True`, and `-999` is not `-999.0` until coercion
+runs for a value that was not already a member. Author the code as an
+integer (`-999`) or as a float (`-999.0`) to match what callers pass.
+
+Python enum membership is case-sensitive. Excel's `=` comparison is not, so
+`A1="n.a."` also accepts `N.A.` while `compute_*` accepts only the declared
+spelling.
+
+The same union is a constraint annotation:
+`Literal["n.a."] | Annotated[float, RealBetween(...)]`. Two `Literal` arms
+merge into one enum (`Literal["a"] | Literal["b"]`). An open type next to a
+constrained arm (`Literal["n.a."] | float`) is rejected; put `Between` or
+`RealBetween` on the numeric arm. A finite integer union is enumerated for
+OFFSET, INDEX, and INDIRECT as the combined set. A text sentinel unioned
+with `real_between` is not enumerated.
+
+Cached workbook text such as `n.a.` is kept for measure dtype `float` or
+`number`. Dtype `int` cannot read that cached text; the cell's cached value
+has to be an integer, and callers can still pass the sentinel.
+
 Domain checks run on each required `compute_*` / `Model` argument
-(scalar or every sequence member) before the evaluation walk, after the same
-safe dtype coercion setters use (`int` becomes `float` when the measure
-dtype is `float`; `float` is never narrowed to `int`).
-A value of the wrong type raises `ValueError` naming the type, not a
-bounds failure.
+(scalar or every sequence member) before the evaluation walk. For a union,
+enum membership is tested on the original value, then the same safe dtype
+coercion setters use runs for everything else (`int` becomes `float` when
+the measure dtype is `float`; `float` is never narrowed to `int`).
+A value of the wrong type for a single-arm domain raises `ValueError`
+naming the type, not a bounds failure. A union mismatch names the whole
+domain.
 
 ## Scalar input maps (1.15.0)
 

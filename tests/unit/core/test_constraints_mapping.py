@@ -67,15 +67,47 @@ def test_constraints_mapping_unions_literal_with_real_interval() -> None:
     assert cell.interval is None
 
 
-def test_numeric_union_is_not_enumerated_as_its_enum_arm() -> None:
+def test_integer_union_enumerates_enum_and_interval() -> None:
+    from excel_grapher.grapher.dynamic_refs import _build_domains, _build_value_domains
+
+    schema: dict[str, Any] = {
+        "Sheet1!A1": Literal[-1, 0, 1] | Annotated[int, Between(0, 3)],
+    }
+    env = constraints_to_cell_type_env(schema, {})
+    assert _build_domains(["Sheet1!A1"], env, DynamicRefLimits()) == {"Sheet1!A1": [-1, 0, 1, 2, 3]}
+    assert _build_value_domains(["Sheet1!A1"], env, DynamicRefLimits()) == {
+        "Sheet1!A1": [-1, 0, 1, 2, 3]
+    }
+
+
+def test_text_sentinel_union_is_not_enumerated() -> None:
     from excel_grapher.grapher.dynamic_refs import DynamicRefError, _build_domains
 
     schema: dict[str, Any] = {
-        "Sheet1!A1": Literal[0, 1] | Annotated[int, Between(0, 3)],
+        "Sheet1!A1": Literal["n.a."] | Annotated[float, RealBetween(-1.0, 1.0)],
     }
     env = constraints_to_cell_type_env(schema, {})
     with pytest.raises(DynamicRefError, match="union"):
         _build_domains(["Sheet1!A1"], env, DynamicRefLimits())
+
+
+def test_constraints_mapping_merges_literal_union_arms() -> None:
+    env = constraints_to_cell_type_env(
+        {"Sheet1!A1": Literal["a"] | Literal["b"]},
+        {},
+    )
+    cell = env["Sheet1!A1"]
+    assert cell.enum == EnumDomain(values=frozenset({"a", "b"}))
+    assert cell.interval is None
+    assert cell.real_interval is None
+
+
+def test_constraints_mapping_rejects_open_numeric_arm() -> None:
+    with pytest.raises(ValueError, match="unconstrained"):
+        constraints_to_cell_type_env(
+            {"Sheet1!A1": Literal["n.a."] | float},
+            {},
+        )
 
 
 def test_constraints_mapping_rejects_two_interval_arms() -> None:
