@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Sequence
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 
@@ -23,6 +24,7 @@ from excel_grapher.exporter.inverted_tree import ast_emit as ast_emit_mod
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     EmitContext,
     _lockstep_producer_slots,
+    _lockstep_string_map,
 )
 from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, Statement
 from excel_grapher.exporter.inverted_tree.deps import DependenceEdge, SeriesDeps
@@ -586,3 +588,42 @@ def test_lockstep_producer_slots_rejects_shared_axis_permutation() -> None:
     """A rotated column walk is not lockstep even when each host reads one slot."""
     ctx, producer = _lockstep_column_pair(4, indicators=2, rotate=True)
     assert _lockstep_producer_slots(ctx, producer) is None
+
+
+class _CountingSlots(dict[int, int]):
+    """Slot map that counts walks of its keys."""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        super().__init__(*args, **kwargs)  # type: ignore[arg-type]
+        self.walks = 0
+
+    def __iter__(self):
+        self.walks += 1
+        return super().__iter__()
+
+
+def test_lockstep_string_map_caches_identity_none() -> None:
+    """An identity pairing is `None`, and a repeat lookup does not walk slots."""
+    ctx, producer = _lockstep_pair(8)
+    slots = _CountingSlots({index: index for index in range(8)})
+    assert _lockstep_string_map(ctx, producer, "INSTRUMENT", slots, "INSTRUMENT") is None
+    assert _lockstep_string_map(ctx, producer, "INSTRUMENT", slots, "INSTRUMENT") is None
+    assert slots.walks == 1
+
+
+def test_lockstep_string_map_caches_remap_per_field() -> None:
+    """A real remap is reused, and a different field does not share that entry."""
+    ctx, producer = _lockstep_pair(3)
+    mapped = replace(
+        producer,
+        domain=tuple(KeyPoint((("INSTRUMENT", label),)) for label in ("Alpha", "Beta", "Gamma")),
+    )
+    slots = _CountingSlots({index: index for index in range(3)})
+    assert _lockstep_string_map(ctx, mapped, "MISSING", slots, "INSTRUMENT") is None
+    found = _lockstep_string_map(ctx, mapped, "INSTRUMENT", slots, "INSTRUMENT")
+    again = _lockstep_string_map(ctx, mapped, "INSTRUMENT", slots, "INSTRUMENT")
+    other = _lockstep_string_map(ctx, mapped, "INSTRUMENT", slots, "OTHER")
+    assert found == {"COM1": "Alpha", "COM2": "Beta", "COM3": "Gamma"}
+    assert again == found
+    assert other is None
+    assert slots.walks == 3
