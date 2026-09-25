@@ -572,8 +572,27 @@ def _lockstep_string_map(
     """Return host_field -> producer_field values when that pairing is a function.
 
     A constant producer field (every host maps to the same label) stays a
-    literal, not a remap through the host key.
+    literal, not a remap through the host key. The result, including `None`,
+    is cached on the host series for the producer and both fields.
     """
+    cache = ctx.host._emit_cache
+    cache_key = ("lockstep_string_map", producer.series_id, producer_field, host_field)
+    cached = cache.get(cache_key, _UNSET)
+    if cached is not _UNSET:
+        return cached
+    mapping = _lockstep_string_pairs(ctx, producer, producer_field, slots, host_field)
+    cache[cache_key] = mapping
+    return mapping
+
+
+def _lockstep_string_pairs(
+    ctx: EmitContext,
+    producer: BoundSeries,
+    producer_field: str,
+    slots: Mapping[int, int],
+    host_field: str,
+) -> dict[object, object] | None:
+    """Build one host-field -> producer-field map, or `None` when it is not a function."""
     mapping: dict[object, object] = {}
     for host_index in sorted(slots):
         producer_index = slots[host_index]

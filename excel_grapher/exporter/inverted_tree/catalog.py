@@ -695,6 +695,27 @@ def schedule_axis_coord(address: CanonicalAddress, catalog: SeriesCatalog) -> in
     return schedule_coord(address, catalog)
 
 
+def _labeller_index(
+    series: Mapping[str, BoundSeries],
+) -> Mapping[str, tuple[tuple[BoundSeries, frozenset[str | int]], ...]]:
+    """Group labellers by `axis_labels` with each labeller's covered keys.
+
+    A series is a labeller when `axis_labels` is set and its tensor domain
+    has an axis. Covered keys are the keys of that first axis, which is
+    the set `labeller_for` tests for containment.
+    """
+    grouped: dict[str, list[tuple[BoundSeries, frozenset[str | int]]]] = {}
+    for item in series.values():
+        axis_name = item.axis_labels
+        if axis_name is None:
+            continue
+        axes = item.tensor_domain.axes
+        if not axes:
+            continue
+        grouped.setdefault(axis_name, []).append((item, frozenset(axes[0].keys)))
+    return MappingProxyType({name: tuple(entries) for name, entries in grouped.items()})
+
+
 @dataclass(frozen=True, slots=True)
 class SeriesCatalog:
     """Bindings series keyed by id, with reverse address lookup.
@@ -702,6 +723,9 @@ class SeriesCatalog:
     `schedule` is built once in `build_catalog` (and copied by
     `partition_catalog`). Join coordinates are a catalog property, not a
     lazily cached attribute of scheduling.
+
+    Labeller lookup is an index of series that declare `axis_labels`, built
+    with the catalog. `labeller_for` checks that index only.
 
     Graph node identity stays `CellKey`. Use `key_point_for` and `binds_for`
     to reach per-cell key coordinates and series-level dimension binds
@@ -712,6 +736,12 @@ class SeriesCatalog:
     order: tuple[str, ...]
     address_to_id: dict[CanonicalAddress, str]
     schedule: ScheduleIndex = field(repr=False, compare=False)
+    _labellers_by_axis: Mapping[str, tuple[tuple[BoundSeries, frozenset[str | int]], ...]] = field(
+        init=False, repr=False, compare=False
+    )
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "_labellers_by_axis", _labeller_index(self.series))
 
     def get(self, series_id: str) -> BoundSeries:
         """Return the series named `series_id`."""
@@ -772,14 +802,11 @@ class SeriesCatalog:
 
     def labeller_for(self, axis_name: str, keys: Sequence[str | int]) -> BoundSeries | None:
         """Return the authored labeller covering `keys` for `axis_name`."""
+        candidates = self._labellers_by_axis.get(axis_name)
+        if not candidates:
+            return None
         requested = set(keys)
-        matches = [
-            series
-            for series in self.series.values()
-            if series.axis_labels == axis_name
-            and series.tensor_domain.axes
-            and requested <= set(series.tensor_domain.axes[0].keys)
-        ]
+        matches = [series for series, covered in candidates if requested <= covered]
         if len(matches) > 1:
             raise InvertedTreeExportError(
                 f"axis {axis_name!r}: multiple labellers cover keys {tuple(keys)!r}"
