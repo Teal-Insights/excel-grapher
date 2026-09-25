@@ -40,6 +40,10 @@ class _CountingDict(dict[str, BoundSeries]):
         self.scans += 1
         return super().__iter__()
 
+    def __getitem__(self, key: str) -> BoundSeries:
+        self.scans += 1
+        return super().__getitem__(key)
+
 
 def _series(
     series_id: str,
@@ -128,6 +132,10 @@ def test_labeller_for_does_not_rescan_the_catalog(monkeypatch: pytest.MonkeyPatc
     pinned = _series("pinned", [], key=None, axis_labels="TIME_PERIOD")
     fillers = [_series(f"extra_{index}", [index]) for index in range(400)]
     catalog, scans = _catalog(*fillers, pinned, years)
+    indexed = catalog._labellers_by_axis["TIME_PERIOD"]
+    assert [series.series_id for series, _covered in indexed] == ["years"]
+    assert indexed[0][1] == frozenset({2020, 2021, 2022})
+    assert set(catalog._labellers_by_axis) == {"TIME_PERIOD"}
     before = scans.scans
     accesses = {"n": 0}
     original = BoundSeries.tensor_domain.fget
