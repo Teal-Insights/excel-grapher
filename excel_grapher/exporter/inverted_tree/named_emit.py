@@ -1731,7 +1731,12 @@ class _SnapshotInputs(_BoundInputs):
             )
             for name in names
         }
-        return cls(**values)'''
+        return cls(**values)
+
+    @classmethod
+    def describe(cls) -> dict[str, InputField]:
+        """Axes, keys, value annotation, default, and cells of each field."""
+        return describe_inputs(cls)'''
 
 
 def _model_init(catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None) -> list[str]:
@@ -1774,8 +1779,21 @@ def _input_class(
         "",
     ]
     for series in inputs:
-        lines.append(f"    {series.series_id}: {_annotation(series, domains)}")
+        lines.extend(
+            [
+                f"    {series.series_id}: {_annotation(series, domains)} = _field(",
+                f"        metadata={_input_field_metadata(series)},",
+                "    )",
+            ]
+        )
     return "\n".join(lines)
+
+
+def _input_field_metadata(series: BoundSeries) -> str:
+    """Field metadata linking an input to its `data` default and cells."""
+    name = series.series_id.upper()
+    cells = f"data.{name}_CELLS" if series.single_valued else f"{_binding(series)}.cells"
+    return f'{{"default": data.{name}_DEFAULT, "cells": {cells}}}'
 
 
 def _model_cells_method() -> list[str]:
@@ -1918,6 +1936,8 @@ def emit_named_model(
     ]
     body = "\n\n\n".join(section for section in sections if section)
     stdlib = ["from dataclasses import Field, dataclass, fields"]
+    if "_field(" in body:
+        stdlib.append("from dataclasses import field as _field")
     if "datetime" in body:
         stdlib.append("from datetime import datetime")
     if "@cached_property" in body:
@@ -1936,9 +1956,8 @@ def emit_named_model(
         if token in body and name not in imported
     )
     local = [f"from . import {', '.join(imported)}"]
-    domain_names = _runtime_domain_names(body)
-    if domain_names:
-        local.append(f"from .runtime import {', '.join(domain_names)}")
+    runtime_names = sorted(["InputField", *_runtime_domain_names(body), "describe_inputs"])
+    local.append(f"from .runtime import {', '.join(runtime_names)}")
     if "read_bound_inputs" in body:
         local.append("from .workbook import read_bound_inputs")
     lines = [
@@ -2816,8 +2835,9 @@ def _emit_named_modules(
     workbook_source = (export_runtime / "workbook.py").read_text(encoding="utf-8")
     return {
         "__init__.py": init_source
-        + "\nfrom .tensor import Axis, Domain, Series, Tensor, TensorSchema\n"
-        + "__all__ += ['Axis', 'Domain', 'Series', 'Tensor', 'TensorSchema']\n",
+        + "\nfrom .runtime import InputField\n"
+        + "from .tensor import Axis, Domain, Series, Tensor, TensorSchema\n"
+        + "__all__ += ['Axis', 'Domain', 'InputField', 'Series', 'Tensor', 'TensorSchema']\n",
         "api.py": api,
         "model.py": model,
         "validation.py": validation,

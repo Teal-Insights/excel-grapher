@@ -8,7 +8,7 @@ from __future__ import annotations
 
 import types
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, fields
 from itertools import product
 from types import MappingProxyType
 from typing import (
@@ -23,6 +23,7 @@ from typing import (
     cast,
     get_args,
     get_origin,
+    get_type_hints,
 )
 
 from excel_grapher.core.grid import Range
@@ -433,6 +434,59 @@ def take(values: Sequence[T], indices: Sequence[int] | slice) -> tuple[T, ...]:
             raise ValueError(f"take index {index} is outside series of length {length}")
         result.append(values[index])
     return tuple(result)
+
+
+@dataclass(frozen=True)
+class InputField:
+    """Public description of one field of a generated `*Inputs` record.
+
+    Attributes:
+        name: Field name, which is also the input series id.
+        values: Annotation of one value, including `Literal` choices or
+            `Annotated` bounds.
+        domain: Snapshot domain of a series input, or `None` for a scalar.
+        default: Workbook default bound by `from_defaults`.
+        cells: Authored worksheet cells keyed by coordinate.
+    """
+
+    name: str
+    values: object
+    domain: Domain | None
+    default: object
+    cells: object
+
+    @property
+    def is_series(self) -> bool:
+        """Whether the field is a tensor over named axes."""
+        return self.domain is not None
+
+    @property
+    def axes(self) -> tuple[Axis, ...]:
+        """Named axes in declaration order; empty for a scalar."""
+        return () if self.domain is None else self.domain.axes
+
+    @property
+    def size(self) -> int:
+        """Number of values the field holds."""
+        return 1 if self.domain is None else len(self.domain)
+
+
+def describe_inputs(record: type) -> dict[str, InputField]:
+    """Describe each field of a generated `*Inputs` record in declaration order."""
+    hints = get_type_hints(record, include_extras=True)
+    described: dict[str, InputField] = {}
+    for spec in fields(record):
+        default = spec.metadata["default"]
+        domain = default.domain if isinstance(default, Tensor) else None
+        hint = hints[spec.name]
+        described[spec.name] = InputField(
+            name=spec.name,
+            values=hint if domain is None else get_args(hint)[0],
+            domain=domain,
+            default=default,
+            cells=spec.metadata["cells"],
+        )
+    return described
 
 
 def as_records(
