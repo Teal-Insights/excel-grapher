@@ -444,7 +444,9 @@ class InputField:
         name: Field name, which is also the input series id.
         values: Annotation of one value, including `Literal` choices or
             `Annotated` bounds.
-        domain: Snapshot domain of a series input, or `None` for a scalar.
+        domain: Coordinate domain (axes and keys) of a series input, or `None`
+            for a scalar. This is not the binding's value `domain`; value
+            bounds and choices live on `values`.
         default: Workbook default bound by `from_defaults`.
         cells: Authored worksheet cells keyed by coordinate.
     """
@@ -479,9 +481,15 @@ def describe_inputs(record: type) -> dict[str, InputField]:
         default = spec.metadata["default"]
         domain = default.domain if isinstance(default, Tensor) else None
         hint = hints[spec.name]
+        values = hint
+        if domain is not None:
+            args = get_args(hint)
+            if not args:
+                raise TypeError(f"{spec.name}: series annotation {hint!r} is not parameterized")
+            values = args[0]
         described[spec.name] = InputField(
             name=spec.name,
-            values=hint if domain is None else get_args(hint)[0],
+            values=values,
             domain=domain,
             default=default,
             cells=spec.metadata["cells"],

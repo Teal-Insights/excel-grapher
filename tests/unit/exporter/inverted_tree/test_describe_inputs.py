@@ -140,3 +140,14 @@ def test_inputs_class_source_snapshot(tmp_path: Path) -> None:
         '        metadata={"default": data.RATE_DEFAULT, "cells": data.RATE.cells},\n'
         "    )"
     )
+
+
+def test_describe_rejects_an_unparameterized_series_annotation(tiny_dsa) -> None:
+    @dataclasses.dataclass(frozen=True)
+    class Bare:
+        growth: object = dataclasses.field(
+            metadata={"default": tiny_dsa.data.GROWTH_BASELINE_DEFAULT, "cells": None}
+        )
+
+    with pytest.raises(TypeError, match=r"growth: series annotation .* is not parameterized"):
+        tiny_dsa.runtime.describe_inputs(Bare)
