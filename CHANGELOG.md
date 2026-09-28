@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.10.3 (2026-09-28)
+
+### Testing
+
+- Skip shipped-module type check when NumPy is absent
+  ([`2e6acfa`](https://github.com/Teal-Insights/excel-grapher/commit/2e6acfa95c37d1a6567ed72e4acff902a8d5316c))
+
+
 ## v23.10.2 (2026-09-28)
 
 ### Bug Fixes
