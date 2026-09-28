@@ -82,6 +82,7 @@ from .guard import (
     instantiate_element_guard,
     or_guard,
 )
+from .guard import CellRef as GuardCellRef
 from .node import Node
 from .parser import (
     DEFAULT_MAX_RANGE_CELLS,
@@ -385,6 +386,40 @@ def _sequential_default_guard(negations: list[GuardExpr]) -> GuardExpr:
     if len(negations) == 1:
         return negations[0]
     return And(tuple(negations))
+
+
+def _is_integer_valued(expr: GuardExpr, cell_type_env: CellTypeEnv | None) -> bool:
+    """Return whether `expr` provably holds only (non-bool) integers."""
+    if isinstance(expr, Literal):
+        return isinstance(expr.value, int) and not isinstance(expr.value, bool)
+    if not isinstance(expr, GuardCellRef) or cell_type_env is None:
+        return False
+    cell_type = cell_type_env.get(normalize_cell_type_env_key(str(expr.key)))
+    if cell_type is None or cell_type.real_interval is not None:
+        return False
+    if cell_type.enum is not None and not all(
+        isinstance(v, int) and not isinstance(v, bool) for v in cell_type.enum.values
+    ):
+        return False
+    return cell_type.interval is not None or cell_type.enum is not None
+
+
+def _choose_branch_guard(
+    index_expr: GuardExpr, i: int, cell_type_env: CellTypeEnv | None
+) -> GuardExpr:
+    """Guard for `CHOOSE` branch `i`, which Excel selects when `INT(index) = i`.
+
+    A provably integer index keeps the exact `index = i` form; otherwise the
+    truncation window `index >= i AND index < i+1` stays sound for fractions.
+    """
+    if _is_integer_valued(index_expr, cell_type_env):
+        return Compare(left=index_expr, op="=", right=Literal(i))
+    return And(
+        (
+            Compare(left=index_expr, op=">=", right=Literal(i)),
+            Compare(left=index_expr, op="<", right=Literal(i + 1)),
+        )
+    )
 
 
 def _span_contains(outer: tuple[int, int], inner: tuple[int, int]) -> bool:
@@ -1642,10 +1677,11 @@ def create_dependency_graph(
                 for sh, a1 in extract_expr_deps(index_s):
                     _merge_guarded_dep(out, (sh, a1), None)
 
+                index_env = dynamic_refs.cell_type_env if dynamic_refs is not None else None
                 for i, choice_s in enumerate(choose_args[1:], start=1):
                     guard: GuardExpr | None = None
                     if index_expr is not None:
-                        guard = Compare(left=index_expr, op="=", right=Literal(i))
+                        guard = _choose_branch_guard(index_expr, i, index_env)
                     add_branch(choice_s, guard)
                 return out
 

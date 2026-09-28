@@ -296,8 +296,12 @@ def test_CHOOSE_nested_in_IF_branch_conjoins_index_guard_with_outer_condition(
     workbook_factory: WorkbookFactory,
 ) -> None:
     b1_is_1 = Compare(left=CellRef(key="Sheet1!B1"), op="=", right=Literal(value=1))
-    c1_selects_1 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=1))
-    c1_selects_2 = Compare(left=CellRef(key="Sheet1!C1"), op="=", right=Literal(value=2))
+    c1 = CellRef(key="Sheet1!C1")
+    # C1 has no integer domain, so each branch guards Excel's truncation window.
+    c1_ge_1 = Compare(left=c1, op=">=", right=Literal(value=1))
+    c1_lt_2 = Compare(left=c1, op="<", right=Literal(value=2))
+    c1_ge_2 = Compare(left=c1, op=">=", right=Literal(value=2))
+    c1_lt_3 = Compare(left=c1, op="<", right=Literal(value=3))
 
     path = workbook_factory(
         lambda ws, _wb: write_single_row(
@@ -310,8 +314,12 @@ def test_CHOOSE_nested_in_IF_branch_conjoins_index_guard_with_outer_condition(
 
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!B1") is None
     assert graph.get_edge_guard("Sheet1!F1", "Sheet1!C1") == b1_is_1
-    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == And(operands=(b1_is_1, c1_selects_1))
-    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") == And(operands=(b1_is_1, c1_selects_2))
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!D1") == And(
+        operands=(b1_is_1, c1_ge_1, c1_lt_2)
+    )
+    assert graph.get_edge_guard("Sheet1!F1", "Sheet1!E1") == And(
+        operands=(b1_is_1, c1_ge_2, c1_lt_3)
+    )
 
 
 def test_IF_nested_in_SWITCH_result_conjoins_with_match_guard(
