@@ -136,7 +136,7 @@ def test_cached_text_constant_emits_measure_tensor(tmp_path: Path) -> None:
     assert "Sequence[" not in internals
 
 
-def _run_ty(package: Path) -> subprocess.CompletedProcess[str]:
+def _run_ty(package: Path, *ignore: str) -> subprocess.CompletedProcess[str]:
     repo_root = Path(__file__).resolve().parents[4]
     return subprocess.run(
         [
@@ -151,6 +151,7 @@ def _run_ty(package: Path) -> subprocess.CompletedProcess[str]:
             str(repo_root),
             "--ignore",
             "unresolved-attribute",
+            *(arg for rule in ignore for arg in ("--ignore", rule)),
             str(package / "data.py"),
             str(package / "internals.py"),
             str(package / "api.py"),
@@ -170,5 +171,37 @@ def test_cached_text_constant_and_helper_type_check_together(tmp_path: Path) -> 
     package.mkdir()
     for filename, source in modules.items():
         (package / filename).write_text(source, encoding="utf-8")
-    ty = _run_ty(package)
+    # `invalid-assignment` in validation.py is issue 1011, unrelated to blank defaults.
+    ty = _run_ty(package, "invalid-assignment")
+    assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
+
+
+def _blank_scalar_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "blank_scalar.xlsx",
+        {"S": {"F1": 2.0, "G1": "=F1+F2"}},
+    )
+
+
+def _blank_scalar_bindings() -> dict:
+    return bindings_document(
+        series_entry("multiplier", "S!F1", layout="scalar", direction="input"),
+        series_entry("adjustment", "S!F2", layout="scalar", direction="input"),
+        series_entry("total", "S!G1", layout="scalar", direction="output"),
+    )
+
+
+def test_blank_scalar_input_annotation_admits_none(tmp_path: Path) -> None:
+    """Issue 1012 — a blank scalar default is `None`, so its annotation must admit it."""
+    modules = generate_inverted(_blank_scalar_workbook(tmp_path), _blank_scalar_bindings())
+    assert "ADJUSTMENT_DEFAULT = None" in modules["data.py"]
+    assert "adjustment: float | str | None = data.ADJUSTMENT_DEFAULT" in modules["model.py"]
+    assert "multiplier: float | str = data.MULTIPLIER_DEFAULT" in modules["model.py"]
+    assert "def _check_adjustment(adjustment: float | str | None)" in modules["validation.py"]
+    package = tmp_path / "blank_scalar_package"
+    package.mkdir()
+    for filename, source in modules.items():
+        (package / filename).write_text(source, encoding="utf-8")
+    # `invalid-assignment` in validation.py is issue 1011, unrelated to blank defaults.
+    ty = _run_ty(package, "invalid-assignment")
     assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
