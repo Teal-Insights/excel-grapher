@@ -91,18 +91,22 @@ class Grid:
             return Grid(nrows, ncols, None, None, value)
         ndarray_rows = _as_nested_rows_from_ndarray(value)
         if ndarray_rows is not None:
-            if not ndarray_rows:
-                ndarray_rows = [[None]]
-            return Grid(len(ndarray_rows), len(ndarray_rows[0]), None, ndarray_rows)
+            return Grid._from_rows(ndarray_rows)
         if isinstance(value, (list, tuple)):
-            rows = [
-                list(row) if isinstance(row, (list, tuple)) else [row]
-                for row in cast("list[CellValue]", value)
-            ]
-            if not rows:
-                rows = [[None]]
-            return Grid(len(rows), len(rows[0]), None, cast("list[list[CellValue]]", rows))
+            return Grid._from_rows(
+                [
+                    list(row) if isinstance(row, (list, tuple)) else [row]
+                    for row in cast("list[CellValue]", value)
+                ]
+            )
         return None
+
+    @staticmethod
+    def _from_rows(rows: list[list[CellValue]]) -> Grid:
+        """Wrap nested rows, standing in a single blank cell for an empty array."""
+        if not rows:
+            rows = [[None]]
+        return Grid(len(rows), len(rows[0]), None, rows)
 
     @property
     def array(self) -> object:

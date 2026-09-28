@@ -231,8 +231,21 @@ def block_cells(
     sheet: str,
     first_row: int,
     first_column: str,
-    row_axis: Axis | AxisTemplate,
-    col_axis: Axis | AxisTemplate,
+    row_axis: AxisTemplate,
+    col_axis: LayoutKeys | AxisTemplate,
+    *,
+    cols_first: bool = False,
+    exceptions: Mapping[Coordinate, str] | None = None,
+) -> ProvenanceTemplate: ...
+
+
+@overload
+def block_cells(
+    sheet: str,
+    first_row: int,
+    first_column: str,
+    row_axis: LayoutKeys,
+    col_axis: AxisTemplate,
     *,
     cols_first: bool = False,
     exceptions: Mapping[Coordinate, str] | None = None,
