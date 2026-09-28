@@ -34,7 +34,33 @@ def test_generate_modules_package_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
         series_entry("src", "S!A1", layout="scalar", direction="input"),
         series_entry("out", "S!B1", layout="scalar", direction="output"),
     )
-    modules = generate_inverted(workbook, document)
+    _assert_clean_package(tmp_path, generate_inverted(workbook, document))
+
+
+def test_formula_series_domains_type_check_as_bound(tmp_path: Path) -> None:
+    """Formula series with a concrete domain expose `Domain`, not a template union."""
+    cells: dict[str, object] = {"A2": "rate", "A3": "growth", "A4": "level", "F1": 2.0}
+    for col, year in zip("BCD", (2024, 2025, 2026), strict=True):
+        cells[f"{col}1"] = year
+        cells[f"{col}2"] = 0.05
+        cells[f"{col}3"] = f"={col}2*$F$1"
+        cells[f"{col}4"] = f"=1+{col}3" if col == "B" else f"={chr(ord(col) - 1)}4*(1+{col}3)"
+    # A sparse input and formula over the same years (2025 is a structural blank).
+    cells.update({"B5": 0.1, "D5": 0.2, "B6": "=B5*2", "D6": "=D5*2"})
+    workbook = write_workbook(tmp_path / "rows.xlsx", {"S": cells})
+    row = {"layout": "row_series", "header_row": 1, "key": ["TIME_PERIOD"]}
+    document = bindings_document(
+        series_entry("level", "S!B4:D4", direction="output", **row),
+        series_entry("rate", "S!B2:D2", direction="input", **row),
+        series_entry("growth", "S!B3:D3", direction="internal", **row),
+        series_entry("shift", "S!B5:D5", direction="input", **row),
+        series_entry("shift_x2", "S!B6:D6", direction="output", **row),
+        series_entry("multiplier", "S!F1", direction="input"),
+    )
+    _assert_clean_package(tmp_path, generate_inverted(workbook, document))
+
+
+def _assert_clean_package(tmp_path: Path, modules: dict[str, str]) -> None:
     pkg = tmp_path / "inv_diag"
     pkg.mkdir()
     for name, content in modules.items():

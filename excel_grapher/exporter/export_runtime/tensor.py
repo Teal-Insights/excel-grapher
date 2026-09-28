@@ -654,7 +654,9 @@ class Series(Tensor[T]):
         return cast(Self, _collect_series(type(self), self.schema, self.cells, records, domain))
 
     @classmethod
-    def from_labels(cls, source: SeriesSpec[T] | Series[T], axis: Axis) -> Series[T]:
+    def from_labels(
+        cls, source: SeriesSpec[T] | TemplateSeriesSpec[T] | Series[T], axis: Axis
+    ) -> Series[T]:
         """Publish the identity tensor mapping each label to itself.
 
         `source` supplies the series id, value types, and cell provenance.
@@ -680,14 +682,17 @@ class Series(Tensor[T]):
 
 @dataclass(frozen=True, slots=True)
 class SeriesSpec(Generic[T]):
-    """Schema, authored domain, and cell provenance without observations."""
+    """Schema, bound authored domain, and cell provenance without observations.
 
-    schema: TensorSchema | SchemaTemplate
-    domain: Domain | DomainTemplate
+    Series whose axes bind from labellers at call time use `TemplateSeriesSpec`.
+    """
+
+    schema: TensorSchema
+    domain: Domain
     cells: Mapping[Coordinate, str] | ProvenanceTemplate | None
 
     @property
-    def required(self) -> Domain | DomainTemplate:
+    def required(self) -> Domain:
         """The schema's required coordinates, which may be a subset of `domain`."""
         return self.schema.domain
 
@@ -699,23 +704,35 @@ class SeriesSpec(Generic[T]):
 
     def with_values(self, values: Sequence[T]) -> Series[T]:
         """Bind observations over the authored domain."""
-        if not isinstance(self.domain, Domain):
-            raise TypeError("with_values requires a bound domain")
         return Series(self.domain, tuple(values), schema=self.schema, cells=self.cells)
 
     def with_nested(self, values: Any) -> Series[T]:
         """Bind nested product values over the authored domain."""
-        if not isinstance(self.domain, Domain):
-            raise TypeError("with_nested requires a bound domain")
         tensor = Tensor.from_nested(domain=self.domain, values=values)
         return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
 
     def with_records(self, records: Iterable[tuple[Coordinate, T]]) -> Series[T]:
         """Bind records over the authored domain."""
-        if not isinstance(self.domain, Domain):
-            raise TypeError("with_records requires a bound domain")
         tensor = Tensor.from_records(domain=self.domain, records=records)
         return Series(tensor.domain, tensor._values, schema=self.schema, cells=self.cells)
+
+
+@dataclass(frozen=True, slots=True)
+class TemplateSeriesSpec(Generic[T]):
+    """A `SeriesSpec` whose domain has axes supplied by labellers at call time."""
+
+    schema: SchemaTemplate
+    domain: DomainTemplate
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None
+
+    @property
+    def required(self) -> DomainTemplate:
+        """The schema's required coordinates, which may be a subset of `domain`."""
+        return self.schema.domain
+
+    def collect(self, records: Iterable[tuple[Coordinate, T]], domain: Domain) -> Series[T]:
+        """Publish coordinate/value records over the bound required `domain`."""
+        return _collect_series(Series, self.schema, self.cells, records, domain)
 
 
 def _collect_series(
@@ -752,13 +769,25 @@ def define_series(
 @overload
 def define_series(
     series_id: str,
-    domain: Domain | DomainTemplate,
+    domain: Domain,
     values: None = None,
     *,
     cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
     value_types: tuple[type, ...],
-    required: Domain | DomainTemplate | None = None,
-) -> SeriesSpec[T]: ...
+    required: Domain | None = None,
+) -> SeriesSpec[Any]: ...
+
+
+@overload
+def define_series(
+    series_id: str,
+    domain: DomainTemplate,
+    values: None = None,
+    *,
+    cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
+    value_types: tuple[type, ...],
+    required: DomainTemplate | None = None,
+) -> TemplateSeriesSpec[Any]: ...
 
 
 def define_series(
@@ -769,11 +798,13 @@ def define_series(
     cells: Mapping[Coordinate, str] | ProvenanceTemplate | None,
     value_types: tuple[type, ...],
     required: Domain | DomainTemplate | None = None,
-) -> Series[T] | SeriesSpec[T]:
+) -> Series[T] | SeriesSpec[Any] | TemplateSeriesSpec[Any]:
     """Bind a series schema, provenance, and optional default observations.
 
     `required` defaults to `domain`. Pass it only when the required
-    coordinates are a proper subset of the authored domain.
+    coordinates are a proper subset of the authored domain. Without `values`,
+    a bound `Domain` yields a `SeriesSpec` and a `DomainTemplate` yields a
+    `TemplateSeriesSpec`; `required` must be of the same kind as `domain`.
     """
     schema_domain = domain if required is None else required
     schema: TensorSchema | SchemaTemplate
@@ -782,7 +813,11 @@ def define_series(
     else:
         schema = TensorSchema(series_id, schema_domain, value_types)
     if values is None:
-        return SeriesSpec(schema=schema, domain=domain, cells=cells)
+        if isinstance(domain, DomainTemplate) and isinstance(schema, SchemaTemplate):
+            return TemplateSeriesSpec(schema=schema, domain=domain, cells=cells)
+        if isinstance(domain, Domain) and isinstance(schema, TensorSchema):
+            return SeriesSpec(schema=schema, domain=domain, cells=cells)
+        raise TypeError("define_series without values needs domain and required of one kind")
     if not isinstance(domain, Domain):
         raise TypeError("define_series with values requires a bound Domain")
     return Series(domain, tuple(values), schema=schema, cells=cells)

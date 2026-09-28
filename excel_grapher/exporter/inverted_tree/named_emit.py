@@ -2536,6 +2536,7 @@ def emit_named_data(
             "DomainTemplate",
             "Series",
             "SeriesSpec",
+            "TemplateSeriesSpec",
             "coordinate_runs",
             "define_series",
         ]
@@ -2654,11 +2655,11 @@ def emit_named_data(
                 f"{name}_POSITIONS = Domain.product(Axis({axis.name!r}, "
                 f"{tuple(range(len(axis.keys)))!r}, int))"
             )
-        annotation = (
-            f"Series[{_value_annotation(series, domains)}]"
-            if values_source is not None
-            else f"SeriesSpec[{_value_annotation(series, domains)}]"
-        )
+        if values_source is not None:
+            spec_type = "Series"
+        else:
+            spec_type = "TemplateSeriesSpec" if runtime else "SeriesSpec"
+        annotation = f"{spec_type}[{_value_annotation(series, domains)}]"
         lines.append(
             _format_define_series(
                 name,
