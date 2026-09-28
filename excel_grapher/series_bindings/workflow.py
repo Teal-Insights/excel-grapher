@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+import hashlib
+import json
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, NotRequired, TypedDict
+from typing import TYPE_CHECKING, Literal, NotRequired, TypedDict
 
 from excel_grapher.core.address_keys import normalize_key as normalize_address
 from excel_grapher.grapher import create_dependency_graph
@@ -77,6 +79,68 @@ def all_series_targets(
     for series in bindings["series"]:
         targets.extend(expand_bound_series_addresses(series, workbook=workbook))
     return sorted(set(targets))
+
+
+TargetsFrom = Literal["all", "outputs"]
+"""Which series seed graph extraction: every series, or only `output` series."""
+
+
+def output_series_targets(
+    bindings: WorkbookSeriesBindings,
+    *,
+    workbook: Path,
+    extra_targets: Iterable[str] = (),
+) -> list[str]:
+    """Expand only `output` series `data_range`s into graph target addresses.
+
+    Use this instead of a hand-maintained target list: output `data_range`s
+    are authored from workbook structure, so the intended order is author
+    outputs, derive targets, extract the graph, then author and validate
+    inputs / internals / constants against that graph.
+
+    Applies `exclude_rows` / `exclude_columns`, so output holes are the single
+    place to skip cells inside a block. Output series over blank or literal
+    cells stay in the set; they become graph leaves.
+
+    Args:
+        bindings: Loaded bindings document.
+        workbook: Path to the `.xlsx` workbook (resolves named ranges).
+        extra_targets: Additional roots to union with the derived set.
+
+    Returns:
+        Sorted, de-duplicated sheet-qualified addresses. Hash the result with
+        `target_set_sha256` for a graph cache key that ignores non-output edits.
+    """
+    targets: list[str] = list(extra_targets)
+    for series in bindings["series"]:
+        if isinstance(series.get("output"), dict):
+            targets.extend(expand_bound_series_addresses(series, workbook=workbook))
+    return sorted(set(targets))
+
+
+def series_targets(
+    bindings: WorkbookSeriesBindings,
+    *,
+    workbook: Path,
+    targets_from: TargetsFrom = "all",
+) -> list[str]:
+    """Return graph targets from every series or only from `output` series."""
+    if targets_from == "outputs":
+        return output_series_targets(bindings, workbook=workbook)
+    return all_series_targets(bindings, workbook=workbook)
+
+
+def target_set_sha256(targets: Iterable[str]) -> str:
+    """Return a stable SHA-256 fingerprint of a graph target set.
+
+    Order and duplicates do not affect the digest, and addresses are
+    normalized first. Fold this (not the whole bindings document) into graph
+    cache keys so edits to inputs, internals, labels or dimensions do not
+    invalidate a cached graph.
+    """
+    canonical = sorted({normalize_address(target) for target in targets})
+    payload = json.dumps(canonical, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(payload).hexdigest()
 
 
 def series_binding_public_addresses(
@@ -177,6 +241,7 @@ def validate_bindings_workbook(
     dynamic_refs: DynamicRefConfig | None = None,
     use_cached_dynamic_refs: bool = True,
     blank_ranges: Sequence[str] | None = None,
+    targets_from: TargetsFrom = "all",
 ) -> BindingsCheckResult:
     """Load bindings, build the graph, and validate against the workbook.
 
@@ -188,9 +253,12 @@ def validate_bindings_workbook(
         use_cached_dynamic_refs: Resolve dynamic refs from cached workbook
             values. Default True preserves the previous library behavior.
         blank_ranges: Sheet-qualified rectangles omitted from the graph.
+        targets_from: `"all"` roots the graph at every series `data_range`;
+            `"outputs"` roots it only at `output` series, matching a pipeline
+            that extracts from `output_series_targets`.
     """
     bindings = load_series_bindings(bindings_path)
-    targets = all_series_targets(bindings, workbook=workbook)
+    targets = series_targets(bindings, workbook=workbook, targets_from=targets_from)
     graph = create_dependency_graph(
         workbook,
         targets,

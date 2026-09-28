@@ -108,3 +108,30 @@ def test_bindings_audit_clean_exit_zero(
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
     assert "0 error(s)" in captured.out
+
+
+def test_bindings_audit_accepts_targets_from_outputs(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx")
+    inputs, result_a, result_b = public_io_series()
+    bindings_dir = write_shards(
+        tmp_path / "bindings",
+        inputs=[inputs],
+        outputs=[result_a, result_b],
+    )
+    exit_code = main(
+        [
+            "bindings",
+            "audit",
+            str(workbook),
+            "--bindings",
+            str(bindings_dir),
+            "--targets-from",
+            "outputs",
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert "No resolution issues found." in captured.out

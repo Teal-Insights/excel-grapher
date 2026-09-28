@@ -216,6 +216,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Fail if series resolution would fail codegen",
     )
     _add_workbook_wiring_args(audit_parser)
+    _add_targets_from_arg(audit_parser)
     audit_parser.add_argument(
         "--json",
         action="store_true",
@@ -238,6 +239,7 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         help="Print unbound formula cells as a coverage worklist",
     )
     _add_workbook_wiring_args(burndown_parser)
+    _add_targets_from_arg(burndown_parser)
     burndown_parser.add_argument(
         "--json",
         action="store_true",
@@ -305,6 +307,17 @@ def _add_workbook_wiring_args(parser: argparse.ArgumentParser) -> None:
         default=None,
         help="Python module exposing BLANK_RANGES: Sequence[str] "
         "(sheet-qualified rectangles omitted from the graph)",
+    )
+
+
+def _add_targets_from_arg(parser: argparse.ArgumentParser) -> None:
+    """Add the graph-root selection switch shared by audit and burndown."""
+    parser.add_argument(
+        "--targets-from",
+        choices=["all", "outputs"],
+        default="all",
+        help="Graph roots: every series data_range (default) or only output series, "
+        "matching a pipeline that extracts from output_series_targets",
     )
 
 
@@ -687,6 +700,7 @@ def _bindings_context(args: argparse.Namespace):
             dynamic_refs=dynamic_refs,
             use_cached_dynamic_refs=args.use_cached_dynamic_refs,
             blank_ranges=blank_ranges,
+            targets_from=args.targets_from,
         )
     except SeriesBindingsLoadError as exc:
         print(str(exc), file=sys.stderr)

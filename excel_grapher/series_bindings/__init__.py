@@ -121,8 +121,12 @@ from excel_grapher.series_bindings.versions import (
 )
 from excel_grapher.series_bindings.workflow import (
     BindingsCheckResult,
+    TargetsFrom,
+    all_series_targets,
+    output_series_targets,
     run_binding_checks,
     series_binding_public_addresses,
+    target_set_sha256,
     validate_bindings_workbook,
 )
 
@@ -200,6 +204,10 @@ __all__ = [
     "resolve_series_bindings",
     "run_binding_checks",
     "series_binding_public_addresses",
+    "TargetsFrom",
+    "all_series_targets",
+    "output_series_targets",
+    "target_set_sha256",
     "validate_bindings_document",
     "validate_bindings_workbook",
     "validate_series_bindings",

@@ -94,6 +94,26 @@ Tier-1 findings:
 - `duplicate_internal_cell_binding`
 - `duplicate_formula_cell_binding` (output vs internal unique-address ownership)
 
+## Output-derived graph targets
+
+Author `output` series first, from workbook structure, then derive graph
+roots from them instead of keeping a separate target list:
+
+1. Author outputs (use `exclude_rows` / `exclude_columns` for holes inside a
+   block; they are the one place to skip cells).
+2. `output_series_targets(bindings, workbook=...)` returns sorted, hole-aware
+   addresses from `output` series only. Pass `extra_targets=` for extra roots.
+3. Extract the graph from those targets.
+4. Author and validate inputs / internals / constants against that graph.
+
+There is no cycle: outputs never depend on the graph. For graph caches, key on
+`target_set_sha256(targets)` rather than the whole bindings document, so edits
+to inputs, internals, labels or dimensions do not force a rebuild.
+
+`bindings audit` and `bindings burndown` accept `--targets-from outputs` to
+build the same output-rooted graph. The default `all` roots the graph at every
+series `data_range`.
+
 ## `bindings burndown`
 
 Coverage residual **inside the current bound graph closure**: formula nodes on
