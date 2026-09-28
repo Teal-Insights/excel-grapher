@@ -446,11 +446,7 @@ def coerce_input_measure(
         return tensor
     if _is_measure_sequence(value):
         members = [_coerce_one(member, dtype, enum) for member in value]
-        if isinstance(value, tuple):
-            return tuple(members)
-        if isinstance(value, list):
-            return members
-        return type(value)(members)
+        return members if isinstance(value, list) else tuple(members)
     return _coerce_one(value, dtype, enum)
 
 

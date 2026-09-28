@@ -327,5 +327,6 @@ dev = [
     "xlsxwriter>=3.2.0",
     "xlwings>=0.34.0",
     "excel-grapher-author-bindings",
+    "pyright>=1.1.414",
 ]
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 from pathlib import Path
 
@@ -67,3 +68,52 @@ def test_generate_modules_package_has_no_ty_or_ruff_diagnostics(tmp_path: Path) 
     ruff = _run(["uv", "run", "--no-sync", "ruff", "check", str(pkg)])
     assert ruff.returncode == 0, f"ruff failed after --fix:\n{ruff.stdout}\n{ruff.stderr}"
     assert ruff.stderr.strip() == ""
+
+
+_SHIPPED_SUPPORT_MODULES = ("excel.py", "runtime.py", "tensor.py", "provenance.py")
+# Duck-typed `getattr` results iterated as `object`; tracked separately from these modules.
+_TRACKED_ELSEWHERE = ('"object" is not iterable',)
+
+
+def test_shipped_support_modules_pass_ty_and_pyright(tmp_path: Path) -> None:
+    """Support modules copied into every package type-check under ty and pyright."""
+    workbook = write_workbook(
+        tmp_path / "support.xlsx",
+        {"S": {"A1": 2, "B1": "=A1*2"}},
+    )
+    document = bindings_document(
+        series_entry("src", "S!A1", layout="scalar", direction="input"),
+        series_entry("out", "S!B1", layout="scalar", direction="output"),
+    )
+    modules = generate_inverted(workbook, document)
+    pkg = tmp_path / "inv_support"
+    pkg.mkdir()
+    for name, content in modules.items():
+        (pkg / name).write_text(content, encoding="utf-8")
+    files = [str(pkg / name) for name in _SHIPPED_SUPPORT_MODULES]
+
+    ty = _run(
+        [
+            "uv",
+            "run",
+            "--no-sync",
+            "ty",
+            "check",
+            "--project",
+            str(_REPO_ROOT),
+            "--extra-search-path",
+            str(tmp_path),
+            *files,
+        ]
+    )
+    assert ty.returncode == 0, f"ty failed:\n{ty.stdout}\n{ty.stderr}"
+
+    pyright = _run(["uv", "run", "--no-sync", "pyright", "--outputjson", *files])
+    report = json.loads(pyright.stdout)
+    errors = [
+        f"{Path(d['file']).name}:{d['range']['start']['line'] + 1}: {d['message']}"
+        for d in report["generalDiagnostics"]
+        if d["severity"] == "error"
+        and not any(message in d["message"] for message in _TRACKED_ELSEWHERE)
+    ]
+    assert errors == []

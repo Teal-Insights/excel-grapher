@@ -8,7 +8,7 @@ from typing import TypeVar, cast
 
 # Imported for isinstance checks; stripped when coercions are embedded (Range is
 # already inlined from core.grid.ranges ahead of this module).
-from excel_grapher.core.grid.grid import _as_nested_rows_from_ndarray
+from excel_grapher.core.grid.grid import Scalar, _as_nested_rows_from_ndarray
 from excel_grapher.core.grid.ranges import Range
 
 from .types import CellValue, ExcelRange, FormulaValue, XlError
@@ -33,7 +33,7 @@ def _is_ndarray_like(value: object) -> bool:
 _PLAIN_SCALAR_TYPES = frozenset({bool, int, float, str, type(None)})
 
 
-def as_scalar(value: object) -> float | int | str | bool | XlError | None:
+def as_scalar(value: object) -> Scalar:
     """Collapse range/array values to `#VALUE!` for scalar coercion contexts.
 
     Lazy `Range`, unbound `ExcelRange`, and nested lists are not valid scalar
@@ -48,7 +48,7 @@ def as_scalar(value: object) -> float | int | str | bool | XlError | None:
         return cast("float | int | str | bool | None", value)
     if isinstance(value, (Range, ExcelRange, list, tuple)) or _is_ndarray_like(value):
         return XlError.VALUE
-    return cast("float | int | str | bool | XlError | None", value)
+    return cast(Scalar, value)
 
 
 def datetime_to_excel_serial(value: datetime) -> float:

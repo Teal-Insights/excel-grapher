@@ -558,17 +558,19 @@ class Tensor(Generic[T]):
             if coordinates is None
             else Domain.explicit(axes=axes, coordinates=coordinates)
         )
-        records = []
-        for coord, value in payload["records"]:
-            if isinstance(value, dict):
-                if value.get("type") == "date":
-                    value = date.fromisoformat(value["value"])
-                elif value.get("type") == "datetime":
-                    value = datetime.fromisoformat(value["value"])
-                else:
-                    raise SchemaError("unsupported serialized workbook value type")
-            records.append((coord, value))
+        records = [(tuple(coord), _decode_json_value(value)) for coord, value in payload["records"]]
         return cls.from_records(domain=domain, records=records)
+
+
+def _decode_json_value(value: Any) -> Any:
+    """Restore a date or datetime that `Tensor.to_json` tagged with its type."""
+    if not isinstance(value, dict):
+        return value
+    if value.get("type") == "date":
+        return date.fromisoformat(value["value"])
+    if value.get("type") == "datetime":
+        return datetime.fromisoformat(value["value"])
+    raise SchemaError("unsupported serialized workbook value type")
 
 
 @dataclass(frozen=True, slots=True)
