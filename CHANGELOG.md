@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.10.0 (2026-09-28)
+
+### Bug Fixes
+
+- **export**: Raise a clear error for an unparameterized series annotation
+  ([`c37b83e`](https://github.com/Teal-Insights/excel-grapher/commit/c37b83e03ace9bde5f65515fc9074c8b3fadb938))
+
+### Features
+
+- **export**: Describe input domains on generated *Inputs records
+  ([`9932ae4`](https://github.com/Teal-Insights/excel-grapher/commit/9932ae413276de7417eae244233a9aa15f2be87a))
+
+
 ## v23.9.1 (2026-09-25)
 
 ### Bug Fixes
