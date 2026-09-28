@@ -160,6 +160,7 @@ class BoundSeries:
     authored_domain: tuple[KeyPoint, ...] | None = None
     graph_cells: frozenset[CanonicalAddress] | None = None
     key_types: tuple[str, ...] = ()
+    blank_default: bool = False
     _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
     _rect: tuple[str, int, int, int, int] | None = field(init=False, repr=False, compare=False)
     _holes_by_index: dict[int, SeriesHole] = field(init=False, repr=False, compare=False)
@@ -1478,6 +1479,12 @@ def build_catalog(
                     workbook=workbook,
                     reader=reader,
                 )
+            blank_default = (
+                layout == "scalar"
+                and direction in {"input", "constant"}
+                and len(cell_tuple) == 1
+                and reader.read(cell_tuple[0]) is None
+            )
             bound = BoundSeries(
                 series_id=series_id,
                 layout=layout,
@@ -1509,6 +1516,7 @@ def build_catalog(
                     if is_graph_formula_node(graph, cell) or is_graph_leaf(graph, cell)
                 ),
                 key_types=key_types,
+                blank_default=blank_default,
             )
             series_map[series_id] = bound
             order.append(series_id)
