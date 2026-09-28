@@ -1,5 +1,21 @@
 Use the `gh` CLI tool to manage issues and pull requests.
 
+## Commit messages (required)
+
+Every commit message **and every PR title** must follow
+[Conventional Commits](https://www.conventionalcommits.org/): `type(scope): summary`, e.g.
+`fix(export): key lockstep string-map cache by slot map`. Allowed types: `feat`, `fix`, `perf`,
+`build`, `chore`, `ci`, `docs`, `style`, `refactor`, `test`. Mark breaking changes with `!`
+(`feat!: ...`) or a `BREAKING CHANGE:` footer.
+
+This is not cosmetic: python-semantic-release parses these messages (including the commit
+messages listed in squash-merge bodies) to choose the version bump and write `CHANGELOG.md`.
+The `Conventional commits` CI workflow rejects PRs whose title or commits don't conform.
+Check a message locally with `uvx --from commitizen==4.10.0 cz check --message "<msg>"`, or run
+`uv run pre-commit install` once to enforce it on every commit. If you already made a bad commit,
+fix it before pushing: `git commit --amend -m "..."` for the latest commit, or
+`git reset --soft <base>` and recommit for older ones.
+
 Always run Python code with `uv run`. Use `uv add` to add dependencies or `uvx` to use uninstalled Python command line tools.
 
 We use `fastpyxl` as a drop-in replacement for `openpyxl`.

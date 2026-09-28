@@ -1,0 +1,43 @@
+name: Conventional commits
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+
+permissions:
+  contents: read
+
+jobs:
+  pr-title:
+    name: Check PR title
+    runs-on: ubuntu-latest
+    steps:
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Squash merges use the PR title as the commit subject on main, which
+      # python-semantic-release parses to pick the version bump.
+      - name: Check PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: uvx --from commitizen==4.10.0 cz check --message "$PR_TITLE"
+
+  commits:
+    name: Check commit messages
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      # Squash bodies list every commit message, and `parse_squash_commits`
+      # makes semantic-release read them too.
+      - name: Check commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: uvx --from commitizen==4.10.0 cz check --rev-range "$BASE_SHA..$HEAD_SHA"
