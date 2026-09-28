@@ -290,3 +290,93 @@ def test_ragged_time_order_is_allowed_to_clone(tmp_path: Path) -> None:
         )
         == 39
     )
+
+
+def _sparse_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "sparse_axes.xlsx",
+        {
+            "Data": {
+                "B1": 2020,
+                "C1": 2021,
+                "A2": "Alpha",
+                "B2": 1.0,
+                "C2": 2.0,
+                "E2": "=B2+C2",
+                "A3": "Beta",
+                "B3": 3.0,
+                "E3": "=B3",
+            },
+            "Other": {
+                **{f"{col}1": 2018 + i for i, col in enumerate("ABCDEF")},
+                **{f"{col}2": 1.0 for col in "ABCDEF"},
+                "H2": "=SUM(A2:F2)",
+            },
+        },
+    )
+
+
+def _sparse_bindings() -> dict[str, Any]:
+    measure = {
+        "concept": "OBS_VALUE",
+        "dtype": "float",
+        "bind": {"kind": "data_cell", "read": "float"},
+    }
+    return {
+        "schema_version": "1.16.0",
+        "concept_scheme": {
+            "id": "example",
+            "concepts": [
+                {"id": "OBS_VALUE", "dtype": "number"},
+                {"id": "VARIANT", "dtype": "string"},
+                {"id": "TIME_PERIOD", "dtype": "int"},
+            ],
+        },
+        "series": [
+            {
+                **_series(
+                    "values",
+                    "Data!B2:C2",
+                    ["VARIANT", "TIME_PERIOD"],
+                    [_dim_row("A"), _dim_col(1)],
+                ),
+                "data_range": ["Data!B2:C2", "Data!B3"],
+                "layout": "matrix",
+            },
+            {
+                "id": "result",
+                "sheet": "Data",
+                "data_range": "Data!E2:E3",
+                "layout": "series",
+                "output": {"compute": {"name": "compute_result"}},
+                "key": ["VARIANT"],
+                "structure": {"measure": measure, "dimensions": [_dim_row("A")]},
+            },
+            {
+                **_series("wide", "Other!A2:F2", ["TIME_PERIOD"], [_dim_col(1)]),
+                "sheet": "Other",
+            },
+            {
+                "id": "wide_total",
+                "sheet": "Other",
+                "data_range": "Other!H2",
+                "layout": "scalar",
+                "output": {"compute": {"name": "compute_wide_total"}},
+                "key": [],
+                "structure": {"measure": measure, "dimensions": []},
+            },
+        ],
+    }
+
+
+def test_sparse_domain_axes_narrow_to_the_series_keys(tmp_path: Path) -> None:
+    """Issue 1015 — `Domain.explicit` spans its own keys, not the pooled axis."""
+    pkg = assert_package_matches_evaluator(
+        _sparse_workbook(tmp_path), _sparse_bindings(), tmp_path, "axis_sparse"
+    )
+    field = pkg.ResultInputs.describe()["values"]
+    assert tuple(field.domain) == (("Alpha", 2020), ("Alpha", 2021), ("Beta", 2020))
+    assert [(axis.name, axis.keys) for axis in field.axes] == [
+        ("VARIANT", ("Alpha", "Beta")),
+        ("TIME_PERIOD", (2020, 2021)),
+    ]
