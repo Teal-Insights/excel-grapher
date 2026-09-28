@@ -2,15 +2,26 @@
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, TypeGuard, cast
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Literal,
+    Protocol,
+    TypeAlias,
+    TypeGuard,
+    TypeVar,
+    cast,
+    runtime_checkable,
+)
 
 from excel_grapher.series_bindings.coerce import coerce_scalar, validate_binding_scalar
 from excel_grapher.series_bindings.types import Record, Records
 
 Layout: TypeAlias = Literal["scalar", "series", "matrix"]
 EmptyMeasure: TypeAlias = Literal["skip", "write", "error"]
+V = TypeVar("V")
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -402,26 +413,26 @@ def _coerce_one(value: object, dtype: str, enum: object | None = None) -> object
     return value
 
 
-def _coerce_named_tensor(value: object, dtype: str, enum: object | None = None) -> object | None:
-    """Rewrite tensor members when `value` looks like a generated `Series`."""
-    domain = getattr(value, "domain", None)
-    items = getattr(value, "items", None)
-    if domain is None or not callable(items) or _is_mapping(value):
-        return None
-    coerced = tuple(_coerce_one(member, dtype, enum) for _coord, member in items())
-    replace = getattr(value, "with_values", None)
-    if callable(replace):
-        return replace(coerced)
-    return cast(Any, type(value))(domain, coerced)
+@runtime_checkable
+class _NamedTensor(Protocol):
+    """A generated `Series`: coordinate-keyed members that rebuild over one domain."""
+
+    def items(self) -> Iterable[tuple[object, object]]: ...
+
+    def with_values(self, values: Sequence[Any], /) -> Any: ...
+
+
+def _is_named_tensor(value: object) -> TypeGuard[_NamedTensor]:
+    return isinstance(value, _NamedTensor) and not _is_mapping(value)
 
 
 def coerce_input_measure(
-    value: object,
+    value: V,
     dtype: str,
     *,
     series_id: str,
     enum: object | None = None,
-) -> object:
+) -> V:
     """Rewrite a public compute input using setter dtype rules.
 
     `int` becomes `float` when `dtype` is `float`. Sequences and tensors are
@@ -439,14 +450,25 @@ def coerce_input_measure(
         enum: Optional union enum. Members keep the caller's runtime type.
 
     Returns:
-        The value, possibly after a safe `int` -> `float` coercion.
+        The value in the same shape and container type, possibly after a safe
+        `int` -> `float` coercion of its members.
     """
-    tensor = _coerce_named_tensor(value, dtype, enum)
-    if tensor is not None:
-        return tensor
+    return cast(V, _coerce_measure(value, dtype, enum))
+
+
+def _coerce_measure(value: object, dtype: str, enum: object | None) -> object:
+    if _is_named_tensor(value):
+        return value.with_values(
+            tuple(_coerce_one(member, dtype, enum) for _coord, member in value.items())
+        )
     if _is_measure_sequence(value):
         members = [_coerce_one(member, dtype, enum) for member in value]
-        return members if isinstance(value, list) else tuple(members)
+        if isinstance(value, tuple):
+            return tuple(members)
+        if isinstance(value, list):
+            return members
+        rebuild = cast("Callable[[list[object]], object]", type(value))
+        return rebuild(members)
     return _coerce_one(value, dtype, enum)
 
 

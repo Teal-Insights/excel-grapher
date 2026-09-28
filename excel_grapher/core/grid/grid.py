@@ -26,6 +26,8 @@ def _as_nested_rows_from_ndarray(value: object) -> list[list[CellValue]] | None:
     if ndim == 0:
         return None
     raw = tolist()
+    if not isinstance(raw, list):
+        return None
     if ndim == 1:
         return [[cast(CellValue, cell)] for cell in raw]
     return cast("list[list[CellValue]]", raw)

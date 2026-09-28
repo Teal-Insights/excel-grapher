@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.10.2 (2026-09-28)
+
+### Bug Fixes
+
+- **export**: Type bound formula series domains as Domain
+  ([`b8270f4`](https://github.com/Teal-Insights/excel-grapher/commit/b8270f49dc536dbf66074a5b933cf4e1ef78473b))
+
+- **export**: Type coerce_input_measure as identity-typed so validation.py rebinds type-check
+  ([`50a9322`](https://github.com/Teal-Insights/excel-grapher/commit/50a93227e5216f02d07a18f06aa1458976eb9972))
+
+
+## v23.10.1 (2026-09-28)
+
+### Bug Fixes
+
+- **deps**: Require fastpyxl>=1.1.0 for keep_formula_cache
+  ([`e60b464`](https://github.com/Teal-Insights/excel-grapher/commit/e60b464175f3049ab48bb58a0441249051eaecf8))
+
+
 ## v23.10.0 (2026-09-28)
 
 ### Bug Fixes

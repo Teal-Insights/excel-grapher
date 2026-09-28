@@ -199,7 +199,7 @@ def python_measure_type(series: BoundSeries) -> str:
         base = "str"
     else:
         base = f"{series.python_dtype} | str"
-    if series.has_none_holes or not series.single_valued:
+    if series.has_none_holes or series.blank_default or not series.single_valued:
         return f"{base} | None"
     return base
 

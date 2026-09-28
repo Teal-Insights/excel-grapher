@@ -1,6 +1,6 @@
 [project]
 name = "excel-grapher"
-version = "23.10.0"
+version = "23.10.2"
 
 description = "Build and analyze dependency graphs from Excel workbooks"
 readme = "README.md"
@@ -23,7 +23,7 @@ classifiers = [
     "Typing :: Typed",
 ]
 dependencies = [
-    "fastpyxl",
+    "fastpyxl>=1.1.0",
     "jsonschema>=4.26.0",
     "pyyaml>=6.0.3",
     "ruamel-yaml>=0.19.1",

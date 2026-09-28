@@ -18,7 +18,9 @@ from excel_grapher.exporter.export_runtime.tensor import (
     SchemaTemplate,
     Series,
     SeriesSpec,
+    TemplateSeriesSpec,
     Tensor,
+    define_series,
     label_axis,
 )
 from excel_grapher.exporter.inverted_tree.runtime import as_records, publish
@@ -51,7 +53,7 @@ def test_label_axis_builds_an_axis_and_names_collisions() -> None:
 
 def test_series_from_labels_is_the_identity_map() -> None:
     axis = label_axis("TIME_PERIOD", (2026, 2027), int)
-    spec = SeriesSpec[object](
+    spec = TemplateSeriesSpec[object](
         schema=SchemaTemplate(
             "year_labels",
             DomainTemplate.product(
@@ -68,6 +70,31 @@ def test_series_from_labels_is_the_identity_map() -> None:
     assert isinstance(labels, Series)
     assert tuple(labels.domain.axes[0].keys) == (2026, 2027)
     assert list(labels.items()) == [((2026,), 2026), ((2027,), 2027)]
+
+
+def test_define_series_without_values_splits_bound_and_template_specs() -> None:
+    years = Axis("TIME_PERIOD", (2026, 2027), int)
+    bound = define_series("x", Domain.product(years), cells=None, value_types=(float,))
+    assert isinstance(bound, SeriesSpec)
+    assert bound.required == Domain.product(years)
+
+    template = DomainTemplate.product(
+        AxisTemplate("TIME_PERIOD", int, size=2, labeller="labels", snapshot=(1, 2))
+    )
+    spec = define_series("y", template, cells=None, value_types=(float,))
+    assert isinstance(spec, TemplateSeriesSpec)
+    assert spec.required is template
+    published = spec.collect([((2026,), 1.0), ((2027,), 2.0)], Domain.product(years))
+    assert list(published.items()) == [((2026,), 1.0), ((2027,), 2.0)]
+
+    with pytest.raises(TypeError, match="one kind"):
+        define_series(
+            "z",
+            cast(Any, Domain.product(years)),
+            cells=None,
+            value_types=(float,),
+            required=cast(Any, template),
+        )
 
 
 def test_axis_template_bind_checks_name_type_and_size() -> None:
