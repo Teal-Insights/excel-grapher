@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.11.0 (2026-09-28)
+
+### Continuous Integration
+
+- Reject non-conventional PR titles and commit messages
+  ([`aaf171f`](https://github.com/Teal-Insights/excel-grapher/commit/aaf171f8baa7a563ad67629d514253596446f2b1))
+
+### Features
+
+- **series_bindings**: Read Excel data validations as domain suggestions
+  ([`a92873f`](https://github.com/Teal-Insights/excel-grapher/commit/a92873f6e67e81a35051dff3ef456fb00443c0ef))
+
+
 ## v23.10.3 (2026-09-28)
 
 ### Testing
