@@ -111,6 +111,14 @@ from excel_grapher.series_bindings.upsert import (
     upsert_series_binding,
 )
 from excel_grapher.series_bindings.validate import validate_series_bindings
+from excel_grapher.series_bindings.validation_domains import (
+    DataValidationRule,
+    SeriesValidationFinding,
+    ValidationDomainSuggestion,
+    compare_series_validation_domains,
+    suggest_validation_domains,
+    validation_cell_type_env,
+)
 from excel_grapher.series_bindings.versions import (
     CURRENT_SCHEMA_VERSION,
     IMPLEMENTED_BIND_KINDS,
@@ -211,6 +219,12 @@ __all__ = [
     "validate_bindings_document",
     "validate_bindings_workbook",
     "validate_series_bindings",
+    "DataValidationRule",
+    "SeriesValidationFinding",
+    "ValidationDomainSuggestion",
+    "compare_series_validation_domains",
+    "suggest_validation_domains",
+    "validation_cell_type_env",
     "audit_binding_resolutions",
     "bootstrap_binding_shards",
     "collapse_unbound_cells_to_ranges",
