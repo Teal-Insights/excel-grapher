@@ -35,6 +35,7 @@ from excel_grapher.core.cell_types import (
     GreaterThanCell,
     IntervalDomain,
     NotEqualCell,
+    RealIntervalDomain,
     canonicalize_cell_type_env_keys,
     constraints_to_cell_type_env,
     is_union_domain,
@@ -604,6 +605,13 @@ def expand_leaf_env_to_argument_env(
                 kind=CellKind.BOOL,
                 enum=EnumDomain(values=frozenset(values)),
             )
+        if kinds <= {str, int, float}:
+            # Text with numbers: the same union an authored sentinel-or-number uses.
+            mixed = _mixed_from_values(values)
+            if mixed is not None:
+                union = _mixed_domain_to_cell_type(mixed)
+                if union is not None:
+                    return union
         return CellType(kind=CellKind.ANY, enum=EnumDomain(values=frozenset(values)))
 
     def _record_consumed_leaf(leaf_addr: str) -> None:
@@ -781,45 +789,73 @@ def expand_leaf_env_to_argument_env(
                             interval=IntervalDomain(min=inferred.lo, max=inferred.hi),
                         )
                 return
-        unsupported = _describe_unsupported_numeric_construct(ast_root)
+        # Enumeration below is exact, so it runs whenever it can. Where it
+        # cannot, the text-or-number summary gets one cheap pass (issue #1005)
+        # before the old bailout: bare ANY, or `enumeration_error`.
+        enumeration_error: DynamicRefError | None = None
         domains: dict[str, list[Any]] = {}
         for r, ct in ref_types.items():
-            if ct.enum is not None:
+            if is_union_domain(ct):
+                union_vals = _finite_integer_union_values(ct, limits)
+                if union_vals is None:
+                    break
+                domains[r] = list(union_vals)
+            elif ct.enum is not None:
                 domains[r] = list(ct.enum.values)
             elif ct.interval is not None:
                 try:
                     domains[r] = _interval_to_values(ct.interval, limits)
                 except DynamicRefError as exc:
+                    unsupported = _describe_unsupported_numeric_construct(ast_root)
                     detail = (
                         f" First unsupported construct: {unsupported}."
                         if unsupported is not None
                         else ""
                     )
-                    raise DynamicRefError(
+                    enumeration_error = DynamicRefError(
                         f"{exc} (while expanding types for formula cell {addr!r}, dependency {r!r}; "
                         f"this formula is not covered by numeric abstract analysis.{detail} "
                         f"constrain {r!r} more tightly, simplify the formula, or extend analysis "
                         f"for the unsupported construct)"
-                    ) from exc
-            elif ct.real_interval is not None:
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return
+                    )
+                    enumeration_error.__cause__ = exc
+                    break
             else:
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return
-        total_branches = math.prod(len(v) for v in domains.values())
-        if total_branches > limits.max_branches:
-            dep_sizes = ", ".join(f"{r!r}: {len(domains[r])}" for r in sorted(domains))
-            unsupported_hint = (
-                f" First unsupported construct: {unsupported}." if unsupported is not None else ""
-            )
-            raise DynamicRefError(
-                f"Formula cell {addr!r} fallback enumeration would require "
-                f"{total_branches} branches (limit {limits.max_branches}). "
-                f"Dependency domain sizes: {dep_sizes}.{unsupported_hint} "
-                f"Tighten constraints on one or more dependencies, simplify "
-                f"the formula, or extend numeric abstract analysis to cover it."
-            )
+                break
+        else:
+            total_branches = math.prod(len(v) for v in domains.values())
+            if total_branches > limits.max_branches:
+                dep_sizes = ", ".join(f"{r!r}: {len(domains[r])}" for r in sorted(domains))
+                unsupported = _describe_unsupported_numeric_construct(ast_root)
+                unsupported_hint = (
+                    f" First unsupported construct: {unsupported}."
+                    if unsupported is not None
+                    else ""
+                )
+                enumeration_error = DynamicRefError(
+                    f"Formula cell {addr!r} fallback enumeration would require "
+                    f"{total_branches} branches (limit {limits.max_branches}). "
+                    f"Dependency domain sizes: {dep_sizes}.{unsupported_hint} "
+                    f"Tighten constraints on one or more dependencies, simplify "
+                    f"the formula, or extend numeric abstract analysis to cover it."
+                )
+        if enumeration_error is not None or len(domains) < len(ref_types):
+            if ast_root is not None and _may_infer_mixed_domain(ast_root):
+                mixed = _infer_mixed_domain(
+                    ast_root, ref_types, limits, current_sheet=_sheet_from_addr(addr)
+                )
+                if mixed is not None:
+                    cache[addr] = _mixed_domain_to_cell_type(mixed) or CellType(kind=CellKind.ANY)
+                    return
+            if enumeration_error is not None:
+                raise enumeration_error
+            cache[addr] = CellType(kind=CellKind.ANY)
+            return
+        try:
+            ast = parse_ast(_formula_to_parse(formula))
+        except FormulaParseError:
+            cache[addr] = CellType(kind=CellKind.ANY)
+            return
         result_values: set[Any] = set()
         ordered_refs = list(ref_types)
         for assignment in product(*(domains[r] for r in ordered_refs)):
@@ -831,12 +867,6 @@ def expand_leaf_env_to_argument_env(
                 except (IndexError, ValueError):
                     return _av.get(a)
 
-            try:
-                formula_parse = _formula_to_parse(formula)
-                ast = parse_ast(formula_parse)
-            except FormulaParseError:
-                cache[addr] = CellType(kind=CellKind.ANY)
-                return
             val = evaluate_expr(
                 ast,
                 get_cell_value=get_cell_value,
@@ -3880,6 +3910,275 @@ def _infer_choose_numeric_domain_result(
         if out is None:
             return _domain_result(None)
     return _domain_result(out)
+
+
+@dataclass(frozen=True, slots=True)
+class _MixedDomain:
+    """Text-or-number result summary for formula cells (issue #1005).
+
+    `numbers` holds exact numeric members (`bool` never appears). `ints` and
+    `real` are the wide numeric arms that cannot be listed.
+    """
+
+    texts: frozenset[str] = frozenset()
+    numbers: frozenset[int | float] = frozenset()
+    ints: _IntBounds | None = None
+    real: RealIntervalDomain | None = None
+
+
+_EMPTY_MIXED = _MixedDomain()
+
+# Root shapes `_infer_mixed_domain` can summarize. Checked before the walk so
+# formulas it cannot help with pay nothing.
+_MIXED_BRANCH_FUNCS = frozenset({"IF", "IFERROR", "IFNA", "CHOOSE"})
+
+
+def _real_hull(
+    a: RealIntervalDomain | None, b: RealIntervalDomain | None
+) -> RealIntervalDomain | None:
+    """Return the smallest real interval covering both; `None` bounds are unbounded."""
+    if a is None:
+        return b
+    if b is None:
+        return a
+    lo = None if a.min is None or b.min is None else min(a.min, b.min)
+    hi = None if a.max is None or b.max is None else max(a.max, b.max)
+    return RealIntervalDomain(min=lo, max=hi)
+
+
+def _int_bounds_hull(a: _IntBounds | None, b: _IntBounds | None) -> _IntBounds | None:
+    if a is None:
+        return b
+    if b is None:
+        return a
+    return _IntBounds(min(a.lo, b.lo), max(a.hi, b.hi))
+
+
+def _union_mixed_domains(
+    a: _MixedDomain, b: _MixedDomain, limits: DynamicRefLimits
+) -> _MixedDomain:
+    """Union two summaries, hulling exact numbers once they pass `max_branches`."""
+    numbers = a.numbers | b.numbers
+    ints = _int_bounds_hull(a.ints, b.ints)
+    real = _real_hull(a.real, b.real)
+    if len(numbers) > limits.max_branches:
+        whole = [v for v in numbers if isinstance(v, int)]
+        frac = [float(v) for v in numbers if not isinstance(v, int)]
+        if whole:
+            ints = _int_bounds_hull(ints, _IntBounds(min(whole), max(whole)))
+        if frac:
+            real = _real_hull(real, RealIntervalDomain(min=min(frac), max=max(frac)))
+        numbers = frozenset()
+    return _MixedDomain(texts=a.texts | b.texts, numbers=numbers, ints=ints, real=real)
+
+
+def _mixed_from_values(values: Iterable[object]) -> _MixedDomain | None:
+    """Split exact values into text and numeric members; `None` for any other type."""
+    texts: set[str] = set()
+    numbers: set[int | float] = set()
+    for v in values:
+        if isinstance(v, bool):
+            return None
+        if isinstance(v, str):
+            texts.add(v)
+        elif isinstance(v, int):
+            numbers.add(v)
+        elif isinstance(v, float):
+            numbers.add(int(v) if v.is_integer() else v)
+        else:
+            return None
+    return _MixedDomain(texts=frozenset(texts), numbers=frozenset(numbers))
+
+
+def _mixed_from_cell_type(ct: CellType | None) -> _MixedDomain | None:
+    """Summarize a precedent's type; `None` when it has no usable domain."""
+    if ct is None or ct.kind not in (CellKind.NUMBER, CellKind.STRING, CellKind.ANY):
+        return None
+    if ct.enum is None and ct.interval is None and ct.real_interval is None:
+        return None
+    if ct.kind is CellKind.STRING and (ct.interval is not None or ct.real_interval is not None):
+        return None
+    out = _EMPTY_MIXED
+    if ct.enum is not None:
+        split = _mixed_from_values(ct.enum.values)
+        if split is None:
+            return None
+        out = split
+    ints: _IntBounds | None = None
+    real = ct.real_interval
+    if ct.interval is not None:
+        lo, hi = ct.interval.min, ct.interval.max
+        if lo is None or hi is None:
+            # An unbounded integer arm cannot be an `_IntBounds`; widen to real.
+            real = _real_hull(
+                real,
+                RealIntervalDomain(
+                    min=None if lo is None else float(lo), max=None if hi is None else float(hi)
+                ),
+            )
+        elif lo <= hi:
+            ints = _IntBounds(int(lo), int(hi))
+    return _MixedDomain(texts=out.texts, numbers=out.numbers, ints=ints, real=real)
+
+
+def _mixed_from_numeric(domain: _FiniteInts | _IntBounds) -> _MixedDomain:
+    if isinstance(domain, _FiniteInts):
+        return _MixedDomain(numbers=frozenset(domain.values))
+    return _MixedDomain(ints=domain)
+
+
+def _infer_mixed_domain(
+    node: AstNode,
+    env: CellTypeEnv,
+    limits: DynamicRefLimits,
+    *,
+    current_sheet: str,
+    depth: int = 0,
+) -> _MixedDomain | None:
+    """Summarize a formula whose results may mix text and numbers (issue #1005).
+
+    Only branch structure (`IF`, `IFERROR`, `IFNA`, `CHOOSE`) and leaves are
+    walked here; any other subexpression must be summarized by
+    `_infer_numeric_domain_result`. Excel errors are dropped. Returns `None`
+    when some reachable result is not covered.
+    """
+    if depth > limits.max_depth:
+        return None
+    if isinstance(node, StringNode):
+        return _MixedDomain(texts=frozenset({node.value}))
+    if isinstance(node, ErrorNode):
+        return _EMPTY_MIXED
+    if isinstance(node, NumberNode):
+        return _mixed_from_values(
+            (int(node.value),) if isinstance(node.value, bool) else (node.value,)
+        )
+    if isinstance(node, BoolNode):
+        return None
+    if isinstance(node, CellRefNode):
+        return _mixed_from_cell_type(_lookup_cell_type(env, node.address))
+
+    def recurse(child: AstNode, child_env: CellTypeEnv = env) -> _MixedDomain | None:
+        return _infer_mixed_domain(
+            child, child_env, limits, current_sheet=current_sheet, depth=depth + 1
+        )
+
+    def numeric(child: AstNode) -> _FiniteInts | _IntBounds | None:
+        result = _infer_numeric_domain_result(
+            child, env, limits, current_sheet=current_sheet, depth=depth + 1
+        )
+        return None if result.diagnostic is not None else result.domain
+
+    name = node.name.upper() if isinstance(node, FunctionCallNode) else ""
+    if name == "IF" and isinstance(node, FunctionCallNode) and 2 <= len(node.args) <= 3:
+        cond = numeric(node.args[0])
+        if isinstance(cond, _FiniteInts) and cond.values:
+            if all(v != 0 for v in cond.values):
+                return recurse(node.args[1])
+            if all(v == 0 for v in cond.values) and len(node.args) == 3:
+                return recurse(node.args[2])
+        if len(node.args) == 2:
+            # A false two-argument IF returns FALSE, which has no arm here.
+            return None
+        then_env = _refine_env_for_condition(env, node.args[0], limits, negate=False) or env
+        then_d = recurse(node.args[1], then_env)
+        if then_d is None:
+            return None
+        else_env = _refine_env_for_condition(env, node.args[0], limits, negate=True) or env
+        else_d = recurse(node.args[2], else_env)
+        return None if else_d is None else _union_mixed_domains(then_d, else_d, limits)
+    if name in {"IFERROR", "IFNA"} and isinstance(node, FunctionCallNode) and len(node.args) == 2:
+        value_d = recurse(node.args[0])
+        if value_d is None:
+            return None
+        fallback_d = recurse(node.args[1])
+        return None if fallback_d is None else _union_mixed_domains(value_d, fallback_d, limits)
+    if name == "CHOOSE" and isinstance(node, FunctionCallNode) and len(node.args) >= 2:
+        index = numeric(node.args[0])
+        options = node.args[1:]
+        if isinstance(index, _FiniteInts):
+            picked = [options[i - 1] for i in sorted(index.values) if 1 <= i <= len(options)]
+        else:
+            picked = list(options)
+        out: _MixedDomain = _EMPTY_MIXED
+        for option in picked:
+            option_d = recurse(option)
+            if option_d is None:
+                return None
+            out = _union_mixed_domains(out, option_d, limits)
+        return out
+    domain = numeric(node)
+    return None if domain is None else _mixed_from_numeric(domain)
+
+
+def _may_infer_mixed_domain(node: AstNode | None) -> bool:
+    """Cheap root check before `_infer_mixed_domain` walks the formula."""
+    if isinstance(node, FunctionCallNode):
+        return node.name.upper() in _MIXED_BRANCH_FUNCS
+    return isinstance(node, (CellRefNode, StringNode, NumberNode))
+
+
+def _mixed_domain_to_cell_type(d: _MixedDomain) -> CellType | None:
+    """Build the `CellType` for a summary; `None` means no value survives.
+
+    Text with numbers becomes the same enum-plus-one-interval union that
+    authored sentinel-or-number domains use (`is_union_domain`). Exact numbers
+    stay in the enum, so a finite integer arm is not widened.
+    """
+    has_wide = d.ints is not None or d.real is not None
+    if not d.texts:
+        if not has_wide:
+            if not d.numbers:
+                return None
+            return CellType(kind=CellKind.NUMBER, enum=EnumDomain(values=frozenset(d.numbers)))
+        whole = [v for v in d.numbers if isinstance(v, int)]
+        if d.real is None and len(whole) == len(d.numbers):
+            ints = d.ints
+            if whole:
+                ints = _int_bounds_hull(ints, _IntBounds(min(whole), max(whole)))
+            assert ints is not None
+            return CellType(kind=CellKind.NUMBER, interval=IntervalDomain(min=ints.lo, max=ints.hi))
+        real = d.real
+        if d.ints is not None:
+            real = _real_hull(real, RealIntervalDomain(min=float(d.ints.lo), max=float(d.ints.hi)))
+        if d.numbers:
+            nums = [float(v) for v in d.numbers]
+            real = _real_hull(real, RealIntervalDomain(min=min(nums), max=max(nums)))
+        return CellType(kind=CellKind.NUMBER, real_interval=real)
+    if not has_wide and not d.numbers:
+        return CellType(kind=CellKind.STRING, enum=EnumDomain(values=d.texts))
+    if d.real is not None:
+        real = d.real
+        if d.ints is not None:
+            real = _real_hull(real, RealIntervalDomain(min=float(d.ints.lo), max=float(d.ints.hi)))
+        return CellType(
+            kind=CellKind.ANY,
+            enum=EnumDomain(values=frozenset((*d.texts, *d.numbers))),
+            real_interval=real,
+        )
+    if d.ints is not None:
+        return CellType(
+            kind=CellKind.ANY,
+            enum=EnumDomain(values=frozenset((*d.texts, *d.numbers))),
+            interval=IntervalDomain(min=d.ints.lo, max=d.ints.hi),
+        )
+    whole = sorted(v for v in d.numbers if isinstance(v, int))
+    if whole and len(whole) == len(d.numbers) and whole[-1] - whole[0] + 1 == len(whole):
+        # A contiguous integer arm is exactly its interval.
+        return CellType(
+            kind=CellKind.ANY,
+            enum=EnumDomain(values=d.texts),
+            interval=IntervalDomain(min=whole[0], max=whole[-1]),
+        )
+    # The interval arm is a point already in the enum: exact, and still a union.
+    members = EnumDomain(values=frozenset((*d.texts, *d.numbers)))
+    if whole:
+        return CellType(
+            kind=CellKind.ANY, enum=members, interval=IntervalDomain(min=whole[0], max=whole[0])
+        )
+    point = min(float(v) for v in d.numbers)
+    return CellType(
+        kind=CellKind.ANY, enum=members, real_interval=RealIntervalDomain(min=point, max=point)
+    )
 
 
 # Excel rejects text results longer than one cell. Checked before concatenation
