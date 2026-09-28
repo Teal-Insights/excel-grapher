@@ -2463,7 +2463,7 @@ def _domain_source(series: BoundSeries, named_axes: NamedAxes, catalog: SeriesCa
         axes = ", ".join(_axis_source_for_domain(axis, named_axes, catalog) for axis in domain.axes)
         coordinates = _coordinates_source(tuple(domain), domain.axes, named_axes, catalog)
         return f"DomainTemplate.explicit(axes=({axes},), coordinates={coordinates})"
-    axes = ", ".join(named_axes.constant(axis) for axis in domain.axes)
+    axes = ", ".join(_product_axis_source(axis, named_axes) for axis in domain.axes)
     emitted = tuple(named_axes.emitted(axis) for axis in domain.axes)
     coordinates = _coordinates_source(tuple(domain), emitted, named_axes)
     return f"Domain.explicit(axes=({axes},), coordinates={coordinates})"
