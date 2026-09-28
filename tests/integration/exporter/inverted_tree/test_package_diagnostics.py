@@ -6,6 +6,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
@@ -163,6 +165,8 @@ _SHIPPED_SUPPORT_MODULES = ("excel.py", "runtime.py", "tensor.py", "provenance.p
 
 def test_shipped_support_modules_pass_ty_and_pyright(tmp_path: Path) -> None:
     """Support modules copied into every package type-check under ty and pyright."""
+    # `excel.py` imports NumPy for its fast paths; resolving it needs the package.
+    pytest.importorskip("numpy")
     workbook = write_workbook(
         tmp_path / "support.xlsx",
         {"S": {"A1": 2, "B1": "=A1*2"}},
