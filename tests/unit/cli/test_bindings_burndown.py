@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -95,3 +96,35 @@ def test_bindings_burndown_exempt_file_clears_worklist(
     captured = capsys.readouterr()
     assert exit_code == 0, captured.err
     assert "Unbound internal formula cells: 0" in captured.out
+
+
+@pytest.mark.parametrize(("targets_from", "formula_nodes"), [("all", 6), ("outputs", 4)])
+def test_bindings_burndown_targets_from_outputs_roots_graph_at_outputs_only(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    targets_from: str,
+    formula_nodes: int,
+) -> None:
+    workbook = write_authoring_workbook(tmp_path / "workbook.xlsx", extra_engine_row=True)
+    inputs, result_a, result_b = public_io_series()
+    bindings_dir = write_shards(
+        tmp_path / "bindings",
+        inputs=[inputs],
+        outputs=[result_a, result_b],
+        internals=[years_internal_series(series_id="alt", data_range="Engine!B3:C3")],
+    )
+    exit_code = main(
+        [
+            "bindings",
+            "burndown",
+            str(workbook),
+            "--bindings",
+            str(bindings_dir),
+            "--json",
+            "--targets-from",
+            targets_from,
+        ]
+    )
+    captured = capsys.readouterr()
+    assert exit_code == 0, captured.err
+    assert json.loads(captured.out)["formula_node_count"] == formula_nodes
