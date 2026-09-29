@@ -58,7 +58,7 @@ from .graph_consistency import (
     GraphConsistencyKind,
 )
 from .graph_pickle import dump_graph, load_graph
-from .guard import And, Compare, GuardExpr, Literal, Not, Or
+from .guard import And, Arith, Compare, GuardExpr, Literal, Neg, Not, Or
 from .guard import CellRef as GuardCellRef
 from .guard import RangeRef as GuardRangeRef
 from .node import (
@@ -129,6 +129,8 @@ __all__ = [
     "GuardRangeRef",
     "Literal",
     "Compare",
+    "Arith",
+    "Neg",
     "Not",
     "And",
     "Or",

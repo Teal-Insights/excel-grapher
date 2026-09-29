@@ -15,14 +15,14 @@ from excel_grapher.core.formula_ast_json import ast_from_json, ast_to_json
 
 from .dependency_provenance import DependencyCause, EdgeProvenance
 from .graph import DependencyGraph
-from .guard import And, CellRef, Compare, GuardExpr, Not, Or, intern_guard
+from .guard import And, Arith, CellRef, Compare, GuardExpr, Neg, Not, Or, intern_guard
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
 # 9: persist `is_array_formula` / `array_formula_ref` for CSE and spill write-back.
 # 8: drop stored `normalized_formula`; strings are derived via `render_formula`.
 # 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
-GRAPH_CACHE_SCHEMA_VERSION = 9
+GRAPH_CACHE_SCHEMA_VERSION = 10
 
 
 class GraphCacheMeta(TypedDict):
@@ -259,6 +259,15 @@ def _guard_to_json(g: GuardExpr | None) -> object:
             "left": _guard_to_json(g.left),
             "right": _guard_to_json(g.right),
         }
+    if isinstance(g, Arith):
+        return {
+            "type": "arith",
+            "op": g.op,
+            "left": _guard_to_json(g.left),
+            "right": _guard_to_json(g.right),
+        }
+    if isinstance(g, Neg):
+        return {"type": "neg", "operand": _guard_to_json(g.operand)}
     if isinstance(g, Not):
         return {"type": "not", "operand": _guard_to_json(g.operand)}
     if isinstance(g, And):
@@ -282,15 +291,21 @@ def _guard_from_json(v: object) -> GuardExpr | None:
         return intern_guard(CellRef(key=cast(NodeKey, key)))
     if typ == "lit":
         return intern_guard(GuardLiteral(value=_value_from_json(d.get("value"))))
-    if typ == "cmp":
+    if typ in ("cmp", "arith"):
         op = d.get("op")
         if not isinstance(op, str):
-            raise TypeError("cmp op must be str")
+            raise TypeError(f"{typ} op must be str")
         left = _guard_from_json(d.get("left"))
         right = _guard_from_json(d.get("right"))
         if left is None or right is None:
-            raise TypeError("cmp left/right cannot be null")
-        return intern_guard(Compare(left=left, op=op, right=right))
+            raise TypeError(f"{typ} left/right cannot be null")
+        node_type = Compare if typ == "cmp" else Arith
+        return intern_guard(node_type(left=left, op=op, right=right))
+    if typ == "neg":
+        operand = _guard_from_json(d.get("operand"))
+        if operand is None:
+            raise TypeError("neg operand cannot be null")
+        return intern_guard(Neg(operand=operand))
     if typ == "not":
         operand = _guard_from_json(d.get("operand"))
         if operand is None:
