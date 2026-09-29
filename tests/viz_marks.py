@@ -8,5 +8,5 @@ import pytest
 
 requires_numpy = pytest.mark.skipif(
     importlib.util.find_spec("numpy") is None,
-    reason="graph viewer layouts need numpy (the `fast` extra)",
+    reason="graph viewer layouts need numpy (the `viz` extra)",
 )

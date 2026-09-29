@@ -150,7 +150,7 @@ The payload builder (`to_web_viz_payload`) and the viewer (`write_web_viz_html`)
 
 #### Shared layout: clustered force
 
-Both viewers (cells here, statements below) use one layout policy from `excel_grapher.grapher.viz_layout` (it needs numpy: `pip install excel-grapher[fast]`): a force layout grouped by the graph's natural clusters (directed Louvain modules for cells, series for statements), computed in levels so large graphs stay tractable:
+Both viewers (cells here, statements below) use one layout policy from `excel_grapher.grapher.viz_layout` (install the `viz` extra: `pip install excel-grapher[viz]`): a force layout grouped by the graph's natural clusters (directed Louvain modules for cells, series for statements), computed in levels so large graphs stay tractable:
 
 1. Force layout on the graph of clusters, one node per cluster.
 2. Force layout of every node, anchored to its cluster's position.
