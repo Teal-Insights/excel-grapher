@@ -13,6 +13,10 @@ Directions are mutually exclusive on one series:
 
 Empty `input: {}` marks an editable leaf.
 
+`input.domain.between` is an integer interval and is only valid with measure
+dtype `int`. `input.domain.real_between` is a real interval and is required for
+dtype `float` or `number`. Do not pair `dtype: float` with `between`.
+
 Do not confuse the `constant` **direction** with `bind.kind: constant` (a fixed
 structure scalar that does not read a cell).
 
