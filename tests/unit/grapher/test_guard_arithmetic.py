@@ -165,6 +165,20 @@ def test_literal_equality_meets_ordered_bounds() -> None:
     assert _add(_cmp(A, "=", Literal(3)), _cmp(A, "<", Arith(B, "+", Literal(1)))) is not None
 
 
+def test_equalities_after_ordered_bounds_still_conflict() -> None:
+    """Equalities join the bounds lazily, whichever order the guards arrive in."""
+    assert _add(_cmp(A, ">", Literal(4)), _cmp(A, "=", Literal(3))) is None
+    assert _add(_cmp(B, "<", Literal(3)), _cmp(A, "=", Literal(3)), _cmp(A, "=", B)) is None
+    assert _add(_cmp(A, ">", C), _cmp(B, ">", A), _cmp(C, "=", B)) is None
+    assert _add(_cmp(A, ">", Literal(4)), _cmp(A, "=", Literal(5))) is not None
+
+
+def test_plain_equalities_do_not_populate_bounds() -> None:
+    c = _add(_cmp(A, "=", Literal(3)), _cmp(A, "=", B), Not(_cmp(C, "=", Literal(1))))
+    assert c is not None
+    assert c.bounds == ()
+
+
 def test_equality_with_arithmetic_gives_two_bounds() -> None:
     assert _add(_cmp(A, "=", Arith(B, "+", Literal(1))), _cmp(A, "<=", B)) is None
 

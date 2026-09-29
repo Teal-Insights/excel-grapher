@@ -1,9 +1,9 @@
 from __future__ import annotations
 
-from collections import deque
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from fractions import Fraction
+from heapq import heappop, heappush
 from math import isfinite
 from typing import Any
 from weakref import WeakValueDictionary
@@ -614,21 +614,35 @@ def _union_interval_remains(cell_type: CellType, forbidden: set[Any]) -> bool:
     return True
 
 
-# Difference bounds `x - y <= c` (or `< c` when strict), keyed `(x, y)`. The
-# empty key stands for the constant 0, so `x <= c` is `(x, _ZERO)`.
+# Difference bounds `x - y <= c + e*eps`, keyed `(x, y)`, where `e` is `-1` for a
+# strict bound and sums of weights add both parts, so tuple order is bound order.
+# The empty key stands for the constant 0, so `x <= c` is `(x, _ZERO)`.
 _ZERO: NodeKey = ""
-_Bound = tuple[Fraction, bool]
+_Num = int | Fraction
+_Weight = tuple[_Num, int]
+_NO_WEIGHT: _Weight = (0, 0)
 # A linear row `sum(coef * cell) + const` (`< 0` when strict, else `<= 0`).
-_LinearRow = tuple[dict[NodeKey, int], Fraction, bool]
+_LinearRow = tuple[dict[NodeKey, int], _Num, bool]
 
 _ORDERED_COMPLEMENT = {"<": ">=", "<=": ">", ">": "<=", ">=": "<"}
 # Rows with more cells than this are left opaque rather than projected.
 _MAX_ROW_CELLS = 8
 
 
+def _exact(v: float) -> _Num:
+    """Return `v` as an `int` when integral, else as the `Fraction` of its decimal text.
+
+    Decimal text keeps `0.1 + 0.2 == 0.3`, matching the formula author's intent.
+    """
+    if isinstance(v, int):
+        return v
+    f = Fraction(repr(v))
+    return f.numerator if f.denominator == 1 else f
+
+
 def _numeric_domain(
     env: CellTypeEnv | None, key: NodeKey
-) -> tuple[Fraction | None, Fraction | None] | None:
+) -> tuple[_Num | None, _Num | None] | None:
     """Return `(lo, hi)` numeric bounds for `key`, or `None` if it may hold non-numbers.
 
     Cells without a declared type are assumed numeric (blanks compare as 0).
@@ -640,18 +654,18 @@ def _numeric_domain(
         return None, None
     if cell_type.kind in (CellKind.STRING, CellKind.BOOL, CellKind.ERROR):
         return None
-    points: list[Fraction] = []
+    points: list[_Num] = []
     if cell_type.enum is not None:
         for v in cell_type.enum.values:
             if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
                 return None
-            points.append(Fraction(v))
-    los: list[Fraction | None] = []
-    his: list[Fraction | None] = []
+            points.append(_exact(v))
+    los: list[_Num | None] = []
+    his: list[_Num | None] = []
     for dom in (cell_type.interval, cell_type.real_interval):
         if dom is not None:
-            los.append(None if dom.min is None else Fraction(dom.min))
-            his.append(None if dom.max is None else Fraction(dom.max))
+            los.append(None if dom.min is None else _exact(dom.min))
+            his.append(None if dom.max is None else _exact(dom.max))
     known_lo = [v for v in los if v is not None]
     known_hi = [v for v in his if v is not None]
     if is_union_domain(cell_type):
@@ -666,17 +680,16 @@ def _numeric_domain(
 
 def _linear_terms(
     expr: GuardExpr, env: CellTypeEnv | None
-) -> tuple[dict[NodeKey, int], Fraction] | None:
+) -> tuple[dict[NodeKey, int], _Num] | None:
     """Return `expr` as `(cell coefficients, constant)`, or `None` if not linear-numeric."""
     if isinstance(expr, CellRef):
         key = _constraint_key(expr.key)
-        return None if _numeric_domain(env, key) is None else ({key: 1}, Fraction(0))
+        return None if _numeric_domain(env, key) is None else ({key: 1}, 0)
     if isinstance(expr, Literal):
         v = expr.value
         if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
             return None
-        # Decimal text keeps `0.1 + 0.2 == 0.3`, matching the formula author's intent.
-        return {}, Fraction(v) if isinstance(v, int) else Fraction(repr(v))
+        return {}, _exact(v)
     if isinstance(expr, Neg):
         inner = _linear_terms(expr.operand, env)
         if inner is None:
@@ -718,7 +731,7 @@ def _ordered_rows(expr: Compare, env: CellTypeEnv | None) -> list[_LinearRow] | 
 
 def _project_row(
     row: _LinearRow, env: CellTypeEnv | None
-) -> tuple[list[tuple[NodeKey, NodeKey, _Bound]], bool, bool]:
+) -> tuple[list[tuple[NodeKey, NodeKey, _Weight]], bool, bool]:
     """Project a linear row onto difference bounds.
 
     Every pair of a `+1` cell and a `-1` cell (either may be absent) is kept and
@@ -726,8 +739,8 @@ def _project_row(
     direction, so each emitted bound is implied by the row.
 
     Returns:
-        `(bounds, exact, violated)`: bounds as `(x, y, (c, strict))` for
-        `x - y <= c`; `exact` when some projection kept every cell; `violated`
+        `(bounds, exact, violated)`: bounds as `(x, y, weight)` for
+        `x - y <= weight`; `exact` when some projection kept every cell; `violated`
         when a constant-only projection is already false.
     """
     coefs, const, strict = row
@@ -736,7 +749,7 @@ def _project_row(
     domains = {k: _numeric_domain(env, k) or (None, None) for k in coefs}
     plus = [k for k, a in coefs.items() if a == 1]
     minus = [k for k, a in coefs.items() if a == -1]
-    out: list[tuple[NodeKey, NodeKey, _Bound]] = []
+    out: list[tuple[NodeKey, NodeKey, _Weight]] = []
     exact = False
     for p in [*plus, None]:
         for n in [*minus, None]:
@@ -755,47 +768,68 @@ def _project_row(
                     if slack > 0 or (slack == 0 and strict):
                         return [], exact, True
                     continue
-                out.append((p or _ZERO, n or _ZERO, (-slack, strict)))
+                out.append((p or _ZERO, n or _ZERO, (-slack, -1 if strict else 0)))
     return out, exact, False
 
 
-def _bound_is_tighter(a: _Bound, b: _Bound) -> bool:
-    """Return whether bound `a` is at least as tight as `b`."""
-    return a[0] < b[0] or (a[0] == b[0] and (a[1] or not b[1]))
+def _add_difference_bound(
+    bounds: dict[tuple[NodeKey, NodeKey], _Weight],
+    potential: dict[NodeKey, _Weight],
+    x: NodeKey,
+    y: NodeKey,
+    w: _Weight,
+) -> bool:
+    """Conjoin `x - y <= w`; return False when the bounds become infeasible.
 
-
-def _bound_is_negative(b: _Bound) -> bool:
-    return b[0] < 0 or (b[0] == 0 and b[1])
-
-
-def _shortest_bound(
-    bounds: Mapping[tuple[NodeKey, NodeKey], _Bound], src: NodeKey, dst: NodeKey
-) -> _Bound | None:
-    """Tightest implied bound on `dst - src`, or `None` when unconstrained.
-
-    Queue-based Bellman–Ford over edges `y -> x` for each `x - y <= c`;
-    `bounds` must not already contain a negative cycle.
+    `potential` is kept a satisfying assignment (`p[x] - p[y] <= w` for every
+    bound). A bound it already satisfies costs O(1); otherwise the violated
+    potentials are repaired Dijkstra-style over the affected nodes only, and
+    having to lower `y` itself means a negative cycle (Cotton & Maler, 2006).
     """
-    succ: dict[NodeKey, list[tuple[NodeKey, _Bound]]] = {}
-    for (x, y), w in bounds.items():
-        succ.setdefault(y, []).append((x, w))
-    dist: dict[NodeKey, _Bound] = {src: (Fraction(0), False)}
-    queue = deque([src])
-    queued = {src}
-    while queue:
-        y = queue.popleft()
-        queued.discard(y)
-        d = dist[y]
-        for x, w in succ.get(y, ()):
-            cand = (d[0] + w[0], d[1] or w[1])
-            cur = dist.get(x)
-            if cur is not None and _bound_is_tighter(cur, cand):
+    if x == y:
+        return w >= _NO_WEIGHT
+    old = bounds.get((x, y))
+    if old is not None and old <= w:
+        return True
+    bounds[(x, y)] = w
+    # A fresh cell has no other bounds, so it can take any satisfying value.
+    if x not in potential:
+        py = potential.setdefault(y, _NO_WEIGHT)
+        potential[x] = (py[0] + w[0], py[1] + w[1])
+        return True
+    if y not in potential:
+        px = potential[x]
+        potential[y] = (px[0] - w[0], px[1] - w[1])
+        return True
+    px, py = potential[x], potential[y]
+    first = (py[0] + w[0] - px[0], py[1] + w[1] - px[1])
+    if first >= _NO_WEIGHT:
+        return True
+    succ: dict[NodeKey, list[tuple[NodeKey, _Weight]]] = {}
+    for (a, b), wt in bounds.items():
+        succ.setdefault(b, []).append((a, wt))
+    lowered: dict[NodeKey, _Weight] = {}
+    best: dict[NodeKey, _Weight] = {x: first}
+    heap: list[tuple[_Weight, NodeKey]] = [(first, x)]
+    while heap:
+        delta, s = heappop(heap)
+        if s in lowered or best.get(s) != delta:
+            continue
+        if s == y:
+            return False
+        ps = potential[s]
+        new_s = (ps[0] + delta[0], ps[1] + delta[1])
+        lowered[s] = new_s
+        for t, wt in succ.get(s, ()):
+            if t in lowered:
                 continue
-            dist[x] = cand
-            if x not in queued:
-                queued.add(x)
-                queue.append(x)
-    return dist.get(dst)
+            pt = potential[t]
+            cand = (new_s[0] + wt[0] - pt[0], new_s[1] + wt[1] - pt[1])
+            if cand < _NO_WEIGHT and (t not in best or cand < best[t]):
+                best[t] = cand
+                heappush(heap, (cand, t))
+    potential.update(lowered)
+    return True
 
 
 @dataclass(frozen=True)
@@ -811,7 +845,32 @@ class GuardConstraints:
     opaque: tuple[str, ...] = ()
     cell_parents: tuple[tuple[NodeKey, NodeKey], ...] = ()
     cell_ne: tuple[tuple[NodeKey, NodeKey], ...] = ()
-    bounds: tuple[tuple[NodeKey, NodeKey, Fraction, bool], ...] = ()
+    bounds: tuple[tuple[NodeKey, NodeKey, _Weight], ...] = ()
+    # A satisfying assignment for `bounds`; path-dependent, so not part of identity.
+    potential: tuple[tuple[NodeKey, _Weight], ...] = field(default=(), compare=False)
+
+    def _frozen_bounds(
+        self,
+        bounds: Mapping[tuple[NodeKey, NodeKey], _Weight],
+        potential: Mapping[NodeKey, _Weight],
+    ) -> tuple[tuple[tuple[NodeKey, NodeKey, _Weight], ...], tuple[tuple[NodeKey, _Weight], ...]]:
+        """Freeze bounds and potentials as sorted tuples.
+
+        Unchanged entries reuse this state's tuples, so the many DFS states along
+        a path share them and each state costs about a pointer per entry.
+        """
+        kept_bounds = {(t[0], t[1]): t for t in self.bounds}
+        triples = []
+        for key, w in bounds.items():
+            t = kept_bounds.get(key)
+            triples.append(t if t is not None and t[2] == w else (key[0], key[1], w))
+        kept_pot = {pair[0]: pair for pair in self.potential}
+        pairs = []
+        for k, w in potential.items():
+            pair = kept_pot.get(k)
+            pairs.append(pair if pair is not None and pair[1] == w else (k, w))
+        # `(x, y)` / keys are unique, so sorting never compares weights.
+        return tuple(sorted(triples)), tuple(sorted(pairs))
 
     def seed_cell_type_env(self, env: CellTypeEnv) -> GuardConstraints | None:
         """Conjoin singleton enum domains as equalities.
@@ -873,10 +932,69 @@ class GuardConstraints:
         opaque: set[str] = set(self.opaque)
         parent: dict[NodeKey, NodeKey] = dict(self.cell_parents)
         ne_pairs: set[tuple[NodeKey, NodeKey]] = set(self.cell_ne)
-        bounds: dict[tuple[NodeKey, NodeKey], _Bound] = {
-            (x, y): (c, strict) for x, y, c, strict in self.bounds
-        }
-        bounded: set[NodeKey] = {k for pair in bounds for k in pair}
+        # Difference bounds are over union-find roots and copied only when touched,
+        # so guards without ordered comparisons pay nothing for them.
+        bounds: dict[tuple[NodeKey, NodeKey], _Weight] | None = None
+        potential: dict[NodeKey, _Weight] | None = None
+
+        def open_bounds() -> tuple[dict[tuple[NodeKey, NodeKey], _Weight], dict[NodeKey, _Weight]]:
+            nonlocal bounds, potential
+            if bounds is None or potential is None:
+                bounds = {(t[0], t[1]): t[2] for t in self.bounds}
+                potential = dict(self.potential)
+            return bounds, potential
+
+        def in_bounds(root: NodeKey) -> bool:
+            if potential is None:
+                return any(k == root for k, _ in self.potential)
+            return root in potential
+
+        def numeric_eq_bounds(root: NodeKey) -> list[tuple[NodeKey, NodeKey, _Weight]]:
+            val = eq.get(root)
+            if isinstance(val, bool) or not isinstance(val, (int, float)) or not isfinite(val):
+                return []
+            v = _exact(val)
+            return [(root, _ZERO, (v, 0)), (_ZERO, root, (-v, 0))]
+
+        def add_bound(x: NodeKey, y: NodeKey, w: _Weight) -> bool:
+            """Conjoin `x - y <= w` over cell keys (or `_ZERO`), mapped to roots."""
+            b, pot = open_bounds()
+            pending = [(x, y, w)]
+            for k in (x, y):
+                if k == _ZERO:
+                    continue
+                lo, hi = _numeric_domain(cell_type_env, k) or (None, None)
+                if hi is not None:
+                    pending.append((k, _ZERO, (hi, 0)))
+                if lo is not None:
+                    pending.append((_ZERO, k, (-lo, 0)))
+            for px, py, pw in pending:
+                rx = px if px == _ZERO else find(px)
+                ry = py if py == _ZERO else find(py)
+                for r in (rx, ry):
+                    if r != _ZERO and r not in pot:
+                        pending.extend(numeric_eq_bounds(r))
+                if not _add_difference_bound(b, pot, rx, ry, pw):
+                    return False
+            return True
+
+        def remap_bounds() -> bool:
+            """Re-add every bound under current roots after a union."""
+            b, pot = open_bounds()
+            old = list(b.items())
+            b.clear()
+            pot.clear()
+            for (x, y), w in old:
+                rx = x if x == _ZERO else find(x)
+                ry = y if y == _ZERO else find(y)
+                if not _add_difference_bound(b, pot, rx, ry, w):
+                    return False
+            return all(
+                _add_difference_bound(b, pot, *bound)
+                for r in list(pot)
+                if r != _ZERO
+                for bound in numeric_eq_bounds(r)
+            )
 
         def find(key: NodeKey) -> NodeKey:
             return _find_parent(parent, _constraint_key(key))
@@ -891,6 +1009,9 @@ class GuardConstraints:
             if not _value_allowed_by_env(cell_type_env, key, val):
                 return False
             eq[key] = val
+            if in_bounds(key):
+                b, pot = open_bounds()
+                return all(_add_difference_bound(b, pot, *bd) for bd in numeric_eq_bounds(key))
             return True
 
         def add_ne_lit(raw_key: NodeKey, val: Any) -> bool:
@@ -928,28 +1049,9 @@ class GuardConstraints:
                 remapped.add((min(xx, yy), max(xx, yy)))
             ne_pairs.clear()
             ne_pairs.update(remapped)
-            return ra not in ne or _enum_remaining(cell_type_env, ra, ne[ra])
-
-        def add_bound(x: NodeKey, y: NodeKey, w: _Bound) -> bool:
-            if x == y:
-                return not _bound_is_negative(w)
-            for k in (x, y):
-                if k in bounded or k == _ZERO:
-                    continue
-                bounded.add(k)
-                lo, hi = _numeric_domain(cell_type_env, k) or (None, None)
-                if hi is not None and not add_bound(k, _ZERO, (hi, False)):
-                    return False
-                if lo is not None and not add_bound(_ZERO, k, (-lo, False)):
-                    return False
-            existing = bounds.get((x, y))
-            if existing is not None and _bound_is_tighter(existing, w):
-                return True
-            back = _shortest_bound(bounds, x, y)
-            if back is not None and _bound_is_negative((back[0] + w[0], back[1] or w[1])):
+            if (in_bounds(ra) or in_bounds(rb)) and not remap_bounds():
                 return False
-            bounds[(x, y)] = w
-            return True
+            return ra not in ne or _enum_remaining(cell_type_env, ra, ne[ra])
 
         def add_ordered(c: Compare) -> bool | None:
             """Conjoin `c` as difference bounds; `None` when `c` is not fully captured."""
@@ -1020,7 +1122,8 @@ class GuardConstraints:
                         return None
                     captured = True
 
-            if isinstance(expr2, Compare) and expr2.op not in ("<>",):
+            # Captured `=` forms join the bounds lazily, only once their cell is ordered.
+            if isinstance(expr2, Compare) and expr2.op != "<>" and not captured:
                 ordered = add_ordered(expr2)
                 if ordered is False:
                     return None
@@ -1035,13 +1138,19 @@ class GuardConstraints:
         )
         parent_items = tuple(sorted((k, p) for k, p in parent.items() if k != p))
         ne_pair_items = tuple(sorted(ne_pairs))
+        bound_items, potential_items = (
+            (self.bounds, self.potential)
+            if bounds is None or potential is None
+            else self._frozen_bounds(bounds, potential)
+        )
         return GuardConstraints(
             equalities=eq_items,
             inequalities=ne_items,
             opaque=tuple(sorted(opaque)),
             cell_parents=parent_items,
             cell_ne=ne_pair_items,
-            bounds=tuple(sorted((x, y, c, strict) for (x, y), (c, strict) in bounds.items())),
+            bounds=bound_items,
+            potential=potential_items,
         )
 
 
