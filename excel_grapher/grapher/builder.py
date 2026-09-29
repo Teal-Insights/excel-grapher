@@ -94,6 +94,8 @@ from .parser import (
     expand_range,
     expand_range_ref,
     format_key,
+    lookup_table_arg_spans,
+    lookup_table_line_cells,
     mask_ref_only_function_calls,
     mask_spans,
     parse_dynamic_range_refs_with_spans,
@@ -1445,16 +1447,32 @@ def create_dependency_graph(
             # (range spans masked) so bare endpoints in single-prefix forms are
             # never attributed to the formula's local sheet.
             if expand_ranges:
-                for start, end, _span in parse_range_refs_with_spans(masked):
+                lookup_tables = lookup_table_arg_spans(masked)
+                for start, end, span in parse_range_refs_with_spans(masked):
                     sheet = start.sheet if start.sheet is not None else current_sheet
                     _ensure_sheet_bounds(sheet)
-                    for dep_sheet, dep_a1 in expand_range_ref(
+                    range_cells = expand_range_ref(
                         start=start,
                         end=end,
                         default_sheet=sheet,
                         max_cells=max_range_cells,
                         sheet_bounds=sheet_bounds,
-                    ):
+                    )
+                    lookup = lookup_tables.get(span)
+                    if lookup is not None:
+                        # Literal-index H/VLOOKUP reads only the key and result lines (#1027).
+                        range_cells = lookup_table_line_cells(
+                            range_cells,
+                            lookup[0],
+                            lookup[1],
+                            origin_col=(
+                                fastpyxl.utils.cell.column_index_from_string(start.column)
+                                if start.column
+                                else 1
+                            ),
+                            origin_row=start.row or 1,
+                        )
+                    for dep_sheet, dep_a1 in range_cells:
                         deps.append((dep_sheet, dep_a1))
                         _note_prov(dep_sheet, dep_a1, DependencyCause.static_range)
 
