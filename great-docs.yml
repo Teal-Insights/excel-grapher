@@ -103,9 +103,8 @@ reference:
       - exporter.LAYOUT_FORCEATLAS2
       - exporter.LAYOUT_GRAPHVIZ_DOT
       - exporter.LAYOUT_GRAPHVIZ_SFDP
-      - exporter.LAYOUT_MULTIPARTITE
       - exporter.LAYOUT_SPRING
-      - exporter.LAYOUT_STRATIFIED_MULTIPARTITE
+      - exporter.LAYOUT_CLUSTERED_FORCE
       - exporter.WebVizLayoutPlugin
       - exporter.WebVizLayoutSpec
       - exporter.list_web_viz_layouts

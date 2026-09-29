@@ -44,7 +44,7 @@ def _chain_nx() -> nx.DiGraph:
 
 def test_louvain_chain_exports_cross_module_local_edges() -> None:
     """Tail-node selection needs the exported CSR edge across the module split."""
-    payload = to_web_viz_payload(_chain_nx(), layout="stratified_multipartite")
+    payload = to_web_viz_payload(_chain_nx(), layout="clustered_force")
     assert tuple(payload.overlays[0].data["node_module_id"]) == (0, 0, 1)
 
     off = payload.core.local_edges.offsets

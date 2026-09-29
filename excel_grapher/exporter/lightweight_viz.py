@@ -14,8 +14,6 @@ from excel_grapher.core.address_keys import normalize_key, parse_address
 from excel_grapher.grapher.graph import DependencyGraph, GraphReadView
 from excel_grapher.grapher.lightweight_viz import (
     WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID,
-    LightweightVizCore,
-    LightweightVizCoreNodeColumns,
     LightweightVizLayoutInput,
     LightweightVizModuleEdge,
     LightweightVizOverlay,
@@ -72,7 +70,6 @@ def _module_overlay_from_analysis(
                 "rank_max": m.rank_max,
                 "centroid_x": m.centroid_x,
                 "centroid_y": m.centroid_y,
-                "density_mode": m.density_mode,
             }
             for m in modules
         ],
@@ -363,9 +360,7 @@ def _graphviz_layout_positions(work, prog: str) -> dict[str, tuple[float, float]
 def _compute_networkx_layout_positions(
     work,
     *,
-    keys: list[str],
-    layout_mode: Literal["spring", "forceatlas2", "multipartite", "graphviz_dot", "graphviz_sfdp"],
-    node_rank: tuple[int, ...],
+    layout_mode: Literal["spring", "forceatlas2", "graphviz_dot", "graphviz_sfdp"],
     seed: int,
     weight_attr: str | None,
 ) -> dict[str, tuple[float, float]]:
@@ -377,54 +372,11 @@ def _compute_networkx_layout_positions(
     if layout_mode == "forceatlas2":
         pos = nx.forceatlas2_layout(work, seed=seed, weight=weight_attr)
         return {k: (float(v[0]), float(v[1])) for k, v in pos.items()}
-    if layout_mode == "multipartite":
-        layered = work.copy()
-        for i, key in enumerate(keys):
-            layered.nodes[key]["subset"] = int(node_rank[i])
-        pos = nx.multipartite_layout(layered, subset_key="subset", align="horizontal")
-        return {k: (float(v[0]), float(v[1])) for k, v in pos.items()}
     if layout_mode == "graphviz_dot":
         return _graphviz_layout_positions(work, prog="dot")
     if layout_mode == "graphviz_sfdp":
         return _graphviz_layout_positions(work, prog="sfdp")
     raise ValueError(f"Unsupported web viz layout mode: {layout_mode}")
-
-
-def _apply_networkx_layout_to_core(
-    core: LightweightVizCore,
-    *,
-    keys: list[str],
-    positions: dict[str, tuple[float, float]],
-) -> LightweightVizCore:
-    x_coords: list[float] = []
-    y_coords: list[float] = []
-    for key in keys:
-        x, y = positions.get(key, (0.0, 0.0))
-        x_coords.append(float(x))
-        y_coords.append(float(y))
-
-    nodes = core.nodes
-    node_cols = LightweightVizCoreNodeColumns(
-        sheet_index=nodes.sheet_index,
-        row=nodes.row,
-        column=nodes.column,
-        is_leaf=nodes.is_leaf,
-        formula=nodes.formula,
-        in_degree=nodes.in_degree,
-        out_degree=nodes.out_degree,
-        rank=nodes.rank,
-        x=tuple(x_coords),
-        y=tuple(y_coords),
-        bucket_density=nodes.bucket_density,
-    )
-    return LightweightVizCore(
-        stats=core.stats,
-        sheets=core.sheets,
-        nodes=node_cols,
-        local_edges=core.local_edges,
-        max_local_nodes=core.max_local_nodes,
-        max_local_edges=core.max_local_edges,
-    )
 
 
 WebVizPayload = LightweightVizPayload
@@ -437,7 +389,7 @@ def to_web_viz_payload(
     max_local_edges: int | None = None,
     include_guarded_edges: bool = True,
     include_guarded_edges_for_partition: bool = False,
-    layout: WebVizLayoutSpec = "stratified_multipartite",
+    layout: WebVizLayoutSpec = "clustered_force",
     layout_config: dict[str, Any] | None = None,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
@@ -453,12 +405,13 @@ def to_web_viz_payload(
     layout or partition needs it, or when a plugin reads `ctx.nx_graph`.
 
     Layout is selected by `layout` (registered web layout plugin id or a direct
-    `WebVizLayoutPlugin` callable). The default `stratified_multipartite` uses
-    SCC-condensation longest-path rank on the vertical axis and Louvain
-    community ordering on the horizontal axis when `include_module_overlay`
-    is true.
-    Other built-in ids include `spring`, `forceatlas2`, `multipartite` (NetworkX
-    `multipartite_layout`), `graphviz_dot`, and `graphviz_sfdp`.
+    `WebVizLayoutPlugin` callable). The default `clustered_force` is the shared
+    multilevel clustered force layout (`excel_grapher.grapher.viz_layout`)
+    with directed Louvain modules as clusters; pass
+    `layout_config={"rank_pull": "none" | "between" | "everywhere"}` to set its
+    vertical pull towards input depth (default `"between"`).
+    Other built-in ids are `spring`, `forceatlas2`, `graphviz_dot`, and
+    `graphviz_sfdp`.
 
     Set `include_module_overlay=False` to skip the partition overlay (single module color;
     overview still draws local graph edges in the viewer).
@@ -495,16 +448,15 @@ def to_web_viz_payload(
         li = LightweightVizLayoutInput(m.module_of, m.node_rank)
     else:
         li = None
-    core_base = build_lightweight_viz_core(
+    core = build_lightweight_viz_core(
         dep_graph,
         limits=limits,
         layout_input=li,
-        layout_mode="bfs",
+        positions=[lay.positions.get(key, (0.0, 0.0)) for key in keys],
         include_guarded_edges=include_guarded_edges,
         include_formula_on_nodes=include_formula_on_nodes,
         max_formula_length=max_formula_length,
     )
-    core = _apply_networkx_layout_to_core(core_base, keys=keys, positions=lay.positions)
     overlays: list[LightweightVizOverlay] = []
     if include_module_overlay and lay.module_analysis is not None:
         overlays.append(

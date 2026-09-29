@@ -35,14 +35,20 @@
     #stats { margin-left: auto; opacity: 0.75; font-size: 12px; }
   </style>
   <script src="https://cdn.jsdelivr.net/npm/regl@2.1.0/dist/regl.min.js"></script>
-  <script src="https://cdn.jsdelivr.net/npm/d3-force@3.0.0/dist/d3-force.min.js"></script>
 </head>
 <body>
   <div id="toolbar">
     <strong id="docTitle">__TITLE__</strong>
     <label><input type="checkbox" id="showModEdges" checked /><span id="edgeLabel"> Overview edges</span></label>
     <select id="moduleFilter"><option value="">All modules</option></select>
-    <button type="button" id="btnForce">Local force (selection)</button>
+    <label>Vertical pull
+      <select id="rankPull">
+        <option value="none">None</option>
+        <option value="between">Between modules</option>
+        <option value="everywhere">Everywhere</option>
+      </select>
+    </label>
+    <button type="button" id="btnForce">Relayout selection</button>
     <button type="button" id="btnOverview">Back to overview</button>
     <span id="stats"></span>
   </div>
@@ -54,6 +60,9 @@
   <script>
     /*__BOOTSTRAP__*/
     /*__SIDECAR__*/
+  </script>
+  <script>
+    /*__VIZ_FORCE_JS__*/
   </script>
   <script>
 (function () {
@@ -252,8 +261,8 @@
   function isPartitionModuleOverlay(overlayId) {
     return overlayId === WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID;
   }
-  var DENSE_BUCKET_THRESHOLD = 12;
-  var VIZ_PAYLOAD_VERSION = 2;
+  var VIZ_PAYLOAD_VERSION = 3;
+  var CFG = window.VIZ_LAYOUT_CONFIG;
 
   function derivePartitionModulesTable(core, moduleId, nodeRank) {
     var n = core.stats.node_count;
@@ -266,11 +275,6 @@
     for (var j = 0; j < nMod; j++) modNodeCount[j] = 0;
     for (var k = 0; k < moduleId.length; k++) {
       modNodeCount[moduleId[k]]++;
-    }
-    var bucketCounts = {};
-    for (var i = 0; i < n; i++) {
-      var bk = nodeRank[i] + ',' + moduleId[i];
-      bucketCounts[bk] = (bucketCounts[bk] || 0) + 1;
     }
     var xs = core.nodes.x;
     var ys = core.nodes.y;
@@ -297,22 +301,13 @@
       var c = modNodeCount[m];
       var r0 = modRankMin[m];
       var r1 = modRankMax[m];
-      var densityMode = false;
-      for (var r = r0; r <= r1; r++) {
-        var cnt = bucketCounts[r + ',' + m] || 0;
-        if (cnt > DENSE_BUCKET_THRESHOLD) {
-          densityMode = true;
-          break;
-        }
-      }
       modules.push({
         id: m,
         node_count: c,
         rank_min: c ? r0 : 0,
         rank_max: c ? r1 : 0,
         centroid_x: c ? sumX[m] / c : 0,
-        centroid_y: c ? sumY[m] / c : 0,
-        density_mode: densityMode
+        centroid_y: c ? sumY[m] / c : 0
       });
     }
     return modules;
@@ -359,8 +354,7 @@
         module_count: modules.length,
         module_edge_count: moduleEdges.length,
         local_edge_count: core.stats.local_edge_count,
-        truncated_local_nodes: core.stats.truncated_local_nodes,
-        dense_bucket_count: core.stats.dense_bucket_count
+        truncated_local_nodes: core.stats.truncated_local_nodes
       };
       nodes = {
         sheet_index: core.nodes.sheet_index,
@@ -372,9 +366,9 @@
         out_degree: core.nodes.out_degree,
         module_id: moduleId,
         rank: nodeRankOut,
-        x: core.nodes.x,
-        y: core.nodes.y,
-        bucket_density: core.nodes.bucket_density
+        depth: core.nodes.depth,
+        x: core.nodes.x.slice(),
+        y: core.nodes.y.slice()
       };
     } else {
       var moduleIdEmpty = n ? new Array(n) : [];
@@ -388,8 +382,7 @@
         module_count: n ? modules.length : 0,
         module_edge_count: 0,
         local_edge_count: core.stats.local_edge_count,
-        truncated_local_nodes: core.stats.truncated_local_nodes,
-        dense_bucket_count: core.stats.dense_bucket_count
+        truncated_local_nodes: core.stats.truncated_local_nodes
       };
       nodes = {
         sheet_index: core.nodes.sheet_index,
@@ -401,9 +394,9 @@
         out_degree: core.nodes.out_degree,
         module_id: moduleIdEmpty,
         rank: nodeRankCore,
-        x: core.nodes.x,
-        y: core.nodes.y,
-        bucket_density: core.nodes.bucket_density
+        depth: core.nodes.depth,
+        x: core.nodes.x.slice(),
+        y: core.nodes.y.slice()
       };
     }
 
@@ -445,6 +438,7 @@
     const ctx2 = overlay.getContext('2d');
 
     const n = data.stats.node_count;
+    const tier = window.VizForce.tier(n, CFG);
     const statsEl = document.getElementById('stats');
     const localEdgeCount = data.stats.local_edge_count;
     var maxLocalEdgeDraw = null;
@@ -455,11 +449,8 @@
       }
     }
     if (maxLocalEdgeDraw == null) {
-    if (n > 40000) {
-      maxLocalEdgeDraw = 200000;
-    } else if (n > 10000) {
-      maxLocalEdgeDraw = 500000;
-    }
+      if (tier === 'large') maxLocalEdgeDraw = CFG.large_max_drawn_edges;
+      else if (tier === 'medium') maxLocalEdgeDraw = CFG.medium_max_drawn_edges;
     }
     var statsText = n + ' nodes · ' + data.stats.module_count + ' modules · '
       + localEdgeCount + ' local edges (exported)';
@@ -488,15 +479,19 @@
       colors[i * 3 + 2] = baseColors[i * 3 + 2];
     }
 
-    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
-    for (let i = 0; i < n; i++) {
-      const x = positions[i * 2], y = positions[i * 2 + 1];
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+    let cx = 0, cy = 0, span = 1;
+    function measureExtent() {
+      let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+      for (let i = 0; i < n; i++) {
+        const x = data.nodes.x[i], y = data.nodes.y[i];
+        minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+        minY = Math.min(minY, y); maxY = Math.max(maxY, y);
+      }
+      if (!isFinite(minX)) { minX = 0; maxX = 1; minY = 0; maxY = 1; }
+      cx = (minX + maxX) / 2; cy = (minY + maxY) / 2;
+      span = Math.max(maxX - minX, maxY - minY, 1);
     }
-    if (!isFinite(minX)) { minX = 0; maxX = 1; minY = 0; maxY = 1; }
-    const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
-    const span = Math.max(maxX - minX, maxY - minY, 1);
+    measureExtent();
 
     let view = { scale: 1, tx: 0, ty: 0 };
     function fitView() {
@@ -504,7 +499,7 @@
       const s = 0.85 * Math.min(w, h) / span;
       view.scale = s;
       view.tx = w / 2 - cx * s;
-      view.ty = h / 2 + cy * s;
+      view.ty = h / 2 - cy * s;
     }
 
     function resize() {
@@ -519,8 +514,7 @@
     }
     window.addEventListener('resize', resize);
 
-    const bin = Math.max(span / 80, 1e-6);
-    const spatial = buildSpatialIndex(data, bin);
+    let spatial = buildSpatialIndex(data, Math.max(span / 80, 1e-6));
 
     const regl = createREGL({
       canvas: canvas,
@@ -640,8 +634,92 @@
       ctx2.restore();
     }
 
+    // Large graphs: one disc per module until cells are 16 px apart.
+    function overviewActive() {
+      return tier === 'large' && mode === 'overview' && data.modules.length > 1
+        && CFG.link_distance * view.scale < 16;
+    }
+
+    function moduleRadius(m) {
+      return CFG.disc_spacing * Math.sqrt(Math.max(m.node_count, 1));
+    }
+
+    function pickModule(mx, my) {
+      const wx = (mx - view.tx) / view.scale;
+      const wy = (my - view.ty) / view.scale;
+      let best = null;
+      for (let m = 0; m < data.modules.length; m++) {
+        const mod = data.modules[m];
+        if (!mod.node_count) continue;
+        if (Math.hypot(wx - mod.centroid_x, wy - mod.centroid_y) > moduleRadius(mod)) continue;
+        if (!best || mod.node_count > best.node_count) best = mod;
+      }
+      return best;
+    }
+
+    function drawModuleOverview() {
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      ctx2.clearRect(0, 0, w, h);
+      ctx2.save();
+      ctx2.strokeStyle = 'rgba(20, 75, 170, 0.22)';
+      for (let e = 0; e < data.module_edges.length; e++) {
+        const ed = data.module_edges[e];
+        const a = data.modules[ed.source_module_id];
+        const b = data.modules[ed.target_module_id];
+        const weight = ed.unconditional_weight + ed.guarded_weight;
+        if (weight <= 0) continue;
+        ctx2.lineWidth = Math.min(1 + Math.log(weight), 6);
+        ctx2.beginPath();
+        ctx2.moveTo(a.centroid_x * view.scale + view.tx, a.centroid_y * view.scale + view.ty);
+        ctx2.lineTo(b.centroid_x * view.scale + view.tx, b.centroid_y * view.scale + view.ty);
+        ctx2.stroke();
+      }
+      const f = filterMod === '' ? null : parseInt(filterMod, 10);
+      for (let m = 0; m < data.modules.length; m++) {
+        const mod = data.modules[m];
+        if (!mod.node_count) continue;
+        const rgb = moduleColor(mod.id, data.modules.length);
+        const r = Math.max(moduleRadius(mod) * view.scale, 3);
+        const x = mod.centroid_x * view.scale + view.tx;
+        const y = mod.centroid_y * view.scale + view.ty;
+        ctx2.globalAlpha = f !== null && f !== mod.id ? 0.25 : 0.8;
+        ctx2.fillStyle = 'rgb(' + rgb[0] + ',' + rgb[1] + ',' + rgb[2] + ')';
+        ctx2.beginPath();
+        ctx2.arc(x, y, r, 0, Math.PI * 2);
+        ctx2.fill();
+        if (r >= 18) {
+          ctx2.globalAlpha = 1;
+          ctx2.fillStyle = '#fff';
+          ctx2.font = '11px system-ui, sans-serif';
+          ctx2.textAlign = 'center';
+          ctx2.textBaseline = 'middle';
+          ctx2.fillText(mod.id + ' (' + mod.node_count + ')', x, y);
+        }
+      }
+      ctx2.restore();
+    }
+
+    function zoomToModule(mod) {
+      let x0 = Infinity, x1 = -Infinity, y0 = Infinity, y1 = -Infinity;
+      for (let i = 0; i < n; i++) {
+        if (data.nodes.module_id[i] !== mod.id) continue;
+        x0 = Math.min(x0, data.nodes.x[i]); x1 = Math.max(x1, data.nodes.x[i]);
+        y0 = Math.min(y0, data.nodes.y[i]); y1 = Math.max(y1, data.nodes.y[i]);
+      }
+      const w = canvas.clientWidth, h = canvas.clientHeight;
+      const ext = Math.max(x1 - x0, y1 - y0, 32 * CFG.link_distance);
+      const s = 0.85 * Math.min(w, h) / ext;
+      view.scale = s;
+      view.tx = w / 2 - (x0 + x1) / 2 * s;
+      view.ty = h / 2 - (y0 + y1) / 2 * s;
+    }
+
     function frame() {
       regl.clear({ color: [1, 1, 1, 1], depth: 1 });
+      if (overviewActive()) {
+        drawModuleOverview();
+        return;
+      }
       drawPoints({ posBuf: posBuf, colBuf: colBuf, scale: view.scale, translate: [view.tx, view.ty] });
       drawOverlay();
     }
@@ -663,6 +741,17 @@
       const rect = canvas.getBoundingClientRect();
       const mx = ev.clientX - rect.left;
       const my = ev.clientY - rect.top;
+      if (overviewActive()) {
+        const mod = pickModule(mx, my);
+        hoverId = -1;
+        if (!mod) { tip.style.display = 'none'; return; }
+        tip.style.display = 'block';
+        tip.style.left = (ev.clientX + 14) + 'px';
+        tip.style.top = (ev.clientY + 14) + 'px';
+        tip.innerHTML = '<b>Module ' + mod.id + '</b><br/>' + mod.node_count +
+          ' cells · rank ' + mod.rank_min + '–' + mod.rank_max + '<br/>click to zoom in';
+        return;
+      }
         const pickR2 = (14 / view.scale) * (14 / view.scale);
         const id = pickNearest(spatial, data, mx, my, view.scale, view.tx, view.ty, pickR2);
       hoverId = id;
@@ -705,7 +794,13 @@
       view.ty = my - wy * view.scale;
     }, { passive: false });
 
-    canvas.addEventListener('click', function () {
+    canvas.addEventListener('click', function (ev) {
+      if (overviewActive()) {
+        const rect = canvas.getBoundingClientRect();
+        const mod = pickModule(ev.clientX - rect.left, ev.clientY - rect.top);
+        if (mod) zoomToModule(mod);
+        return;
+      }
       if (hoverId >= 0) {
         pinnedId = hoverId;
         highlight = neighborSet(data, pinnedId);
@@ -720,59 +815,93 @@
       applyFilterAndHighlight();
     });
 
+    const pullSelect = document.getElementById('rankPull');
+    pullSelect.value = (raw.annotations && raw.annotations.rank_pull) || 'none';
+    if (tier !== 'small' || !data.nodes.depth) {
+      pullSelect.disabled = true;
+      pullSelect.title = 'Precomputed; pass layout_config={"rank_pull": ...} to change it for graphs this size';
+    }
+
+    function layoutEdgePairs() {
+      const off = data.local_edges.offsets, tg = data.local_edges.targets;
+      const out = [];
+      for (let u = 0; u < n; u++) {
+        for (let k = off[u]; k < off[u + 1]; k++) out.push([u, tg[k]]);
+      }
+      return out;
+    }
+
+    function setBaseline(xs, ys) {
+      for (let i = 0; i < n; i++) {
+        data.nodes.x[i] = xs[i];
+        data.nodes.y[i] = ys[i];
+      }
+      const sums = data.modules.map(function () { return [0, 0]; });
+      for (let i = 0; i < n; i++) {
+        const s = sums[data.nodes.module_id[i]];
+        if (s) { s[0] += xs[i]; s[1] += ys[i]; }
+      }
+      data.modules.forEach(function (m, k) {
+        if (!m.node_count) return;
+        m.centroid_x = sums[k][0] / m.node_count;
+        m.centroid_y = sums[k][1] / m.node_count;
+      });
+      measureExtent();
+      spatial = buildSpatialIndex(data, Math.max(span / 80, 1e-6));
+    }
+
+    // Small graphs: rerun the whole clustered layout in the browser.
+    pullSelect.addEventListener('change', function () {
+      const out = window.VizForce.clusteredLayout({
+        n: n,
+        edges: layoutEdgePairs(),
+        clusters: data.nodes.module_id,
+        depths: data.nodes.depth,
+        rankPull: pullSelect.value
+      }, CFG);
+      setBaseline(out.x, out.y);
+      document.getElementById('btnOverview').click();
+    });
+
+    // Relayout the selected cell's module (large graphs) or neighborhood.
+    function relayoutMembers(nid) {
+      if (tier === 'large') {
+        const mid = data.nodes.module_id[nid];
+        const members = [];
+        for (let i = 0; i < n; i++) if (data.nodes.module_id[i] === mid) members.push(i);
+        if (members.length <= CFG.tier_small_max) return members;
+      }
+      return localForceSubgraph(data, nid).nodeIds;
+    }
+
     document.getElementById('btnForce').addEventListener('click', function () {
       const nid = pinnedId >= 0 ? pinnedId : (hoverId >= 0 ? hoverId : 0);
       if (n === 0) return;
-      const sub = localForceSubgraph(data, nid);
+      const ids = relayoutMembers(nid);
       mode = 'force';
-      runForceLayout(sub);
-    });
-
-    function runForceLayout(sub) {
-      const nodes = sub.nodeIds.map(function (id) {
-        return { id: id, x: data.nodes.x[id], y: data.nodes.y[id] };
-      });
-      const idToIdx = {};
-      for (let i = 0; i < nodes.length; i++) idToIdx[nodes[i].id] = i;
-      const links = [];
-      for (let e = 0; e < sub.edgesFrom.length; e++) {
-        const s = idToIdx[sub.edgesFrom[e]];
-        const t = idToIdx[sub.edgesTo[e]];
-        if (s === undefined || t === undefined) continue;
-        links.push({ source: nodes[s], target: nodes[t], guarded: sub.edgesGuarded[e] });
-      }
-      const sim = d3.forceSimulation(nodes)
-        .force('link', d3.forceLink(links).distance(40).strength(0.6))
-        .force('charge', d3.forceManyBody().strength(-120))
-        .force('cx', d3.forceX(0).strength(0.05))
-        .force('cy', d3.forceY(0).strength(0.05));
-      for (let t = 0; t < 120; t++) sim.tick();
-      sim.stop();
-
-      let fx = Infinity, fX = -Infinity, fy = Infinity, fY = -Infinity;
-      for (let i = 0; i < nodes.length; i++) {
-        fx = Math.min(fx, nodes[i].x); fX = Math.max(fX, nodes[i].x);
-        fy = Math.min(fy, nodes[i].y); fY = Math.max(fY, nodes[i].y);
-      }
-      const fspan = Math.max(fX - fx, fY - fy, 1);
-      const fcx = (fx + fX) / 2, fcy = (fy + fY) / 2;
-
-      for (let i = 0; i < nodes.length; i++) {
-        const id = nodes[i].id;
-        positions[id * 2] = (nodes[i].x - fcx) * (span / fspan) + cx;
-        positions[id * 2 + 1] = (nodes[i].y - fcy) * (span / fspan) + cy;
-      }
-      posBuf.subdata(positions);
+      const xs = new Float64Array(n), ys = new Float64Array(n);
+      for (let i = 0; i < n; i++) { xs[i] = positions[i * 2]; ys[i] = positions[i * 2 + 1]; }
+      window.VizForce.relayoutGroup({
+        ids: ids,
+        edges: layoutEdgePairs(),
+        x: xs,
+        y: ys,
+        depths: data.nodes.depth,
+        rankPull: pullSelect.value
+      }, CFG);
+      const on = new Set(ids);
       for (let i = 0; i < n; i++) {
-        const on = sub.nodeIds.indexOf(i) >= 0;
-        const dim = on ? 1 : 0.28;
+        positions[i * 2] = xs[i];
+        positions[i * 2 + 1] = ys[i];
+        const dim = on.has(i) ? 1 : 0.28;
         colors[i * 3] = baseColors[i * 3] * dim;
         colors[i * 3 + 1] = baseColors[i * 3 + 1] * dim;
         colors[i * 3 + 2] = baseColors[i * 3 + 2] * dim;
       }
+      posBuf.subdata(positions);
       colBuf.subdata(colors);
       document.getElementById('showModEdges').checked = false;
-    }
+    });
 
     document.getElementById('btnOverview').addEventListener('click', function () {
       mode = 'overview';

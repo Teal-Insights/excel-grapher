@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import heapq
 import json
-import math
-from collections import deque
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -23,21 +21,14 @@ from .formula_label import (
     validate_max_formula_length,
 )
 from .graph import DependencyGraph, GraphReadView
-from .node import Node, NodeKey, NodeView, make_cell_node
+from .node import NodeKey, NodeView
 
 VizGraph: TypeAlias = GraphReadView | DependencyGraph
 
 # --- Constants ----------------------------------------------------------------
 
-DENSE_BUCKET_THRESHOLD = 12
-VIZ_PAYLOAD_VERSION = 2
+VIZ_PAYLOAD_VERSION = 3
 WEBVIZ_LOUVAIN_DIRECTED_OVERLAY_ID = "webviz.louvain_directed"
-
-# BFS overview: weighted barycentric ordering within each (rank, module) bucket
-BFS_HORIZONTAL_UNGUARDED_WEIGHT = 1.0
-BFS_HORIZONTAL_GUARDED_WEIGHT = 0.35
-BFS_HORIZONTAL_SWEEP_COUNT = 6
-BFS_HORIZONTAL_MIN_SLOT_GAP = 1.0
 
 # --- CSR / edge extraction ----------------------------------------------------
 
@@ -209,7 +200,6 @@ class LightweightVizCoreStats:
     node_count: int
     local_edge_count: int
     truncated_local_nodes: int
-    dense_bucket_count: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -222,9 +212,9 @@ class LightweightVizCoreNodeColumns:
     in_degree: tuple[int, ...]
     out_degree: tuple[int, ...]
     rank: tuple[int, ...]
+    depth: tuple[int, ...]
     x: tuple[float, ...]
     y: tuple[float, ...]
-    bucket_density: tuple[int, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -235,347 +225,6 @@ class LightweightVizCore:
     local_edges: LightweightVizLocalEdges
     max_local_nodes: int | None
     max_local_edges: int | None
-
-
-def _build_out_adj_guarded(
-    graph: VizGraph,
-    keys: list[NodeKey],
-    key_id: dict[NodeKey, int],
-    *,
-    include_guarded: bool,
-) -> list[list[tuple[int, bool]]]:
-    """Outgoing adjacency with guarded flags, aligned with `selected_adj` edge filtering."""
-    n = len(keys)
-    out: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
-    for fk in keys:
-        fi = key_id[fk]
-        for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
-            resolved = _resolve_viz_endpoint(graph, tk)
-            ti = None if resolved is None else key_id.get(resolved)
-            if ti is None:
-                continue
-            guarded = graph.is_guarded(fk, tk)
-            if guarded and not include_guarded:
-                continue
-            out[fi].append((ti, guarded))
-    for row in out:
-        row.sort(key=lambda t: t[0])
-    return out
-
-
-def _reverse_adj_flagged(
-    adj_flagged: list[list[tuple[int, bool]]], n: int
-) -> list[list[tuple[int, bool]]]:
-    rev: list[list[tuple[int, bool]]] = [[] for _ in range(n)]
-    for u in range(n):
-        for v, g in adj_flagged[u]:
-            rev[v].append((u, g))
-    for row in rev:
-        row.sort(key=lambda t: t[0])
-    return rev
-
-
-def _edge_weight(guarded: bool) -> float:
-    return BFS_HORIZONTAL_GUARDED_WEIGHT if guarded else BFS_HORIZONTAL_UNGUARDED_WEIGHT
-
-
-def _bucket_keys_sorted(ranks: list[int], module_of: list[int]) -> list[tuple[int, int]]:
-    buckets = {(ranks[i], module_of[i]) for i in range(len(ranks))}
-    return sorted(buckets)
-
-
-def _bfs_bucket_sort_key(
-    vid: int,
-    ranks: list[int],
-    adj_flagged: list[list[tuple[int, bool]]],
-    rev_flagged: list[list[tuple[int, bool]]],
-) -> tuple[int, int]:
-    """Stable tie-break for initial bucket order using the closest rank neighbor when present."""
-    r = ranks[vid]
-    preds = [u for u, _ in rev_flagged[vid] if ranks[u] == r - 1]
-    if preds:
-        return (min(preds), vid)
-    succs = [w for w, _ in adj_flagged[vid] if ranks[w] == r + 1]
-    if succs:
-        return (min(succs), vid)
-    return (vid, vid)
-
-
-def _bfs_horizontal_iteration_order(
-    n: int,
-    ranks: list[int],
-    module_of: list[int],
-    adj_flagged: list[list[tuple[int, bool]]],
-    rev_flagged: list[list[tuple[int, bool]]],
-) -> list[int]:
-    """Deterministic permutation for `_rank_band_xy`: within each (rank, module) bucket, order by weighted barycentric sweeps."""
-    if n == 0:
-        return []
-    bucket_order: dict[tuple[int, int], list[int]] = {}
-    for bk in _bucket_keys_sorted(ranks, module_of):
-        members = [i for i in range(n) if ranks[i] == bk[0] and module_of[i] == bk[1]]
-        members.sort(key=lambda vid: _bfs_bucket_sort_key(vid, ranks, adj_flagged, rev_flagged))
-        bucket_order[bk] = members
-
-    slot_x = [0.0] * n
-    for members in bucket_order.values():
-        for j, nid in enumerate(members):
-            slot_x[nid] = float(j) * BFS_HORIZONTAL_MIN_SLOT_GAP
-
-    rank_min = min(ranks)
-    rank_max = max(ranks)
-
-    def respace_bucket(bk: tuple[int, int]) -> None:
-        for j, nid in enumerate(bucket_order[bk]):
-            slot_x[nid] = float(j) * BFS_HORIZONTAL_MIN_SLOT_GAP
-
-    def down_sweep() -> None:
-        for r in range(rank_min, rank_max + 1):
-            for mid in sorted({module_of[i] for i in range(n) if ranks[i] == r}):
-                bk = (r, mid)
-                members = bucket_order[bk]
-                scores: list[tuple[float, int]] = []
-                for v in members:
-                    num = 0.0
-                    den = 0.0
-                    for u, guarded in rev_flagged[v]:
-                        if ranks[u] != r - 1:
-                            continue
-                        if module_of[u] != module_of[v]:
-                            continue
-                        w = _edge_weight(guarded)
-                        num += w * slot_x[u]
-                        den += w
-                    sc = (num / den) if den > 0.0 else slot_x[v]
-                    scores.append((sc, v))
-                scores.sort(key=lambda t: (t[0], t[1]))
-                bucket_order[bk] = [v for _, v in scores]
-                respace_bucket(bk)
-
-    def up_sweep() -> None:
-        for r in range(rank_max, rank_min - 1, -1):
-            for mid in sorted({module_of[i] for i in range(n) if ranks[i] == r}):
-                bk = (r, mid)
-                members = bucket_order[bk]
-                scores: list[tuple[float, int]] = []
-                for v in members:
-                    num = 0.0
-                    den = 0.0
-                    for wn, guarded in adj_flagged[v]:
-                        if ranks[wn] != r + 1:
-                            continue
-                        if module_of[wn] != module_of[v]:
-                            continue
-                        w = _edge_weight(guarded)
-                        num += w * slot_x[wn]
-                        den += w
-                    sc = (num / den) if den > 0.0 else slot_x[v]
-                    scores.append((sc, v))
-                scores.sort(key=lambda t: (t[0], t[1]))
-                bucket_order[bk] = [v for _, v in scores]
-                respace_bucket(bk)
-
-    for _ in range(BFS_HORIZONTAL_SWEEP_COUNT):
-        down_sweep()
-        up_sweep()
-
-    return sorted(range(n), key=lambda i: (ranks[i], module_of[i], slot_x[i], i))
-
-
-def _balance_overview_layout_spans(xs: list[float], ys: list[float]) -> None:
-    if not xs:
-        return
-    min_x = min(xs)
-    max_x = max(xs)
-    min_y = min(ys)
-    max_y = max(ys)
-    cx = 0.5 * (min_x + max_x)
-    cy = 0.5 * (min_y + max_y)
-    span_x = max(max_x - min_x, 1.0)
-    span_y = max(max_y - min_y, 1.0)
-    target = max(span_x, span_y)
-    sx = target / span_x
-    sy = target / span_y
-    for i in range(len(xs)):
-        xs[i] = cx + (xs[i] - cx) * sx
-        ys[i] = cy + (ys[i] - cy) * sy
-
-
-def _rank_band_xy(
-    n: int,
-    module_of: list[int],
-    node_rank: list[int],
-    *,
-    iteration_order: Sequence[int] | None = None,
-) -> tuple[list[float], list[float], list[int], int]:
-    x_scale = 120.0
-    y_band = 36.0
-    bucket_counts: dict[tuple[int, int], int] = {}
-    for i in range(n):
-        b = (node_rank[i], module_of[i])
-        bucket_counts[b] = bucket_counts.get(b, 0) + 1
-
-    dense_bucket_count = sum(1 for _b, c in bucket_counts.items() if c > DENSE_BUCKET_THRESHOLD)
-
-    xs = [0.0] * n
-    ys = [0.0] * n
-    bucket_density = [0] * n
-    bucket_running_idx: dict[tuple[int, int], int] = {}
-
-    order = list(range(n)) if iteration_order is None else list(iteration_order)
-    if len(order) != n:
-        raise ValueError("iteration_order length must equal node count")
-    if set(order) != set(range(n)):
-        raise ValueError("iteration_order must be a permutation of range(n)")
-
-    for i in order:
-        rnk = node_rank[i]
-        mid = module_of[i]
-        xs[i] = float(rnk) * x_scale
-        base_y = float(mid) * y_band
-        bkey = (rnk, mid)
-        cnt = bucket_counts[bkey]
-        bucket_density[i] = cnt
-        idx_in_bucket = bucket_running_idx.get(bkey, 0)
-        bucket_running_idx[bkey] = idx_in_bucket + 1
-        if cnt <= DENSE_BUCKET_THRESHOLD:
-            centered = float(idx_in_bucket) - 0.5 * float(cnt - 1)
-            ys[i] = base_y + centered * 4.0
-        else:
-            t = (i * 1103515245 + 12345) & 0x7FFFFFFF
-            jx = ((t % 10000) / 10000.0 - 0.5) * y_band * 0.85
-            jy = (((t // 10000) % 10000) / 10000.0 - 0.5) * 8.0
-            ys[i] = base_y + jx + jy
-
-    _balance_overview_layout_spans(xs, ys)
-    xs, ys = ys, xs
-    return xs, ys, bucket_density, dense_bucket_count
-
-
-# Whole-graph force layout (export-time); pairwise repulsion only for modest n.
-_FORCE_PAIRWISE_REPULSION_MAX_N = 512
-_FORCE_LINK_DISTANCE = 40.0
-_FORCE_LINK_STRENGTH = 0.06
-_FORCE_CHARGE = 120.0
-_FORCE_CENTER_STRENGTH = 0.05
-_FORCE_TICKS_MIN = 40
-_FORCE_TICKS_MAX = 120
-_FORCE_GRID_REPULSE_CELL_DIVISOR = 48.0
-
-
-def _force_directed_xy(n: int, adj: list[list[int]]) -> tuple[list[float], list[float]]:
-    """Deterministic force-directed placement using link springs, pairwise repulsion, and weak centering."""
-    if n == 0:
-        return [], []
-    radius = 100.0 * math.sqrt(float(max(n, 1)))
-    xs = [0.0] * n
-    ys = [0.0] * n
-    for i in range(n):
-        ang = 2.0 * math.pi * float(i) / float(n)
-        xs[i] = math.cos(ang) * radius
-        ys[i] = math.sin(ang) * radius
-
-    edges: list[tuple[int, int]] = []
-    for u in range(n):
-        for v in adj[u]:
-            edges.append((u, v))
-
-    ticks = min(_FORCE_TICKS_MAX, max(_FORCE_TICKS_MIN, n // 50))
-    if n > 50_000:
-        ticks = min(ticks, 80)
-
-    for tick in range(ticks):
-        tnorm = tick / max(ticks - 1, 1) if ticks > 1 else 1.0
-        alpha = (1.0 - tnorm) ** 0.5
-
-        fx = [0.0] * n
-        fy = [0.0] * n
-
-        for u, v in edges:
-            dx = xs[v] - xs[u]
-            dy = ys[v] - ys[u]
-            dist = math.hypot(dx, dy)
-            if dist < 1e-9:
-                dist = 1e-9
-            fmag = _FORCE_LINK_STRENGTH * (dist - _FORCE_LINK_DISTANCE)
-            fx_u = fmag * dx / dist
-            fy_u = fmag * dy / dist
-            fx[u] += fx_u
-            fy[u] += fy_u
-            fx[v] -= fx_u
-            fy[v] -= fy_u
-
-        if n <= _FORCE_PAIRWISE_REPULSION_MAX_N:
-            for i in range(n):
-                xi, yi = xs[i], ys[i]
-                for j in range(i + 1, n):
-                    dx = xs[j] - xi
-                    dy = ys[j] - yi
-                    dist2 = dx * dx + dy * dy + 0.01
-                    dist = math.sqrt(dist2)
-                    inv_cubed = _FORCE_CHARGE / (dist2 * dist)
-                    fx[i] -= inv_cubed * dx
-                    fy[i] -= inv_cubed * dy
-                    fx[j] += inv_cubed * dx
-                    fy[j] += inv_cubed * dy
-        else:
-            min_x = min(xs)
-            max_x = max(xs)
-            min_y = min(ys)
-            max_y = max(ys)
-            span = max(max_x - min_x, max_y - min_y, 1.0)
-            cell = span / _FORCE_GRID_REPULSE_CELL_DIVISOR
-            if cell < 1e-9:
-                cell = 1e-9
-            buckets: dict[tuple[int, int], list[int]] = {}
-            for i in range(n):
-                bx = int(xs[i] / cell)
-                by = int(ys[i] / cell)
-                buckets.setdefault((bx, by), []).append(i)
-            for i in range(n):
-                bx = int(xs[i] / cell)
-                by = int(ys[i] / cell)
-                for ox in (-1, 0, 1):
-                    for oy in (-1, 0, 1):
-                        for j in buckets.get((bx + ox, by + oy), []):
-                            if j <= i:
-                                continue
-                            dx = xs[j] - xs[i]
-                            dy = ys[j] - ys[i]
-                            dist2 = dx * dx + dy * dy + 0.01
-                            dist = math.sqrt(dist2)
-                            inv_cubed = _FORCE_CHARGE / (dist2 * dist)
-                            fx[i] -= inv_cubed * dx
-                            fy[i] -= inv_cubed * dy
-                            fx[j] += inv_cubed * dx
-                            fy[j] += inv_cubed * dy
-
-        for i in range(n):
-            fx[i] -= _FORCE_CENTER_STRENGTH * xs[i]
-            fy[i] -= _FORCE_CENTER_STRENGTH * ys[i]
-
-        for i in range(n):
-            xs[i] += fx[i] * alpha
-            ys[i] += fy[i] * alpha
-
-    return xs, ys
-
-
-def _grid_xy(n: int) -> tuple[list[float], list[float], list[int], int]:
-    x_scale = 120.0
-    y_band = 36.0
-    cols = max(1, int(math.ceil(math.sqrt(max(n, 1)))))
-    xs = [0.0] * n
-    ys = [0.0] * n
-    bucket_density = [1] * n
-    for i in range(n):
-        r = i // cols
-        c = i % cols
-        xs[i] = float(c) * x_scale
-        ys[i] = float(r) * y_band
-    _balance_overview_layout_spans(xs, ys)
-    xs, ys = ys, xs
-    return xs, ys, bucket_density, 0
 
 
 def _dfs_postorder_finish(adj: list[list[int]], n: int) -> list[int]:
@@ -724,127 +373,50 @@ def unconditional_scc_ranks(uncond: list[list[int]], n: int) -> tuple[list[int],
     return [comp_rank[comp[i]] for i in range(n)], n_comp
 
 
-def _default_bfs_target_ranks(adj: list[list[int]], rev_adj: list[list[int]], n: int) -> list[int]:
-    if n == 0:
-        return []
-    target_like = [i for i in range(n) if not rev_adj[i]]
-    if not target_like:
-        target_like = list(range(n))
-    target_like.sort()
-
-    dist = [-1] * n
-    q: deque[int] = deque()
-    for s in target_like:
-        dist[s] = 0
-        q.append(s)
-    while q:
-        u = q.popleft()
-        du = dist[u]
-        for v in adj[u]:
-            if dist[v] >= 0:
-                continue
-            dist[v] = du + 1
-            q.append(v)
-    return [d if d >= 0 else 0 for d in dist]
-
-
-def _bfs_distances_from_seed_ids(
-    adj: list[list[int]], n: int, seed_ids: Sequence[int]
-) -> list[int]:
-    dist = [-1] * n
-    q: deque[int] = deque()
-    for s in seed_ids:
-        if not (0 <= s < n):
-            continue
-        if dist[s] >= 0:
-            continue
-        dist[s] = 0
-        q.append(s)
-    while q:
-        u = q.popleft()
-        du = dist[u]
-        for v in adj[u]:
-            if dist[v] >= 0:
-                continue
-            dist[v] = du + 1
-            q.append(v)
-    return dist
-
-
-def _node_for_viz_subgraph(graph: VizGraph, key: NodeKey) -> Node | None:
-    """Return a `Node` for an induced viz subgraph, copying when needed."""
-    if isinstance(graph, DependencyGraph):
-        return graph._get_internal_node(key)
-    view = graph.get_node(key)
-    if view is None or view.sheet is None or view.column is None or view.row is None:
-        return None
-    return make_cell_node(
-        view.sheet,
-        view.column,
-        view.row,
-        formula=view.formula,
-        normalized_formula=view.normalized_formula,
-        value=view.value,
-        is_leaf=view.is_leaf,
-        is_target=view.is_target,
-        metadata=dict(view.metadata),
-        formula_ast=view.formula_ast,
-        is_array_formula=view.is_array_formula,
-        array_formula_ref=view.array_formula_ref,
-    )
-
-
-def _induced_dependency_subgraph(
-    graph: VizGraph,
-    keep_keys: set[NodeKey],
-) -> DependencyGraph:
-    sub = DependencyGraph()
-    if graph.sheet_order is not None:
-        sub.sheet_order = list(graph.sheet_order)
-    sub.leaf_classification = graph.leaf_classification
-    for k in graph.keys(order="workbook", source=keep_keys):
-        node = _node_for_viz_subgraph(graph, k)
-        if node is None:
-            continue
-        sub.add_node(node)
-    for fk in graph.keys(order="workbook", source=keep_keys):
-        for tk in graph.keys(order="workbook", source=graph.get_dependencies(fk)):
-            resolved = _resolve_viz_endpoint(graph, tk)
-            if resolved is None or resolved not in keep_keys:
-                continue
-            edge = graph.get_edge_attrs(fk, tk)
-            edge_kwargs: dict[str, Any] = {}
-            if edge.provenance is not None:
-                edge_kwargs["provenance"] = edge.provenance
-            sub.add_edge(fk, resolved, guard=edge.guard, **edge_kwargs)
-    sub.rebuild_adjacency()
-    return sub
-
-
 def build_lightweight_viz_core(
     graph: VizGraph,
     *,
     limits: VizLimits | None = None,
     layout_input: LightweightVizLayoutInput | None = None,
-    layout_mode: Literal["bfs", "layered", "grid", "force"] = "bfs",
+    positions: Sequence[tuple[float, float]] | None = None,
     include_guarded_edges: bool = True,
-    bfs_seed_keys: Sequence[NodeKey] | None = None,
-    exclude_unreachable_from_bfs: bool = False,
     include_formula_on_nodes: bool = True,
     max_formula_length: int | None = 120,
 ) -> LightweightVizCore:
+    """Build the cell-level core columns of a web-viz payload.
+
+    Args:
+        graph: Cell graph (or read view) to draw.
+        limits: Local-neighborhood export caps.
+        layout_input: Module per node and node rank (e.g. Louvain + SCC rank).
+            Defaults to one module and SCC-condensation rank.
+        positions: `(x, y)` per node in `graph.keys(order="workbook")` order.
+            When omitted, runs the shared clustered force layout with modules
+            as clusters and the default vertical pull.
+        include_guarded_edges: Count guarded edges in degrees, local edges, and
+            the default layout.
+        include_formula_on_nodes: Store display formulas on nodes.
+        max_formula_length: Truncate display formulas to this length.
+
+    Raises:
+        ValueError: `layout_input` or `positions` length does not match the
+            node count.
+    """
+    from .viz_layout import DEFAULT_RANK_PULL, clustered_force_layout, input_depths
+
     validate_max_formula_length(max_formula_length)
 
     lim = limits or VizLimits()
     keys = graph.keys(order="workbook")
     n = len(keys)
+    if positions is not None and len(positions) != n:
+        raise ValueError("positions must have one (x, y) per graph node")
     if n == 0:
         return LightweightVizCore(
             stats=LightweightVizCoreStats(
                 node_count=0,
                 local_edge_count=0,
                 truncated_local_nodes=0,
-                dense_bucket_count=0,
             ),
             sheets=tuple(),
             nodes=LightweightVizCoreNodeColumns(
@@ -856,9 +428,9 @@ def build_lightweight_viz_core(
                 in_degree=tuple(),
                 out_degree=tuple(),
                 rank=tuple(),
+                depth=tuple(),
                 x=tuple(),
                 y=tuple(),
-                bucket_density=tuple(),
             ),
             local_edges=LightweightVizLocalEdges(
                 offsets=(0,),
@@ -892,79 +464,27 @@ def build_lightweight_viz_core(
 
     if layout_input is None:
         module_of = [0] * n
-        if layout_mode == "grid":
-            xs, ys, bucket_density, dense_bucket_count = _grid_xy(n)
-            cols = max(1, int(math.ceil(math.sqrt(n))))
-            ranks = [i // cols for i in range(n)]
-        elif layout_mode == "bfs":
-            if bfs_seed_keys is None:
-                seed_ids = [i for i in range(n) if not rev_selected[i]]
-                if not seed_ids:
-                    seed_ids = list(range(n))
-            else:
-                seed_ids = [key_id[k] for k in bfs_seed_keys if k in key_id]
-                if not seed_ids:
-                    seed_ids = [i for i in range(n) if not rev_selected[i]]
-                    if not seed_ids:
-                        seed_ids = list(range(n))
-            dist = _bfs_distances_from_seed_ids(selected_adj, n, seed_ids)
-            should_exclude_unreachable = exclude_unreachable_from_bfs or not include_guarded_edges
-            if should_exclude_unreachable:
-                keep_ids = [i for i, d in enumerate(dist) if d >= 0]
-                if keep_ids and len(keep_ids) < n:
-                    keep_keys = {keys[i] for i in keep_ids}
-                    subgraph = _induced_dependency_subgraph(graph, keep_keys)
-                    sub_seeds = (
-                        None
-                        if bfs_seed_keys is None
-                        else tuple(k for k in bfs_seed_keys if k in keep_keys)
-                    )
-                    return build_lightweight_viz_core(
-                        subgraph,
-                        limits=lim,
-                        layout_input=None,
-                        layout_mode=layout_mode,
-                        include_guarded_edges=include_guarded_edges,
-                        bfs_seed_keys=sub_seeds,
-                        exclude_unreachable_from_bfs=should_exclude_unreachable,
-                        include_formula_on_nodes=include_formula_on_nodes,
-                        max_formula_length=max_formula_length,
-                    )
-            ranks = [d if d >= 0 else 0 for d in dist]
-            adj_flagged = _build_out_adj_guarded(
-                graph, keys, key_id, include_guarded=include_guarded_edges
-            )
-            rev_flagged = _reverse_adj_flagged(adj_flagged, n)
-            iteration_order = _bfs_horizontal_iteration_order(
-                n, ranks, module_of, adj_flagged, rev_flagged
-            )
-            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(
-                n, module_of, ranks, iteration_order=iteration_order
-            )
-        elif layout_mode == "layered":
-            ranks, _scc_count = unconditional_scc_ranks(uncond, n)
-            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
-        elif layout_mode == "force":
-            ranks = _default_bfs_target_ranks(selected_adj, rev_selected, n)
-            _, _, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, ranks)
-            xs, ys = _force_directed_xy(n, selected_adj)
-            _balance_overview_layout_spans(xs, ys)
-            xs, ys = ys, xs
-        else:
-            raise ValueError(f"Unsupported layout_mode: {layout_mode!r}")
+        ranks, _scc_count = unconditional_scc_ranks(uncond, n)
     else:
         if len(layout_input.module_of) != n or len(layout_input.node_rank) != n:
             raise ValueError("layout_input tuple lengths must match graph order")
         module_of = list(layout_input.module_of)
-        node_rank = list(layout_input.node_rank)
-        ranks = node_rank
-        if layout_mode == "force":
-            _, _, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, node_rank)
-            xs, ys = _force_directed_xy(n, selected_adj)
-            _balance_overview_layout_spans(xs, ys)
-            xs, ys = ys, xs
-        else:
-            xs, ys, bucket_density, dense_bucket_count = _rank_band_xy(n, module_of, node_rank)
+        ranks = list(layout_input.node_rank)
+    depths = input_depths(n, [(u, v) for u in range(n) for v in uncond[u]])
+
+    if positions is None:
+        pos = clustered_force_layout(
+            n,
+            [(u, v) for u in range(n) for v in selected_adj[u]],
+            module_of,
+            depths=depths,
+            rank_pull=DEFAULT_RANK_PULL,
+        )
+        xs = [float(v) for v in pos[:, 0]]
+        ys = [float(v) for v in pos[:, 1]]
+    else:
+        xs = [float(x) for x, _y in positions]
+        ys = [float(y) for _x, y in positions]
 
     n_mod = max(module_of) + 1 if module_of else 0
     mod_node_count = [0] * n_mod
@@ -1020,7 +540,6 @@ def build_lightweight_viz_core(
         node_count=n,
         local_edge_count=local_edge_count,
         truncated_local_nodes=truncated_local,
-        dense_bucket_count=dense_bucket_count,
     )
 
     nodes = LightweightVizCoreNodeColumns(
@@ -1032,9 +551,9 @@ def build_lightweight_viz_core(
         in_degree=tuple(in_deg),
         out_degree=tuple(out_deg),
         rank=tuple(ranks),
+        depth=tuple(depths),
         x=tuple(xs),
         y=tuple(ys),
-        bucket_density=tuple(bucket_density),
     )
 
     local_edges = LightweightVizLocalEdges(
@@ -1104,7 +623,6 @@ class LightweightVizModule:
     rank_max: int
     centroid_x: float
     centroid_y: float
-    density_mode: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -1129,11 +647,6 @@ def derive_partition_modules_table(
     for m in module_id:
         mod_node_count[m] += 1
 
-    bucket_counts: dict[tuple[int, int], int] = {}
-    for i in range(n):
-        b = (node_rank[i], module_id[i])
-        bucket_counts[b] = bucket_counts.get(b, 0) + 1
-
     xs = list(core.nodes.x)
     ys = list(core.nodes.y)
 
@@ -1152,10 +665,6 @@ def derive_partition_modules_table(
     modules: list[LightweightVizModule] = []
     for m in range(n_mod):
         c = mod_node_count[m]
-        density_mode = any(
-            bucket_counts.get((r, m), 0) > DENSE_BUCKET_THRESHOLD
-            for r in range(mod_rank_min[m], mod_rank_max[m] + 1)
-        )
         modules.append(
             LightweightVizModule(
                 id=m,
@@ -1164,7 +673,6 @@ def derive_partition_modules_table(
                 rank_max=mod_rank_max[m] if c else 0,
                 centroid_x=sum_x[m] / c if c else 0.0,
                 centroid_y=sum_y[m] / c if c else 0.0,
-                density_mode=density_mode,
             )
         )
     return tuple(modules)
@@ -1195,7 +703,6 @@ def _core_to_jsonable(c: LightweightVizCore) -> dict[str, Any]:
             "node_count": c.stats.node_count,
             "local_edge_count": c.stats.local_edge_count,
             "truncated_local_nodes": c.stats.truncated_local_nodes,
-            "dense_bucket_count": c.stats.dense_bucket_count,
         },
         "sheets": list(c.sheets),
         "nodes": {
@@ -1207,9 +714,9 @@ def _core_to_jsonable(c: LightweightVizCore) -> dict[str, Any]:
             "in_degree": list(nc.in_degree),
             "out_degree": list(nc.out_degree),
             "rank": list(nc.rank),
+            "depth": list(nc.depth),
             "x": list(nc.x),
             "y": list(nc.y),
-            "bucket_density": list(nc.bucket_density),
         },
         "local_edges": {
             "offsets": list(c.local_edges.offsets),
@@ -1272,6 +779,8 @@ def write_web_viz_html(
     """Write a web visualization HTML bundle from a web-viz payload."""
     from importlib import resources
 
+    from .viz_layout import viz_layout_js_bootstrap
+
     if payload.version != VIZ_PAYLOAD_VERSION:
         raise ValueError(f"Unsupported lightweight viz payload version: {payload.version}")
 
@@ -1331,5 +840,6 @@ def write_web_viz_html(
         tpl.replace("__TITLE__", title)
         .replace("/*__BOOTSTRAP__*/", bootstrap)
         .replace("/*__SIDECAR__*/", sidecar_js)
+        .replace("/*__VIZ_FORCE_JS__*/", viz_layout_js_bootstrap())
     )
     out.write_text(html, encoding="utf-8")

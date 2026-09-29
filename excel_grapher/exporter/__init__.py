@@ -59,12 +59,11 @@ from .semantic_viz import (
 )
 from .series_graph import to_series_graph
 from .web_viz_layout import (
+    LAYOUT_CLUSTERED_FORCE,
     LAYOUT_FORCEATLAS2,
     LAYOUT_GRAPHVIZ_DOT,
     LAYOUT_GRAPHVIZ_SFDP,
-    LAYOUT_MULTIPARTITE,
     LAYOUT_SPRING,
-    LAYOUT_STRATIFIED_MULTIPARTITE,
     WebVizLayoutPlugin,
     WebVizLayoutSpec,
     list_web_viz_layouts,
@@ -116,10 +115,9 @@ __all__ = [
     "register_projection_manifest",
     "resolve_projection_manifest",
     "unregister_projection_manifest",
-    "LAYOUT_STRATIFIED_MULTIPARTITE",
+    "LAYOUT_CLUSTERED_FORCE",
     "LAYOUT_SPRING",
     "LAYOUT_FORCEATLAS2",
-    "LAYOUT_MULTIPARTITE",
     "LAYOUT_GRAPHVIZ_DOT",
     "LAYOUT_GRAPHVIZ_SFDP",
     "WebVizLayoutPlugin",
