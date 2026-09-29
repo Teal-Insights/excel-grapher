@@ -30,7 +30,7 @@ from excel_grapher.core.range_shorthand import (
     expand_whole_row_span_deps,
 )
 
-from .guard import And, Compare, GuardExpr, Literal, Not, Or, RangeRef, intern_guard
+from .guard import And, Arith, Compare, GuardExpr, Literal, Neg, Not, Or, RangeRef, intern_guard
 from .guard import CellRef as GuardCellRef
 from .node import NodeKey
 
@@ -1290,12 +1290,9 @@ def _parse_guard_expr(
     if not s:
         return None
 
-    # Strip redundant outer parentheses.
-    while s.startswith("(") and s.endswith(")"):
-        inner = s[1:-1].strip()
-        if not inner:
-            break
-        s = inner
+    s = _strip_outer_parens(s)
+    if not s:
+        return None
 
     # Function-like: AND(...), OR(...), NOT(...)
     m = re.match(r"^(?P<fn>AND|OR|NOT)\s*\((?P<inner>.*)\)$", s, flags=re.IGNORECASE)
@@ -1332,13 +1329,13 @@ def _parse_guard_expr(
     for op in ("<>", "<=", ">=", "=", "<", ">"):
         if op in s:
             left_s, right_s = (p.strip() for p in s.split(op, 1))
-            left = _parse_guard_atom(
+            left = _parse_guard_operand(
                 left_s,
                 current_sheet=current_sheet,
                 named_ranges=named_ranges,
                 allow_ranges=allow_ranges,
             )
-            right = _parse_guard_atom(
+            right = _parse_guard_operand(
                 right_s,
                 current_sheet=current_sheet,
                 named_ranges=named_ranges,
@@ -1352,6 +1349,127 @@ def _parse_guard_expr(
     return _parse_guard_atom(
         s, current_sheet=current_sheet, named_ranges=named_ranges, allow_ranges=allow_ranges
     )
+
+
+def _strip_outer_parens(s: str) -> str:
+    """Strip parentheses that wrap all of `s` (`(A1)+(B1)` keeps its own)."""
+    while s.startswith("(") and s.endswith(")") and _closing_paren_index(s) == len(s) - 1:
+        s = s[1:-1].strip()
+    return s
+
+
+def _closing_paren_index(s: str) -> int | None:
+    """Return the index of the `)` matching the `(` at `s[0]`, skipping quoted text."""
+    depth = 0
+    quote: str | None = None
+    for i, ch in enumerate(s):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+        elif ch in "\"'":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth == 0:
+                return i
+    return None
+
+
+def _split_additive_terms(s: str) -> list[tuple[str, str]] | None:
+    """Split `s` on top-level binary `+`/`-` into `(sign, term)` pairs.
+
+    A sign at the start of `s` or right after another operator is unary and
+    stays part of its term. Returns `None` for unbalanced text or an empty term.
+    """
+    terms: list[tuple[str, str]] = []
+    sign = "+"
+    start = 0
+    depth = 0
+    quote: str | None = None
+    unary = True
+    for i, ch in enumerate(s):
+        if quote is not None:
+            if ch == quote:
+                quote = None
+            continue
+        if ch in "\"'":
+            quote = ch
+        elif ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+            if depth < 0:
+                return None
+        elif ch in "+-" and depth == 0 and not unary:
+            terms.append((sign, s[start:i].strip()))
+            sign, start, unary = ch, i + 1, True
+            continue
+        if not ch.isspace():
+            unary = False
+    if quote is not None or depth != 0:
+        return None
+    terms.append((sign, s[start:].strip()))
+    if any(not term for _, term in terms):
+        return None
+    return terms
+
+
+def _parse_guard_operand(
+    s: str,
+    *,
+    current_sheet: str,
+    named_ranges: dict[str, tuple[str, str]],
+    allow_ranges: bool = False,
+) -> GuardExpr | None:
+    """Parse a comparison operand: an atom, or `+`/`-`/unary-minus arithmetic over atoms."""
+    terms = _split_additive_terms(s)
+    if terms is None:
+        return None
+    if len(terms) > 1:
+        out: GuardExpr | None = None
+        for sign, term_s in terms:
+            term = _parse_guard_operand(
+                term_s,
+                current_sheet=current_sheet,
+                named_ranges=named_ranges,
+                allow_ranges=allow_ranges,
+            )
+            if term is None or not _is_numeric_operand(term):
+                return None
+            out = term if out is None else Arith(left=out, op=sign, right=term)
+        return out
+
+    stripped = _strip_outer_parens(s)
+    if stripped != s:
+        return _parse_guard_operand(
+            stripped,
+            current_sheet=current_sheet,
+            named_ranges=named_ranges,
+            allow_ranges=allow_ranges,
+        )
+    atom = _parse_guard_atom(
+        s, current_sheet=current_sheet, named_ranges=named_ranges, allow_ranges=allow_ranges
+    )
+    if atom is not None or not s.startswith("-"):
+        return atom
+    operand = _parse_guard_operand(
+        s[1:].strip(),
+        current_sheet=current_sheet,
+        named_ranges=named_ranges,
+        allow_ranges=allow_ranges,
+    )
+    if operand is None or not _is_numeric_operand(operand):
+        return None
+    return Neg(operand=operand)
+
+
+def _is_numeric_operand(expr: GuardExpr) -> bool:
+    """Return whether `expr` may appear under `+`/`-` (text and booleans may not)."""
+    if isinstance(expr, Literal):
+        return isinstance(expr.value, (int, float)) and not isinstance(expr.value, bool)
+    return True
 
 
 def _split_top_level_args(s: str) -> list[str] | None:

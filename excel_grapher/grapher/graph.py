@@ -43,10 +43,12 @@ from .edge_meta import EdgeMetaArrays, EdgeMetaLookup, pack_edge_meta_ids
 from .graph_pickle import dumps_graph_blob, loads_graph_blob
 from .guard import (
     And,
+    Arith,
     CellRef,
     Compare,
     GuardConstraints,
     GuardExpr,
+    Neg,
     Not,
     Or,
     intern_guard,
@@ -1952,10 +1954,10 @@ def _collect_graph_keys(g: DependencyGraph) -> list[str]:
 def _guard_collect_cellref_keys(expr: GuardExpr, add: Callable[[str], None]) -> None:
     if isinstance(expr, CellRef):
         add(expr.key)
-    elif isinstance(expr, Compare):
+    elif isinstance(expr, (Compare, Arith)):
         _guard_collect_cellref_keys(expr.left, add)
         _guard_collect_cellref_keys(expr.right, add)
-    elif isinstance(expr, Not):
+    elif isinstance(expr, (Not, Neg)):
         _guard_collect_cellref_keys(expr.operand, add)
     elif isinstance(expr, (And, Or)):
         for o in expr.operands:
@@ -1977,10 +1979,10 @@ def _intern_guard_cell_refs(
     def rec(e: GuardExpr) -> GuardExpr:
         if isinstance(e, CellRef):
             return CellRef(key=ckey(e.key))
-        if isinstance(e, Compare):
-            return Compare(left=rec(e.left), op=e.op, right=rec(e.right))
-        if isinstance(e, Not):
-            return Not(operand=rec(e.operand))
+        if isinstance(e, (Compare, Arith)):
+            return type(e)(left=rec(e.left), op=e.op, right=rec(e.right))
+        if isinstance(e, (Not, Neg)):
+            return type(e)(operand=rec(e.operand))
         if isinstance(e, And):
             return And(operands=tuple(rec(o) for o in e.operands))
         if isinstance(e, Or):

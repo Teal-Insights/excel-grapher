@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass
+from fractions import Fraction
+from math import isfinite
 from typing import Any
 from weakref import WeakValueDictionary
 
@@ -15,6 +18,7 @@ from excel_grapher.core.address_keys import (
     parse_node_key,
 )
 from excel_grapher.core.cell_types import (
+    CellKind,
     CellType,
     CellTypeEnv,
     is_union_domain,
@@ -117,6 +121,37 @@ class Literal(GuardExpr):
 
 
 @dataclass(frozen=True, slots=True, weakref_slot=True)
+class Arith(GuardExpr):
+    """Numeric `left + right` or `left - right` operand of a comparison.
+
+    Attributes:
+        left: Left operand (`CellRef`, numeric `Literal`, `Arith` or `Neg`).
+        op: `"+"` or `"-"`.
+        right: Right operand.
+    """
+
+    left: GuardExpr
+    op: str
+    right: GuardExpr
+
+    def __str__(self) -> str:  # pragma: no cover (covered indirectly via exports)
+        right = f"({self.right})" if isinstance(self.right, Arith) else str(self.right)
+        return f"{self.left}{self.op}{right}"
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True)
+class Neg(GuardExpr):
+    """Numeric unary minus of a comparison operand."""
+
+    operand: GuardExpr
+
+    def __str__(self) -> str:  # pragma: no cover (covered indirectly via exports)
+        if isinstance(self.operand, (Arith, Neg)):
+            return f"-({self.operand})"
+        return f"-{self.operand}"
+
+
+@dataclass(frozen=True, slots=True, weakref_slot=True)
 class Compare(GuardExpr):
     """Comparison: left op right."""
 
@@ -179,6 +214,10 @@ def _guard_intern_key(expr: GuardExpr) -> tuple[Any, ...]:
         return (Literal, type(expr.value), expr.value)
     if isinstance(expr, Compare):
         return (Compare, id(expr.left), expr.op, id(expr.right))
+    if isinstance(expr, Arith):
+        return (Arith, id(expr.left), expr.op, id(expr.right))
+    if isinstance(expr, Neg):
+        return (Neg, id(expr.operand))
     if isinstance(expr, Not):
         return (Not, id(expr.operand))
     if isinstance(expr, And):
@@ -203,6 +242,15 @@ def intern_guard(expr: GuardExpr) -> GuardExpr:
         right = intern_guard(expr.right)
         if left is not expr.left or right is not expr.right:
             expr = Compare(left=left, op=expr.op, right=right)
+    elif isinstance(expr, Arith):
+        left = intern_guard(expr.left)
+        right = intern_guard(expr.right)
+        if left is not expr.left or right is not expr.right:
+            expr = Arith(left=left, op=expr.op, right=right)
+    elif isinstance(expr, Neg):
+        operand = intern_guard(expr.operand)
+        if operand is not expr.operand:
+            expr = Neg(operand=operand)
     elif isinstance(expr, Not):
         operand = intern_guard(expr.operand)
         if operand is not expr.operand:
@@ -289,9 +337,9 @@ def guard_range_shape(expr: GuardExpr) -> tuple[int, int] | None:
 def _collect_range_refs(expr: GuardExpr) -> list[RangeRef]:
     if isinstance(expr, RangeRef):
         return [expr]
-    if isinstance(expr, Compare):
+    if isinstance(expr, (Compare, Arith)):
         return _collect_range_refs(expr.left) + _collect_range_refs(expr.right)
-    if isinstance(expr, Not):
+    if isinstance(expr, (Not, Neg)):
         return _collect_range_refs(expr.operand)
     if isinstance(expr, (And, Or)):
         out: list[RangeRef] = []
@@ -318,17 +366,17 @@ def instantiate_element_guard(
             return expr.element(row_offset, col_offset)
         except IndexError:
             return None
-    if isinstance(expr, Compare):
+    if isinstance(expr, (Compare, Arith)):
         left = instantiate_element_guard(expr.left, row_offset=row_offset, col_offset=col_offset)
         right = instantiate_element_guard(expr.right, row_offset=row_offset, col_offset=col_offset)
         if left is None or right is None:
             return None
-        return intern_guard(Compare(left=left, op=expr.op, right=right))
-    if isinstance(expr, Not):
+        return intern_guard(type(expr)(left=left, op=expr.op, right=right))
+    if isinstance(expr, (Not, Neg)):
         operand = instantiate_element_guard(
             expr.operand, row_offset=row_offset, col_offset=col_offset
         )
-        return None if operand is None else intern_guard(Not(operand))
+        return None if operand is None else intern_guard(type(expr)(operand))
     if isinstance(expr, (And, Or)):
         operands: list[GuardExpr] = []
         for operand in expr.operands:
@@ -433,17 +481,17 @@ def rewrite_guard_keys(expr: GuardExpr, old_key: NodeKey, new_key: NodeKey) -> G
             if rewritten == node.key:
                 return intern_guard(node)
             return intern_guard(RangeRef(rewritten))
-        if isinstance(node, Compare):
+        if isinstance(node, (Compare, Arith)):
             left = walk(node.left)
             right = walk(node.right)
             if left is node.left and right is node.right:
                 return intern_guard(node)
-            return intern_guard(Compare(left=left, op=node.op, right=right))
-        if isinstance(node, Not):
+            return intern_guard(type(node)(left=left, op=node.op, right=right))
+        if isinstance(node, (Not, Neg)):
             operand = walk(node.operand)
             if operand is node.operand:
                 return intern_guard(node)
-            return intern_guard(Not(operand=operand))
+            return intern_guard(type(node)(operand=operand))
         if isinstance(node, And):
             ops = tuple(walk(o) for o in node.operands)
             if all(a is b for a, b in zip(ops, node.operands, strict=True)):
@@ -566,6 +614,190 @@ def _union_interval_remains(cell_type: CellType, forbidden: set[Any]) -> bool:
     return True
 
 
+# Difference bounds `x - y <= c` (or `< c` when strict), keyed `(x, y)`. The
+# empty key stands for the constant 0, so `x <= c` is `(x, _ZERO)`.
+_ZERO: NodeKey = ""
+_Bound = tuple[Fraction, bool]
+# A linear row `sum(coef * cell) + const` (`< 0` when strict, else `<= 0`).
+_LinearRow = tuple[dict[NodeKey, int], Fraction, bool]
+
+_ORDERED_COMPLEMENT = {"<": ">=", "<=": ">", ">": "<=", ">=": "<"}
+# Rows with more cells than this are left opaque rather than projected.
+_MAX_ROW_CELLS = 8
+
+
+def _numeric_domain(
+    env: CellTypeEnv | None, key: NodeKey
+) -> tuple[Fraction | None, Fraction | None] | None:
+    """Return `(lo, hi)` numeric bounds for `key`, or `None` if it may hold non-numbers.
+
+    Cells without a declared type are assumed numeric (blanks compare as 0).
+    Text and booleans sort above every number in Excel comparisons, so a cell
+    whose domain admits them cannot be ordered as a real number.
+    """
+    cell_type = None if env is None else env.get(key)
+    if cell_type is None:
+        return None, None
+    if cell_type.kind in (CellKind.STRING, CellKind.BOOL, CellKind.ERROR):
+        return None
+    points: list[Fraction] = []
+    if cell_type.enum is not None:
+        for v in cell_type.enum.values:
+            if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
+                return None
+            points.append(Fraction(v))
+    los: list[Fraction | None] = []
+    his: list[Fraction | None] = []
+    for dom in (cell_type.interval, cell_type.real_interval):
+        if dom is not None:
+            los.append(None if dom.min is None else Fraction(dom.min))
+            his.append(None if dom.max is None else Fraction(dom.max))
+    known_lo = [v for v in los if v is not None]
+    known_hi = [v for v in his if v is not None]
+    if is_union_domain(cell_type):
+        # Enum or interval: the hull of both.
+        lo = None if None in los else min(points + known_lo)
+        hi = None if None in his else max(points + known_hi)
+        return lo, hi
+    if points:
+        return min(points), max(points)
+    return (max(known_lo) if known_lo else None, min(known_hi) if known_hi else None)
+
+
+def _linear_terms(
+    expr: GuardExpr, env: CellTypeEnv | None
+) -> tuple[dict[NodeKey, int], Fraction] | None:
+    """Return `expr` as `(cell coefficients, constant)`, or `None` if not linear-numeric."""
+    if isinstance(expr, CellRef):
+        key = _constraint_key(expr.key)
+        return None if _numeric_domain(env, key) is None else ({key: 1}, Fraction(0))
+    if isinstance(expr, Literal):
+        v = expr.value
+        if isinstance(v, bool) or not isinstance(v, (int, float)) or not isfinite(v):
+            return None
+        # Decimal text keeps `0.1 + 0.2 == 0.3`, matching the formula author's intent.
+        return {}, Fraction(v) if isinstance(v, int) else Fraction(repr(v))
+    if isinstance(expr, Neg):
+        inner = _linear_terms(expr.operand, env)
+        if inner is None:
+            return None
+        return {k: -a for k, a in inner[0].items()}, -inner[1]
+    if isinstance(expr, Arith) and expr.op in ("+", "-"):
+        left = _linear_terms(expr.left, env)
+        right = _linear_terms(expr.right, env)
+        if left is None or right is None:
+            return None
+        sign = 1 if expr.op == "+" else -1
+        coefs = dict(left[0])
+        for k, a in right[0].items():
+            coefs[k] = coefs.get(k, 0) + sign * a
+        return {k: a for k, a in coefs.items() if a}, left[1] + sign * right[1]
+    return None
+
+
+def _ordered_rows(expr: Compare, env: CellTypeEnv | None) -> list[_LinearRow] | None:
+    """Return the linear rows of an ordered or `=` comparison, or `None`."""
+    left = _linear_terms(expr.left, env)
+    right = _linear_terms(expr.right, env)
+    if left is None or right is None:
+        return None
+    coefs = dict(left[0])
+    for k, a in right[0].items():
+        coefs[k] = coefs.get(k, 0) - a
+    diff = ({k: a for k, a in coefs.items() if a}, left[1] - right[1])
+    neg = ({k: -a for k, a in diff[0].items()}, -diff[1])
+    rows = {
+        "<": [(*diff, True)],
+        "<=": [(*diff, False)],
+        ">": [(*neg, True)],
+        ">=": [(*neg, False)],
+        "=": [(*diff, False), (*neg, False)],
+    }.get(expr.op)
+    return rows
+
+
+def _project_row(
+    row: _LinearRow, env: CellTypeEnv | None
+) -> tuple[list[tuple[NodeKey, NodeKey, _Bound]], bool, bool]:
+    """Project a linear row onto difference bounds.
+
+    Every pair of a `+1` cell and a `-1` cell (either may be absent) is kept and
+    the remaining cells are replaced by their domain bound in the weakening
+    direction, so each emitted bound is implied by the row.
+
+    Returns:
+        `(bounds, exact, violated)`: bounds as `(x, y, (c, strict))` for
+        `x - y <= c`; `exact` when some projection kept every cell; `violated`
+        when a constant-only projection is already false.
+    """
+    coefs, const, strict = row
+    if len(coefs) > _MAX_ROW_CELLS:
+        return [], False, False
+    domains = {k: _numeric_domain(env, k) or (None, None) for k in coefs}
+    plus = [k for k, a in coefs.items() if a == 1]
+    minus = [k for k, a in coefs.items() if a == -1]
+    out: list[tuple[NodeKey, NodeKey, _Bound]] = []
+    exact = False
+    for p in [*plus, None]:
+        for n in [*minus, None]:
+            slack = const
+            for k, a in coefs.items():
+                if k in (p, n):
+                    continue
+                lo, hi = domains[k]
+                bound = lo if a > 0 else hi
+                if bound is None:
+                    break
+                slack += a * bound
+            else:
+                exact = exact or len(coefs) == (p is not None) + (n is not None)
+                if p is None and n is None:
+                    if slack > 0 or (slack == 0 and strict):
+                        return [], exact, True
+                    continue
+                out.append((p or _ZERO, n or _ZERO, (-slack, strict)))
+    return out, exact, False
+
+
+def _bound_is_tighter(a: _Bound, b: _Bound) -> bool:
+    """Return whether bound `a` is at least as tight as `b`."""
+    return a[0] < b[0] or (a[0] == b[0] and (a[1] or not b[1]))
+
+
+def _bound_is_negative(b: _Bound) -> bool:
+    return b[0] < 0 or (b[0] == 0 and b[1])
+
+
+def _shortest_bound(
+    bounds: Mapping[tuple[NodeKey, NodeKey], _Bound], src: NodeKey, dst: NodeKey
+) -> _Bound | None:
+    """Tightest implied bound on `dst - src`, or `None` when unconstrained.
+
+    Queue-based Bellman–Ford over edges `y -> x` for each `x - y <= c`;
+    `bounds` must not already contain a negative cycle.
+    """
+    succ: dict[NodeKey, list[tuple[NodeKey, _Bound]]] = {}
+    for (x, y), w in bounds.items():
+        succ.setdefault(y, []).append((x, w))
+    dist: dict[NodeKey, _Bound] = {src: (Fraction(0), False)}
+    queue = deque([src])
+    queued = {src}
+    while queue:
+        y = queue.popleft()
+        queued.discard(y)
+        d = dist[y]
+        for x, w in succ.get(y, ()):
+            cand = (d[0] + w[0], d[1] or w[1])
+            cur = dist.get(x)
+            if cur is not None and _bound_is_tighter(cur, cand):
+                continue
+            dist[x] = cand
+            if x not in queued:
+                queued.add(x)
+                queue.append(x)
+    return dist.get(dst)
+
+
 @dataclass(frozen=True)
 class GuardConstraints:
     """A minimal, conservative constraint set derived from a conjunction of guards.
@@ -579,6 +811,7 @@ class GuardConstraints:
     opaque: tuple[str, ...] = ()
     cell_parents: tuple[tuple[NodeKey, NodeKey], ...] = ()
     cell_ne: tuple[tuple[NodeKey, NodeKey], ...] = ()
+    bounds: tuple[tuple[NodeKey, NodeKey, Fraction, bool], ...] = ()
 
     def seed_cell_type_env(self, env: CellTypeEnv) -> GuardConstraints | None:
         """Conjoin singleton enum domains as equalities.
@@ -611,6 +844,10 @@ class GuardConstraints:
         - Compare(CellRef(key), "=", Literal(v)) and the swapped operand order
         - Compare(CellRef(key), "<>", Literal(v)) and the swapped operand order
         - Compare(CellRef(a), "=", CellRef(b)) / "<>" (unification)
+        - `<`, `<=`, `>`, `>=` and `=` between `+`/`-` sums of cells and numeric
+          literals, as difference bounds `x - y <= c` checked for a negative
+          cycle. Terms with more cells keep one `+1` and one `-1` cell and
+          replace the rest by their `cell_type_env` interval bound.
         - Not(Compare(...)) is rewritten when possible
         - And(...) is flattened into its operands
         Everything else is tracked as opaque (string form) without consistency checks.
@@ -618,6 +855,9 @@ class GuardConstraints:
         When `cell_type_env` is provided, equalities outside a cell's enum or
         interval are inconsistent, and complementary inequalities that exhaust
         a finite enum are inconsistent.
+
+        Ordered reasoning treats cells as real numbers unless `cell_type_env`
+        admits text, booleans or errors for them (those sort above numbers).
         """
 
         def flatten(expr: GuardExpr) -> list[GuardExpr]:
@@ -633,6 +873,10 @@ class GuardConstraints:
         opaque: set[str] = set(self.opaque)
         parent: dict[NodeKey, NodeKey] = dict(self.cell_parents)
         ne_pairs: set[tuple[NodeKey, NodeKey]] = set(self.cell_ne)
+        bounds: dict[tuple[NodeKey, NodeKey], _Bound] = {
+            (x, y): (c, strict) for x, y, c, strict in self.bounds
+        }
+        bounded: set[NodeKey] = {k for pair in bounds for k in pair}
 
         def find(key: NodeKey) -> NodeKey:
             return _find_parent(parent, _constraint_key(key))
@@ -686,6 +930,43 @@ class GuardConstraints:
             ne_pairs.update(remapped)
             return ra not in ne or _enum_remaining(cell_type_env, ra, ne[ra])
 
+        def add_bound(x: NodeKey, y: NodeKey, w: _Bound) -> bool:
+            if x == y:
+                return not _bound_is_negative(w)
+            for k in (x, y):
+                if k in bounded or k == _ZERO:
+                    continue
+                bounded.add(k)
+                lo, hi = _numeric_domain(cell_type_env, k) or (None, None)
+                if hi is not None and not add_bound(k, _ZERO, (hi, False)):
+                    return False
+                if lo is not None and not add_bound(_ZERO, k, (-lo, False)):
+                    return False
+            existing = bounds.get((x, y))
+            if existing is not None and _bound_is_tighter(existing, w):
+                return True
+            back = _shortest_bound(bounds, x, y)
+            if back is not None and _bound_is_negative((back[0] + w[0], back[1] or w[1])):
+                return False
+            bounds[(x, y)] = w
+            return True
+
+        def add_ordered(c: Compare) -> bool | None:
+            """Conjoin `c` as difference bounds; `None` when `c` is not fully captured."""
+            rows = _ordered_rows(c, cell_type_env)
+            if rows is None:
+                return None
+            exact = True
+            for row in rows:
+                projected, row_exact, violated = _project_row(row, cell_type_env)
+                if violated:
+                    return False
+                exact = exact and row_exact
+                for x, y, w in projected:
+                    if not add_bound(x, y, w):
+                        return False
+            return True if exact else None
+
         def add_ne_cells(a: NodeKey, b: NodeKey) -> bool:
             ra, rb = find(a), find(b)
             if ra == rb:
@@ -704,7 +985,10 @@ class GuardConstraints:
                     expr2 = Compare(left=c.left, op="<>", right=c.right)
                 elif c.op == "<>":
                     expr2 = Compare(left=c.left, op="=", right=c.right)
+                elif c.op in _ORDERED_COMPLEMENT:
+                    expr2 = Compare(left=c.left, op=_ORDERED_COMPLEMENT[c.op], right=c.right)
 
+            captured = False
             if isinstance(expr2, Compare) and expr2.op in ("=", "<>"):
                 left, right = expr2.left, expr2.right
                 cell: CellRef | None = None
@@ -725,7 +1009,7 @@ class GuardConstraints:
                     )
                     if not ok:
                         return None
-                    continue
+                    captured = True
                 if cell is not None and other is not None:
                     ok = (
                         add_eq_cells(cell.key, other.key)
@@ -734,9 +1018,16 @@ class GuardConstraints:
                     )
                     if not ok:
                         return None
-                    continue
+                    captured = True
 
-            opaque.add(str(expr2))
+            if isinstance(expr2, Compare) and expr2.op not in ("<>",):
+                ordered = add_ordered(expr2)
+                if ordered is False:
+                    return None
+                captured = captured or ordered is True
+
+            if not captured:
+                opaque.add(str(expr2))
 
         eq_items = tuple(sorted(eq.items(), key=lambda kv: kv[0]))
         ne_items = tuple(
@@ -750,6 +1041,7 @@ class GuardConstraints:
             opaque=tuple(sorted(opaque)),
             cell_parents=parent_items,
             cell_ne=ne_pair_items,
+            bounds=tuple(sorted((x, y, c, strict) for (x, y), (c, strict) in bounds.items())),
         )
 
 
@@ -768,17 +1060,17 @@ def rewrite_guard_aliases(expr: GuardExpr, aliases: Mapping[NodeKey, NodeKey]) -
             if dest is None or dest == node.key:
                 return intern_guard(node)
             return intern_guard(CellRef(dest))
-        if isinstance(node, Compare):
+        if isinstance(node, (Compare, Arith)):
             left = walk(node.left)
             right = walk(node.right)
             if left is node.left and right is node.right:
                 return intern_guard(node)
-            return intern_guard(Compare(left=left, op=node.op, right=right))
-        if isinstance(node, Not):
+            return intern_guard(type(node)(left=left, op=node.op, right=right))
+        if isinstance(node, (Not, Neg)):
             operand = walk(node.operand)
             if operand is node.operand:
                 return intern_guard(node)
-            return intern_guard(Not(operand=operand))
+            return intern_guard(type(node)(operand=operand))
         if isinstance(node, And):
             ops = tuple(walk(o) for o in node.operands)
             if all(a is b for a, b in zip(ops, node.operands, strict=True)):
