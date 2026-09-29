@@ -51,6 +51,9 @@ uv add "excel-grapher[fast] @ git+https://github.com/Teal-Insights/excel-grapher
 # With NetworkX support
 uv add "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
 
+# With the HTML graph viewers (NumPy + NetworkX layouts, Graphviz)
+uv add "excel-grapher[viz] @ git+https://github.com/Teal-Insights/excel-grapher"
+
 # With all optional dependencies (includes `fast`)
 uv add "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
@@ -63,6 +66,7 @@ pip install git+https://github.com/Teal-Insights/excel-grapher
 # With extras:
 pip install "excel-grapher[fast] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[networkx] @ git+https://github.com/Teal-Insights/excel-grapher"
+pip install "excel-grapher[viz] @ git+https://github.com/Teal-Insights/excel-grapher"
 pip install "excel-grapher[all] @ git+https://github.com/Teal-Insights/excel-grapher"
 ```
 

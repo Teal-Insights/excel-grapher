@@ -176,7 +176,7 @@ def _numpy():
         import numpy
     except ImportError as e:
         raise ImportError(
-            "graph viewer layouts need numpy; install it with `pip install excel-grapher[fast]`"
+            "graph viewer layouts need numpy; install it with `pip install excel-grapher[viz]`"
         ) from e
     return numpy
 
