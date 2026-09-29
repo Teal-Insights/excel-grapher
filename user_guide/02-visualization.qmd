@@ -121,9 +121,9 @@ For graphs that are too large for Graphviz or Mermaid, the current recommended w
 - `DependencyGraph` (or any `GraphReadView`) -> `to_web_viz_payload(...)`
 - `write_web_viz_html(...)` for rendering
 
-Pass the graph (or a projection) directly. NetworkX is built only when the chosen layout or partition needs it (Louvain, `spring`, `forceatlas2`, `multipartite`, Graphviz layouts). Custom layout plugins that ignore `ctx.nx_graph` do not force a conversion. `to_networkx` remains available when you want a NetworkX object.
+Pass the graph (or a projection) directly. NetworkX is built only when the chosen layout or partition needs it (Louvain, `spring`, `forceatlas2`, Graphviz layouts). Custom layout plugins that ignore `ctx.nx_graph` do not force a conversion. `to_networkx` remains available when you want a NetworkX object.
 
-The payload stores node coordinates, module/rank metadata, and edge columns; the browser viewer consumes those directly.
+The payload stores node coordinates, module/rank/depth metadata, and edge columns; the browser viewer consumes those directly.
 
 ```python
 from pathlib import Path
@@ -142,15 +142,21 @@ write_web_viz_html(payload, Path("model.html"), data_mode="auto")
 
 The payload builder (`to_web_viz_payload`) and the viewer (`write_web_viz_html`) are powered by plugins. A single default plugin is provided for each, but you are encouraged to write your own. Configure `to_web_viz_payload(...)` via:
 
-- `layout="..."`: layout plugin id (`stratified_multipartite` default; see `list_web_viz_layouts()`).
+- `layout="..."`: layout plugin id (`clustered_force` default; see `list_web_viz_layouts()`).
 - `layout_config={...}`: plugin-specific optional config.
 - `include_guarded_edges`: include/exclude guarded edges in core/local edge export.
 - `include_guarded_edges_for_partition`: include/exclude guarded edges in module partitioning.
 - `include_module_overlay`: include partition overlay metadata and module color semantics.
 
-#### Default layout: `stratified_multipartite`
+#### Shared layout: clustered force
 
-The default layout is `stratified_multipartite`, which uses SCC-condensation longest-path rank on the vertical axis and Louvain community ordering on the horizontal axis.
+Both viewers (cells here, statements below) use one layout policy from `excel_grapher.grapher.viz_layout`: a force layout grouped by the graph's natural clusters (directed Louvain modules for cells, series for statements), computed in levels so large graphs stay tractable:
+
+1. Force layout on the graph of clusters, one node per cluster.
+2. Force layout of every node, anchored to its cluster's position.
+3. For large graphs, a few global refinement ticks.
+
+A weak **vertical pull** towards input depth (longest path from the inputs) keeps the input -> output direction readable: inputs sit at the top. `rank_pull` selects it: `"between"` clusters (default), `"everywhere"` (also weakly inside each cluster), or `"none"`.
 
 ```python
 from excel_grapher.exporter import to_web_viz_payload, list_web_viz_layouts
@@ -158,26 +164,36 @@ from excel_grapher.grapher import write_web_viz_html
 
 payload = to_web_viz_payload(
     g,
-    layout="stratified_multipartite",  # default
-    layout_config=None,  # plugin-specific options
+    layout="clustered_force",  # default
+    layout_config={"rank_pull": "between"},  # or "none" / "everywhere"
     include_module_overlay=True,  # include Louvain partition overlay
 )
 write_web_viz_html(payload, "model-web.html", data_mode="auto")
 ```
 
-This layout is partly intended to inform refactoring and modularization of generated code. Interpret the viewer with this mental model:
+Viewer behavior follows three size tiers shared by both viewers (`VIZ_TIER_SMALL_MAX`, `VIZ_TIER_MEDIUM_MAX`; the HTML gets them injected with the force settings, so browser relayout matches the precomputed layout):
 
-- **Position**: `x`/`y` - SCC-rank vertical strata and Louvain-based horizontal ordering.
+| Size | Precomputed layout | Drawing | Relayout in the browser |
+|---|---|---|---|
+| Small (≤ 2,000) | exact repulsion | labeled boxes (statements) / points (cells) | whole graph, when Vertical pull or Cluster by changes |
+| Medium (≤ 20,000) | exact repulsion inside clusters | boxes, labels depend on zoom | the selected cluster or neighborhood |
+| Large | grid repulsion plus refinement | opens on the cluster overview; click a cluster or zoom in for dots / points | the selected cluster only |
+
+Size is node count for cells and statements plus twice the bundles for statements.
+
+Interpret the cell viewer with this mental model:
+
+- **Position**: `x`/`y` - Louvain modules as regions, inputs pulled towards the top.
 - **Color**: node color maps to `module_id` (partition/community id). With no module overlay, all nodes are one module color.
 - **Edges**: overview prefers node-level `local_edges`; if unavailable, it falls back to module-centroid edges.
 - **Label `Module edges` / `Graph edges`**: reflects which edge set is currently drawn in overview.
-- **Rank** in tooltip is node rank metadata and may differ from visual layering for force-directed layouts.
+- **Rank** in tooltip is SCC-condensation rank metadata, not a drawing axis.
 
-`excel_grapher.exporter.to_web_viz_payload(...)` includes the partition overlay by default and is the canonical payload entrypoint for this visualization workflow. Open the exported HTML directly in a browser. The interface supports panning, zooming, hover tooltips, and a local force-layout mode for inspecting a neighborhood around a selected node.
+`excel_grapher.exporter.to_web_viz_payload(...)` includes the partition overlay by default and is the canonical payload entrypoint for this visualization workflow. Open the exported HTML directly in a browser. The interface supports panning, zooming, hover tooltips, and **Relayout selection** for untangling the neighborhood (or, on large graphs, the module) around a selected node.
 
 ### Statement graph (series bindings)
 
-Cell-level visualization does not scale to million-edge workbooks. When series bindings exist, build a **statement graph**: one node per formula-shape run, with instance edges deduplicated by access class and schedule distance. Instance partitions stay on the bundles as metadata. Ranks use the distance-zero residual (same legality test as inverted-tree scheduling), not Louvain modules.
+Cell-level visualization does not scale to million-edge workbooks. When series bindings exist, build a **statement graph**: one node per formula-shape run, with instance edges deduplicated by access class and schedule distance. Instance partitions stay on the bundles as metadata. Ranks use the distance-zero residual (same legality test as inverted-tree scheduling), not Louvain modules. Positions come from the shared clustered force layout with series as clusters.
 
 ```python
 from pathlib import Path
@@ -191,7 +207,9 @@ bindings = load_series_bindings("bindings.yaml")
 g = create_dependency_graph(
     "model.xlsx", all_series_targets(bindings, workbook=Path("model.xlsx")), load_values=True
 )
-payload = to_semantic_viz_payload(g, bindings, workbook="model.xlsx", blank_ranges=["Lookup!A1:C3"])
+payload = to_semantic_viz_payload(
+    g, bindings, workbook="model.xlsx", blank_ranges=["Lookup!A1:C3"], rank_pull="between"
+)
 write_semantic_viz_html(payload, Path("model-statements.html"))
 ```
 
@@ -200,11 +218,12 @@ CLI:
 ```bash
 uv run excel-grapher bindings viz model.xlsx --bindings bindings.yaml --output model-statements.html
 uv run excel-grapher bindings viz model.xlsx --bindings bindings --blank-ranges blank_ranges.py --output model-statements.html
+uv run excel-grapher bindings viz model.xlsx --bindings bindings.yaml --rank-pull none --output model-statements.html
 ```
 
 Cell-level `to_web_viz_payload` is unchanged and does not require bindings.
 
-The HTML viewer always paints to a canvas. Q-CRAFT-scale graphs (~715 statements / 5,725 bundles, under `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES`) draw labeled boxes, arrows, and pan/zoom the same way the old SVG viewer did. Larger statement graphs (LIC-DSF is ~20k statements / 120k bundles) use dots and lines so rank 0 is not a five-million-pixel row of labels. Sparse ranks stretch across the opening camera instead of packing at the left edge. Large catalogs uncheck Constants on first paint. An on-page legend documents access-class edge colors (`identity` blue, `shift` purple, `affine` green, `gather` / `whole` / `dynamic` / `cross_partition` amber), dashed lag vs solid contemporaneous stroke, guarded fade, and node fill for the current **Color by** mode (series hue by default, or a named role palette, or per-sheet hue with a visible `mixed` group when a statement spans worksheets). **Layout** defaults to schedule **rank**. On graphs that fit the box threshold, **Clustered** is a canvas-side force layout (no Graphviz binary): Cluster by series, role, or sheet pulls each group into one region with one labeled hull, and changing Cluster by relayouts in the browser. Cluster by `none` in clustered mode is a plain force with no hulls. Dots / LIC-DSF graphs fail closed to rank (clustered is disabled) so pairwise force never runs at that scale. On rank layout, **Cluster by** still draws per-rank frames without replacing the vertical axis and defaults to **series** so statement nodes are grouped under their series. Click a node or edge to open the inspect panel: nodes list sampled member cells and instance-partition chips; edges list sampled canonical instance pairs. **Reset** restores the opening camera after pan/zoom without changing direction filters. Inline HTML samples up to eight cell addresses per node and eight instance edges per bundle; `payload.to_dict()` and `excel-grapher bindings viz --json` keep the full lists. Each node includes `shape_key` and a `labels` object copied from the series binding (`notes`, `sdmx_notes`, `compute_name`, `groups`, measure concept id/name/description, `axis_labels`). Formula text is not stored on statement nodes; use series, statement, partition, or bundle drilldown for cell formulas and canonical instance edges.
+The HTML viewer always paints to a canvas and follows the size tiers above. Q-CRAFT-scale graphs (~715 statements / 5,725 bundles, the medium tier) draw labeled boxes and arrows; labels appear once zoomed in far enough to read. Large statement graphs (LIC-DSF is ~20k statements / 120k bundles) open on a cluster overview (one disc per series, sized by statement count, with aggregated edges); click a disc or zoom in to see its statements as dots and lines. Large catalogs uncheck Constants on first paint. An on-page legend documents access-class edge colors (`identity` blue, `shift` purple, `affine` green, `gather` / `whole` / `dynamic` / `cross_partition` amber), dashed lag vs solid contemporaneous stroke, guarded fade, and node fill for the current **Color by** mode (series hue by default, or a named role palette, or per-sheet hue with a visible `mixed` group when a statement spans worksheets). **Cluster by** (series by default, or role, sheet, none) draws one labeled hull per group; on small graphs changing it relayouts in the browser so each group gets its own region (`none` is a plain force with no hulls), and so does **Vertical pull**. On medium and large graphs both are precomputed (re-export with `--rank-pull` to change the pull) and **Relayout** untangles the selected node's cluster (or its two-hop neighborhood when Cluster by is `none`). Click a node or edge to open the inspect panel: nodes list sampled member cells and instance-partition chips; edges list sampled canonical instance pairs. **Reset** restores the precomputed layout and the opening camera without changing direction filters. Inline HTML samples up to eight cell addresses per node and eight instance edges per bundle; `payload.to_dict()` and `excel-grapher bindings viz --json` keep the full lists. Each node includes `shape_key` and a `labels` object copied from the series binding (`notes`, `sdmx_notes`, `compute_name`, `groups`, measure concept id/name/description, `axis_labels`). Formula text is not stored on statement nodes; use series, statement, partition, or bundle drilldown for cell formulas and canonical instance edges.
 
 ```python
 from excel_grapher.exporter import (

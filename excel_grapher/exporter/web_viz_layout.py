@@ -8,22 +8,20 @@ from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from excel_grapher.grapher.lightweight_viz import VizGraph, VizLimits
 
-LAYOUT_STRATIFIED_MULTIPARTITE = "stratified_multipartite"
+LAYOUT_CLUSTERED_FORCE = "clustered_force"
 LAYOUT_SPRING = "spring"
 LAYOUT_FORCEATLAS2 = "forceatlas2"
-LAYOUT_MULTIPARTITE = "multipartite"
 LAYOUT_GRAPHVIZ_DOT = "graphviz_dot"
 LAYOUT_GRAPHVIZ_SFDP = "graphviz_sfdp"
 
 _NX_SUBMODES: tuple[WebVizNxSubmode, ...] = (
     "spring",
     "forceatlas2",
-    "multipartite",
     "graphviz_dot",
     "graphviz_sfdp",
 )
 
-WebVizNxSubmode = Literal["spring", "forceatlas2", "multipartite", "graphviz_dot", "graphviz_sfdp"]
+WebVizNxSubmode = Literal["spring", "forceatlas2", "graphviz_dot", "graphviz_sfdp"]
 
 
 class _NxGraphSlot:
@@ -146,78 +144,21 @@ def unregister_web_viz_layout(layout_id: str) -> None:
     _plugins.pop(layout_id, None)
 
 
-def _positions_stratified_scc_louvain(
-    keys: list[str],
-    ma: Any,
-) -> dict[str, tuple[float, float]]:
-    n = len(keys)
-    if n == 0:
-        return {}
-    rank = ma.node_rank
-    mod = ma.module_of
-    max_r = max(rank) if n else 0
-    by_rank: dict[int, list[int]] = {}
-    for i in range(n):
-        r = int(rank[i])
-        by_rank.setdefault(r, []).append(i)
-    out: dict[str, tuple[float, float]] = {}
-    for r, idxs in sorted(by_rank.items(), key=lambda x: x[0]):
-        idxs.sort(key=lambda i: (int(mod[i]), keys[i]))
-        w = len(idxs)
-        denom_y = max(max_r, 0) + 1
-        y = 1.0 - 2.0 * (r + 0.5) / max(denom_y, 1)
-        if w == 1:
-            i0 = idxs[0]
-            out[keys[i0]] = (0.0, y)
-        else:
-            for j, i in enumerate(idxs):
-                x = 2.0 * j / (w - 1) - 1.0
-                out[keys[i]] = (x, y)
-    return out
+def _clustered_force(ctx: WebVizLayoutContext, layout_config: dict[str, Any]) -> WebVizLayoutResult:
+    """Shared multilevel clustered force layout; clusters are directed Louvain modules.
 
-
-def _stratified_multipartite(
-    ctx: WebVizLayoutContext, layout_config: dict[str, Any]
-) -> WebVizLayoutResult:
-    del layout_config
-    if not ctx.include_module_overlay:
-        from excel_grapher.exporter import lightweight_viz as lv
-
-        layout_graph = lv._layout_work_graph(
-            ctx.dep_graph,
-            keys=ctx.keys,
-            include_guarded_edges=ctx.include_guarded_edges,
-            weight_attr=ctx.weight_attr,
-            nx_graph=ctx.provided_nx_graph,
-        )
-        from excel_grapher.grapher.lightweight_viz import build_lightweight_viz_core
-
-        core_tmp = build_lightweight_viz_core(
-            ctx.dep_graph,
-            limits=ctx.limits,
-            layout_input=None,
-            layout_mode="bfs",
-            include_guarded_edges=ctx.include_guarded_edges,
-            include_formula_on_nodes=ctx.include_formula_on_nodes,
-            max_formula_length=ctx.max_formula_length,
-        )
-        node_rank = tuple(core_tmp.nodes.rank)
-        pos = lv._compute_networkx_layout_positions(
-            layout_graph,
-            keys=ctx.keys,
-            layout_mode="multipartite",
-            node_rank=node_rank,
-            seed=ctx.seed,
-            weight_attr=ctx.weight_attr,
-        )
-        return WebVizLayoutResult(
-            positions=pos,
-            module_analysis=None,
-            annotations={"layout": LAYOUT_MULTIPARTITE, "stratified_fallback": "bfs_multipartite"},
-            viewer_hints={},
-        )
+    `layout_config["rank_pull"]` selects the vertical pull towards input depth
+    (`"none"`, `"between"` (default), or `"everywhere"`).
+    """
     from excel_grapher.exporter import lightweight_viz as lv
+    from excel_grapher.grapher import viz_layout
+    from excel_grapher.grapher.lightweight_viz import _build_int_adjacencies
 
+    rank_pull = layout_config.get("rank_pull", viz_layout.DEFAULT_RANK_PULL)
+    if rank_pull not in viz_layout.RANK_PULL_MODES:
+        raise ValueError(
+            f"rank_pull must be one of {viz_layout.RANK_PULL_MODES}, got {rank_pull!r}"
+        )
     ma = lv._analyze_modules_directed_louvain_for_viz(
         ctx.dep_graph,
         keys=ctx.keys,
@@ -226,11 +167,28 @@ def _stratified_multipartite(
         weight_attr=ctx.weight_attr,
         nx_graph=ctx.provided_nx_graph,
     )
-    pos = _positions_stratified_scc_louvain(ctx.keys, ma)
+    n = len(ctx.keys)
+    key_id = {k: i for i, k in enumerate(ctx.keys)}
+    uncond, all_adj = _build_int_adjacencies(ctx.dep_graph, ctx.keys, key_id)
+    selected = all_adj if ctx.include_guarded_edges else uncond
+    depths = viz_layout.input_depths(n, [(u, v) for u in range(n) for v in uncond[u]])
+    pos = viz_layout.clustered_force_layout(
+        n,
+        [(u, v) for u in range(n) for v in selected[u]],
+        ma.module_of,
+        depths=depths,
+        rank_pull=rank_pull,
+        seed=ctx.seed,
+    )
+    positions = {key: (float(pos[i][0]), float(pos[i][1])) for i, key in enumerate(ctx.keys)}
     return WebVizLayoutResult(
-        positions=pos,
-        module_analysis=ma,
-        annotations={"layout": LAYOUT_STRATIFIED_MULTIPARTITE},
+        positions=positions,
+        module_analysis=ma if ctx.include_module_overlay else None,
+        annotations={
+            "layout": LAYOUT_CLUSTERED_FORCE,
+            "rank_pull": rank_pull,
+            "tier": viz_layout.viz_tier(n),
+        },
         viewer_hints={},
     )
 
@@ -241,7 +199,6 @@ def _nx_submode(
     def _impl(ctx: WebVizLayoutContext, layout_config: dict[str, Any]) -> WebVizLayoutResult:
         del layout_config
         from excel_grapher.exporter import lightweight_viz as lv
-        from excel_grapher.grapher.lightweight_viz import build_lightweight_viz_core
 
         work = lv._layout_work_graph(
             ctx.dep_graph,
@@ -260,39 +217,18 @@ def _nx_submode(
                 weight_attr=ctx.weight_attr,
                 nx_graph=ctx.provided_nx_graph,
             )
-            node_rank: tuple[int, ...] = ma.node_rank
         else:
             ma = None
-            core_tmp = build_lightweight_viz_core(
-                ctx.dep_graph,
-                limits=ctx.limits,
-                layout_input=None,
-                layout_mode="bfs",
-                include_guarded_edges=ctx.include_guarded_edges,
-                include_formula_on_nodes=ctx.include_formula_on_nodes,
-                max_formula_length=ctx.max_formula_length,
-            )
-            node_rank = tuple(core_tmp.nodes.rank)
 
         pos = lv._compute_networkx_layout_positions(
             work,
-            keys=ctx.keys,
             layout_mode=submode,
-            node_rank=node_rank,
             seed=ctx.seed,
             weight_attr=ctx.weight_attr,
         )
-        if ctx.include_module_overlay:
-            assert ma is not None
-            return WebVizLayoutResult(
-                positions=pos,
-                module_analysis=ma,
-                annotations={"layout": submode, "layout_group": "networkx_drawing"},
-                viewer_hints={},
-            )
         return WebVizLayoutResult(
             positions=pos,
-            module_analysis=None,
+            module_analysis=ma,
             annotations={"layout": submode, "layout_group": "networkx_drawing"},
             viewer_hints={},
         )
@@ -301,7 +237,7 @@ def _nx_submode(
 
 
 def _register_builtin_plugins() -> None:
-    register_web_viz_layout(LAYOUT_STRATIFIED_MULTIPARTITE, _stratified_multipartite)
+    register_web_viz_layout(LAYOUT_CLUSTERED_FORCE, _clustered_force)
     for sid in _NX_SUBMODES:
         register_web_viz_layout(sid, _nx_submode(sid))
 
@@ -309,10 +245,9 @@ def _register_builtin_plugins() -> None:
 _register_builtin_plugins()
 
 __all__ = [
-    "LAYOUT_STRATIFIED_MULTIPARTITE",
+    "LAYOUT_CLUSTERED_FORCE",
     "LAYOUT_SPRING",
     "LAYOUT_FORCEATLAS2",
-    "LAYOUT_MULTIPARTITE",
     "LAYOUT_GRAPHVIZ_DOT",
     "LAYOUT_GRAPHVIZ_SFDP",
     "WebVizLayoutContext",

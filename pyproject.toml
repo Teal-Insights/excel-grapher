@@ -25,6 +25,7 @@ classifiers = [
 dependencies = [
     "fastpyxl>=1.1.0",
     "jsonschema>=4.26.0",
+    "numpy>=1.24",
     "pyyaml>=6.0.3",
     "ruamel-yaml>=0.19.1",
 ]

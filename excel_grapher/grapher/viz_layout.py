@@ -171,10 +171,9 @@ def input_depths(n: int, edges: Sequence[tuple[int, int]]) -> list[int]:
 
 
 def _numpy():
-    try:
-        import numpy
-    except ImportError as e:  # pragma: no cover
-        raise ImportError("numpy is required for graph viewer layouts") from e
+    """Import numpy on first layout, keeping `excel_grapher` imports light."""
+    import numpy
+
     return numpy
 
 

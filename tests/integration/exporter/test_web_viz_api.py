@@ -13,7 +13,7 @@ import pytest
 from excel_grapher import write_web_viz_html
 from excel_grapher.exporter import to_web_viz_payload
 from excel_grapher.exporter.web_viz_layout import (
-    LAYOUT_STRATIFIED_MULTIPARTITE,
+    LAYOUT_CLUSTERED_FORCE,
     WebVizLayoutContext,
     WebVizLayoutResult,
     list_web_viz_layouts,
@@ -90,16 +90,17 @@ def _zero_layout(ctx: WebVizLayoutContext, layout_config: dict[str, object]) -> 
     )
 
 
-def test_to_web_viz_payload_default_layout_is_stratified_multipartite() -> None:
+def test_to_web_viz_payload_default_layout_is_clustered_force() -> None:
     sig = inspect.signature(to_web_viz_payload)
-    assert sig.parameters["layout"].default == "stratified_multipartite"
+    assert sig.parameters["layout"].default == "clustered_force"
 
 
 def test_to_web_viz_layout_registry_includes_builtins() -> None:
     ids = set(list_web_viz_layouts())
-    assert "stratified_multipartite" in ids
+    assert "clustered_force" in ids
     assert "spring" in ids
-    assert "multipartite" in ids
+    assert "stratified_multipartite" not in ids
+    assert "multipartite" not in ids
 
 
 def test_register_web_viz_layout_allows_replace() -> None:
@@ -193,14 +194,20 @@ def test_digraph_compat_path_still_reconstructs(monkeypatch: pytest.MonkeyPatch)
 
 def test_to_web_viz_payload_includes_annotations() -> None:
     g = _build_two_component_digraph()
-    payload = to_web_viz_payload(g, seed=7, layout=LAYOUT_STRATIFIED_MULTIPARTITE)
+    payload = to_web_viz_payload(g, seed=7, layout=LAYOUT_CLUSTERED_FORCE)
     assert payload.annotations is not None
-    assert payload.annotations.get("layout") == "stratified_multipartite"
+    assert payload.annotations.get("layout") == "clustered_force"
+    assert payload.annotations.get("rank_pull") == "between"
+    assert payload.annotations.get("tier") == "small"
 
     from excel_grapher.grapher.lightweight_viz import serialize_lightweight_viz_json
 
     blob = json.loads(serialize_lightweight_viz_json(payload))
-    assert blob.get("annotations", {}).get("layout") == "stratified_multipartite"
+    assert blob.get("annotations", {}).get("layout") == "clustered_force"
+    assert blob["version"] == 3
+    assert "bucket_density" not in blob["core"]["nodes"]
+    assert "dense_bucket_count" not in blob["core"]["stats"]
+    assert len(blob["core"]["nodes"]["depth"]) == 4
 
 
 def test_to_web_viz_payload_accepts_networkx_digraph() -> None:
@@ -239,7 +246,7 @@ def test_default_layout_does_not_call_to_networkx_for_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def boom(*_args: object, **_kwargs: object) -> None:
-        raise AssertionError("stratified_multipartite must not force to_networkx()")
+        raise AssertionError("clustered_force must not force to_networkx()")
 
     monkeypatch.setattr("excel_grapher.grapher.export.to_networkx", boom)
     payload = to_web_viz_payload(_build_two_component_graph(), seed=7)
@@ -316,12 +323,16 @@ def test_write_web_viz_html_writes_html_file(tmp_path: Path) -> None:
     m = re.search(r"window\.__VIZ_DATA__\s*=\s*(\{.*?\});", html, re.S)
     assert m, "inline JSON"
     d = json.loads(m.group(1))
-    assert d.get("annotations", {}).get("layout") == "stratified_multipartite"
+    assert d.get("annotations", {}).get("layout") == "clustered_force"
+    assert "window.VIZ_LAYOUT_CONFIG = " in html
+    assert "VizForce.relayoutGroup" in html
+    assert "d3-force" not in html
+    assert "40000" not in html
 
 
 def test_write_web_viz_html_accepts_custom_template(tmp_path: Path) -> None:
     g = _build_two_component_digraph()
-    p = to_web_viz_payload(g, seed=1, layout="stratified_multipartite")
+    p = to_web_viz_payload(g, seed=1)
     pkg = "excel_grapher.grapher"
     ref = importlib.resources.files(pkg).joinpath("lightweight_viz_template.html")
     tpl = tmp_path / "tpl.html"
@@ -340,7 +351,7 @@ def test_write_web_viz_html_accepts_custom_template(tmp_path: Path) -> None:
 
 @pytest.mark.parametrize(
     "layout",
-    ("spring", "forceatlas2", "multipartite"),
+    ("spring", "forceatlas2"),
 )
 def test_to_web_viz_payload_supports_networkx_layouts(layout: str) -> None:
     # NetworkX spring/multipartite layouts import NumPy internally.
@@ -354,24 +365,43 @@ def test_to_web_viz_payload_supports_networkx_layouts(layout: str) -> None:
     )
 
 
-def test_to_web_viz_stratified_has_distinct_scc_ranks() -> None:
-    g = _build_chain_digraph(5)
-    payload = to_web_viz_payload(
-        g, seed=0, layout="stratified_multipartite", include_module_overlay=True
+def test_clustered_force_positions_come_from_shared_layout() -> None:
+    from excel_grapher.grapher.lightweight_viz import _build_int_adjacencies
+    from excel_grapher.grapher.viz_layout import clustered_force_layout, input_depths
+
+    graph = _build_two_component_graph()
+    payload = to_web_viz_payload(graph, seed=5)
+    keys = graph.keys(order="workbook")
+    key_id = {k: i for i, k in enumerate(keys)}
+    uncond, all_adj = _build_int_adjacencies(graph, keys, key_id)
+    edges = [(u, v) for u in range(len(keys)) for v in all_adj[u]]
+    depths = input_depths(len(keys), [(u, v) for u in range(len(keys)) for v in uncond[u]])
+    modules = payload.overlays[0].data["node_module_id"]
+    want = clustered_force_layout(
+        len(keys), edges, modules, depths=depths, rank_pull="between", seed=5
     )
-    assert payload.core.stats.node_count == 5
-    ranks = set(payload.core.nodes.rank)
-    assert len(ranks) >= 2
+    assert list(payload.core.nodes.depth) == depths
+    for i in range(len(keys)):
+        assert payload.core.nodes.x[i] == pytest.approx(want[i][0])
+        assert payload.core.nodes.y[i] == pytest.approx(want[i][1])
+
+
+def test_clustered_force_rank_pull_is_configurable() -> None:
+    graph = _build_chain_digraph(6)
+    pulled = to_web_viz_payload(graph, seed=0)
+    free = to_web_viz_payload(graph, seed=0, layout_config={"rank_pull": "none"})
+    assert free.annotations is not None and free.annotations["rank_pull"] == "none"
+    assert pulled.core.nodes.y != free.core.nodes.y
+    with pytest.raises(ValueError, match="rank_pull"):
+        to_web_viz_payload(graph, layout_config={"rank_pull": "sideways"})
 
 
 def test_to_web_viz_payload_can_omit_module_overlay() -> None:
-    # Without module overlay, stratified fallback uses NetworkX multipartite (needs NumPy).
-    pytest.importorskip("numpy")
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, include_module_overlay=False, seed=1)
     assert payload.overlays == ()
     assert payload.annotations is not None
-    assert payload.annotations.get("stratified_fallback") == "bfs_multipartite"
+    assert payload.annotations.get("layout") == "clustered_force"
     assert payload.core.stats.node_count == 4
 
 

@@ -57,7 +57,7 @@ def _chain_nx():
 
 
 def _payload():
-    return to_web_viz_payload(_chain_nx(), layout="stratified_multipartite")
+    return to_web_viz_payload(_chain_nx())
 
 
 def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
@@ -139,3 +139,32 @@ def test_overview_viewer_embeds_module_edges(tmp_path: Path) -> None:
     text = out.read_text(encoding="utf-8")
     assert "module_edges" in text
     assert "canvas" in text
+
+
+def test_build_core_takes_positions_and_has_no_rank_band_modes() -> None:
+    import inspect
+
+    params = inspect.signature(build_lightweight_viz_core).parameters
+    assert "layout_mode" not in params
+    assert "bfs_seed_keys" not in params
+    g = _chain_graph()
+    core = build_lightweight_viz_core(
+        g, limits=VizLimits(), positions=((1.0, 2.0), (3.0, 4.0), (5.0, 6.0))
+    )
+    assert core.nodes.x == (1.0, 3.0, 5.0)
+    assert core.nodes.y == (2.0, 4.0, 6.0)
+    # Chain S!A3 -> S!A2 -> S!A1: A1 is the input.
+    assert core.nodes.depth == (0, 1, 2)
+    with pytest.raises(ValueError, match="positions"):
+        build_lightweight_viz_core(g, limits=VizLimits(), positions=((0.0, 0.0),))
+
+
+def test_build_core_without_positions_uses_clustered_force() -> None:
+    from excel_grapher.grapher.viz_layout import clustered_force_layout
+
+    core = build_lightweight_viz_core(_chain_graph(), limits=VizLimits())
+    want = clustered_force_layout(
+        3, [(1, 0), (2, 1)], [0, 0, 0], depths=[0, 1, 2], rank_pull="between"
+    )
+    assert core.nodes.x == pytest.approx(tuple(want[:, 0]))
+    assert core.nodes.y == pytest.approx(tuple(want[:, 1]))
