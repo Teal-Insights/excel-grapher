@@ -17,48 +17,87 @@ from excel_grapher.exporter.semantic_graph import (
     StatementGraph,
     build_statement_graph,
     jsonable_scalar,
+    schedule_edges,
 )
 from excel_grapher.grapher.graph import DependencyGraph
+from excel_grapher.grapher.viz_layout import (
+    DEFAULT_RANK_PULL,
+    RANK_PULL_MODES,
+    RankPull,
+    VizTier,
+    clustered_force_layout,
+    input_depths,
+    viz_layout_js_bootstrap,
+    viz_tier,
+)
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
 
-SEMANTIC_VIZ_PAYLOAD_VERSION = 1
+SEMANTIC_VIZ_PAYLOAD_VERSION = 2
 SEMANTIC_VIZ_OVERLAY_ID = "webviz.statement_graph"
 SEMANTIC_VIZ_CELL_SAMPLE = 8
-SEMANTIC_VIZ_CAMERA_MAX_WIDTH = 2800
-# Boxes while the graph is in the Q-CRAFT neighborhood (~12k primitives).
-# LIC-DSF is ~260k and uses dots and lines on the same canvas.
-SEMANTIC_VIZ_BOX_MAX_PRIMITIVES = 20_000
+SEMANTIC_VIZ_CLUSTER_BY = "series"
 
 __all__ = [
-    "SEMANTIC_VIZ_BOX_MAX_PRIMITIVES",
-    "SEMANTIC_VIZ_CAMERA_MAX_WIDTH",
     "SEMANTIC_VIZ_CELL_SAMPLE",
+    "SEMANTIC_VIZ_CLUSTER_BY",
     "SEMANTIC_VIZ_OVERLAY_ID",
     "SEMANTIC_VIZ_PAYLOAD_VERSION",
     "SemanticVizPayload",
-    "semantic_viz_clustered_layout_allowed",
     "semantic_viz_primitive_count",
+    "semantic_viz_tier",
     "serialize_semantic_viz_json",
+    "statement_graph_layout",
     "to_semantic_viz_payload",
     "write_semantic_viz_html",
 ]
 
 
 def semantic_viz_primitive_count(*, statement_count: int, bundle_count: int) -> int:
-    """Return statement + twice-bundle size used to pick boxes vs dots."""
+    """Return statement + twice-bundle size used to pick the viewer tier."""
     return statement_count + 2 * bundle_count
 
 
-def semantic_viz_clustered_layout_allowed(*, statement_count: int, bundle_count: int) -> bool:
-    """Return whether the HTML viewer may run clustered force layout.
+def semantic_viz_tier(*, statement_count: int, bundle_count: int) -> VizTier:
+    """Return the shared size tier for a statement graph.
 
-    Rank layout stays the only mode above `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES`
-    (the dots / LIC-DSF path). Pairwise force is not run there.
+    `small` and `medium` draw labeled boxes; `large` opens on the cluster
+    overview and draws dots when zoomed in.
     """
-    return (
+    return viz_tier(
         semantic_viz_primitive_count(statement_count=statement_count, bundle_count=bundle_count)
-        <= SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
     )
+
+
+def statement_graph_layout(
+    graph: StatementGraph, *, rank_pull: RankPull = DEFAULT_RANK_PULL
+) -> tuple[tuple[tuple[float, float], ...], tuple[int, ...]]:
+    """Lay out a statement graph with the shared clustered force layout.
+
+    Clusters are series. Depth is input depth over the schedule edges
+    (`schedule_edges`), so the pull puts inputs at the top.
+
+    Returns:
+        `(positions, depths)`, one entry per `graph.nodes`.
+    """
+    nodes = graph.nodes
+    n = len(nodes)
+    index = {node.statement_id: i for i, node in enumerate(nodes)}
+    edges = sorted(
+        {
+            (index[b.consumer_id], index[b.producer_id])
+            for b in graph.bundles
+            if b.consumer_id in index and b.producer_id in index and b.consumer_id != b.producer_id
+        }
+    )
+    depths = tuple(input_depths(n, schedule_edges(nodes, graph.bundles)))
+    pos = clustered_force_layout(
+        n,
+        edges,
+        [node.series_id for node in nodes],
+        depths=depths,
+        rank_pull=rank_pull,
+    )
+    return tuple((float(x), float(y)) for x, y in pos.tolist()), depths
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,12 +105,24 @@ class SemanticVizPayload:
     """JSON-serializable statement-graph visualization.
 
     Distinct from cell-level `LightweightVizPayload`. Nodes are statements,
-    not cells. Layout ranks come from the distance-zero residual, not Louvain.
+    not cells. `ranks` on the graph come from the distance-zero residual;
+    positions come from the shared clustered force layout (clusters are
+    series) with the vertical `rank_pull` towards input depth.
     """
 
     version: int
     graph: StatementGraph
+    positions: tuple[tuple[float, float], ...]
+    depths: tuple[int, ...]
+    rank_pull: RankPull = DEFAULT_RANK_PULL
     annotations: Mapping[str, Any] | None = None
+
+    @property
+    def tier(self) -> VizTier:
+        """Shared size tier of this graph."""
+        return semantic_viz_tier(
+            statement_count=len(self.graph.nodes), bundle_count=len(self.graph.bundles)
+        )
 
     def to_dict(self, *, cell_sample: int | None = None) -> dict[str, Any]:
         """Return a JSON-serializable mapping.
@@ -88,6 +139,11 @@ class SemanticVizPayload:
             "version": self.version,
             "kind": "statement_graph",
             "overlay_id": SEMANTIC_VIZ_OVERLAY_ID,
+            "layout": {
+                "tier": self.tier,
+                "rank_pull": self.rank_pull,
+                "cluster_by": SEMANTIC_VIZ_CLUSTER_BY,
+            },
             "stats": {
                 "cell_count": g.stats.cell_count,
                 "statement_count": g.stats.statement_count,
@@ -123,8 +179,9 @@ class SemanticVizPayload:
                     "is_remainder": node.is_remainder,
                     "labels": node.labels.to_dict(),
                     "rank": g.ranks[i],
-                    "x": g.positions[i][0],
-                    "y": g.positions[i][1],
+                    "depth": self.depths[i],
+                    "x": self.positions[i][0],
+                    "y": self.positions[i][1],
                 }
                 for i, node in enumerate(g.nodes)
             ],
@@ -171,6 +228,7 @@ def to_semantic_viz_payload(
     workbook: Path | str,
     view: SemanticCatalogView | None = None,
     blank_ranges: Iterable[str] | None = None,
+    rank_pull: RankPull = DEFAULT_RANK_PULL,
 ) -> SemanticVizPayload:
     """Build a statement-graph payload from a cell graph plus series bindings.
 
@@ -184,17 +242,29 @@ def to_semantic_viz_payload(
         view: Precomputed catalog. When omitted, `load_semantic_catalog` runs.
         blank_ranges: Sheet-qualified rectangles omitted from the graph. Forwarded
             to catalog edge classification when `view` is omitted.
+        rank_pull: Vertical pull towards input depth: `"none"`, `"between"`
+            series clusters (default), or `"everywhere"`.
 
     Raises:
         SemanticCatalogError: Catalog or instance-edge analysis failed.
+        ValueError: Unknown `rank_pull`.
     """
+    if rank_pull not in RANK_PULL_MODES:
+        raise ValueError(f"rank_pull must be one of {RANK_PULL_MODES}, got {rank_pull!r}")
     snapshot = (
         view
         if view is not None
         else load_semantic_catalog(graph, bindings, workbook=workbook, blank_ranges=blank_ranges)
     )
     statement_graph = build_statement_graph(snapshot, graph)
-    return SemanticVizPayload(version=SEMANTIC_VIZ_PAYLOAD_VERSION, graph=statement_graph)
+    positions, depths = statement_graph_layout(statement_graph, rank_pull=rank_pull)
+    return SemanticVizPayload(
+        version=SEMANTIC_VIZ_PAYLOAD_VERSION,
+        graph=statement_graph,
+        positions=positions,
+        depths=depths,
+        rank_pull=rank_pull,
+    )
 
 
 def serialize_semantic_viz_json(
@@ -227,9 +297,11 @@ def write_semantic_viz_html(
 ) -> None:
     """Write a standalone HTML viewer for a statement-graph payload.
 
-    Rank layout is the default. Below `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES`, the
-    viewer also offers a canvas-side clustered force layout so Cluster by can
-    move nodes without regenerating the HTML. Larger (dots) graphs stay on rank.
+    The viewer opens on the precomputed clustered force layout. Behavior
+    follows the shared size tier: `small` graphs relayout in the browser when
+    Cluster by or Vertical pull changes; `medium` graphs relayout one selected
+    cluster or neighborhood; `large` graphs open on the cluster overview,
+    expand into dots when zoomed in, and relayout one selected cluster.
     """
     if payload.version != SEMANTIC_VIZ_PAYLOAD_VERSION:
         raise ValueError(f"Unsupported semantic viz payload version: {payload.version}")
@@ -261,8 +333,8 @@ def write_semantic_viz_html(
         tpl.replace("__TITLE__", title)
         .replace("/*__BOOTSTRAP__*/", bootstrap)
         .replace("/*__SIDECAR__*/", sidecar_js)
+        .replace("/*__VIZ_FORCE_JS__*/", viz_layout_js_bootstrap())
         .replace("/*__LAYOUT_JS__*/", layout_js)
-        .replace("__BOX_MAX_PRIMITIVES__", str(SEMANTIC_VIZ_BOX_MAX_PRIMITIVES))
     )
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(html, encoding="utf-8")

@@ -373,3 +373,28 @@ def test_to_web_viz_payload_can_omit_module_overlay() -> None:
     assert payload.annotations is not None
     assert payload.annotations.get("stratified_fallback") == "bfs_multipartite"
     assert payload.core.stats.node_count == 4
+
+
+def _graph_with_unreachable_cycle() -> DependencyGraph:
+    """`S!D1` is the only BFS seed; the `A1 <-> B1` cycle is unreachable from it."""
+    graph = DependencyGraph()
+    graph.add_node(Node(sheet="S", column="D", row=1, formula=None, value=1, is_leaf=True))
+    graph.add_node(Node(sheet="S", column="A", row=1, formula="=B1", value=None, is_leaf=False))
+    graph.add_node(Node(sheet="S", column="B", row=1, formula="=A1", value=None, is_leaf=False))
+    graph.add_edge("S!A1", "S!B1")
+    graph.add_edge("S!B1", "S!A1")
+    return graph
+
+
+@pytest.mark.parametrize("include_module_overlay", [True, False])
+def test_payload_node_columns_align_without_guarded_edges(include_module_overlay: bool) -> None:
+    payload = to_web_viz_payload(
+        _graph_with_unreachable_cycle(),
+        include_guarded_edges=False,
+        include_module_overlay=include_module_overlay,
+    )
+    nodes = payload.core.nodes
+    n = payload.core.stats.node_count
+    assert n == 3
+    for column in (nodes.sheet_index, nodes.row, nodes.column, nodes.rank, nodes.x, nodes.y):
+        assert len(column) == n

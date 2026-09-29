@@ -177,12 +177,15 @@ class StatementGraphStats:
 
 @dataclass(frozen=True, slots=True)
 class StatementGraph:
-    """Compressed statement graph with schedule ranks and 2-D positions."""
+    """Compressed statement graph with schedule ranks.
+
+    Viewer positions are not stored here; `to_semantic_viz_payload` lays the
+    graph out with the shared clustered force layout.
+    """
 
     nodes: tuple[StatementNode, ...]
     bundles: tuple[StatementBundle, ...]
     ranks: tuple[int, ...]
-    positions: tuple[tuple[float, float], ...]
     stats: StatementGraphStats
     remainder_sample: tuple[CanonicalAddress, ...]
     heterogeneous_pairs: tuple[tuple[str, str], ...]
@@ -396,15 +399,17 @@ def _bundles_from_edges(
     return tuple(bundles)
 
 
-def _rank_and_positions(
+def schedule_edges(
     nodes: Sequence[StatementNode],
     bundles: Sequence[StatementBundle],
-) -> tuple[tuple[int, ...], tuple[tuple[float, float], ...]]:
-    n = len(nodes)
-    if n == 0:
-        return (), ()
+) -> list[tuple[int, int]]:
+    """Return unique `(consumer, producer)` node-index pairs of the schedule.
+
+    Only unguarded, distance-zero `identity` / `affine` bundles order the
+    schedule; self-loops are dropped.
+    """
     index = {node.statement_id: i for i, node in enumerate(nodes)}
-    adj: list[list[int]] = [[] for _ in range(n)]
+    pairs: set[tuple[int, int]] = set()
     for bundle in bundles:
         if bundle.guarded or bundle.distance != 0 or bundle.access not in {"identity", "affine"}:
             continue
@@ -414,35 +419,20 @@ def _rank_and_positions(
         dst = index.get(bundle.producer_id)
         if src is None or dst is None:
             continue
+        pairs.add((src, dst))
+    return sorted(pairs)
+
+
+def _schedule_ranks(
+    nodes: Sequence[StatementNode],
+    bundles: Sequence[StatementBundle],
+) -> tuple[int, ...]:
+    n = len(nodes)
+    adj: list[list[int]] = [[] for _ in range(n)]
+    for src, dst in schedule_edges(nodes, bundles):
         adj[src].append(dst)
-    for row in adj:
-        row.sort()
-        # Unique targets; Kosaraju accepts duplicates but ranks stay stable.
-        if len(row) > 1:
-            seen: set[int] = set()
-            uniq: list[int] = []
-            for v in row:
-                if v not in seen:
-                    seen.add(v)
-                    uniq.append(v)
-            row[:] = uniq
     ranks, _scc = unconditional_scc_ranks(adj, n)
-    max_r = max(ranks) if ranks else 0
-    by_rank: dict[int, list[int]] = {}
-    for i, rank in enumerate(ranks):
-        by_rank.setdefault(rank, []).append(i)
-    positions = [(0.0, 0.0)] * n
-    for rank, idxs in sorted(by_rank.items()):
-        idxs.sort(key=lambda i: (nodes[i].series_id, nodes[i].start, nodes[i].statement_id))
-        denom_y = max(max_r, 0) + 1
-        y = 1.0 - 2.0 * (rank + 0.5) / max(denom_y, 1)
-        if len(idxs) == 1:
-            positions[idxs[0]] = (0.0, y)
-            continue
-        for j, i in enumerate(idxs):
-            x = 2.0 * j / (len(idxs) - 1) - 1.0
-            positions[i] = (x, y)
-    return tuple(ranks), tuple(positions)
+    return tuple(ranks)
 
 
 def _unbound_cells(
@@ -532,7 +522,7 @@ def build_statement_graph(
     remainder_id = REMAINDER_STATEMENT_ID if unbound_count else ""
     bundles = _bundles_from_edges(view.edges.edges, cell_stmt, catalog, remainder_id)
     hetero = _heterogeneous_pairs(view.edges.edges, catalog)
-    ranks, positions = _rank_and_positions(node_list, bundles)
+    ranks = _schedule_ranks(node_list, bundles)
     bound_cells = sum(len(series.cells) for series in catalog.series.values())
     stats = StatementGraphStats(
         cell_count=bound_cells,
@@ -546,7 +536,6 @@ def build_statement_graph(
         nodes=tuple(node_list),
         bundles=bundles,
         ranks=ranks,
-        positions=positions,
         stats=stats,
         remainder_sample=remainder_sample,
         heterogeneous_pairs=hetero,
@@ -610,8 +599,6 @@ def statement_graph_to_networkx(graph: StatementGraph):
             "sheet": node.sheet,
             "is_remainder": node.is_remainder,
             "rank": graph.ranks[index],
-            "x": graph.positions[index][0],
-            "y": graph.positions[index][1],
             "representative_cell": node.cells[0] if node.cells else None,
         }
         attrs.update(node.labels.to_dict())
@@ -649,6 +636,7 @@ __all__ = [
     "build_statement_graph",
     "jsonable_cell_value",
     "jsonable_scalar",
+    "schedule_edges",
     "statement_graph_to_networkx",
     "statement_labels_for",
     "statement_sheet",

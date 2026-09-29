@@ -107,6 +107,7 @@ packages = ["excel_grapher"]
 "excel_grapher/grapher/lightweight_viz_template.html" = "excel_grapher/grapher/lightweight_viz_template.html"
 "excel_grapher/exporter/semantic_viz_template.html" = "excel_grapher/exporter/semantic_viz_template.html"
 "excel_grapher/exporter/semantic_viz_layout.js" = "excel_grapher/exporter/semantic_viz_layout.js"
+"excel_grapher/grapher/viz_force.js" = "excel_grapher/grapher/viz_force.js"
 "excel_grapher/series_bindings/series_binding.schema.json" = "excel_grapher/series_bindings/series_binding.schema.json"
 
 [tool.hatch.build.targets.sdist]

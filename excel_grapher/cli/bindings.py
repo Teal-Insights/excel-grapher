@@ -22,6 +22,7 @@ from excel_grapher.grapher.dynamic_refs import (
     DynamicRefConfig,
     DynamicRefError,
 )
+from excel_grapher.grapher.viz_layout import DEFAULT_RANK_PULL, RANK_PULL_MODES
 from excel_grapher.series_bindings.audit import (
     DIRECTIONS,
     audit_binding_resolutions,
@@ -146,6 +147,13 @@ def register(subparsers: argparse._SubParsersAction[argparse.ArgumentParser]) ->
         "--json",
         action="store_true",
         help="Also write the statement-graph payload next to --output as .viz.json",
+    )
+    viz_parser.add_argument(
+        "--rank-pull",
+        choices=RANK_PULL_MODES,
+        default=DEFAULT_RANK_PULL,
+        help="Vertical pull towards input depth in the clustered force layout "
+        f"(default: {DEFAULT_RANK_PULL})",
     )
     viz_parser.add_argument(
         "--blank-ranges",
@@ -370,6 +378,7 @@ def cmd_viz(args: argparse.Namespace) -> int:
             result["bindings"],
             workbook=workbook,
             blank_ranges=blank_ranges,
+            rank_pull=args.rank_pull,
         )
         write_semantic_viz_html(payload, args.output, title=workbook.name)
         if args.json:
