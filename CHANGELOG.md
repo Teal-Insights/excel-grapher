@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.13.0 (2026-09-29)
+
+### Features
+
+- **guard**: Support arithmetic operands and ordered comparisons in guards
+  ([`ab43965`](https://github.com/Teal-Insights/excel-grapher/commit/ab4396509c685262e0f4ed0cec130e5b4c3a1b95))
+
+### Performance Improvements
+
+- **guard**: Make difference-bound checks incremental and pay-per-use
+  ([`72ac434`](https://github.com/Teal-Insights/excel-grapher/commit/72ac43462f27b193ccf0531a0f7caa65b2e51231))
+
+
 ## v23.12.0 (2026-09-29)
 
 ### Bug Fixes
