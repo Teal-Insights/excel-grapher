@@ -20,6 +20,7 @@ from tests.unit.exporter.inverted_tree.test_shape_a12_formula_shape import (
     _a12_bindings,
     _a12_workbook,
 )
+from tests.viz_marks import requires_numpy
 
 
 def _labelled_a12_bindings() -> dict:
@@ -71,6 +72,7 @@ def test_statement_nodes_copy_binding_labels_and_keep_one_shape_each(tmp_path: P
         assert node.labels.series_context == (("SCENARIO", "baseline"),)
 
 
+@requires_numpy
 def test_payload_json_includes_nested_labels(tmp_path: Path) -> None:
     workbook = _a12_workbook(tmp_path)
     document = _labelled_a12_bindings()
@@ -91,6 +93,7 @@ def test_payload_json_includes_nested_labels(tmp_path: Path) -> None:
         assert labels["series_context"] == {"SCENARIO": "baseline"}
 
 
+@requires_numpy
 def test_html_viewer_embeds_labels_and_shape_key(tmp_path: Path) -> None:
     workbook = _a12_workbook(tmp_path)
     document = _labelled_a12_bindings()

@@ -9,10 +9,12 @@ import xlsxwriter
 
 from excel_grapher.exporter import IdentityTransitCompression, to_web_viz_payload
 from excel_grapher.grapher import create_dependency_graph, to_networkx
+from tests.viz_marks import requires_numpy
 
 pytest.importorskip("networkx")
 
 
+@requires_numpy
 def test_projected_networkx_omits_transit_nodes_without_mutating_graph(tmp_path: Path) -> None:
     workbook_path = tmp_path / "identity_target.xlsx"
     wb = xlsxwriter.Workbook(workbook_path)
@@ -43,6 +45,7 @@ def test_projected_networkx_omits_transit_nodes_without_mutating_graph(tmp_path:
     assert nx_payload.core.stats.node_count == payload.core.stats.node_count
 
 
+@requires_numpy
 def test_projected_graph_skips_nx_reconstruction(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

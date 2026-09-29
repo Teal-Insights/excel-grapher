@@ -12,8 +12,10 @@ from tests.unit.exporter.inverted_tree.test_shape_a11_zipper import (
     _zipper_bindings,
     _zipper_workbook,
 )
+from tests.viz_marks import requires_numpy
 
 
+@requires_numpy
 def test_main_bindings_viz_writes_html(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     workbook = _zipper_workbook(tmp_path)
     bindings_path = tmp_path / "zipper.bindings.yaml"
@@ -43,6 +45,7 @@ def test_main_bindings_viz_writes_html(tmp_path: Path, capsys: pytest.CaptureFix
     assert "statements=" in captured.out
 
 
+@requires_numpy
 def test_main_bindings_viz_forwards_blank_ranges(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -89,6 +92,7 @@ def test_main_bindings_viz_missing_workbook(tmp_path: Path) -> None:
     assert exit_code == 1
 
 
+@requires_numpy
 def test_main_bindings_viz_forwards_rank_pull(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

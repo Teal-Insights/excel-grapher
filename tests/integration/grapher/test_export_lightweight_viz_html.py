@@ -18,6 +18,7 @@ from excel_grapher.grapher.lightweight_viz import (
     build_lightweight_viz_core,
 )
 from excel_grapher.grapher.node import Node
+from tests.viz_marks import requires_numpy
 
 
 def _n(sheet: str, col: str, row: int, *, leaf: bool, formula: str | None) -> Node:
@@ -60,6 +61,7 @@ def _payload():
     return to_web_viz_payload(_chain_nx())
 
 
+@requires_numpy
 def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
     g = _chain_graph()
     core = build_lightweight_viz_core(g, limits=VizLimits(), layout_input=None)
@@ -75,6 +77,7 @@ def test_write_html_core_only_no_overlays(tmp_path: Path) -> None:
     assert "Core only" in text
 
 
+@requires_numpy
 def test_build_core_uses_graph_sheet_order_for_sheet_indices() -> None:
     g = DependencyGraph(sheet_order=["Z", "A"])
     g.add_node(_n("A", "A", 1, leaf=True, formula=None))
@@ -84,6 +87,7 @@ def test_build_core_uses_graph_sheet_order_for_sheet_indices() -> None:
     assert core.sheets == ("Z", "A")
 
 
+@requires_numpy
 def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"
@@ -95,6 +99,7 @@ def test_inline_embeds_payload_under_budget(tmp_path: Path) -> None:
     assert '"formula"' in text
 
 
+@requires_numpy
 def test_sidecar_writes_sibling_json(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"
@@ -104,6 +109,7 @@ def test_sidecar_writes_sibling_json(tmp_path: Path) -> None:
     assert "window.__VIZ_DATA_URL__" in out.read_text(encoding="utf-8")
 
 
+@requires_numpy
 def test_auto_sidecar_when_estimate_large(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     p = _payload()
     monkeypatch.setattr(
@@ -119,12 +125,14 @@ def test_auto_sidecar_when_estimate_large(tmp_path: Path, monkeypatch: pytest.Mo
     assert "__VIZ_DATA_URL__" in html
 
 
+@requires_numpy
 def test_invalid_payload_version_raises(tmp_path: Path) -> None:
     p = replace(_payload(), version=99)
     with pytest.raises(ValueError, match="Unsupported"):
         write_web_viz_html(p, tmp_path / "x.html", data_mode="inline")
 
 
+@requires_numpy
 def test_write_data_roundtrip(tmp_path: Path) -> None:
     p = _payload()
     path = tmp_path / "d.json"
@@ -132,6 +140,7 @@ def test_write_data_roundtrip(tmp_path: Path) -> None:
     assert path.read_text(encoding="utf-8").startswith("{")
 
 
+@requires_numpy
 def test_overview_viewer_embeds_module_edges(tmp_path: Path) -> None:
     p = _payload()
     out = tmp_path / "v.html"
@@ -159,6 +168,7 @@ def test_build_core_takes_positions_and_has_no_rank_band_modes() -> None:
         build_lightweight_viz_core(g, limits=VizLimits(), positions=((0.0, 0.0),))
 
 
+@requires_numpy
 def test_build_core_without_positions_uses_clustered_force() -> None:
     from excel_grapher.grapher.viz_layout import clustered_force_layout
 

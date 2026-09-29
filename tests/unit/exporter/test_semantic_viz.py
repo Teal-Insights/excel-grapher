@@ -58,6 +58,7 @@ from tests.unit.exporter.inverted_tree.test_shape_a36_vintage_residual import (
     vintage_residual_bindings,
     vintage_residual_workbook,
 )
+from tests.viz_marks import requires_numpy
 
 
 def _view(workbook: Path, document: dict):
@@ -172,6 +173,7 @@ def test_statement_sheet_is_mixed_when_cells_span_sheets() -> None:
     assert statement_sheet(()) == MIXED_SHEET
 
 
+@requires_numpy
 def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
@@ -199,6 +201,7 @@ def test_payload_traces_cells_and_writes_html(tmp_path: Path) -> None:
     assert "canvas" in html.lower()
 
 
+@requires_numpy
 def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
@@ -222,6 +225,7 @@ def test_html_payload_samples_cell_addresses(tmp_path: Path) -> None:
         assert len(node["cells"]) <= SEMANTIC_VIZ_CELL_SAMPLE
 
 
+@requires_numpy
 def test_payload_traces_nodes_and_bundles(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
@@ -253,6 +257,7 @@ def test_payload_traces_nodes_and_bundles(tmp_path: Path) -> None:
         assert len(bundle["instance_edges"]) <= SEMANTIC_VIZ_CELL_SAMPLE
 
 
+@requires_numpy
 def test_html_ships_inspect_panel(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
@@ -273,6 +278,7 @@ def test_html_ships_inspect_panel(tmp_path: Path) -> None:
     assert "drilldown" in text.lower() or "Inspect" in text
 
 
+@requires_numpy
 def test_semantic_catalog_honors_blank_ranges(tmp_path: Path) -> None:
     from excel_grapher.exporter.semantic_catalog import SemanticCatalogError
     from excel_grapher.grapher import create_dependency_graph
@@ -298,6 +304,7 @@ def test_semantic_catalog_honors_blank_ranges(tmp_path: Path) -> None:
     assert payload.graph.stats.statement_count >= 1
 
 
+@requires_numpy
 def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:
     view, graph, catalog = _view(_zipper_workbook(tmp_path), _zipper_bindings())
     from excel_grapher.grapher.node import make_cell_node
@@ -343,6 +350,7 @@ def _zipper_payload(tmp_path: Path, **kwargs):
     )
 
 
+@requires_numpy
 def test_payload_positions_come_from_shared_clustered_layout(tmp_path: Path) -> None:
     payload = _zipper_payload(tmp_path)
     data = payload.to_dict()
@@ -371,6 +379,7 @@ def test_payload_positions_come_from_shared_clustered_layout(tmp_path: Path) -> 
         assert node["y"] == pytest.approx(want[i][1])
 
 
+@requires_numpy
 def test_rank_pull_is_configurable(tmp_path: Path) -> None:
     pulled = _zipper_payload(tmp_path, rank_pull="everywhere")
     free = _zipper_payload(tmp_path, rank_pull="none")
@@ -381,6 +390,7 @@ def test_rank_pull_is_configurable(tmp_path: Path) -> None:
         _zipper_payload(tmp_path, rank_pull="sideways")
 
 
+@requires_numpy
 def test_statement_graph_carries_no_viewer_positions(tmp_path: Path) -> None:
     pytest.importorskip("networkx")
     payload = _zipper_payload(tmp_path)
@@ -391,6 +401,7 @@ def test_statement_graph_carries_no_viewer_positions(tmp_path: Path) -> None:
         assert "rank" in attrs
 
 
+@requires_numpy
 def test_html_injects_shared_layout_config(tmp_path: Path) -> None:
     payload = _zipper_payload(tmp_path)
     html_path = tmp_path / "zipper.html"
@@ -410,6 +421,7 @@ def test_html_injects_shared_layout_config(tmp_path: Path) -> None:
     assert 'id="layoutMode"' not in html
 
 
+@requires_numpy
 def test_html_ships_legend_and_reset_control(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
@@ -454,6 +466,7 @@ def test_html_ships_legend_and_reset_control(tmp_path: Path) -> None:
     assert "wheel" in text
 
 
+@requires_numpy
 def test_html_ships_color_and_cluster_controls(tmp_path: Path) -> None:
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())

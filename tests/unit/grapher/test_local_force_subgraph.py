@@ -8,6 +8,7 @@ import re
 import networkx as nx
 
 from excel_grapher.exporter import to_web_viz_payload
+from tests.viz_marks import requires_numpy
 
 
 def _local_force_subgraph_source() -> str:
@@ -42,6 +43,7 @@ def _chain_nx() -> nx.DiGraph:
     return g
 
 
+@requires_numpy
 def test_louvain_chain_exports_cross_module_local_edges() -> None:
     """Tail-node selection needs the exported CSR edge across the module split."""
     payload = to_web_viz_payload(_chain_nx(), layout="clustered_force")
