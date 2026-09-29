@@ -20,7 +20,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from typing import TYPE_CHECKING
 
-from fastpyxl.utils.cell import coordinate_from_string
+from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
 
 from excel_grapher.core.address_keys import (
     format_key,
@@ -49,7 +49,11 @@ from excel_grapher.core.range_shorthand import (
 )
 from excel_grapher.grapher.dependency_provenance import DependencyCause, EdgeProvenance
 from excel_grapher.grapher.node import NodeKey
-from excel_grapher.grapher.parser import DEFAULT_MAX_RANGE_CELLS, expand_range
+from excel_grapher.grapher.parser import (
+    DEFAULT_MAX_RANGE_CELLS,
+    expand_range,
+    lookup_table_line_cells,
+)
 
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph import DependencyGraph
@@ -291,29 +295,72 @@ def _expected_formula_ref_keys(
         return set()
     anchor = node.address or key
     expected: set[NodeKey] = set()
-    for leaf in _iter_static_address_leaves(ast):
-        expected.update(
-            _keys_for_address_leaf(graph, leaf, anchor=str(anchor), host_key=key, add=add)
-        )
+    for leaf, lookup in _iter_static_address_leaves(ast):
+        keys = _keys_for_address_leaf(graph, leaf, anchor=str(anchor), host_key=key, add=add)
+        if lookup is not None and keys:
+            keys = _lookup_table_line_keys(keys, leaf, lookup, anchor=str(anchor))
+        expected.update(keys)
     return expected
+
+
+_LookupSelection = tuple[str, int]
+_AddressLeaf = CellRefNode | RangeNode | WholeColumnNode | WholeRowNode
+
+
+def _lookup_table_line_keys(
+    keys: set[NodeKey], leaf: _AddressLeaf, lookup: _LookupSelection, *, anchor: str
+) -> set[NodeKey]:
+    """Narrow a literal-index H/VLOOKUP table to its key and result lines (#1027)."""
+    match leaf:
+        case RangeNode():
+            _sheet, a1 = parse_address(normalize_key(resolve_cell_ref(leaf.start_ref, anchor)))
+            col, row = coordinate_from_string(a1)
+            origin_col, origin_row = column_index_from_string(col), int(row)
+        case WholeColumnNode():
+            _sheet, start_letter, _end = resolve_whole_column_ref(leaf, anchor)
+            origin_col, origin_row = column_index_from_string(start_letter), 1
+        case WholeRowNode():
+            _sheet, start_row, _end = resolve_whole_row_ref(leaf, anchor)
+            origin_col, origin_row = 1, start_row
+        case _:
+            return keys
+    cells = [parse_address(k) for k in keys]
+    kept = lookup_table_line_cells(
+        cells, lookup[0], lookup[1], origin_col=origin_col, origin_row=origin_row
+    )
+    return {format_key(sheet, a1) for sheet, a1 in kept}
+
+
+def _lookup_selection(node: FunctionCallNode) -> _LookupSelection | None:
+    """Return `(name, index)` for an H/VLOOKUP whose index is a positive numeric literal."""
+    name = normalize_excel_function_name(node.name)
+    if name not in {"HLOOKUP", "VLOOKUP"} or len(node.args) not in (3, 4):
+        return None
+    index_arg = node.args[2]
+    if isinstance(index_arg, UnaryOpNode) and index_arg.op == "+":
+        index_arg = index_arg.operand
+    if not isinstance(index_arg, NumberNode) or int(index_arg.value) < 1:
+        return None
+    return name, int(index_arg.value)
 
 
 def _iter_static_address_leaves(
     node: AstNode, *, dynamic_mask: bool = False
-) -> Iterator[CellRefNode | RangeNode | WholeColumnNode | WholeRowNode]:
+) -> Iterator[tuple[_AddressLeaf, _LookupSelection | None]]:
     """Yield address leaves extraction would record as static formula refs.
 
     CellRefs inside OFFSET/INDIRECT/dynamic INDEX still count (argument
     refs). Range and whole-column/row leaves inside those calls are masked,
-    matching builder extraction.
+    matching builder extraction. A leaf that is the table of a literal-index
+    H/VLOOKUP is paired with its `(name, index)` selection.
     """
     match node:
         case CellRefNode():
-            yield node
+            yield node, None
         case RangeNode() | WholeColumnNode() | WholeRowNode() if dynamic_mask:
             return
         case RangeNode() | WholeColumnNode() | WholeRowNode():
-            yield node
+            yield node, None
         case BinaryOpNode(left=left, right=right):
             yield from _iter_static_address_leaves(left, dynamic_mask=dynamic_mask)
             yield from _iter_static_address_leaves(right, dynamic_mask=dynamic_mask)
@@ -321,7 +368,16 @@ def _iter_static_address_leaves(
             yield from _iter_static_address_leaves(operand, dynamic_mask=dynamic_mask)
         case FunctionCallNode(args=args):
             nested = dynamic_mask or _masks_static_ranges(node)
-            for arg in args:
+            lookup = _lookup_selection(node)
+            for i, arg in enumerate(args):
+                if (
+                    i == 1
+                    and lookup is not None
+                    and not nested
+                    and isinstance(arg, RangeNode | WholeColumnNode | WholeRowNode)
+                ):
+                    yield arg, lookup
+                    continue
                 yield from _iter_static_address_leaves(arg, dynamic_mask=nested)
         case _:
             return

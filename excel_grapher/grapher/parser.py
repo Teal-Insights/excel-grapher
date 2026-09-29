@@ -944,6 +944,99 @@ def _split_function_args(inner: str) -> list[str] | None:
     return _split_top_level_args(inner)
 
 
+_LOOKUP_LINE_FN_NAMES = frozenset({"HLOOKUP", "VLOOKUP"})
+_POSITIVE_NUMBER_LITERAL_RE = re.compile(r"^\+?(?:\d+(?:\.\d*)?|\.\d+)$")
+
+
+def _top_level_arg_spans(s: str, start: int, end: int) -> list[tuple[int, int]] | None:
+    """Return whitespace-stripped spans of top-level comma-separated args in `s[start:end]`."""
+    spans: list[tuple[int, int]] = []
+    depth = 0
+    in_str = False
+    arg_start = start
+    for i in range(start, end + 1):
+        ch = s[i] if i < end else ","
+        if ch == '"':
+            in_str = not in_str
+        elif in_str:
+            continue
+        elif ch in "({":
+            depth += 1
+        elif ch in ")}":
+            depth -= 1
+        elif ch == "," and depth == 0:
+            a, b = arg_start, i
+            while a < b and s[a].isspace():
+                a += 1
+            while b > a and s[b - 1].isspace():
+                b -= 1
+            spans.append((a, b))
+            arg_start = i + 1
+    if in_str or depth != 0:
+        return None
+    return spans
+
+
+def lookup_table_line_cells(
+    cells: list[tuple[str, str]],
+    fn: str,
+    index: int,
+    *,
+    origin_col: int,
+    origin_row: int,
+) -> list[tuple[str, str]]:
+    """Keep the `(sheet, a1)` table cells a literal-index lookup can read.
+
+    `HLOOKUP` reads the key row and row `index`; `VLOOKUP` the key column and
+    column `index`. Lines are counted from the table origin (`origin_col`,
+    `origin_row`, both 1-based). An index past the table keeps the key line
+    only, since Excel then returns `#REF!`.
+    """
+    horizontal = fn == "HLOOKUP"
+    origin = origin_row if horizontal else origin_col
+    lines = {origin, origin + index - 1}
+    kept: list[tuple[str, str]] = []
+    for sheet, a1 in cells:
+        col, row = fastpyxl.utils.cell.coordinate_from_string(a1)
+        line = row if horizontal else fastpyxl.utils.cell.column_index_from_string(col)
+        if line in lines:
+            kept.append((sheet, a1))
+    return kept
+
+
+def lookup_table_arg_spans(formula: str) -> dict[tuple[int, int], tuple[str, int]]:
+    """Map `HLOOKUP`/`VLOOKUP` table-argument spans to `(function, index)`.
+
+    Only calls whose index argument is a positive numeric literal are
+    included; Excel truncates a fractional index. Such a call reads just the
+    table's key line (first row or column) and line `index`, so extraction
+    can skip the other lines. Nested calls are included.
+
+    Args:
+        formula: Formula text with a leading `=`.
+
+    Returns:
+        `{(start, end): (function_name, index)}` for each qualifying table arg.
+    """
+    out: dict[tuple[int, int], tuple[str, int]] = {}
+    for fn, inner, (_call_start, call_end) in _find_function_calls_with_spans(
+        formula, _LOOKUP_LINE_FN_NAMES, include_nested=True
+    ):
+        inner_end = call_end - 1
+        inner_start = inner_end - len(inner)
+        arg_spans = _top_level_arg_spans(formula, inner_start, inner_end)
+        if arg_spans is None or len(arg_spans) not in (3, 4):
+            continue
+        index_text = formula[arg_spans[2][0] : arg_spans[2][1]]
+        if not _POSITIVE_NUMBER_LITERAL_RE.match(index_text):
+            continue
+        index = int(float(index_text))
+        if index < 1:
+            continue
+        out[arg_spans[1]] = (fn, index)
+    return out
+
+
 @functools.lru_cache(maxsize=4096)
 def _find_function_calls_with_spans(
     formula: str,
