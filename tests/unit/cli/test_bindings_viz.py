@@ -87,3 +87,21 @@ def test_main_bindings_viz_missing_workbook(tmp_path: Path) -> None:
         ]
     )
     assert exit_code == 1
+
+
+def test_main_bindings_viz_forwards_rank_pull(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    import json
+
+    workbook = _zipper_workbook(tmp_path)
+    bindings_path = tmp_path / "zipper.bindings.yaml"
+    bindings_path.write_text(yaml.safe_dump(_zipper_bindings(), sort_keys=False), encoding="utf-8")
+    out = tmp_path / "zipper.html"
+    args = ["bindings", "viz", str(workbook), "--bindings", str(bindings_path)]
+    exit_code = main([*args, "--output", str(out), "--json", "--rank-pull", "none"])
+    assert exit_code == 0, capsys.readouterr().err
+    data = json.loads(out.with_suffix(".viz.json").read_text(encoding="utf-8"))
+    assert data["layout"]["rank_pull"] == "none"
+    with pytest.raises(SystemExit):
+        main([*args, "--output", str(out), "--rank-pull", "sideways"])

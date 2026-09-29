@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import inspect
 import json
-import math
 import shutil
 import subprocess
 from pathlib import Path
@@ -19,17 +18,21 @@ from excel_grapher.exporter.semantic_graph import (
     MIXED_SHEET,
     REMAINDER_STATEMENT_ID,
     build_statement_graph,
+    schedule_edges,
     statement_sheet,
 )
 from excel_grapher.exporter.semantic_viz import (
-    SEMANTIC_VIZ_BOX_MAX_PRIMITIVES,
     SEMANTIC_VIZ_CELL_SAMPLE,
     SEMANTIC_VIZ_PAYLOAD_VERSION,
-    semantic_viz_clustered_layout_allowed,
-    semantic_viz_primitive_count,
+    semantic_viz_tier,
     serialize_semantic_viz_json,
     to_semantic_viz_payload,
     write_semantic_viz_html,
+)
+from excel_grapher.grapher.viz_layout import (
+    clustered_force_layout,
+    input_depths,
+    viz_layout_js_config,
 )
 from excel_grapher.series_bindings import validate_bindings_document
 from tests.unit.exporter.inverted_tree.helpers import inverted_graph_parts
@@ -318,33 +321,93 @@ def test_remainder_node_when_graph_has_unbound_cells(tmp_path: Path) -> None:
     assert remainder_payload["sheet"] == MIXED_SHEET
 
 
-def test_qcraft_scale_uses_boxes() -> None:
-    # Q-CRAFT: 715 statements / 5,725 bundles. Labeled boxes stay readable.
-    count = semantic_viz_primitive_count(statement_count=715, bundle_count=5725)
-    assert count < SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
+def test_qcraft_scale_is_medium_tier() -> None:
+    # Q-CRAFT: 715 statements / 5,725 bundles. Labeled boxes, zoom-dependent labels.
+    assert semantic_viz_tier(statement_count=715, bundle_count=5725) == "medium"
 
 
-def test_lic_dsf_scale_uses_dots() -> None:
+def test_lic_dsf_scale_is_large_tier() -> None:
     # LIC-DSF statement grain: ~20k statements / ~120k bundles.
-    assert semantic_viz_primitive_count(statement_count=20020, bundle_count=119808) > (
-        SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
-    )
+    assert semantic_viz_tier(statement_count=20020, bundle_count=119808) == "large"
 
 
-def test_html_ships_canvas_painter_and_rank_spread(tmp_path: Path) -> None:
+def _zipper_payload(tmp_path: Path, **kwargs):
     workbook = _zipper_workbook(tmp_path)
     view, graph, _catalog = _view(workbook, _zipper_bindings())
-    payload = to_semantic_viz_payload(
-        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
+    return to_semantic_viz_payload(
+        graph,
+        validate_bindings_document(_zipper_bindings()),
+        workbook=workbook,
+        view=view,
+        **kwargs,
     )
+
+
+def test_payload_positions_come_from_shared_clustered_layout(tmp_path: Path) -> None:
+    payload = _zipper_payload(tmp_path)
+    data = payload.to_dict()
+    assert data["layout"] == {"tier": "small", "rank_pull": "between", "cluster_by": "series"}
+
+    g = payload.graph
+    index = {node.statement_id: i for i, node in enumerate(g.nodes)}
+    edges = sorted(
+        {
+            (index[b.consumer_id], index[b.producer_id])
+            for b in g.bundles
+            if b.consumer_id != b.producer_id
+        }
+    )
+    depths = input_depths(len(g.nodes), schedule_edges(g.nodes, g.bundles))
+    want = clustered_force_layout(
+        len(g.nodes),
+        edges,
+        [node.series_id for node in g.nodes],
+        depths=depths,
+        rank_pull="between",
+    )
+    for i, node in enumerate(data["nodes"]):
+        assert node["depth"] == depths[i]
+        assert node["x"] == pytest.approx(want[i][0])
+        assert node["y"] == pytest.approx(want[i][1])
+
+
+def test_rank_pull_is_configurable(tmp_path: Path) -> None:
+    pulled = _zipper_payload(tmp_path, rank_pull="everywhere")
+    free = _zipper_payload(tmp_path, rank_pull="none")
+    assert pulled.to_dict()["layout"]["rank_pull"] == "everywhere"
+    assert free.to_dict()["layout"]["rank_pull"] == "none"
+    assert pulled.positions != free.positions
+    with pytest.raises(ValueError, match="rank_pull"):
+        _zipper_payload(tmp_path, rank_pull="sideways")
+
+
+def test_statement_graph_carries_no_viewer_positions(tmp_path: Path) -> None:
+    pytest.importorskip("networkx")
+    payload = _zipper_payload(tmp_path)
+    assert not hasattr(payload.graph, "positions")
+    nx_graph = payload.graph.to_networkx()
+    for _node, attrs in nx_graph.nodes(data=True):
+        assert "x" not in attrs and "y" not in attrs
+        assert "rank" in attrs
+
+
+def test_html_injects_shared_layout_config(tmp_path: Path) -> None:
+    payload = _zipper_payload(tmp_path)
     html_path = tmp_path / "zipper.html"
     write_semantic_viz_html(payload, html_path)
     html = html_path.read_text(encoding="utf-8")
     assert "canvas" in html.lower()
-    assert str(SEMANTIC_VIZ_BOX_MAX_PRIMITIVES) in html
-    assert payload.graph.stats.statement_count + 2 * payload.graph.stats.bundle_count < (
-        SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
+    assert (
+        "window.VIZ_LAYOUT_CONFIG = " + json.dumps(viz_layout_js_config(), separators=(",", ":"))
+        in html
     )
+    assert "VizForce.clusteredLayout" in html
+    assert "VizForce.relayoutGroup" in html
+    assert "CAMERA_MAX_W" not in html
+    assert "layoutByRank" not in html
+    assert 'id="rankPull"' in html
+    assert 'id="relayout"' in html
+    assert 'id="layoutMode"' not in html
 
 
 def test_html_ships_legend_and_reset_control(tmp_path: Path) -> None:
@@ -462,7 +525,7 @@ def _node_bin() -> str:
 
 
 def _run_layout_js(payload: dict) -> dict:
-    """Execute `semantic_viz_layout.js` against a JSON payload."""
+    """Run `semantic_viz_layout.js` helpers against a JSON payload."""
     runner = """
     const fs = require("fs");
     const api = require(process.argv[process.argv.length - 1]);
@@ -473,17 +536,11 @@ def _run_layout_js(payload: dict) -> dict:
       n._label = n._label || n.id;
       n._cluster = api.clusterKey(n, input.clusterBy || "none");
     });
-    const size = api.layoutClustered(nodes, input.bundles || [], !!input.compact);
+    api.sizeNodes(nodes, !!input.compact);
+    if (input.separate) api.separateBoxes(nodes);
     process.stdout.write(JSON.stringify({
-      size: size,
-      allowed: api.clusteredLayoutAllowed(input.primitiveCount, input.boxMaxPrimitives),
-      positions: Object.fromEntries(nodes.map((n) => [n.id, {x: n._x, y: n._y}])),
-      hulls: api.clusterHulls(nodes, {splitByRank: false}).map((h) => ({
-        key: h.key, count: h.members.length
-      })),
-      rankHulls: api.clusterHulls(nodes, {splitByRank: true}).map((h) => ({
-        key: h.key, rank: h.rank, count: h.members.length
-      }))
+      boxes: Object.fromEntries(nodes.map((n) => [n.id, {x: n._x, y: n._y, w: n._w, h: n._h}])),
+      hulls: api.clusterHulls(nodes, {}).map((h) => ({key: h.key, count: h.members.length}))
     }));
     """
     proc = subprocess.run(
@@ -498,156 +555,38 @@ def _run_layout_js(payload: dict) -> dict:
     return json.loads(proc.stdout)
 
 
-def test_clustered_layout_allowed_below_box_cap_only() -> None:
-    assert semantic_viz_clustered_layout_allowed(statement_count=715, bundle_count=5725)
-    assert semantic_viz_clustered_layout_allowed(statement_count=25, bundle_count=40)
-    assert not semantic_viz_clustered_layout_allowed(statement_count=20020, bundle_count=119808)
+def _node(node_id: str, series_id: str, sheet: str, x: float, y: float) -> dict:
+    return {
+        "id": node_id,
+        "series_id": series_id,
+        "direction": "internal",
+        "sheet": sheet,
+        "start": 0,
+        "is_remainder": False,
+        "_x": x,
+        "_y": y,
+    }
 
 
-def test_clustered_layout_moves_nodes_when_cluster_by_changes(tmp_path: Path) -> None:
-    workbook = _zipper_workbook(tmp_path)
-    view, graph, _catalog = _view(workbook, _zipper_bindings())
-    payload = to_semantic_viz_payload(
-        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
-    )
-    data = payload.to_dict()
-    ids = [node["id"] for node in data["nodes"]]
-    assert ids
-    base = {"nodes": data["nodes"], "bundles": data["bundles"]}
-    none = _run_layout_js({**base, "clusterBy": "none"})
-    series = _run_layout_js({**base, "clusterBy": "series"})
-    role = _run_layout_js({**base, "clusterBy": "role"})
-
-    def moved(left: dict, right: dict) -> list[str]:
-        return [
-            node_id
-            for node_id in ids
-            if math.hypot(
-                left["positions"][node_id]["x"] - right["positions"][node_id]["x"],
-                left["positions"][node_id]["y"] - right["positions"][node_id]["y"],
-            )
-            > 1.0
-        ]
-
-    assert moved(none, series)
-    assert moved(series, role)
-    assert none["hulls"] == []
-    series_keys = {hull["key"] for hull in series["hulls"]}
-    assert series_keys >= {"debt", "adjustment"}
-    assert len(series["hulls"]) == len(series_keys)
-    assert len(series["rankHulls"]) >= len(series["hulls"])
-
-
-def test_clustered_sheet_layout_keeps_mixed_as_own_group() -> None:
+def test_cluster_hulls_keep_mixed_sheet_as_own_group() -> None:
     nodes = [
-        {
-            "id": "eng",
-            "series_id": "alpha",
-            "direction": "internal",
-            "sheet": "Engine",
-            "start": 0,
-            "is_remainder": False,
-            "rank": 0,
-        },
-        {
-            "id": "mix",
-            "series_id": "beta",
-            "direction": "internal",
-            "sheet": MIXED_SHEET,
-            "start": 0,
-            "is_remainder": False,
-            "rank": 1,
-        },
-        {
-            "id": "oth",
-            "series_id": "gamma",
-            "direction": "output",
-            "sheet": "Other",
-            "start": 0,
-            "is_remainder": False,
-            "rank": 0,
-        },
-        {
-            "id": "eng2",
-            "series_id": "alpha",
-            "direction": "internal",
-            "sheet": "Engine",
-            "start": 1,
-            "is_remainder": False,
-            "rank": 2,
-        },
+        _node("eng", "alpha", "Engine", 0, 0),
+        _node("mix", "beta", MIXED_SHEET, 200, 0),
+        _node("oth", "gamma", "Other", 400, 0),
+        _node("eng2", "alpha", "Engine", 0, 200),
     ]
-    out = _run_layout_js({"nodes": nodes, "bundles": [], "clusterBy": "sheet"})
-    keys = {hull["key"] for hull in out["hulls"]}
-    assert keys == {"Engine", MIXED_SHEET, "Other"}
-    mix = out["positions"]["mix"]
-    engine = out["positions"]["eng"]
-    assert math.hypot(mix["x"] - engine["x"], mix["y"] - engine["y"]) > 20
-    rank_keys = {(hull["key"], hull["rank"]) for hull in out["rankHulls"]}
-    assert ("Engine", 0) in rank_keys
-    assert ("Engine", 2) in rank_keys
-    assert len(out["hulls"]) == 3
-    assert len(out["rankHulls"]) > len(out["hulls"])
+    out = _run_layout_js({"nodes": nodes, "clusterBy": "sheet"})
+    counts = {hull["key"]: hull["count"] for hull in out["hulls"]}
+    assert counts == {"Engine": 2, MIXED_SHEET: 1, "Other": 1}
+    assert _run_layout_js({"nodes": nodes, "clusterBy": "none"})["hulls"] == []
 
 
-def test_layout_js_refuses_force_above_box_cap() -> None:
-    out = _run_layout_js(
-        {
-            "nodes": [],
-            "bundles": [],
-            "clusterBy": "none",
-            "primitiveCount": semantic_viz_primitive_count(
-                statement_count=20020, bundle_count=119808
-            ),
-            "boxMaxPrimitives": SEMANTIC_VIZ_BOX_MAX_PRIMITIVES,
-        }
-    )
-    assert out["allowed"] is False
-    small = _run_layout_js(
-        {
-            "nodes": [],
-            "bundles": [],
-            "clusterBy": "none",
-            "primitiveCount": semantic_viz_primitive_count(statement_count=715, bundle_count=5725),
-            "boxMaxPrimitives": SEMANTIC_VIZ_BOX_MAX_PRIMITIVES,
-        }
-    )
-    assert small["allowed"] is True
-
-
-def test_html_ships_clustered_layout_mode(tmp_path: Path) -> None:
-    workbook = _zipper_workbook(tmp_path)
-    view, graph, _catalog = _view(workbook, _zipper_bindings())
-    payload = to_semantic_viz_payload(
-        graph, validate_bindings_document(_zipper_bindings()), workbook=workbook, view=view
-    )
-    html = tmp_path / "zipper.html"
-    write_semantic_viz_html(payload, html)
-    text = html.read_text(encoding="utf-8")
-
-    assert 'id="layoutMode"' in text
-    assert 'value="rank" selected' in text or 'option value="rank" selected' in text
-    assert 'value="clustered"' in text
-    assert "layoutClustered" in text
-    assert "clusteredLayoutAllowed" in text
-    assert "clusterHulls" in text
-    assert "splitByRank" in text
-    assert "SemanticVizLayout" in text
-    assert "markStyle === 'dots'" in text or 'markStyle === "dots"' in text
-    assert "clusteredOpt.disabled" in text or "clustered.disabled" in text
-    assert "layoutMode() === 'clustered'" in text or 'layoutMode() === "clustered"' in text
-    assert "getElementById('layoutMode')" in text or 'getElementById("layoutMode")' in text
-    assert "canvas-side" in text.lower() or "clustered force" in text.lower()
-    assert 'id="colorBy"' in text
-    assert 'id="clusterBy"' in text
-    assert 'id="legendFill"' in text
-    assert "identity: '#0969da'" in text
-    assert 'id="reset"' in text
-    assert 'id="search"' in text
-    for direction in ("constant", "input", "internal", "output"):
-        assert f'data-dir="{direction}"' in text
-    assert "pointermove" in text
-    assert "wheel" in text
-    assert payload.graph.stats.statement_count + 2 * payload.graph.stats.bundle_count < (
-        SEMANTIC_VIZ_BOX_MAX_PRIMITIVES
-    )
+def test_separate_boxes_removes_overlap() -> None:
+    nodes = [_node(f"n{i}", "s", "S", float(i), 0.0) for i in range(4)]
+    boxes = _run_layout_js({"nodes": nodes, "clusterBy": "none", "separate": True})["boxes"]
+    items = list(boxes.values())
+    for i, a in enumerate(items):
+        for b in items[i + 1 :]:
+            overlap_x = (a["w"] + b["w"]) / 2 - abs(a["x"] - b["x"])
+            overlap_y = (a["h"] + b["h"]) / 2 - abs(a["y"] - b["y"])
+            assert overlap_x <= 1e-6 or overlap_y <= 1e-6
