@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.12.0 (2026-09-29)
+
+### Bug Fixes
+
+- **grapher**: Limit literal-index HLOOKUP/VLOOKUP edges to key and result lines
+  ([`ca1ba93`](https://github.com/Teal-Insights/excel-grapher/commit/ca1ba937df40ba6ea924732867ef710c640a315c))
+
+### Features
+
+- **grapher**: Decide may-cycle guards from affine/interval abstraction of guard cells
+  ([`c45bb9a`](https://github.com/Teal-Insights/excel-grapher/commit/c45bb9a32a0f6e4fd38558ca51249cb45e0157b5))
+
+
 ## v23.11.1 (2026-09-29)
 
 ### Bug Fixes
