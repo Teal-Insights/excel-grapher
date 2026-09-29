@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.0.0 (2026-09-29)
+
+### Bug Fixes
+
+- **viz**: Keep numpy optional for viewer layouts
+  ([`04ff981`](https://github.com/Teal-Insights/excel-grapher/commit/04ff981d6f74e518d77e3427d439778764585e6d))
+
+- **viz**: Ship numpy and networkx with the viz extra
+  ([`71c490a`](https://github.com/Teal-Insights/excel-grapher/commit/71c490a50a667e6a166035fcf6a2a240d13d7389))
+
+### Documentation
+
+- **skills**: Show real_between domain for float inputs in author-bindings
+  ([`29abb1b`](https://github.com/Teal-Insights/excel-grapher/commit/29abb1b61ac84c4eb0f2c7c9654cb5d39cbaa847))
+
+### Features
+
+- **viz**: Move the cell viewer onto the shared clustered force layout
+  ([`e0e06cb`](https://github.com/Teal-Insights/excel-grapher/commit/e0e06cbbb341283e9a800cf90c8527f9083a813f))
+
+- **viz**: Shared multilevel clustered force layout for the statement viewer
+  ([`b3d134e`](https://github.com/Teal-Insights/excel-grapher/commit/b3d134e12dee44d1bce98354a01604cbd8a64e0c))
+
+### Breaking Changes
+
+- **viz**: `stratified_multipartite` and `multipartite` web viz layouts and
+  `LAYOUT_STRATIFIED_MULTIPARTITE` / `LAYOUT_MULTIPARTITE` are removed (use `clustered_force` /
+  `LAYOUT_CLUSTERED_FORCE`). `build_lightweight_viz_core` drops `layout_mode`, `bfs_seed_keys`, and
+  `exclude_unreachable_from_bfs` and takes `positions`. Web viz payloads are version 3: nodes gain
+  `depth` and lose `bucket_density`; stats lose `dense_bucket_count`; modules lose `density_mode`.
+  Statement viz payloads are version 2 with a `layout` block and per-node `depth`;
+  `StatementGraph.positions`, `SEMANTIC_VIZ_BOX_MAX_PRIMITIVES`, `SEMANTIC_VIZ_CAMERA_MAX_WIDTH`,
+  and `semantic_viz_clustered_layout_allowed` are removed.
+
+
 ## v23.13.0 (2026-09-29)
 
 ### Features
