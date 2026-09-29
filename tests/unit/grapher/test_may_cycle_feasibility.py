@@ -13,7 +13,7 @@ from excel_grapher.grapher.guard import (
     Not,
     rewrite_guard_aliases,
 )
-from excel_grapher.grapher.may_cycle import identity_alias_map
+from excel_grapher.grapher.may_cycle import GuardConeAbstraction, identity_alias_map
 from excel_grapher.grapher.node import make_cell_node
 
 
@@ -100,3 +100,90 @@ def test_identity_alias_plus_singleton_domain_kills_mismatched_equality() -> Non
     )
     assert graph.cycle_report().has_may_cycles is True
     assert graph.cycle_report(cell_type_env=env).has_may_cycles is False
+
+
+# ---- affine / interval abstraction of guard-cone cells (#1028) ---------------
+
+
+def _cycle_with_guard_cells(guard, cells: dict[str, str], env=None):
+    """Two-node guarded cycle whose guard cells have the given formulas."""
+    nodes = [
+        make_cell_node("Sheet1", key[0], int(key[1:]), normalized_formula=f, is_leaf=False)
+        for key, f in cells.items()
+    ]
+    graph = _two_node_guarded_cycle(a_to_b=guard, b_to_a=guard, extra_nodes=nodes)
+    return graph.cycle_report(cell_type_env=env)
+
+
+def _cmp(left, op: str, right):
+    def term(x):
+        return Literal(x) if isinstance(x, (int, float)) else CellRef(f"Sheet1!{x}")
+
+    return Compare(left=term(left), op=op, right=term(right))
+
+
+def test_same_root_offsets_decide_cell_cell_equality() -> None:
+    cells = {"P1": "=Sheet1!L1+1", "Q1": "=Sheet1!L1+2"}
+    assert _cycle_with_guard_cells(_cmp("P1", "=", "Q1"), cells).has_may_cycles is False
+    assert _cycle_with_guard_cells(_cmp("P1", "<>", "Q1"), cells).has_may_cycles is True
+
+
+def test_offset_chains_fold_to_a_common_root() -> None:
+    cells = {"P1": "=Sheet1!L1+1", "P2": "=Sheet1!P1+1", "Q1": "=Sheet1!L1+2", "Q2": "=Sheet1!Q1"}
+    assert _cycle_with_guard_cells(_cmp("P2", "=", "Q2"), cells).has_may_cycles is True
+    assert _cycle_with_guard_cells(_cmp("P2", "<", "Q2"), cells).has_may_cycles is False
+
+
+def test_max_index_outside_its_interval_is_infeasible() -> None:
+    env = constraints_to_cell_type_env(
+        {"Sheet1!L1": TypingLiteral[0, 1, 2, 3], "Sheet1!K1": TypingLiteral[0, 1, 2, 3]}, {}
+    )
+    for formula in (
+        "=MAX(Sheet1!L1-Sheet1!K1,0)",
+        "=IF(Sheet1!L1-Sheet1!K1>0,Sheet1!L1-Sheet1!K1,0)",
+    ):
+        cells = {"X1": formula}
+        assert _cycle_with_guard_cells(_cmp("X1", "=", 5), cells, env).has_may_cycles is False
+        assert _cycle_with_guard_cells(_cmp("X1", "<", 0), cells, env).has_may_cycles is False
+        assert _cycle_with_guard_cells(_cmp("X1", "=", 2), cells, env).has_may_cycles is True
+
+
+def test_max_of_same_root_difference_is_constant() -> None:
+    cells = {
+        "A2": "=Sheet1!L1+5",
+        "B2": "=Sheet1!L1+2",
+        "X1": "=IF(Sheet1!A2-Sheet1!B2>0,Sheet1!A2-Sheet1!B2,0)",
+    }
+    x_is_zero = _cmp("X1", "=", 0)
+    assert _cycle_with_guard_cells(x_is_zero, cells).has_may_cycles is False
+    assert _cycle_with_guard_cells(Not(x_is_zero), cells).has_may_cycles is True
+    assert _cycle_with_guard_cells(_cmp("X1", "=", 4), cells).has_may_cycles is False
+
+
+def test_unknown_formula_shape_keeps_edge_feasible() -> None:
+    env = constraints_to_cell_type_env({"Sheet1!L1": TypingLiteral[0, 1]}, {})
+    cells = {"X1": "=Sheet1!L1*7"}
+    assert _cycle_with_guard_cells(_cmp("X1", "=", 7), cells, env).has_may_cycles is True
+    assert _cycle_with_guard_cells(_cmp("X1", "=", 99), cells, env).has_may_cycles is True
+
+
+def test_ordered_compare_of_possibly_boolean_copy_is_not_decided() -> None:
+    """With L1=TRUE, Excel ranks TRUE above 2, so `P1>=Q1` can hold."""
+    cells = {"P1": "=Sheet1!L1", "Q1": "=Sheet1!L1+1"}
+    assert _cycle_with_guard_cells(_cmp("P1", ">=", "Q1"), cells).has_may_cycles is True
+    assert _cycle_with_guard_cells(_cmp("P1", "=", "Q1"), cells).has_may_cycles is False
+
+
+def test_abstraction_handles_long_chains_and_formula_cycles() -> None:
+    nodes = {
+        f"S!A{i}": make_cell_node("S", "A", i, normalized_formula=f"=S!A{i - 1}+1", is_leaf=False)
+        for i in range(2, 5002)
+    }
+    nodes["S!B1"] = make_cell_node("S", "B", 1, normalized_formula="=S!B2+1", is_leaf=False)
+    nodes["S!B2"] = make_cell_node("S", "B", 2, normalized_formula="=S!B1-1", is_leaf=False)
+    cone = GuardConeAbstraction(nodes, None)
+    tail = cone.value("S!A5001")
+    assert (tail.root, tail.offset) == ("S!A1", 5000.0)
+    assert cone.simplify(Compare(left=CellRef("S!A5001"), op="=", right=CellRef("S!A2"))) is False
+    guard = Compare(left=CellRef("S!B1"), op="=", right=Literal(3))
+    assert cone.simplify(guard) is guard
