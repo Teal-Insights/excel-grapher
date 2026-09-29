@@ -19,7 +19,11 @@ inputs:
       sheet: Inputs
       data_range: Inputs!A1
       layout: scalar
-      input: {}
+      input:
+        domain:
+          real_between:
+            min: 0.0
+            max: 100.0
       structure:
         measure:
           concept: OBS_VALUE

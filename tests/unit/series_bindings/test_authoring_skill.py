@@ -155,6 +155,32 @@ def test_catalog_example_is_pedagogical_not_an_emitter_input() -> None:
     assert "not an input to a generator" in skill.lower() or "pedagogical" in skill.lower()
 
 
+def test_catalog_example_float_input_uses_real_between_domain(tmp_path: Path) -> None:
+    from excel_grapher import DependencyGraph
+    from excel_grapher.series_bindings import load_series_bindings, validate_series_bindings
+
+    example = yaml.safe_load(
+        (_CANONICAL / "assets" / "catalog.example.yaml").read_text(encoding="utf-8")
+    )
+    (series,) = example["inputs"]["series"]
+    assert series["structure"]["measure"]["dtype"] == "float"
+    assert set(series["input"]["domain"]) == {"real_between"}
+    shard = {
+        "schema_version": example["schema_version"],
+        "workbook": example["workbook"],
+        "series": [series],
+    }
+    (tmp_path / "inputs.bindings.yaml").write_text(yaml.safe_dump(shard), encoding="utf-8")
+    bindings = load_series_bindings(tmp_path)
+    codes = {
+        issue["code"] for issue in validate_series_bindings(DependencyGraph(), bindings)["issues"]
+    }
+    assert "domain_dtype_mismatch" not in codes
+
+    conventions = (_CANONICAL / "references" / "conventions.md").read_text(encoding="utf-8")
+    assert "Do not pair `dtype: float` with `between`." in conventions
+
+
 def test_sdist_includes_author_bindings_skill() -> None:
     pyproject = (_REPO_ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert "skills/author-bindings" in pyproject
