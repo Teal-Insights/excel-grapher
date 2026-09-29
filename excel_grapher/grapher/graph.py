@@ -56,7 +56,7 @@ from .guard import (
     rewrite_guard_aliases,
     rewrite_guard_keys,
 )
-from .may_cycle import identity_alias_map
+from .may_cycle import GuardConeAbstraction, identity_alias_map
 from .node import Node, NodeKey, NodeView, copy_node, node_to_view
 
 # Sentinel so `set_node_ast(..., formula=None)` can clear the raw audit string
@@ -1351,10 +1351,13 @@ class DependencyGraph:
         When `cell_type_env` is omitted, uses `self.cell_type_env` (set by
         `create_dependency_graph` from `DynamicRefConfig`). Identity-formula
         cells are rewritten to their copied cell before guards are conjoined, so
-        singleton leaf domains apply through aliases.
+        singleton leaf domains apply through aliases. Guard comparisons are first
+        decided, where possible, from an affine/interval abstraction of the guard
+        cells (`GuardConeAbstraction`).
         """
         env = self.cell_type_env if cell_type_env is None else cell_type_env
         aliases = identity_alias_map(self._nodes)
+        cone = GuardConeAbstraction(self._nodes, env)
         self._ensure_csr()
         n = len(self._csr_keys)
         keys = self._csr_keys
@@ -1375,13 +1378,15 @@ class DependencyGraph:
             scc = {keys[i] for i in scc_ids}
             if _subgraph_has_cycle_ids(set(scc_ids), uncond_neighbors):
                 continue
-            if not _subgraph_has_feasible_cycle(self, scc, cell_type_env=env, aliases=aliases):
+            if not _subgraph_has_feasible_cycle(
+                self, scc, cell_type_env=env, aliases=aliases, cone=cone
+            ):
                 continue
             may_sccs.append(scc)
 
         if may_sccs:
             example_may = _find_feasible_cycle_path(
-                self, may_sccs[0], cell_type_env=env, aliases=aliases
+                self, may_sccs[0], cell_type_env=env, aliases=aliases, cone=cone
             )
 
         return CycleReport(
@@ -2116,13 +2121,22 @@ def _apply_guard_constraints(
     *,
     cell_type_env: CellTypeEnv | None = None,
     aliases: Mapping[NodeKey, NodeKey] | None = None,
+    cone: GuardConeAbstraction | None = None,
 ) -> list[GuardConstraints]:
     """Conjoin an edge guard onto the current constraints.
 
     For disjunctive guards (OR), this returns multiple possible constraint sets,
     one per feasible disjunct (best-effort). This keeps cycle feasibility checks
     conservative without requiring full boolean reasoning.
+
+    When `cone` is given, comparisons it decides are folded first; a guard
+    that folds to false yields no constraint sets.
     """
+    if guard is not None and cone is not None:
+        folded = cone.simplify(guard)
+        if folded is False:
+            return []
+        guard = None if folded is True else folded
     if guard is not None and aliases:
         guard = rewrite_guard_aliases(guard, aliases)
     if guard is None:
@@ -2157,6 +2171,7 @@ def _subgraph_has_feasible_cycle(
     *,
     cell_type_env: CellTypeEnv | None = None,
     aliases: Mapping[NodeKey, NodeKey] | None = None,
+    cone: GuardConeAbstraction | None = None,
 ) -> bool:
     """Return whether `nodes` contains a guard-feasible cycle.
 
@@ -2181,7 +2196,7 @@ def _subgraph_has_feasible_cycle(
             if guard is None:
                 guard = graph._stored_guard(v, w)
             for c2 in _apply_guard_constraints(
-                c, guard, cell_type_env=cell_type_env, aliases=aliases
+                c, guard, cell_type_env=cell_type_env, aliases=aliases, cone=cone
             ):
                 if w in on_stack:
                     return True
@@ -2201,6 +2216,7 @@ def _find_feasible_cycle_path(
     *,
     cell_type_env: CellTypeEnv | None = None,
     aliases: Mapping[NodeKey, NodeKey] | None = None,
+    cone: GuardConeAbstraction | None = None,
 ) -> list[NodeKey] | None:
     """Best-effort: find one feasible cycle path within `nodes` (symbolic constraints)."""
     visited: set[tuple[NodeKey, GuardConstraints]] = set()
@@ -2223,7 +2239,7 @@ def _find_feasible_cycle_path(
             if guard is None:
                 guard = graph._stored_guard(v, w)
             for c2 in _apply_guard_constraints(
-                c, guard, cell_type_env=cell_type_env, aliases=aliases
+                c, guard, cell_type_env=cell_type_env, aliases=aliases, cone=cone
             ):
                 if w in on_stack:
                     i = stack.index(w)

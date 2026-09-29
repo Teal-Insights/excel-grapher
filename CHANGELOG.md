@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v23.11.1 (2026-09-29)
+
+### Bug Fixes
+
+- **grapher**: Guard CHOOSE branches with truncation window for non-integer indices
+  ([`c064a58`](https://github.com/Teal-Insights/excel-grapher/commit/c064a58ea4fb4405218bffb0b5fa36788a0680eb))
+
+
 ## v23.11.0 (2026-09-28)
 
 ### Continuous Integration
