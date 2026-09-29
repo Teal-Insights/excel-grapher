@@ -22,6 +22,7 @@ from excel_grapher.exporter.web_viz_layout import (
 )
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.node import Node
+from tests.viz_marks import requires_numpy
 
 
 def _build_two_component_digraph():
@@ -176,6 +177,7 @@ def test_nx_layouts_do_not_call_to_networkx_for_graph(monkeypatch: pytest.Monkey
     assert payload.core.stats.node_count == 4
 
 
+@requires_numpy
 def test_digraph_compat_path_still_reconstructs(monkeypatch: pytest.MonkeyPatch) -> None:
     import excel_grapher.exporter.lightweight_viz as lv
 
@@ -192,6 +194,7 @@ def test_digraph_compat_path_still_reconstructs(monkeypatch: pytest.MonkeyPatch)
     assert payload.core.stats.node_count == 4
 
 
+@requires_numpy
 def test_to_web_viz_payload_includes_annotations() -> None:
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, seed=7, layout=LAYOUT_CLUSTERED_FORCE)
@@ -210,6 +213,7 @@ def test_to_web_viz_payload_includes_annotations() -> None:
     assert len(blob["core"]["nodes"]["depth"]) == 4
 
 
+@requires_numpy
 def test_to_web_viz_payload_accepts_networkx_digraph() -> None:
     g = _build_two_component_digraph()
 
@@ -220,6 +224,7 @@ def test_to_web_viz_payload_accepts_networkx_digraph() -> None:
     assert payload.overlays[0].overlay_id == "webviz.louvain_directed"
 
 
+@requires_numpy
 def test_to_web_viz_payload_accepts_dependency_graph() -> None:
     graph = _build_two_component_graph()
     payload = to_web_viz_payload(graph, seed=7)
@@ -228,6 +233,7 @@ def test_to_web_viz_payload_accepts_dependency_graph() -> None:
     assert payload.overlays[0].overlay_id == "webviz.louvain_directed"
 
 
+@requires_numpy
 def test_to_web_viz_payload_skips_nx_reconstruction_for_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -242,6 +248,7 @@ def test_to_web_viz_payload_skips_nx_reconstruction_for_graph(
     assert payload.core.stats.node_count == 4
 
 
+@requires_numpy
 def test_default_layout_does_not_call_to_networkx_for_graph(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -300,6 +307,7 @@ def test_layout_plugin_can_opt_into_nx_graph(monkeypatch: pytest.MonkeyPatch) ->
     assert payload.annotations["nx_nodes"] == 4
 
 
+@requires_numpy
 def test_to_web_viz_payload_is_deterministic_with_seed() -> None:
     g = _build_two_component_digraph()
 
@@ -310,6 +318,7 @@ def test_to_web_viz_payload_is_deterministic_with_seed() -> None:
     assert a.core.nodes.rank == b.core.nodes.rank
 
 
+@requires_numpy
 def test_write_web_viz_html_writes_html_file(tmp_path: Path) -> None:
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, seed=3)
@@ -330,6 +339,7 @@ def test_write_web_viz_html_writes_html_file(tmp_path: Path) -> None:
     assert "40000" not in html
 
 
+@requires_numpy
 def test_write_web_viz_html_accepts_custom_template(tmp_path: Path) -> None:
     g = _build_two_component_digraph()
     p = to_web_viz_payload(g, seed=1)
@@ -365,6 +375,7 @@ def test_to_web_viz_payload_supports_networkx_layouts(layout: str) -> None:
     )
 
 
+@requires_numpy
 def test_clustered_force_positions_come_from_shared_layout() -> None:
     from excel_grapher.grapher.lightweight_viz import _build_int_adjacencies
     from excel_grapher.grapher.viz_layout import clustered_force_layout, input_depths
@@ -386,6 +397,7 @@ def test_clustered_force_positions_come_from_shared_layout() -> None:
         assert payload.core.nodes.y[i] == pytest.approx(want[i][1])
 
 
+@requires_numpy
 def test_clustered_force_rank_pull_is_configurable() -> None:
     graph = _build_chain_digraph(6)
     pulled = to_web_viz_payload(graph, seed=0)
@@ -396,6 +408,7 @@ def test_clustered_force_rank_pull_is_configurable() -> None:
         to_web_viz_payload(graph, layout_config={"rank_pull": "sideways"})
 
 
+@requires_numpy
 def test_to_web_viz_payload_can_omit_module_overlay() -> None:
     g = _build_two_component_digraph()
     payload = to_web_viz_payload(g, include_module_overlay=False, seed=1)
@@ -417,6 +430,7 @@ def _graph_with_unreachable_cycle() -> DependencyGraph:
 
 
 @pytest.mark.parametrize("include_module_overlay", [True, False])
+@requires_numpy
 def test_payload_node_columns_align_without_guarded_edges(include_module_overlay: bool) -> None:
     payload = to_web_viz_payload(
         _graph_with_unreachable_cycle(),
