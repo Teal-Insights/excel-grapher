@@ -6,13 +6,17 @@ import math
 from collections.abc import Mapping
 from dataclasses import dataclass
 
-from excel_grapher.core.cell_types import CellTypeEnv
+from fastpyxl.utils.cell import column_index_from_string, get_column_letter
+
+from excel_grapher.core.address_keys import CellKey, format_cell_key
+from excel_grapher.core.cell_types import CellKind, CellTypeEnv
 from excel_grapher.core.formula_ast import (
     AstNode,
     BinaryOpNode,
     CellRefNode,
     FunctionCallNode,
     NumberNode,
+    RangeNode,
     UnaryOpNode,
     resolve_cell_ref,
 )
@@ -184,6 +188,44 @@ def _env_value(env: CellTypeEnv | None, key: NodeKey) -> AbstractValue:
     return AbstractValue(key, 0.0, min(lo for lo, _ in parts), max(hi for _, hi in parts), True)
 
 
+def _hull(a: AbstractValue, b: AbstractValue) -> AbstractValue:
+    """Return a value covering both numeric operands."""
+    if a.root == b.root and a.offset == b.offset:
+        return a if (a.lo, a.hi) == (b.lo, b.hi) else _range(min(a.lo, b.lo), max(a.hi, b.hi))
+    return _range(min(a.lo, b.lo), max(a.hi, b.hi))
+
+
+def _env_numeric_arm(env: CellTypeEnv | None, key: NodeKey) -> AbstractValue | None:
+    """Bounds on `key` when it holds a number; `None` when it never does.
+
+    Text, boolean, and blank arms of a declared union domain are dropped, since
+    range aggregates such as `AVERAGE` skip them.
+    """
+    cell_type = None if env is None else env.get(_constraint_key(key))
+    if cell_type is None:
+        return _range(-math.inf, math.inf)
+    parts: list[tuple[float, float]] = []
+    if cell_type.enum is not None:
+        parts.extend(
+            (float(v), float(v))
+            for v in cell_type.enum.values
+            if not isinstance(v, bool) and isinstance(v, (int, float))
+        )
+    for dom in (cell_type.interval, cell_type.real_interval):
+        if dom is not None:
+            lo = -math.inf if dom.min is None else float(dom.min)
+            hi = math.inf if dom.max is None else float(dom.max)
+            parts.append((lo, hi))
+    if parts:
+        return _range(min(lo for lo, _ in parts), max(hi for _, hi in parts))
+    if cell_type.enum is not None or cell_type.kind in _NON_NUMERIC_KINDS:
+        return None
+    return _range(-math.inf, math.inf)
+
+
+_NON_NUMERIC_KINDS = frozenset({CellKind.STRING, CellKind.BOOL, CellKind.ERROR})
+
+
 def _definitely_lt(a: AbstractValue, b: AbstractValue) -> bool:
     return a.hi < b.lo - _TOL
 
@@ -230,16 +272,40 @@ def _decide(op: str, a: AbstractValue, b: AbstractValue) -> bool | None:
     return None
 
 
-_SHAPE_FUNCTIONS = frozenset({"MAX", "MIN", "IF"}) | _DIGIT_ROUNDING | _STEP_ROUNDING
+_SHAPE_FUNCTIONS = frozenset({"MAX", "MIN", "SUM", "AVERAGE"}) | _DIGIT_ROUNDING | _STEP_ROUNDING
+
+# Ranges larger than this stay opaque rather than expanding into the cone.
+_MAX_RANGE_CELLS = 10_000
+
+
+def _range_keys(ast: RangeNode, host: NodeKey) -> list[NodeKey] | None:
+    """Return the cell keys of a rectangular range, or `None` when too large."""
+    start = CellKey(resolve_cell_ref(ast.start_ref, host))
+    end = CellKey(resolve_cell_ref(ast.end_ref, host))
+    if start.sheet != end.sheet:
+        return None
+    c1, c2 = sorted((column_index_from_string(start.column), column_index_from_string(end.column)))
+    r1, r2 = sorted((start.row, end.row))
+    if (c2 - c1 + 1) * (r2 - r1 + 1) > _MAX_RANGE_CELLS:
+        return None
+    return [
+        format_cell_key(start.sheet, get_column_letter(c), r)
+        for r in range(r1, r2 + 1)
+        for c in range(c1, c2 + 1)
+    ]
 
 
 class GuardConeAbstraction:
     """Lazily abstract guard cells as `root + offset` or numeric intervals.
 
     Recognised formula shapes are numeric literals, `=R`, `R+n`, `R-n`,
-    `a+b`, `a-b`, `MAX(...)`, `MIN(...)`, `IF(x>y,x,y)` style max/min, and
-    rounding (`ROUND`, `ROUNDUP`, `ROUNDDOWN`, `TRUNC`, `INT`, `FLOOR`,
-    `CEILING`) with literal digits or significance. Guard `Arith` operands are
+    `a+b`, `a-b`, `MAX(...)`, `MIN(...)`, `SUM(...)`, `AVERAGE(...)` (over
+    ranges too, skipping text and blanks as Excel does), `IF(x>y,x,y)` style
+    max/min, `IF(ISNUMBER(x),x,y)`, any other three-argument `IF` as the hull
+    of its branches, and rounding (`ROUND`, `ROUNDUP`, `ROUNDDOWN`, `TRUNC`,
+    `INT`, `FLOOR`, `CEILING`) with literal digits or significance. A value
+    known only by its bounds keeps its cell as root, and a declared numeric
+    domain on a formula cell tightens those bounds. Guard `Arith` operands are
     folded as linear forms over roots, so `A > B + C` with `A`, `B` on one root
     reduces to `0 > C`.
     Every other cell is its own opaque root, bounded only by its declared
@@ -287,8 +353,23 @@ class GuardConeAbstraction:
                 continue
             ast = self._nodes[cur].formula_ast
             out = None if ast is None else self._eval(ast, cur)
-            self._memo[cur] = _env_value(self._env, cur) if out is None else out
+            self._memo[cur] = self._settle(cur, out)
         return self._memo[key]
+
+    def _settle(self, key: NodeKey, out: AbstractValue | None) -> AbstractValue:
+        """Name a bounds-only result after its cell and apply a declared domain."""
+        declared = _env_value(self._env, key)
+        if out is None:
+            return declared
+        if out.root is None:
+            # The cell is its own root, so `X = X` and `X + 1 > X` stay decidable.
+            out = AbstractValue(key, 0.0, out.lo, out.hi, True)
+        if declared.numeric:
+            lo, hi = max(out.lo, declared.lo), min(out.hi, declared.hi)
+            if lo > hi:
+                return declared
+            out = AbstractValue(out.root, out.offset, lo, hi, True)
+        return out
 
     def _shape_refs(self, key: NodeKey) -> list[NodeKey] | None:
         """Return cell refs of a recognised formula shape, or `None` for opaque cells."""
@@ -306,10 +387,22 @@ class GuardConeAbstraction:
                 except ValueError:
                     return False
                 return True
+            if isinstance(ast, RangeNode):
+                try:
+                    keys = _range_keys(ast, key)
+                except ValueError:
+                    return False
+                if keys is None:
+                    return False
+                refs.extend(keys)
+                return True
             if isinstance(ast, BinaryOpNode) and ast.op in ("+", "-", ">", ">=", "<", "<="):
                 return walk(ast.left) and walk(ast.right)
             if isinstance(ast, UnaryOpNode) and ast.op == "-":
                 return walk(ast.operand)
+            if isinstance(ast, FunctionCallNode) and ast.name.upper() == "IF":
+                # Only the branches are abstracted; the condition is never evaluated.
+                return len(ast.args) == 3 and walk(ast.args[1]) and walk(ast.args[2])
             if isinstance(ast, FunctionCallNode) and ast.name.upper() in _SHAPE_FUNCTIONS:
                 return bool(ast.args) and all(walk(a) for a in ast.args)
             return False
@@ -331,13 +424,17 @@ class GuardConeAbstraction:
             return None if a is None else _range(-a.hi, -a.lo)
         if isinstance(ast, FunctionCallNode):
             name = ast.name.upper()
+            if name in ("SUM", "AVERAGE") or (
+                name in ("MAX", "MIN") and any(isinstance(a, RangeNode) for a in ast.args)
+            ):
+                return self._eval_aggregate(name, ast.args, host)
             if name in ("MAX", "MIN"):
                 args = [self._eval(a, host) for a in ast.args]
                 if any(a is None for a in args):
                     return None
                 return _extreme([a for a in args if a is not None], upper=name == "MAX")
             if name == "IF":
-                return self._eval_if_extreme(ast, host)
+                return self._eval_if(ast, host)
             if name in _DIGIT_ROUNDING or name in _STEP_ROUNDING:
                 return self._eval_rounding(ast, host)
         return None
@@ -364,6 +461,87 @@ class GuardConeAbstraction:
             step = 10.0 ** -math.trunc(digits)
         x = self._eval(args[0], host)
         return None if x is None else _round_outward(x, step)
+
+    def _numeric_arm(self, key: NodeKey) -> AbstractValue | None:
+        """Bounds on `key` when it holds a number; `None` when it never does."""
+        v = self._memo[key]
+        return v if v.numeric else _env_numeric_arm(self._env, key)
+
+    def _eval_aggregate(
+        self, name: str, args: tuple[AstNode, ...] | list[AstNode], host: NodeKey
+    ) -> AbstractValue | None:
+        """Abstract `SUM`, `AVERAGE`, `MIN`, or `MAX` over values and references.
+
+        Referenced cells (ranges or single refs) that hold text, booleans, or
+        blanks are skipped, as in Excel; other arguments must be numeric.
+        """
+        # (numeric arm or None, whether the element may be skipped)
+        elements: list[tuple[AbstractValue | None, bool]] = []
+        for arg in args:
+            if isinstance(arg, (RangeNode, CellRefNode)):
+                keys = (
+                    _range_keys(arg, host)
+                    if isinstance(arg, RangeNode)
+                    else [resolve_cell_ref(arg, host)]
+                )
+                if keys is None:
+                    return None
+                for k in keys:
+                    elements.append((self._numeric_arm(k), not self._memo[k].numeric))
+                continue
+            v = self._eval(arg, host)
+            if v is None or not v.numeric:
+                return None
+            elements.append((v, False))
+        arms = [a for a, _ in elements if a is not None]
+        maybe_skipped = any(skip for _, skip in elements)
+        if name == "SUM":
+            total = _const(0.0)
+            for arm, skip in elements:
+                if arm is not None:
+                    total = _add(total, _hull(arm, _const(0.0)) if skip else arm)
+            return total
+        if not arms:
+            # `AVERAGE` of nothing is `#DIV/0!`; `MIN`/`MAX` of nothing is 0.
+            return None if name == "AVERAGE" else _const(0.0)
+        if name == "AVERAGE":
+            return _range(min(a.lo for a in arms), max(a.hi for a in arms))
+        upper = name == "MAX"
+        sure = [a for a, skip in elements if a is not None and not skip]
+        pick = max if upper else min
+        spread = [a.hi if upper else a.lo for a in arms] + ([0.0] if maybe_skipped else [])
+        far = pick(spread)
+        if sure:
+            near = pick(a.lo if upper else a.hi for a in sure)
+        else:
+            near = (min if upper else max)([a.lo if upper else a.hi for a in arms] + [0.0])
+        return _range(near, far) if upper else _range(far, near)
+
+    def _eval_if(self, ast: FunctionCallNode, host: NodeKey) -> AbstractValue | None:
+        """Abstract a three-argument `IF` whose condition is left undecided."""
+        if len(ast.args) != 3:
+            return None
+        out = self._eval_if_extreme(ast, host)
+        if out is not None:
+            return out
+        cond, then, other = ast.args
+        b = self._eval(other, host)
+        if b is None or not b.numeric:
+            return None
+        if (
+            isinstance(cond, FunctionCallNode)
+            and cond.name.upper() == "ISNUMBER"
+            and len(cond.args) == 1
+            and cond.args[0] == then
+            and isinstance(then, CellRefNode)
+        ):
+            # `then` is only taken when it is a number.
+            a = self._numeric_arm(resolve_cell_ref(then, host))
+            return b if a is None else _hull(a, b)
+        a = self._eval(then, host)
+        if a is None or not a.numeric:
+            return None
+        return _hull(a, b)
 
     def _eval_if_extreme(self, ast: FunctionCallNode, host: NodeKey) -> AbstractValue | None:
         """Abstract `IF(x>y,x,y)` as `MAX(x,y)` and `IF(x<y,x,y)` as `MIN(x,y)`."""
