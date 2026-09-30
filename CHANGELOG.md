@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.2 (2026-09-30)
+
+### Bug Fixes
+
+- **guards**: Fold Arith operands and rounding in the guard cone; report residual may-cycles
+  ([`52e7f63`](https://github.com/Teal-Insights/excel-grapher/commit/52e7f63acd3a2d0be1e4824deb05e57f0d5a0158))
+
+
 ## v24.1.1 (2026-09-30)
 
 ### Performance Improvements
