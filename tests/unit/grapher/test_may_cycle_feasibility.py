@@ -369,3 +369,152 @@ def test_rounding_bounds_are_outward() -> None:
     assert (value.lo, value.hi) == (0.0, 3.0)
     # Non-literal digits keep the cell opaque.
     assert cone.value("Sheet1!A3").root == "Sheet1!A3"
+
+
+# ---- range aggregates and IF hulls (#1046) -------------------------------------
+
+_GRACE = Annotated[int, Between(0, 50)]
+_GRACE_OR_BLANK = Annotated[float, RealBetween(0, 50)] | TypingLiteral[""]
+
+
+def _cone(cells: dict[str, str], constraints: dict[str, object]) -> GuardConeAbstraction:
+    nodes = {
+        f"Sheet1!{key}": make_cell_node(
+            "Sheet1", key[0], int(key[1:]), normalized_formula=f, is_leaf=False
+        )
+        for key, f in cells.items()
+    }
+    return GuardConeAbstraction(nodes, constraints_to_cell_type_env(constraints, {}))
+
+
+def _bounds(cone: GuardConeAbstraction, key: str) -> tuple[float, float, bool]:
+    v = cone.value(f"Sheet1!{key}")
+    return v.lo, v.hi, v.numeric
+
+
+_ELEMENTS = {f"Sheet1!A{i}": _GRACE for i in (1, 2, 3)}
+
+
+@pytest.mark.parametrize(
+    ("formula", "expected"),
+    [
+        ("=SUM(Sheet1!A1:A3)", (0.0, 150.0)),
+        ("=AVERAGE(Sheet1!A1:A3)", (0.0, 50.0)),
+        ("=MAX(Sheet1!A1:A3)", (0.0, 50.0)),
+        ("=MIN(Sheet1!A1:A3,7)", (0.0, 7.0)),
+        ("=IF(SUM(Sheet1!A1:A3)=0,0,AVERAGE(Sheet1!A1:A3))", (0.0, 50.0)),
+    ],
+)
+def test_range_aggregates_bound_by_element_domains(formula: str, expected) -> None:
+    cone = _cone({"B1": formula}, _ELEMENTS)
+    assert _bounds(cone, "B1") == (*expected, True)
+
+
+def test_range_aggregates_ignore_text_arm_of_elements() -> None:
+    constraints = {f"Sheet1!A{i}": _GRACE_OR_BLANK for i in (1, 2, 3)}
+    cone = _cone(
+        {
+            "B1": "=AVERAGE(Sheet1!A1:A3)",
+            "B2": "=SUM(Sheet1!A1:A3)",
+            "B3": "=MAX(Sheet1!A1:A3)",
+            "B4": "=MIN(Sheet1!A1:A3,-3)",
+        },
+        {**constraints, "Sheet1!A4": Annotated[float, RealBetween(2, 5)]},
+    )
+    assert _bounds(cone, "B1") == (0.0, 50.0, True)
+    assert _bounds(cone, "B2") == (0.0, 150.0, True)
+    assert _bounds(cone, "B3") == (0.0, 50.0, True)
+    assert _bounds(cone, "B4") == (-3.0, -3.0, True)
+
+
+def test_all_ignored_max_includes_zero() -> None:
+    constraints = {"Sheet1!A1": Annotated[float, RealBetween(2, 5)] | TypingLiteral[""]}
+    cone = _cone({"B1": "=MAX(Sheet1!A1:A1)"}, constraints)
+    assert _bounds(cone, "B1") == (0.0, 5.0, True)
+
+
+def test_range_aggregate_with_undeclared_element_is_unbounded() -> None:
+    cone = _cone({"B1": "=AVERAGE(Sheet1!A1:A4)"}, _ELEMENTS)
+    lo, hi, _ = _bounds(cone, "B1")
+    assert (lo, hi) == (-float("inf"), float("inf"))
+
+
+def test_average_of_never_numeric_range_stays_opaque() -> None:
+    cone = _cone({"B1": "=AVERAGE(Sheet1!A1:A1)"}, {"Sheet1!A1": TypingLiteral["x"]})
+    assert cone.value("Sheet1!B1").root == "Sheet1!B1"
+    assert _bounds(cone, "B1")[1] == float("inf")
+
+
+def test_isnumber_passthrough_collapses_to_alias_root() -> None:
+    cells = {
+        "A2": "=Sheet1!A1",
+        "A3": "=Sheet1!A2",
+        "B1": "=IF(ISNUMBER(Sheet1!A3),Sheet1!A3,Sheet1!A2)",
+    }
+    cone = _cone(cells, {"Sheet1!A1": _GRACE})
+    v = cone.value("Sheet1!B1")
+    assert (v.root, v.offset, v.lo, v.hi, v.numeric) == ("Sheet1!A1", 0.0, 0.0, 50.0, True)
+
+
+def test_isnumber_passthrough_uses_numeric_arm_of_override() -> None:
+    constraints = {
+        "Sheet1!A1": Annotated[float, RealBetween(1, 4)] | TypingLiteral[""],
+        "Sheet1!A2": Annotated[float, RealBetween(3, 9)],
+    }
+    cone = _cone({"B1": "=IF(ISNUMBER(Sheet1!A1),Sheet1!A1,Sheet1!A2)"}, constraints)
+    assert _bounds(cone, "B1") == (1.0, 9.0, True)
+
+
+def test_undecided_if_is_hull_of_numeric_branches() -> None:
+    constraints = {"Sheet1!A1": _GRACE, "Sheet1!A2": Annotated[int, Between(-2, 3)]}
+    cone = _cone(
+        {
+            "B1": "=IF(Sheet1!C1=1,Sheet1!A1,Sheet1!A2)",
+            "B2": '=IF(Sheet1!C1=1,Sheet1!A1,"")',
+            "B3": "=IF(Sheet1!C1=1,Sheet1!A1)",
+        },
+        constraints,
+    )
+    assert _bounds(cone, "B1") == (-2.0, 50.0, True)
+    # A text branch or a missing else (FALSE) keeps the cell opaque.
+    assert _bounds(cone, "B2")[2] is False
+    assert _bounds(cone, "B3")[2] is False
+
+
+def test_hulled_cell_keeps_its_own_identity() -> None:
+    constraints = {"Sheet1!A1": _GRACE, "Sheet1!A2": Annotated[int, Between(-2, 3)]}
+    cone = _cone({"B1": "=IF(Sheet1!C1=1,Sheet1!A1,Sheet1!A2)", "B2": "=Sheet1!B1+1"}, constraints)
+    guard = Compare(left=CellRef("Sheet1!B2"), op=">", right=CellRef("Sheet1!B1"))
+    assert cone.simplify(guard) is True
+
+
+def test_declared_domain_tightens_recognised_formula() -> None:
+    constraints = {**_ELEMENTS, "Sheet1!B1": Annotated[float, RealBetween(1, 10)]}
+    cone = _cone({"B1": "=AVERAGE(Sheet1!A1:A3)"}, constraints)
+    assert _bounds(cone, "B1") == (1.0, 10.0, True)
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=IF(SUM(Sheet1!A1:A3)=0,0,AVERAGE(Sheet1!A1:A3))",
+        "=IF(ISNUMBER(Sheet1!A3),Sheet1!A3,Sheet1!A2)",
+    ],
+)
+def test_issue_1046_choose_branch_is_unreachable(formula: str) -> None:
+    """`B` >= 0 keeps `MAX(6 - ROUNDDOWN(B, 0), 0)` below the loop-closing 7."""
+    cells = {
+        "A2": "=Sheet1!A1",
+        "A3": "=Sheet1!A2",
+        "B1": formula,
+        "B2": "=IF(6-ROUNDDOWN(Sheet1!B1,0)>0,6-ROUNDDOWN(Sheet1!B1,0),0)",
+    }
+    constraints = {"Sheet1!A1": _GRACE}
+    if "SUM" in formula:
+        cells = {"B1": formula, "B2": cells["B2"]}
+        constraints = _ELEMENTS
+    env = constraints_to_cell_type_env(constraints, {})
+    branch7 = And((Not(_cmp("B2", "=", 0)), _cmp("B2", ">=", 7), _cmp("B2", "<", 8)))
+    assert _cycle_with_guard_cells(branch7, cells, env).has_may_cycles is False
+    branch6 = And((Not(_cmp("B2", "=", 0)), _cmp("B2", ">=", 6), _cmp("B2", "<", 7)))
+    assert _cycle_with_guard_cells(branch6, cells, env).has_may_cycles is True
