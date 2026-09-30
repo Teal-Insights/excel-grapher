@@ -125,9 +125,38 @@
     }
   }
 
+  // Move cluster discs onto x = 0, separated along y only (keeps y order and mean).
+  function stackDiscs(cx, cy, radii, gap) {
+    var k = cx.length;
+    var order = [];
+    var mean = 0;
+    for (var c = 0; c < k; c++) {
+      order.push(c);
+      mean += cy[c] / k;
+    }
+    order.sort(function (a, b) {
+      return cy[a] - cy[b] || a - b;
+    });
+    var ys = order.map(function (c) {
+      return cy[c];
+    });
+    for (var i = 1; i < k; i++) {
+      var prev = order[i - 1];
+      ys[i] = Math.max(ys[i], ys[i - 1] + radii[prev] + radii[order[i]] + gap);
+    }
+    var shift = 0;
+    for (i = 0; i < k; i++) shift += ys[i] / k;
+    for (i = 0; i < k; i++) {
+      cy[order[i]] = ys[i] - shift + mean;
+      cx[order[i]] = 0;
+    }
+  }
+
   // Multilevel clustered force. `o`: n, edges ([u, v] pairs), clusters (one
   // label per node), depths (input depth per node), rankPull
-  // ("none" | "between" | "everywhere"). Returns {x, y} centered on 0.
+  // ("none" | "between" | "everywhere"), alignClusters (defaults to
+  // cfg.align_clusters with a pull; puts every cluster centroid on x = 0).
+  // Returns {x, y} centered on 0.
   function clusteredLayout(o, cfg) {
     var n = o.n;
     var x = new Float64Array(n);
@@ -135,6 +164,8 @@
     if (!n) return { x: x, y: y };
     var pull = o.rankPull || "none";
     var depths = pull === "none" ? null : o.depths;
+    var align =
+      pull !== "none" && (o.alignClusters == null ? !!cfg.align_clusters : !!o.alignClusters);
     var ids = {};
     var cid = new Int32Array(n);
     var k = 0;
@@ -206,7 +237,8 @@
         },
         cfg
       );
-      separateDiscs(centers.x, centers.y, radii, cfg.link_distance);
+      if (align) stackDiscs(centers.x, centers.y, radii, cfg.link_distance);
+      else separateDiscs(centers.x, centers.y, radii, cfg.link_distance);
     }
 
     // Level 2: every node, anchored to its cluster.
@@ -259,6 +291,12 @@
       },
       cfg
     );
+    if (align) {
+      // Inter-cluster links drift clusters off the axis; recentre each one.
+      var sx = new Float64Array(k);
+      for (i = 0; i < n; i++) sx[cid[i]] += x[i] / sizes[cid[i]];
+      for (i = 0; i < n; i++) x[i] -= sx[cid[i]];
+    }
     var cxm = 0;
     var cym = 0;
     for (i = 0; i < n; i++) {

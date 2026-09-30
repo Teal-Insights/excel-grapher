@@ -156,7 +156,7 @@ Both viewers (cells here, statements below) use one layout policy from `excel_gr
 2. Force layout of every node, anchored to its cluster's position.
 3. For large graphs, a few global refinement ticks.
 
-A weak **vertical pull** towards input depth (longest path from the inputs) keeps the input -> output direction readable: inputs sit at the top. `rank_pull` selects it: `"between"` clusters (default), `"everywhere"` (also weakly inside each cluster), or `"none"`.
+A weak **vertical pull** towards input depth (longest path from the inputs) keeps the input -> output direction readable: inputs sit at the top. `rank_pull` selects it: `"between"` clusters (default), `"everywhere"` (also weakly inside each cluster), or `"none"`. With a pull, cluster centroids are also aligned on the horizontal axis, so clusters stack into one input -> output column (`clustered_force_layout(..., align_clusters=False)` turns that off).
 
 ```python
 from excel_grapher.exporter import to_web_viz_payload, list_web_viz_layouts
