@@ -17,7 +17,19 @@ from excel_grapher.core.formula_ast import (
     resolve_cell_ref,
 )
 
-from .guard import And, CellRef, Compare, GuardExpr, Literal, Not, Or, _constraint_key, intern_guard
+from .guard import (
+    And,
+    Arith,
+    CellRef,
+    Compare,
+    GuardExpr,
+    Literal,
+    Neg,
+    Not,
+    Or,
+    _constraint_key,
+    intern_guard,
+)
 from .node import Node, NodeKey
 
 
@@ -121,6 +133,33 @@ def _extreme(args: list[AbstractValue], *, upper: bool) -> AbstractValue | None:
     return _range(pick(a.lo for a in args), pick(a.hi for a in args))
 
 
+# Rounding functions whose result lies between the input rounded down and up
+# to a step: digit-based ones round to `10**-digits`, FLOOR/CEILING to a
+# positive significance.
+_DIGIT_ROUNDING = frozenset({"ROUND", "ROUNDUP", "ROUNDDOWN", "TRUNC", "INT"})
+_STEP_ROUNDING = frozenset({"FLOOR", "CEILING"})
+
+
+def _literal_number(ast: AstNode) -> float | None:
+    """Return the value of a numeric literal, possibly negated."""
+    if isinstance(ast, NumberNode):
+        return float(ast.value)
+    if isinstance(ast, UnaryOpNode) and ast.op == "-" and isinstance(ast.operand, NumberNode):
+        return -float(ast.operand.value)
+    return None
+
+
+def _round_outward(a: AbstractValue, step: float) -> AbstractValue:
+    """Hull of rounding any value in `a` to a multiple of `step`, in any direction."""
+    lo = math.floor(a.lo / step) * step if math.isfinite(a.lo) else a.lo
+    hi = math.ceil(a.hi / step) * step if math.isfinite(a.hi) else a.hi
+    return _range(lo, hi)
+
+
+# Linear form `sum(coef * root) + [lo, hi]` of a guard `Arith` operand.
+_Linear = tuple[dict[NodeKey, float], float, float]
+
+
 def _env_value(env: CellTypeEnv | None, key: NodeKey) -> AbstractValue:
     """Opaque value of `key`, bounded by its numeric domain when one is declared."""
     cell_type = None if env is None else env.get(_constraint_key(key))
@@ -191,11 +230,18 @@ def _decide(op: str, a: AbstractValue, b: AbstractValue) -> bool | None:
     return None
 
 
+_SHAPE_FUNCTIONS = frozenset({"MAX", "MIN", "IF"}) | _DIGIT_ROUNDING | _STEP_ROUNDING
+
+
 class GuardConeAbstraction:
     """Lazily abstract guard cells as `root + offset` or numeric intervals.
 
     Recognised formula shapes are numeric literals, `=R`, `R+n`, `R-n`,
-    `a+b`, `a-b`, `MAX(...)`, `MIN(...)` and `IF(x>y,x,y)` style max/min.
+    `a+b`, `a-b`, `MAX(...)`, `MIN(...)`, `IF(x>y,x,y)` style max/min, and
+    rounding (`ROUND`, `ROUNDUP`, `ROUNDDOWN`, `TRUNC`, `INT`, `FLOOR`,
+    `CEILING`) with literal digits or significance. Guard `Arith` operands are
+    folded as linear forms over roots, so `A > B + C` with `A`, `B` on one root
+    reduces to `0 > C`.
     Every other cell is its own opaque root, bounded only by its declared
     `CellTypeEnv` domain, which keeps unknown shapes sound.
 
@@ -264,7 +310,7 @@ class GuardConeAbstraction:
                 return walk(ast.left) and walk(ast.right)
             if isinstance(ast, UnaryOpNode) and ast.op == "-":
                 return walk(ast.operand)
-            if isinstance(ast, FunctionCallNode) and ast.name.upper() in ("MAX", "MIN", "IF"):
+            if isinstance(ast, FunctionCallNode) and ast.name.upper() in _SHAPE_FUNCTIONS:
                 return bool(ast.args) and all(walk(a) for a in ast.args)
             return False
 
@@ -292,7 +338,32 @@ class GuardConeAbstraction:
                 return _extreme([a for a in args if a is not None], upper=name == "MAX")
             if name == "IF":
                 return self._eval_if_extreme(ast, host)
+            if name in _DIGIT_ROUNDING or name in _STEP_ROUNDING:
+                return self._eval_rounding(ast, host)
         return None
+
+    def _eval_rounding(self, ast: FunctionCallNode, host: NodeKey) -> AbstractValue | None:
+        """Abstract monotone rounding by the hull of rounding its bounds outward."""
+        name = ast.name.upper()
+        args = ast.args
+        if name in _STEP_ROUNDING:
+            step = _literal_number(args[1]) if len(args) == 2 else None
+            if step is None or step <= 0:
+                return None
+        else:
+            if name == "INT":
+                arity_ok = len(args) == 1
+            elif name == "TRUNC":
+                arity_ok = len(args) in (1, 2)
+            else:
+                arity_ok = len(args) == 2
+            digits = _literal_number(args[1]) if len(args) == 2 else 0.0
+            # Excel caps digits well inside float range; beyond it, stay opaque.
+            if not arity_ok or digits is None or abs(digits) > 300:
+                return None
+            step = 10.0 ** -math.trunc(digits)
+        x = self._eval(args[0], host)
+        return None if x is None else _round_outward(x, step)
 
     def _eval_if_extreme(self, ast: FunctionCallNode, host: NodeKey) -> AbstractValue | None:
         """Abstract `IF(x>y,x,y)` as `MAX(x,y)` and `IF(x<y,x,y)` as `MIN(x,y)`."""
@@ -311,6 +382,64 @@ class GuardConeAbstraction:
         if x is None or y is None:
             return None
         return _extreme([x, y], upper=upper)
+
+    def _linear(
+        self, expr: GuardExpr, bounds: dict[NodeKey, tuple[float, float]]
+    ) -> _Linear | None:
+        """Return `expr` as a linear form over cone roots, recording root bounds.
+
+        Arithmetic coerces every operand to a number, so a root stands for the
+        same number wherever it appears.
+        """
+        if isinstance(expr, CellRef):
+            v = self.value(expr.key)
+            if v.root is None:
+                return {}, v.lo, v.hi
+            bounds[v.root] = (v.lo - v.offset, v.hi - v.offset)
+            return {v.root: 1.0}, v.offset, v.offset
+        if isinstance(expr, Literal):
+            x = expr.value
+            if isinstance(x, bool) or not isinstance(x, (int, float)):
+                return None
+            return {}, float(x), float(x)
+        if isinstance(expr, Neg):
+            inner = self._linear(expr.operand, bounds)
+            if inner is None:
+                return None
+            coefs, lo, hi = inner
+            return {r: -c for r, c in coefs.items()}, -hi, -lo
+        if isinstance(expr, Arith) and expr.op in ("+", "-"):
+            left = self._linear(expr.left, bounds)
+            right = self._linear(expr.right, bounds)
+            if left is None or right is None:
+                return None
+            sign = 1.0 if expr.op == "+" else -1.0
+            coefs = dict(left[0])
+            for r, c in right[0].items():
+                coefs[r] = coefs.get(r, 0.0) + sign * c
+            if sign > 0:
+                return coefs, left[1] + right[1], left[2] + right[2]
+            return coefs, left[1] - right[2], left[2] - right[1]
+        return None
+
+    def _decide_linear(self, guard: Compare) -> bool | None:
+        """Decide a comparison with `Arith`/`Neg` operands via `left - right op 0`."""
+        for side in (guard.left, guard.right):
+            # A bare cell is compared as-is, so it must be known to be numeric.
+            if isinstance(side, CellRef) and not self.value(side.key).numeric:
+                return None
+        bounds: dict[NodeKey, tuple[float, float]] = {}
+        diff = self._linear(Arith(guard.left, "-", guard.right), bounds)
+        if diff is None:
+            return None
+        coefs, lo, hi = diff
+        for root, c in coefs.items():
+            if c == 0:
+                continue
+            rlo, rhi = bounds[root]
+            lo += c * (rlo if c > 0 else rhi)
+            hi += c * (rhi if c > 0 else rlo)
+        return _decide(guard.op, _range(lo, hi), _const(0.0))
 
     def _term(self, expr: GuardExpr) -> AbstractValue | None:
         if isinstance(expr, CellRef):
@@ -338,6 +467,9 @@ class GuardConeAbstraction:
 
     def _simplify(self, guard: GuardExpr) -> GuardExpr | bool:
         if isinstance(guard, Compare):
+            if isinstance(guard.left, (Arith, Neg)) or isinstance(guard.right, (Arith, Neg)):
+                out = self._decide_linear(guard)
+                return guard if out is None else out
             a, b = self._term(guard.left), self._term(guard.right)
             if a is None or b is None:
                 return guard
