@@ -102,6 +102,41 @@ def test_rank_pull_between_orders_clusters() -> None:
     assert ys[0] < ys[1] < ys[2]
 
 
+def _role_dag() -> dict:
+    size = 5
+    edges = []
+    for k in range(3):
+        base = k * size
+        edges += [[base + a, base + b] for a in range(size) for b in range(a + 1, size)]
+    edges += [[size, 0], [2 * size, size], [2 * size + 1, 1]]
+    clusters = [i // size for i in range(3 * size)]
+    return {"n": 3 * size, "edges": edges, "clusters": clusters, "depths": clusters}
+
+
+def _cluster_x(out: dict, clusters: list[int]) -> list[float]:
+    return [
+        sum(x for x, c in zip(out["x"], clusters, strict=True) if c == k) / clusters.count(k)
+        for k in range(3)
+    ]
+
+
+@pytest.mark.parametrize("pull", ["between", "everywhere"])
+def test_rank_pull_aligns_cluster_centroids_on_cross_axis(pull: str) -> None:
+    payload = {**_role_dag(), "rankPull": pull}
+    out = _run(_LAYOUT, payload)
+    assert all(abs(x) < 1e-9 for x in _cluster_x(out, payload["clusters"]))
+    size = 5
+    ys = [sum(out["y"][k * size : (k + 1) * size]) / size for k in range(3)]
+    gap = viz_layout_js_config()["link_distance"]
+    assert ys[0] + gap < ys[1] and ys[1] + gap < ys[2]
+
+
+def test_align_clusters_can_be_turned_off() -> None:
+    payload = {**_role_dag(), "rankPull": "everywhere", "alignClusters": False}
+    xs = _cluster_x(_run(_LAYOUT, payload), payload["clusters"])
+    assert max(xs) - min(xs) > 1.0
+
+
 def test_relayout_group_moves_only_members_and_keeps_centroid() -> None:
     script = """
     const x = input.x.slice();

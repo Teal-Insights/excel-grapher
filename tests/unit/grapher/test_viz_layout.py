@@ -91,6 +91,59 @@ def test_rank_pull_everywhere_orders_chain_inside_one_cluster() -> None:
     assert pos[-1, 1] > pos[0, 1]
 
 
+def _role_dag() -> tuple[int, list[tuple[int, int]], list[str], list[int]]:
+    """The input -> internal -> output DAG from issue 1040, clustered by role."""
+    roles = ["input"] * 6 + ["internal"] * 8 + ["output"] * 3
+    flow = [
+        (0, 6), (1, 6), (2, 7), (3, 7), (4, 8), (5, 8),
+        (6, 9), (7, 9), (7, 10), (8, 10), (9, 11), (10, 11),
+        (11, 12), (11, 13), (6, 13), (12, 14), (13, 15), (14, 16), (15, 16),
+    ]  # fmt: skip
+    edges = [(consumer, producer) for producer, consumer in flow]
+    n = len(roles)
+    return n, edges, roles, vl.input_depths(n, edges)
+
+
+def _cluster_means(pos, clusters) -> dict:
+    labels = np.asarray(clusters)
+    return {c: pos[labels == c].mean(axis=0) for c in dict.fromkeys(clusters)}
+
+
+@pytest.mark.parametrize("rank_pull", ["between", "everywhere"])
+def test_rank_pull_aligns_cluster_centroids_on_cross_axis(rank_pull) -> None:
+    n, edges, roles, depths = _role_dag()
+    pos = vl.clustered_force_layout(n, edges, roles, depths=depths, rank_pull=rank_pull)
+    means = _cluster_means(pos, roles)
+    assert all(abs(m[0]) < 1e-9 for m in means.values())
+    assert means["input"][1] < means["internal"][1] < means["output"][1]
+
+
+def test_aligned_clusters_do_not_overlap_on_depth_axis() -> None:
+    n, edges, roles, depths = _role_dag()
+    pos = vl.clustered_force_layout(n, edges, roles, depths=depths, rank_pull="between")
+    labels = np.asarray(roles)
+    order = ["input", "internal", "output"]
+    for upper, lower in zip(order, order[1:], strict=False):
+        assert pos[labels == upper, 1].mean() + vl.FORCE_LINK_DISTANCE < (
+            pos[labels == lower, 1].mean()
+        )
+
+
+def test_align_clusters_can_be_turned_off() -> None:
+    n, edges, roles, depths = _role_dag()
+    pos = vl.clustered_force_layout(
+        n, edges, roles, depths=depths, rank_pull="everywhere", align_clusters=False
+    )
+    xs = [m[0] for m in _cluster_means(pos, roles).values()]
+    assert max(xs) - min(xs) > 1.0
+
+
+def test_align_clusters_needs_rank_pull() -> None:
+    n, edges, clusters = _two_cliques()
+    with pytest.raises(ValueError, match="align_clusters"):
+        vl.clustered_force_layout(n, edges, clusters, align_clusters=True)
+
+
 def test_rank_pull_requires_depths() -> None:
     with pytest.raises(ValueError, match="depths"):
         vl.clustered_force_layout(2, [(0, 1)], [0, 0], rank_pull="between")
@@ -150,3 +203,4 @@ def test_js_config_carries_shared_constants() -> None:
     assert cfg["link_strength"] == vl.FORCE_LINK_STRENGTH
     assert cfg["charge"] == vl.FORCE_CHARGE
     assert cfg["camera_max_width"] == vl.VIZ_CAMERA_MAX_WIDTH
+    assert cfg["align_clusters"] is vl.FORCE_ALIGN_CLUSTERS

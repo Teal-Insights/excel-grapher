@@ -17,7 +17,9 @@ pair count fits `FORCE_EXACT_PAIR_BUDGET`, and grid-based (pairs in
 neighboring cells only) beyond that.
 
 An optional weak vertical pull towards input depth keeps the input -> output
-direction readable: inputs sit at the top (smallest `y`).
+direction readable: inputs sit at the top (smallest `y`). With a pull, cluster
+centroids are also aligned on the cross (`x`) axis, so clusters read as one
+input -> output column instead of a triangle.
 """
 
 from __future__ import annotations
@@ -60,6 +62,8 @@ FORCE_CENTER_STRENGTH = 0.01
 FORCE_INTER_CLUSTER_LINK_SCALE = 0.1
 FORCE_RANK_PULL = 0.05
 FORCE_RANK_PULL_WITHIN = 0.02
+# With a rank pull, put every cluster centroid on `x = 0` by default.
+FORCE_ALIGN_CLUSTERS = True
 FORCE_TICKS = 80
 FORCE_REFINE_TICKS = 20
 FORCE_MAX_STEP = FORCE_LINK_DISTANCE
@@ -79,6 +83,7 @@ _GOLDEN_ANGLE = math.pi * (3.0 - math.sqrt(5.0))
 
 __all__ = [
     "DEFAULT_RANK_PULL",
+    "FORCE_ALIGN_CLUSTERS",
     "FORCE_CHARGE",
     "FORCE_LINK_DISTANCE",
     "FORCE_LINK_STRENGTH",
@@ -127,6 +132,7 @@ def viz_layout_js_config() -> dict[str, Any]:
         "inter_cluster_link_scale": FORCE_INTER_CLUSTER_LINK_SCALE,
         "rank_pull": FORCE_RANK_PULL,
         "rank_pull_within": FORCE_RANK_PULL_WITHIN,
+        "align_clusters": FORCE_ALIGN_CLUSTERS,
         "ticks": FORCE_TICKS,
         "max_step": FORCE_MAX_STEP,
         "disc_spacing": FORCE_DISC_SPACING,
@@ -347,6 +353,21 @@ def _separate_discs(np, centers: np.ndarray, radii: np.ndarray, gap: float) -> N
         centers += move
 
 
+def _stack_discs(np, centers: np.ndarray, radii: np.ndarray, gap: float) -> None:
+    """Move cluster discs onto `x = 0` in place, separated along `y` only.
+
+    Keeps the `y` order and mean of the centers.
+    """
+    mean_y = float(centers[:, 1].mean())
+    order = np.argsort(centers[:, 1], kind="stable")
+    ys = centers[order, 1]
+    rs = radii[order]
+    for i in range(1, ys.size):
+        ys[i] = max(ys[i], ys[i - 1] + rs[i - 1] + rs[i] + gap)
+    centers[order, 1] = ys - ys.mean() + mean_y
+    centers[:, 0] = 0.0
+
+
 def _cluster_ids(clusters: Sequence[Hashable]) -> tuple[list[int], int]:
     seen: dict[Hashable, int] = {}
     ids = [seen.setdefault(c, len(seen)) for c in clusters]
@@ -360,6 +381,7 @@ def clustered_force_layout(
     *,
     depths: Sequence[int] | None = None,
     rank_pull: RankPull = "none",
+    align_clusters: bool | None = None,
     tier: VizTier | None = None,
     seed: int = 0,
 ) -> np.ndarray:
@@ -375,6 +397,11 @@ def clustered_force_layout(
         rank_pull: Weak vertical pull towards depth: `"none"`, `"between"`
             clusters only, or `"everywhere"` (between clusters and, weaker,
             inside each cluster). Inputs are pulled to the top.
+        align_clusters: Put every cluster's centroid on `x = 0`, stacking
+            clusters along the depth axis, so they read as one column. Each
+            cluster keeps its shape and depth position. Defaults to
+            `FORCE_ALIGN_CLUSTERS` when `rank_pull` is set, else off; needs a
+            pull.
         tier: Size tier; defaults to `viz_tier(n)`. Repulsion is exact over
             all pairs while they fit `FORCE_EXACT_PAIR_BUDGET`, else exact
             inside clusters when those fit (not for `large`), else grid-based.
@@ -387,7 +414,8 @@ def clustered_force_layout(
 
     Raises:
         ValueError: `clusters` or `depths` length mismatch, unknown
-            `rank_pull`, or a pull without `depths`.
+            `rank_pull`, a pull without `depths`, or `align_clusters`
+            without a pull.
     """
     np = _numpy()
     if rank_pull not in RANK_PULL_MODES:
@@ -399,6 +427,10 @@ def clustered_force_layout(
             raise ValueError("rank_pull needs depths")
         if len(depths) != n:
             raise ValueError("depths must have one entry per node")
+    if align_clusters is None:
+        align_clusters = rank_pull != "none" and FORCE_ALIGN_CLUSTERS
+    elif align_clusters and rank_pull == "none":
+        raise ValueError("align_clusters needs a rank_pull")
     if n == 0:
         return np.zeros((0, 2), dtype=np.float64)
     tier = tier or viz_tier(n)
@@ -446,7 +478,10 @@ def clustered_force_layout(
             target_y=target,
             pull_k=FORCE_RANK_PULL,
         )
-        _separate_discs(np, centers, radii, FORCE_LINK_DISTANCE)
+        if align_clusters:
+            _stack_discs(np, centers, radii, FORCE_LINK_DISTANCE)
+        else:
+            _separate_discs(np, centers, radii, FORCE_LINK_DISTANCE)
 
     # Level 2: every node, anchored to its cluster.
     order = np.argsort(cid, kind="stable")
@@ -514,5 +549,8 @@ def clustered_force_layout(
             alpha0=0.5,
         )
 
+    if align_clusters:
+        # Inter-cluster links drift clusters off the axis; recentre each one.
+        pos[:, 0] -= (np.bincount(cid, weights=pos[:, 0], minlength=k) / sizes)[cid]
     pos -= pos.mean(axis=0)
     return pos
