@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from fractions import Fraction
 from heapq import heappop, heappush
@@ -872,14 +872,27 @@ class GuardConstraints:
         # `(x, y)` / keys are unique, so sorting never compares weights.
         return tuple(sorted(triples)), tuple(sorted(pairs))
 
-    def seed_cell_type_env(self, env: CellTypeEnv) -> GuardConstraints | None:
+    def seed_cell_type_env(
+        self, env: CellTypeEnv, *, keys: Iterable[NodeKey] | None = None
+    ) -> GuardConstraints | None:
         """Conjoin singleton enum domains as equalities.
 
         Interval and multi-value enum domains are not seeded; they only reject
         assignments during `add`.
+
+        Args:
+            env: Cell type environment to read domains from.
+            keys: When given, seed only these cells (e.g. those some guard
+                mentions). Pins on other cells cannot affect consistency, and
+                seeding them makes every derived state carry a copy.
         """
+        if keys is None:
+            items: Iterable[tuple[NodeKey, CellType]] = env.items()
+        else:
+            wanted = sorted({_constraint_key(k) for k in keys})
+            items = [(k, t) for k in wanted if (t := env.get(k)) is not None]
         out: GuardConstraints | None = self
-        for key, cell_type in env.items():
+        for key, cell_type in items:
             if cell_type.enum is None or len(cell_type.enum.values) != 1:
                 continue
             if is_union_domain(cell_type):
@@ -1152,6 +1165,23 @@ class GuardConstraints:
             bounds=bound_items,
             potential=potential_items,
         )
+
+
+def guard_cell_keys(expr: GuardExpr) -> set[NodeKey]:
+    """Return the keys of every `CellRef` in `expr`."""
+    out: set[NodeKey] = set()
+    stack = [expr]
+    while stack:
+        node = stack.pop()
+        if isinstance(node, CellRef):
+            out.add(node.key)
+        elif isinstance(node, (Compare, Arith)):
+            stack.extend((node.left, node.right))
+        elif isinstance(node, (Not, Neg)):
+            stack.append(node.operand)
+        elif isinstance(node, (And, Or)):
+            stack.extend(node.operands)
+    return out
 
 
 def rewrite_guard_aliases(expr: GuardExpr, aliases: Mapping[NodeKey, NodeKey]) -> GuardExpr:

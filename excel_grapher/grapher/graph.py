@@ -51,6 +51,7 @@ from .guard import (
     Neg,
     Not,
     Or,
+    guard_cell_keys,
     intern_guard,
     or_guard,
     rewrite_guard_aliases,
@@ -1378,8 +1379,14 @@ class DependencyGraph:
             scc = {keys[i] for i in scc_ids}
             if _subgraph_has_cycle_ids(set(scc_ids), uncond_neighbors):
                 continue
-            if not _subgraph_has_feasible_cycle(
-                self, scc, cell_type_env=env, aliases=aliases, cone=cone
+            seed = _seed_guard_constraints(env, _scc_guard_keys(self, scc, aliases))
+            if not any(
+                _subgraph_has_feasible_cycle(
+                    self, sub, cell_type_env=env, aliases=aliases, cone=cone, seed=seed
+                )
+                for sub in _edge_refuted_sub_sccs(
+                    self, scc, seed, cell_type_env=env, aliases=aliases, cone=cone
+                )
             ):
                 continue
             may_sccs.append(scc)
@@ -2157,12 +2164,71 @@ def _apply_guard_constraints(
     return [] if nxt is None else [nxt]
 
 
-def _seed_guard_constraints(cell_type_env: CellTypeEnv | None) -> GuardConstraints:
+def _intra_scc_edges(
+    graph: DependencyGraph, nodes: set[NodeKey]
+) -> Iterator[tuple[NodeKey, NodeKey, GuardExpr | None]]:
+    """Yield `(v, w, guard)` for every edge with both endpoints in `nodes`."""
+    for v in nodes:
+        for raw_w in graph._iter_dep_keys(v):
+            w = graph._resolve_graph_endpoint(raw_w)
+            if w is None or w not in nodes:
+                continue
+            guard = graph._stored_guard(v, raw_w)
+            if guard is None:
+                guard = graph._stored_guard(v, w)
+            yield v, w, guard
+
+
+def _scc_guard_keys(
+    graph: DependencyGraph,
+    nodes: set[NodeKey],
+    aliases: Mapping[NodeKey, NodeKey] | None,
+) -> set[NodeKey]:
+    """Return cells mentioned by intra-SCC edge guards, before and after aliasing."""
+    keys: set[NodeKey] = set()
+    for _, _, guard in _intra_scc_edges(graph, nodes):
+        if guard is None:
+            continue
+        keys |= guard_cell_keys(guard)
+        if aliases:
+            keys |= guard_cell_keys(rewrite_guard_aliases(guard, aliases))
+    return keys
+
+
+def _seed_guard_constraints(
+    cell_type_env: CellTypeEnv | None, keys: Iterable[NodeKey]
+) -> GuardConstraints:
+    """Seed singleton domains of `keys` only; other pins cannot affect consistency."""
     seed = GuardConstraints()
     if cell_type_env is None:
         return seed
-    seeded = seed.seed_cell_type_env(cell_type_env)
+    seeded = seed.seed_cell_type_env(cell_type_env, keys=keys)
     return seed if seeded is None else seeded
+
+
+def _edge_refuted_sub_sccs(
+    graph: DependencyGraph,
+    nodes: set[NodeKey],
+    seed: GuardConstraints,
+    *,
+    cell_type_env: CellTypeEnv | None,
+    aliases: Mapping[NodeKey, NodeKey] | None,
+    cone: GuardConeAbstraction | None,
+) -> list[set[NodeKey]]:
+    """Drop edges whose guard alone is infeasible, then return the cyclic sub-SCCs.
+
+    Any feasible cycle in `nodes` lies inside one of the returned sets, since
+    constraints only grow along a path.
+    """
+    ordered = list(nodes)
+    local = {key: i for i, key in enumerate(ordered)}
+    adj: list[list[int]] = [[] for _ in ordered]
+    for v, w, guard in _intra_scc_edges(graph, nodes):
+        if _apply_guard_constraints(
+            seed, guard, cell_type_env=cell_type_env, aliases=aliases, cone=cone
+        ):
+            adj[local[v]].append(local[w])
+    return [{ordered[i] for i in scc} for scc in _scc_cycle_ids(len(ordered), adj.__getitem__)]
 
 
 def _subgraph_has_feasible_cycle(
@@ -2172,6 +2238,7 @@ def _subgraph_has_feasible_cycle(
     cell_type_env: CellTypeEnv | None = None,
     aliases: Mapping[NodeKey, NodeKey] | None = None,
     cone: GuardConeAbstraction | None = None,
+    seed: GuardConstraints | None = None,
 ) -> bool:
     """Return whether `nodes` contains a guard-feasible cycle.
 
@@ -2206,7 +2273,8 @@ def _subgraph_has_feasible_cycle(
         on_stack.remove(v)
         return False
 
-    seed = _seed_guard_constraints(cell_type_env)
+    if seed is None:
+        seed = _seed_guard_constraints(cell_type_env, _scc_guard_keys(graph, nodes, aliases))
     return any(dfs(n, seed) for n in nodes)
 
 
@@ -2217,6 +2285,7 @@ def _find_feasible_cycle_path(
     cell_type_env: CellTypeEnv | None = None,
     aliases: Mapping[NodeKey, NodeKey] | None = None,
     cone: GuardConeAbstraction | None = None,
+    seed: GuardConstraints | None = None,
 ) -> list[NodeKey] | None:
     """Best-effort: find one feasible cycle path within `nodes` (symbolic constraints)."""
     visited: set[tuple[NodeKey, GuardConstraints]] = set()
@@ -2252,7 +2321,8 @@ def _find_feasible_cycle_path(
         on_stack.remove(v)
         return None
 
-    seed = _seed_guard_constraints(cell_type_env)
+    if seed is None:
+        seed = _seed_guard_constraints(cell_type_env, _scc_guard_keys(graph, nodes, aliases))
     for n in nodes:
         out = dfs(n, seed)
         if out is not None:
