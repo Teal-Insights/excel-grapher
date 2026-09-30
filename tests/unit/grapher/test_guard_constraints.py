@@ -156,3 +156,12 @@ def test_guard_constraints_quoted_guard_key_matches_unquoted_env_key() -> None:
         right=Literal(value=2),
     )
     assert GuardConstraints().add(eq2, cell_type_env=env) is None
+
+
+def test_seed_cell_type_env_with_keys_seeds_only_those_cells() -> None:
+    env = constraints_to_cell_type_env(
+        {"Inputs!A1": TypingLiteral[1], "Inputs!B1": TypingLiteral[2]}, {}
+    )
+    seeded = GuardConstraints().seed_cell_type_env(env, keys=["'Inputs'!A1", "Inputs!Z9"])
+    assert seeded is not None
+    assert seeded.equalities == (("Inputs!A1", 1),)

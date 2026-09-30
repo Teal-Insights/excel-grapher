@@ -187,3 +187,74 @@ def test_abstraction_handles_long_chains_and_formula_cycles() -> None:
     assert cone.simplify(Compare(left=CellRef("S!A5001"), op="=", right=CellRef("S!A2"))) is False
     guard = Compare(left=CellRef("S!B1"), op="=", right=Literal(3))
     assert cone.simplify(guard) is guard
+
+
+def _guarded_ring(layers: int) -> DependencyGraph:
+    """Ring of two-way IF layers closed by a back edge guarded by `Sheet1!P1=0`.
+
+    Every layer picks one of two guarded paths, so a path-sensitive search that
+    cannot refute the back edge up front visits about `2**layers` states.
+    """
+    graph = DependencyGraph()
+    for j in range(1, layers + 1):
+        for col in "CDE":
+            graph.add_node(make_cell_node("Sheet1", col, j, formula="=0", is_leaf=False))
+    for j in range(1, layers + 1):
+        sel = CellRef(f"Sheet1!S{j}")
+        graph.add_edge(f"Sheet1!C{j}", f"Sheet1!D{j}", guard=Compare(sel, "=", Literal(1)))
+        graph.add_edge(f"Sheet1!C{j}", f"Sheet1!E{j}", guard=Not(Compare(sel, "=", Literal(1))))
+        nxt = f"Sheet1!C{j + 1}" if j < layers else "Sheet1!C1"
+        back = Compare(CellRef("Sheet1!P1"), "=", Literal(0)) if j == layers else None
+        graph.add_edge(f"Sheet1!D{j}", nxt, guard=back)
+        graph.add_edge(f"Sheet1!E{j}", nxt, guard=back)
+    return graph
+
+
+def _ring_env(layers: int, pins: int):
+    constraints: dict[str, object] = {"Sheet1!P1": TypingLiteral[1]}
+    constraints |= {f"Sheet1!S{j}": TypingLiteral[1, 2] for j in range(1, layers + 1)}
+    constraints |= {f"Sheet1!Z{i}": TypingLiteral[0] for i in range(1, pins + 1)}
+    return constraints_to_cell_type_env(constraints, {})
+
+
+def test_irrelevant_singleton_pins_do_not_enter_guard_constraints(monkeypatch) -> None:
+    """#1042: pins on cells no guard mentions must not be seeded into DFS states."""
+    from excel_grapher.grapher import guard as guard_mod
+
+    largest = 0
+    real_add = guard_mod.GuardConstraints.add
+
+    def spy(self, g, *, cell_type_env=None):
+        nonlocal largest
+        largest = max(largest, len(self.equalities))
+        return real_add(self, g, cell_type_env=cell_type_env)
+
+    monkeypatch.setattr(guard_mod.GuardConstraints, "add", spy)
+    graph = _guarded_ring(4)
+    report = graph.cycle_report(cell_type_env=_ring_env(4, pins=500))
+    assert report.has_may_cycles is False
+    assert largest <= 5
+
+
+def test_edge_refuted_by_env_alone_eliminates_scc_without_path_search(monkeypatch) -> None:
+    """#1042: an SCC broken by edge-local refutation needs no path-sensitive DFS."""
+    from excel_grapher.grapher import graph as graph_mod
+
+    def boom(*args, **kwargs):
+        raise AssertionError("path search should not run")
+
+    monkeypatch.setattr(graph_mod, "_subgraph_has_feasible_cycle", boom)
+    graph = _guarded_ring(12)
+    report = graph.cycle_report(cell_type_env=_ring_env(12, pins=0))
+    assert report.has_may_cycles is False
+
+
+def test_edge_refutation_keeps_reporting_the_whole_scc() -> None:
+    """Refuting one edge that leaves an inner cycle still reports the original SCC."""
+    graph = _guarded_ring(2)
+    # Inner loop C1 -> D1 -> C1, feasible, alongside the refutable ring.
+    graph.add_edge("Sheet1!D1", "Sheet1!C1", guard=None)
+    report = graph.cycle_report(cell_type_env=_ring_env(2, pins=0))
+    assert report.has_may_cycles is True
+    assert len(report.may_cycles) == 1
+    assert "Sheet1!C2" in report.may_cycles[0]
