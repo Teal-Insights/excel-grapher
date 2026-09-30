@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.1 (2026-09-30)
+
+### Performance Improvements
+
+- **guards**: Seed only guard-referenced pins and refute edges before cycle DFS
+  ([`90782a8`](https://github.com/Teal-Insights/excel-grapher/commit/90782a83f9f4258ee0959a1cfb9cf63b7d31b199))
+
+
 ## v24.1.0 (2026-09-30)
 
 ### Features
