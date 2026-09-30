@@ -1355,6 +1355,17 @@ class DependencyGraph:
         singleton leaf domains apply through aliases. Guard comparisons are first
         decided, where possible, from an affine/interval abstraction of the guard
         cells (`GuardConeAbstraction`).
+
+        Each may-cycle is a residual component: the cyclic part of an SCC left
+        after dropping edges whose guard alone is infeasible, and that still
+        contains a guard-feasible cycle. It can be smaller than the SCC of the
+        full graph.
+
+        The env is the whole contract for leaf values: a leaf with a declared
+        domain ranges over it, even when the workbook holds a literal there, and
+        a leaf without one is unconstrained. Cycle analysis never assumes a leaf
+        keeps its workbook value; pin such a leaf with a singleton domain (for
+        example `Literal[0]`) to make it a constant.
         """
         env = self.cell_type_env if cell_type_env is None else cell_type_env
         aliases = identity_alias_map(self._nodes)
@@ -1380,16 +1391,16 @@ class DependencyGraph:
             if _subgraph_has_cycle_ids(set(scc_ids), uncond_neighbors):
                 continue
             seed = _seed_guard_constraints(env, _scc_guard_keys(self, scc, aliases))
-            if not any(
-                _subgraph_has_feasible_cycle(
-                    self, sub, cell_type_env=env, aliases=aliases, cone=cone, seed=seed
-                )
+            # Report the residual components that still carry a feasible cycle.
+            may_sccs.extend(
+                sub
                 for sub in _edge_refuted_sub_sccs(
                     self, scc, seed, cell_type_env=env, aliases=aliases, cone=cone
                 )
-            ):
-                continue
-            may_sccs.append(scc)
+                if _subgraph_has_feasible_cycle(
+                    self, sub, cell_type_env=env, aliases=aliases, cone=cone, seed=seed
+                )
+            )
 
         if may_sccs:
             example_may = _find_feasible_cycle_path(

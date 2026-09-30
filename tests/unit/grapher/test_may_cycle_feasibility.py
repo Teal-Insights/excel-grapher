@@ -2,14 +2,20 @@
 
 from __future__ import annotations
 
+from typing import Annotated
 from typing import Literal as TypingLiteral
 
-from excel_grapher.core.cell_types import constraints_to_cell_type_env
+import pytest
+
+from excel_grapher.core.cell_types import Between, RealBetween, constraints_to_cell_type_env
 from excel_grapher.grapher.graph import DependencyGraph
 from excel_grapher.grapher.guard import (
+    And,
+    Arith,
     CellRef,
     Compare,
     Literal,
+    Neg,
     Not,
     rewrite_guard_aliases,
 )
@@ -249,12 +255,117 @@ def test_edge_refuted_by_env_alone_eliminates_scc_without_path_search(monkeypatc
     assert report.has_may_cycles is False
 
 
-def test_edge_refutation_keeps_reporting_the_whole_scc() -> None:
-    """Refuting one edge that leaves an inner cycle still reports the original SCC."""
+def test_edge_refutation_reports_the_residual_scc() -> None:
+    """#1043: refuting edges reports the cyclic residual, not the original SCC."""
     graph = _guarded_ring(2)
     # Inner loop C1 -> D1 -> C1, feasible, alongside the refutable ring.
     graph.add_edge("Sheet1!D1", "Sheet1!C1", guard=None)
     report = graph.cycle_report(cell_type_env=_ring_env(2, pins=0))
     assert report.has_may_cycles is True
-    assert len(report.may_cycles) == 1
-    assert "Sheet1!C2" in report.may_cycles[0]
+    assert report.may_cycles == [{"Sheet1!C1", "Sheet1!D1"}]
+    assert report.example_may_cycle_path is not None
+    assert set(report.example_may_cycle_path) <= report.may_cycles[0]
+
+
+# ---- Arith operands and rounding in the guard cone (#1043) -------------------
+
+
+def _ref(x: str) -> CellRef:
+    return CellRef(f"Sheet1!{x}")
+
+
+def _schedule_env():
+    return constraints_to_cell_type_env(
+        {
+            "Sheet1!A1": Annotated[int, Between(1990, 2100)],
+            "Sheet1!A4": Annotated[int, Between(0, 50)],
+        },
+        {},
+    )
+
+
+_SCHEDULE_CELLS = {"A2": "=Sheet1!A1+18", "A3": "=Sheet1!A1+18"}
+
+
+def test_arith_operand_sharing_a_root_is_decided() -> None:
+    """`yr > b + grace` with `yr`, `b` on one root reduces to `0 > grace`."""
+    env = _schedule_env()
+    after_grace = Compare(_ref("A2"), ">", Arith(_ref("A3"), "+", _ref("A4")))
+    report = _cycle_with_guard_cells(after_grace, _SCHEDULE_CELLS, env)
+    assert report.has_may_cycles is False
+    within = Compare(_ref("A2"), "<=", Arith(_ref("A3"), "+", _ref("A4")))
+    assert _cycle_with_guard_cells(within, _SCHEDULE_CELLS, env).has_may_cycles is True
+
+
+def test_arith_operand_debt_schedule_window() -> None:
+    env = _schedule_env()
+    window = And(
+        (
+            Compare(_ref("A2"), ">", Arith(_ref("A3"), "+", _ref("A4"))),
+            Compare(_ref("A2"), "<=", Arith(_ref("A3"), "+", Literal(30))),
+        )
+    )
+    assert _cycle_with_guard_cells(window, _SCHEDULE_CELLS, env).has_may_cycles is False
+
+
+def test_arith_operand_with_undecidable_slack_stays_feasible() -> None:
+    env = _schedule_env()
+    guard = Compare(_ref("A2"), ">", Arith(Arith(_ref("A3"), "+", _ref("A4")), "-", Literal(1)))
+    assert _cycle_with_guard_cells(guard, _SCHEDULE_CELLS, env).has_may_cycles is True
+    unbounded = Compare(_ref("A2"), ">", Arith(_ref("A3"), "+", _ref("Z9")))
+    assert _cycle_with_guard_cells(unbounded, _SCHEDULE_CELLS, env).has_may_cycles is True
+
+
+def test_arith_operand_neg_and_cancellation() -> None:
+    cone = GuardConeAbstraction(
+        {
+            f"Sheet1!{key}": make_cell_node(
+                "Sheet1", key[0], int(key[1:]), normalized_formula=f, is_leaf=False
+            )
+            for key, f in _SCHEDULE_CELLS.items()
+        },
+        _schedule_env(),
+    )
+    # -A2 + A3 = 0 regardless of A1's value.
+    assert cone.simplify(Compare(Arith(Neg(_ref("A2")), "+", _ref("A3")), "=", Literal(0))) is True
+    assert cone.simplify(Compare(Arith(_ref("A2"), "-", _ref("A3")), "<", Neg(_ref("A4")))) is False
+
+
+@pytest.mark.parametrize(
+    "formula",
+    [
+        "=ROUNDDOWN(Sheet1!A1,0)",
+        "=ROUNDUP(Sheet1!A1,0)",
+        "=ROUND(Sheet1!A1,0)",
+        "=INT(Sheet1!A1)",
+        "=TRUNC(Sheet1!A1)",
+        "=TRUNC(Sheet1!A1,1)",
+        "=FLOOR(Sheet1!A1,1)",
+        "=CEILING(Sheet1!A1,2)",
+    ],
+)
+def test_rounding_keeps_choose_index_bounded(formula: str) -> None:
+    """`MAX(6 - ROUNDDOWN(L, 0), 0)` with `L` in [0, 10] never reaches 7."""
+    env = constraints_to_cell_type_env({"Sheet1!A1": Annotated[float, RealBetween(0, 10)]}, {})
+    cells = {"A2": formula, "A3": "=IF(6-Sheet1!A2>0,6-Sheet1!A2,0)"}
+    branch7 = And((Not(_cmp("A3", "=", 0)), _cmp("A3", ">=", 7), _cmp("A3", "<", 8)))
+    assert _cycle_with_guard_cells(branch7, cells, env).has_may_cycles is False
+    branch6 = And((Not(_cmp("A3", "=", 0)), _cmp("A3", ">=", 6), _cmp("A3", "<", 7)))
+    assert _cycle_with_guard_cells(branch6, cells, env).has_may_cycles is True
+
+
+def test_rounding_bounds_are_outward() -> None:
+    env = constraints_to_cell_type_env({"Sheet1!A1": Annotated[float, RealBetween(0.2, 2.5)]}, {})
+    nodes = {
+        "Sheet1!A2": make_cell_node(
+            "Sheet1", "A", 2, normalized_formula="=ROUND(Sheet1!A1,0)", is_leaf=False
+        ),
+        "Sheet1!A3": make_cell_node(
+            "Sheet1", "A", 3, normalized_formula="=ROUND(Sheet1!A1,Sheet1!B1)", is_leaf=False
+        ),
+    }
+    cone = GuardConeAbstraction(nodes, env)
+    value = cone.value("Sheet1!A2")
+    assert (value.lo, value.hi) == (0.0, 3.0)
+    # Non-literal digits keep the cell opaque.
+    assert cone.value("Sheet1!A3").root == "Sheet1!A3"
