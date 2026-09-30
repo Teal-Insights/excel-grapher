@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.0 (2026-09-30)
+
+### Features
+
+- **viz**: Align cluster centroids on the cross axis under rank_pull
+  ([`7773447`](https://github.com/Teal-Insights/excel-grapher/commit/77734470562d1bb0ff7bc447530a022353421a7b))
+
+
 ## v24.0.0 (2026-09-29)
 
 ### Bug Fixes
