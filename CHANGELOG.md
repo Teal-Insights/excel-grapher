@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.3 (2026-10-01)
+
+### Bug Fixes
+
+- **may-cycle**: Abstract range aggregates and IF branch hulls in guard cone
+  ([`1a0361b`](https://github.com/Teal-Insights/excel-grapher/commit/1a0361b4574e4a606fb721d8883b90e9f1f38879))
+
+
 ## v24.1.2 (2026-09-30)
 
 ### Bug Fixes
