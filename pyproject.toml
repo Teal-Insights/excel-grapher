@@ -333,3 +333,5 @@ dev = [
     "pyright>=1.1.414",
 ]
 
+[tool.uv]
+constraint-dependencies = ["certifi>=2026.10.19"]
