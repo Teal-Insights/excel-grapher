@@ -70,6 +70,9 @@ from excel_grapher.series_bindings.input_coerce import (
 from excel_grapher.series_bindings.input_coerce import (
     coerce_input_measure as coerce_input_measure,
 )
+from excel_grapher.series_bindings.input_coerce import (
+    public_value_from_workbook as public_value_from_workbook,
+)
 from excel_grapher.series_bindings.input_coerce import require_input_domain as require_input_domain
 
 T = TypeVar("T")

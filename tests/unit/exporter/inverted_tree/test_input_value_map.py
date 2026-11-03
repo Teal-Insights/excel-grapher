@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 from excel_grapher.evaluator import FormulaEvaluator
+from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
@@ -85,6 +86,67 @@ def test_map_runs_on_orchestrator_after_domain_not_in_internals(tmp_path: Path) 
     assert "apply_input_value_map" not in modules["api.py"]
     assert "apply_input_value_map" not in modules["internals.py"]
     assert '"High "' in modules["internals.py"] or "'High '" in modules["internals.py"]
+
+
+def test_from_workbook_binds_selector_needle_as_public_key(tmp_path: Path) -> None:
+    workbook = _selector_workbook(tmp_path)
+    pkg = load_package(
+        generate_inverted(workbook, _selector_bindings()),
+        tmp_path,
+        name="value_map_workbook",
+    )
+    model = pkg.Model.from_workbook(workbook)
+    assert model.selector == "High "
+    assert model.out == 10
+    assert pkg.Model.from_defaults().out == 10
+    assert pkg.Model.from_defaults(selector="Low").out == 1
+    assert pkg.compute_out(pkg.OutInputs.from_defaults()) == 10
+
+    low = write_workbook(
+        tmp_path / "low.xlsx",
+        {
+            "Inputs": {"A1": "Low "},
+            "Engine": {
+                "A1": (
+                    '=IF(Inputs!A1="High ",10,IF(Inputs!A1="Medium",5,IF(Inputs!A1="Low ",1,0)))'
+                )
+            },
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    assert pkg.Model.from_workbook(low).out == 1
+    assert pkg.Model.from_workbook(low, selector="High").out == 10
+    with pytest.raises(ValueError, match=r"selector out of domain: 'High '"):
+        pkg.Model.from_workbook(low, selector="High ")
+    unknown = write_workbook(
+        tmp_path / "unknown.xlsx",
+        {
+            "Inputs": {"A1": "Nope"},
+            "Engine": {"A1": '=IF(Inputs!A1="High ",10,0)'},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    with pytest.raises(ValueError, match=r"not a value_map needle"):
+        pkg.Model.from_workbook(unknown)
+
+    assert pkg.compute_out(pkg.OutInputs.from_workbook(low)) == 1
+    bundle = pkg.OutInputs.from_defaults(selector="Low")
+    assert bundle.selector == "Low "
+    assert pkg.compute_out(bundle) == 1
+
+
+def test_ambiguous_workbook_needle_fails_export(tmp_path: Path) -> None:
+    workbook = write_workbook(
+        tmp_path / "ambiguous.xlsx",
+        {
+            "Inputs": {"A1": "Same"},
+            "Engine": {"A1": '=IF(Inputs!A1="Same",1,0)'},
+            "Outputs": {"A1": "=Engine!A1"},
+        },
+    )
+    document = _selector_bindings(value_map={"Left": "Same", "Right": "Same"})
+    with pytest.raises(InvertedTreeExportError, match=r"multiple value_map keys"):
+        generate_inverted(workbook, document)
 
 
 def test_shared_runner_maps_once_in_evaluation_body(tmp_path: Path) -> None:

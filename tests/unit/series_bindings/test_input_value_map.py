@@ -158,6 +158,24 @@ def test_apply_input_value_map_rewrites_and_rejects() -> None:
         apply_input_value_map("Nope", _SELECTOR_MAP, series_id="selector")
 
 
+def test_public_value_from_workbook_inverts_needles() -> None:
+    from excel_grapher.series_bindings.input_coerce import public_value_from_workbook
+
+    assert public_value_from_workbook("High ", _SELECTOR_MAP, series_id="selector") == "High"
+    assert public_value_from_workbook("Medium", _SELECTOR_MAP, series_id="selector") == "Medium"
+    assert public_value_from_workbook(1, {"low": 1.0, "high": 2}, series_id="band") == "low"
+    assert public_value_from_workbook(1.0, {"low": 1, "high": 2}, series_id="band") == "low"
+    assert public_value_from_workbook(True, {"on": True, "off": False}, series_id="flag") == "on"
+    with pytest.raises(ValueError, match=r"not a value_map needle"):
+        public_value_from_workbook("Nope", _SELECTOR_MAP, series_id="selector")
+    with pytest.raises(ValueError, match=r"not a value_map needle"):
+        public_value_from_workbook(True, {"on": 1}, series_id="flag")
+    with pytest.raises(ValueError, match=r"not a value_map needle"):
+        public_value_from_workbook(1, {"on": True}, series_id="flag")
+    with pytest.raises(ValueError, match=r"multiple value_map keys"):
+        public_value_from_workbook(1, {"a": 1, "b": 1.0}, series_id="band")
+
+
 def test_coerce_setter_input_maps_after_domain() -> None:
     domain = {"enum": frozenset(_SELECTOR_MAP)}
     assert coerce_setter_input(

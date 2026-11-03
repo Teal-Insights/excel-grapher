@@ -101,8 +101,10 @@ def read_bound_inputs(
     """Read named input-direction cells from `workbook`.
 
     Only `names` are bound. Constant series stay on `data_module`. Extra sheets
-    and unbound cells are ignored. This is not Excel F9 parity: formula engine
-    sheets are not re-read.
+    and unbound cells are ignored. Values are cached workbook cells. Generated
+    constructors translate `input.value_map` needles to public keys before
+    validation. This is not Excel F9 parity: formula engine sheets are not
+    re-read.
 
     Args:
         workbook: Path to a populated workbook of this export vintage.
