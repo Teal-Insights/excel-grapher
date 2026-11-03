@@ -1701,15 +1701,26 @@ def _input_name_set(names: Sequence[str]) -> str:
 
 
 def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()) -> list[str]:
-    """Emit `_bind_inputs`, the shared CHECKS path for Model and input bundles."""
+    """Emit `_bind_inputs`, the shared CHECKS path for Model and input bundles.
+
+    `align_snapshot` is set by `from_workbook`. Caller-built models and
+    `compute_*` bundles leave snapshot keys in place so CHECKS rejects them.
+    """
     deferred_ids = _deferred_runtime_inputs(catalog)
     deferred = tuple(
         series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
     )
     lines: list[str] = []
-    lines.append(
-        "def _bind_inputs(target: object, inputs: dict[str, Any], *, validate: bool = True) -> None:"
-    )
+    if deferred:
+        lines.append(
+            "def _bind_inputs("
+            "target: object, inputs: dict[str, Any], *, validate: bool = True, "
+            "align_snapshot: bool = False) -> None:"
+        )
+    else:
+        lines.append(
+            "def _bind_inputs(target: object, inputs: dict[str, Any], *, validate: bool = True) -> None:"
+        )
     if override_ids:
         lines.extend(
             [
@@ -1761,7 +1772,14 @@ def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()
             if labeller is not None and labeller.series_id != series.series_id:
                 extras.append(f"{axis.name}=target.{labeller.series_id}")
         extra = f", {', '.join(extras)}" if extras else ""
-        align = [f"        value = align_runtime_keys(value{extra})"] if extra else []
+        align = (
+            [
+                "        if align_snapshot:",
+                f"            value = align_runtime_keys(value{extra})",
+            ]
+            if extra
+            else []
+        )
         if override_ids:
             lines.extend(
                 [
@@ -1840,8 +1858,48 @@ def _model_from_defaults(
     return lines
 
 
+def _from_workbook_return(align_snapshot: bool) -> list[str]:
+    """Finish `from_workbook` after the cell values are in `values`.
+
+    Workbook loads may carry snapshot keys for a runtime axis. Only that path
+    aligns them onto the labeller. A caller-supplied series keeps its keys.
+    """
+    if not align_snapshot:
+        return ["        return cls(**values)"]
+    return [
+        "        instance = cls.__new__(cls)",
+        "        if isinstance(instance, Model):",
+        "            _bind_inputs(instance, values, align_snapshot=True)",
+        "            return instance",
+        "        for name, value in values.items():",
+        "            object.__setattr__(instance, name, value)",
+        "        instance._validate(align_snapshot=True)",
+        "        return instance",
+    ]
+
+
+def _validate_method(align_snapshot: bool) -> list[str]:
+    """Emit `_validate`, optionally forwarding workbook key alignment."""
+    if align_snapshot:
+        signature = "    def _validate(self, *, align_snapshot: bool = False) -> None:"
+        bind = "        _bind_inputs(holder, values, align_snapshot=align_snapshot)"
+    else:
+        signature = "    def _validate(self) -> None:"
+        bind = "        _bind_inputs(holder, values)"
+    return [
+        signature,
+        "        holder = Model.__new__(Model)",
+        "        names = {field.name for field in fields(self)}",
+        "        values = {name: getattr(self, name) for name in names}",
+        bind,
+    ]
+
+
 def _bound_inputs_mixin(
-    *, translate_workbook_values: bool, override_ids: Sequence[str] = ()
+    *,
+    translate_workbook_values: bool,
+    override_ids: Sequence[str] = (),
+    align_snapshot: bool = False,
 ) -> str:
     """Shared workbook bind and CHECKS validation for Model and input bundles."""
     if override_ids:
@@ -1902,16 +1960,12 @@ def _bound_inputs_mixin(
         *read_call,
         *read_tail,
         "        values.update(overrides)",
-        "        return cls(**values)",
+        *_from_workbook_return(align_snapshot),
         "",
         "    def __post_init__(self) -> None:",
         "        self._validate()",
         "",
-        "    def _validate(self) -> None:",
-        "        holder = Model.__new__(Model)",
-        "        names = {field.name for field in fields(self)}",
-        "        values = {name: getattr(self, name) for name in names}",
-        "        _bind_inputs(holder, values)",
+        *_validate_method(align_snapshot),
         *copy_back,
         "",
         "",
@@ -2233,6 +2287,7 @@ def emit_named_model(
         _bound_inputs_mixin(
             translate_workbook_values=bool(value_maps),
             override_ids=override_ids,
+            align_snapshot=bool(_deferred_runtime_inputs(catalog)),
         ),
         "\n".join(class_lines),
         *input_classes,
