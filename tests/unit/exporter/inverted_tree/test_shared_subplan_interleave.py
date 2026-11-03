@@ -68,8 +68,13 @@ def _kwarg_uses_before_assign(source: str) -> list[tuple[str, int]]:
     for fn in tree.body:
         if not isinstance(fn, ast.FunctionDef):
             continue
-        bound: set[str] = {arg.arg for arg in fn.args.kwonlyargs}
+        bound: set[str] = {arg.arg for arg in fn.args.posonlyargs}
         bound.update(arg.arg for arg in fn.args.args)
+        bound.update(arg.arg for arg in fn.args.kwonlyargs)
+        if fn.args.vararg is not None:
+            bound.add(fn.args.vararg.arg)
+        if fn.args.kwarg is not None:
+            bound.add(fn.args.kwarg.arg)
         for node in fn.body:
             for call in ast.walk(node):
                 if not isinstance(call, ast.Call):

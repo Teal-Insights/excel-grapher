@@ -85,6 +85,16 @@ model = Model.from_workbook("ghana-2025.xlsm")
 model = Model.from_workbook("ghana-2025.xlsm", discount_rate=0.04)
 ```
 
+`{Output}Inputs.from_workbook` loads only that output's leaves. Keyword overrides
+are the same public values `compute_*` accepts and replace the cells read from
+the file.
+
+A series with `input.value_map` is stored in Excel as the workbook needle.
+`from_workbook` accepts that needle, checks the public key, and stores the
+needle formulas compare. Keyword overrides stay public keys. A cell that is
+not one of the map's needles fails closed. `from_defaults` uses the public
+key of the snapshot needle, so a value-map template still constructs.
+
 These two files are complementary, not duplicates. Generated `internals.py` imports Excel operators from `excel.py` and named-axis helpers from `runtime.py`; `runtime.py` imports value semantics from `excel.py`.
 
 Construct inputs from coordinate/value records. The generated schema validates axis names,

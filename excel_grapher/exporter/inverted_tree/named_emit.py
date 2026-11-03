@@ -50,8 +50,10 @@ from excel_grapher.exporter.inverted_tree.named_axes import (
 )
 from excel_grapher.exporter.inverted_tree.schedule import scan_function_name, scc_external_params
 from excel_grapher.series_bindings.input_coerce import (
+    AmbiguousWorkbookNeedle,
     input_value_map_from_series,
     measure_domain_from_series,
+    public_value_from_workbook,
 )
 from excel_grapher.series_bindings.resolve import _WorkbookValues
 
@@ -1650,8 +1652,10 @@ def _model_from_defaults(
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
     deps: Mapping[str, SeriesDeps] | None = None,
+    default_exprs: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
+    exprs = default_exprs or {}
     inputs = [catalog.get(sid) for sid in _input_series_ids(catalog, deps)]
     lines = ["", "    @classmethod"]
     if not inputs:
@@ -1667,7 +1671,7 @@ def _model_from_defaults(
     lines.append("        cls,")
     lines.append("        *,")
     for series in inputs:
-        default = f"data.{series.series_id.upper()}_DEFAULT"
+        default = exprs.get(series.series_id, f"data.{series.series_id.upper()}_DEFAULT")
         lines.append(f"        {series.series_id}: {_annotation(series, domains)} = {default},")
     lines.extend(
         [
@@ -1685,58 +1689,82 @@ def _model_from_defaults(
     return lines
 
 
-_BOUND_INPUTS_MIXIN = '''class _BoundInputs:
+def _bound_inputs_mixin(*, translate_workbook_values: bool) -> str:
     """Shared workbook bind and CHECKS validation for Model and input bundles."""
-
-    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]
-    _INPUT_IDS: tuple[str, ...] = ()
-
-    @classmethod
-    def from_workbook(cls, workbook: Path | str, **overrides: object) -> Self:
-        """Bind input leaves from a populated workbook of this vintage."""
-        declared = getattr(cls, "__dataclass_fields__", None)
-        names = tuple(declared) if declared else cls._INPUT_IDS
-        unknown = overrides.keys() - set(names)
-        if unknown:
-            raise TypeError(f"unknown inputs: {sorted(unknown)}")
-        values = read_bound_inputs(Path(workbook), names, data)
-        values.update(overrides)
-        return cls(**values)
-
-    def __post_init__(self) -> None:
-        self._validate()
-
-    def _validate(self) -> None:
-        holder = Model.__new__(Model)
-        names = {field.name for field in fields(self)}
-        values = {name: getattr(self, name) for name in names}
-        _bind_inputs(holder, values)
-        for name in names:
-            object.__setattr__(self, name, getattr(holder, name))
-
-
-class _SnapshotInputs(_BoundInputs):
-    """Per-output bundle factory over `data.*_DEFAULT` leaves."""
-
-    @classmethod
-    def from_defaults(cls, **overrides: object) -> Self:
-        names = {field.name for field in fields(cls)}
-        unexpected = overrides.keys() - names
-        if unexpected:
-            listed = ", ".join(sorted(unexpected))
-            raise TypeError(f"{cls.__name__}.from_defaults() got unknown argument(s): {listed}")
-        values = {
-            name: (
-                overrides[name] if name in overrides else getattr(data, f"{name.upper()}_DEFAULT")
-            )
-            for name in names
-        }
-        return cls(**values)
-
-    @classmethod
-    def describe(cls) -> dict[str, InputField]:
-        """Axes, keys, value annotation, default, and cells of each field."""
-        return describe_inputs(cls)'''
+    if translate_workbook_values:
+        read_tail = [
+            "        values = {"
+            "name: _public_workbook_value(name, value) for name, value in values.items()"
+            "}",
+        ]
+        default_value = [
+            "                overrides[name]",
+            "                if name in overrides",
+            "                else _public_workbook_value("
+            'name, getattr(data, f"{name.upper()}_DEFAULT"))',
+        ]
+    else:
+        read_tail = []
+        default_value = [
+            "                overrides[name]"
+            ' if name in overrides else getattr(data, f"{name.upper()}_DEFAULT")',
+        ]
+    lines = [
+        "class _BoundInputs:",
+        '    """Shared workbook bind and CHECKS validation for Model and input bundles."""',
+        "",
+        "    __dataclass_fields__: ClassVar[dict[str, Field[Any]]]",
+        "    _INPUT_IDS: tuple[str, ...] = ()",
+        "",
+        "    @classmethod",
+        "    def from_workbook(cls, workbook: Path | str, **overrides: object) -> Self:",
+        '        """Bind input leaves from a populated workbook of this vintage."""',
+        '        declared = getattr(cls, "__dataclass_fields__", None)',
+        "        names = tuple(declared) if declared else cls._INPUT_IDS",
+        "        unknown = overrides.keys() - set(names)",
+        "        if unknown:",
+        '            raise TypeError(f"unknown inputs: {sorted(unknown)}")',
+        "        values = read_bound_inputs(Path(workbook), names, data)",
+        *read_tail,
+        "        values.update(overrides)",
+        "        return cls(**values)",
+        "",
+        "    def __post_init__(self) -> None:",
+        "        self._validate()",
+        "",
+        "    def _validate(self) -> None:",
+        "        holder = Model.__new__(Model)",
+        "        names = {field.name for field in fields(self)}",
+        "        values = {name: getattr(self, name) for name in names}",
+        "        _bind_inputs(holder, values)",
+        "        for name in names:",
+        "            object.__setattr__(self, name, getattr(holder, name))",
+        "",
+        "",
+        "class _SnapshotInputs(_BoundInputs):",
+        '    """Per-output bundle factory over `data.*_DEFAULT` leaves."""',
+        "",
+        "    @classmethod",
+        "    def from_defaults(cls, **overrides: object) -> Self:",
+        "        names = {field.name for field in fields(cls)}",
+        "        unexpected = overrides.keys() - names",
+        "        if unexpected:",
+        '            listed = ", ".join(sorted(unexpected))',
+        '            raise TypeError(f"{cls.__name__}.from_defaults() got unknown argument(s): {listed}")',
+        "        values = {",
+        "            name: (",
+        *default_value,
+        "            )",
+        "            for name in names",
+        "        }",
+        "        return cls(**values)",
+        "",
+        "    @classmethod",
+        "    def describe(cls) -> dict[str, InputField]:",
+        '        """Axes, keys, value annotation, default, and cells of each field."""',
+        "        return describe_inputs(cls)",
+    ]
+    return "\n".join(lines)
 
 
 def _model_init(catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None) -> list[str]:
@@ -1846,6 +1874,7 @@ def _model_class(
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
     domains: Mapping[str, str] = _NO_DOMAINS,
+    default_exprs: Mapping[str, str] | None = None,
 ) -> list[str]:
     """Lines of the memoized `Model` class."""
     input_ids = _input_series_ids(catalog, deps)
@@ -1858,8 +1887,8 @@ def _model_class(
         "    inputs bound at construction are available, so a public function",
         "    supplies exactly the leaves of its output. Unknown constructor",
         "    names fail closed. `from_defaults` binds every input from",
-        "    `data.*_DEFAULT`. `from_workbook` reads those input cells from a",
-        "    populated workbook of this vintage.",
+        "    `data.*_DEFAULT`. `from_workbook` reads those input cells from",
+        "    a populated workbook of this vintage.",
         '    """',
         "",
     ]
@@ -1867,7 +1896,7 @@ def _model_class(
         model.append(f"    {series.series_id}: {_annotation(series, domains)}")
     model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog, deps))
-    model.extend(_model_from_defaults(catalog, domains, deps))
+    model.extend(_model_from_defaults(catalog, domains, deps, default_exprs))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
@@ -1914,14 +1943,94 @@ def _wrapped_from_import(module: str, names: Sequence[str]) -> str:
     return f"from .{module} import (\n    {listed},\n)"
 
 
+def _catalog_value_maps(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps] | None,
+) -> dict[str, dict[Any, Any]]:
+    """Public-to-needle maps for scalar inputs that declare `input.value_map`."""
+    maps: dict[str, dict[Any, Any]] = {}
+    for series_id in _input_series_ids(catalog, deps):
+        mapping = input_value_map_from_series(catalog.get(series_id).raw)
+        if mapping:
+            maps[series_id] = dict(mapping)
+    return maps
+
+
+def _value_maps_literal(maps: Mapping[str, Mapping[Any, Any]]) -> str:
+    """Render `_VALUE_MAPS` so each generated line stays within 100 columns."""
+    lines = ["{"]
+    for name, mapping in maps.items():
+        entries = [
+            f"{_python_literal(key)}: {_python_literal(needle)}" for key, needle in mapping.items()
+        ]
+        inline = "{" + ", ".join(entries) + "}"
+        one_line = f"    {_python_literal(name)}: {inline},"
+        if len(one_line) <= 100:
+            lines.append(one_line)
+            continue
+        lines.append(f"    {_python_literal(name)}: {{")
+        lines.extend(f"        {entry}," for entry in entries)
+        lines.append("    },")
+    lines.append("}")
+    return "\n".join(lines)
+
+
+def _value_map_source(maps: Mapping[str, Mapping[Any, Any]]) -> str:
+    """Emit the needle-to-public helper used by workbook constructors."""
+    if not maps:
+        return ""
+    return "\n".join(
+        [
+            f"_VALUE_MAPS: dict[str, dict[Any, Any]] = {_value_maps_literal(maps)}",
+            "",
+            "",
+            "def _public_workbook_value(name: str, value: object) -> object:",
+            '    """Map a workbook needle to its public `input.value_map` key."""',
+            "    mapping = _VALUE_MAPS.get(name)",
+            "    if mapping is None:",
+            "        return value",
+            "    return public_value_from_workbook(value, mapping, series_id=name)",
+        ]
+    )
+
+
+def _public_default_exprs(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps] | None,
+    defaults: Mapping[str, Mapping[str, object]] | None,
+) -> dict[str, str]:
+    """Signature defaults for `Model.from_defaults` that CHECKS will accept.
+
+    `data.*_DEFAULT` stores the workbook needle. A value-map constructor
+    default is the public key of that needle. An unmapped snapshot keeps the
+    needle expression. An ambiguous needle fails closed at export.
+    """
+    if not defaults:
+        return {}
+    exprs: dict[str, str] = {}
+    for series_id, mapping in _catalog_value_maps(catalog, deps).items():
+        cell_value = next(iter(defaults.get(series_id, {}).values()), None)
+        try:
+            public = public_value_from_workbook(cell_value, mapping, series_id=series_id)
+        except AmbiguousWorkbookNeedle as exc:
+            raise InvertedTreeExportError(str(exc)) from exc
+        except ValueError:
+            continue
+        exprs[series_id] = _python_literal(public)
+    return exprs
+
+
 def emit_named_model(
     catalog: SeriesCatalog,
     deps: Mapping[str, SeriesDeps],
     scc_map: Mapping[str, tuple[str, ...]],
     domains: Mapping[str, str] = _NO_DOMAINS,
+    defaults: Mapping[str, Mapping[str, object]] | None = None,
 ) -> str:
-    """Emit `Model`, `_BoundInputs`, and per-output Inputs dataclasses."""
-    class_lines = _model_class(catalog, deps, scc_map, domains)
+    """Emit `Model` and per-output Inputs dataclasses."""
+    value_maps = _catalog_value_maps(catalog, deps)
+    default_exprs = _public_default_exprs(catalog, deps, defaults)
+    class_lines = _model_class(catalog, deps, scc_map, domains, default_exprs)
     input_classes: list[str] = []
     input_names: list[str] = []
     for output in catalog.output_series():
@@ -1930,7 +2039,8 @@ def emit_named_model(
         input_names.append(_inputs_class_name(output))
     sections = [
         "\n".join(_bind_inputs_source(catalog)),
-        _BOUND_INPUTS_MIXIN,
+        _value_map_source(value_maps),
+        _bound_inputs_mixin(translate_workbook_values=bool(value_maps)),
         "\n".join(class_lines),
         *input_classes,
     ]
@@ -1956,6 +2066,8 @@ def emit_named_model(
         if token in body and name not in imported
     )
     local = [f"from . import {', '.join(imported)}"]
+    if "public_value_from_workbook" in body:
+        local.append("from .excel import public_value_from_workbook")
     runtime_names = sorted(["InputField", *_runtime_domain_names(body), "describe_inputs"])
     local.append(f"from .runtime import {', '.join(runtime_names)}")
     if "read_bound_inputs" in body:
@@ -2513,12 +2625,14 @@ def emit_named_data(
     constant_lines: Sequence[str] = (),
     domains: Mapping[str, str] = _NO_DOMAINS,
     deps: Mapping[str, SeriesDeps] | None = None,
+    defaults: Mapping[str, Mapping[str, object]] | None = None,
 ) -> str:
     """Emit shared axes, bound series, provenance, and workbook defaults."""
     from excel_grapher.exporter.inverted_tree.emit import _py_literal
 
     retained = _data_series(catalog, deps)
-    defaults = _read_defaults(catalog, workbook, retained)
+    if defaults is None:
+        defaults = _read_defaults(catalog, workbook, retained)
     labelled = _labelled_axes_map(catalog)
     tensor_names = [
         "Axis",
@@ -2823,10 +2937,19 @@ def _emit_named_modules(
         )
     validation = emit_named_validation(catalog, domains, deps)
     constant_sets, constant_lines = _output_constant_sets(catalog, deps)
-    model = emit_named_model(catalog, deps, scc_map, domains)
+    retained = _data_series(catalog, deps)
+    workbook_defaults = _read_defaults(catalog, workbook, retained)
+    model = emit_named_model(catalog, deps, scc_map, domains, defaults=workbook_defaults)
     api = emit_named_api(catalog, deps, constant_sets, domains)
     data = emit_named_data(
-        catalog, workbook, named_axes, literal_tables, constant_lines, domains, deps
+        catalog,
+        workbook,
+        named_axes,
+        literal_tables,
+        constant_lines,
+        domains,
+        deps,
+        defaults=workbook_defaults,
     )
     from excel_grapher.exporter.inverted_tree.standalone import build_runtime_modules
 

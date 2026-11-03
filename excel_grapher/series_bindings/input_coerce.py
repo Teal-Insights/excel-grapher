@@ -36,6 +36,7 @@ SeriesInput: TypeAlias = Records | Record | Sequence[_Scalar] | DataFrameInput
 SetterInput: TypeAlias = SeriesInput | _Scalar
 
 __all__ = [
+    "AmbiguousWorkbookNeedle",
     "EmptyMeasure",
     "Layout",
     "SeriesInput",
@@ -44,6 +45,7 @@ __all__ = [
     "coerce_setter_input",
     "input_value_map_from_series",
     "measure_domain_from_series",
+    "public_value_from_workbook",
     "require_input_domain",
 ]
 
@@ -470,6 +472,58 @@ def _coerce_measure(value: object, dtype: str, enum: object | None) -> object:
         rebuild = cast("Callable[[list[object]], object]", type(value))
         return rebuild(members)
     return _coerce_one(value, dtype, enum)
+
+
+class AmbiguousWorkbookNeedle(ValueError):
+    """More than one public key stores this workbook needle."""
+
+
+def _same_workbook_needle(stored: object, cell: object) -> bool:
+    """Return whether `cell` is the authored workbook needle `stored`.
+
+    Excel often caches a whole number as `int` when the map stored `float`.
+    `True` is not `1`.
+    """
+    if isinstance(stored, bool) or isinstance(cell, bool):
+        return type(stored) is type(cell) and stored == cell
+    if isinstance(stored, int | float) and isinstance(cell, int | float):
+        return stored == cell
+    return stored == cell
+
+
+def public_value_from_workbook(
+    value: object,
+    mapping: Mapping[Any, Any],
+    *,
+    series_id: str,
+) -> object:
+    """Return the public `input.value_map` key stored as `value` in a workbook.
+
+    Args:
+        value: Cached cell value from a workbook of this vintage.
+        mapping: Public value to workbook needle.
+        series_id: Binding series id used in the error message.
+
+    Returns:
+        The unique public key whose needle equals `value`.
+
+    Raises:
+        AmbiguousWorkbookNeedle: More than one public key stores `value`.
+        ValueError: `value` is not a needle of `mapping`.
+    """
+    matches = [key for key, needle in mapping.items() if _same_workbook_needle(needle, value)]
+    if len(matches) == 1:
+        return matches[0]
+    if len(matches) > 1:
+        listed = ", ".join(repr(key) for key in matches)
+        raise AmbiguousWorkbookNeedle(
+            f"{series_id} workbook value {value!r} matches multiple value_map keys: {listed}"
+        )
+    needles = ", ".join(repr(needle) for needle in mapping.values())
+    raise ValueError(
+        f"{series_id} workbook value {value!r} is not a value_map needle; "
+        f"expected one of {{{needles}}}"
+    )
 
 
 def apply_input_value_map(
