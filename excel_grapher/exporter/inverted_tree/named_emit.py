@@ -463,6 +463,8 @@ def _labelled_axes_map(catalog: SeriesCatalog) -> dict[str, str]:
                 f"axis {name!r}: multiple runtime labellers {existing!r} and {series.series_id!r}"
             )
         mapping[name] = series.series_id
+    for name, series_id in catalog.header_labeller_ids().items():
+        mapping.setdefault(name, series_id)
     return mapping
 
 
@@ -1759,11 +1761,13 @@ def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()
             if labeller is not None and labeller.series_id != series.series_id:
                 extras.append(f"{axis.name}=target.{labeller.series_id}")
         extra = f", {', '.join(extras)}" if extras else ""
+        align = [f"        value = align_runtime_keys(value{extra})"] if extra else []
         if override_ids:
             lines.extend(
                 [
                     f"    if {series_id!r} in inputs:",
                     f"        value = inputs[{series_id!r}]",
+                    *align,
                     f"        check = validation.CHECKS.get({series_id!r})",
                     f"        store({series_id!r}, value if check is None else check(value{extra}))",
                 ]
@@ -1773,6 +1777,7 @@ def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()
                 [
                     f"    if {series_id!r} in inputs:",
                     f"        value = inputs[{series_id!r}]",
+                    *align,
                     f"        check = validation.CHECKS.get({series_id!r})",
                     "        setattr(",
                     "            target,",
@@ -2258,8 +2263,9 @@ def emit_named_model(
         local.append("from .excel import public_value_from_workbook")
     runtime_names = sorted(["InputField", *_runtime_domain_names(body), "describe_inputs"])
     local.append(f"from .runtime import {', '.join(runtime_names)}")
-    if "Unset" in body:
-        local.append("from .tensor import Unset")
+    tensor_imports = [name for name in ("Unset", "align_runtime_keys") if name in body]
+    if tensor_imports:
+        local.append(f"from .tensor import {', '.join(tensor_imports)}")
     if "read_bound_inputs" in body:
         local.append("from .workbook import read_bound_inputs")
     lines = [
@@ -2988,6 +2994,13 @@ def emit_named_data(
             lines.append(f"{name}_DEFAULT = UNSET")
         elif series.direction == "input":
             lines.append(f"{name}_DEFAULT = {name}")
+    label_cells = {
+        series.series_id: dict(series.formula_label_addresses)
+        for series in retained
+        if series.direction == "input" and series.formula_label_addresses
+    }
+    if label_cells:
+        lines.append(f"LABEL_CELLS = {label_cells!r}")
     if override_ids:
         lines.append(f"OVERRIDE_INPUTS = {_python_literal(override_ids)}")
     for table, values in literal_tables.items():

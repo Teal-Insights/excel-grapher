@@ -20,6 +20,7 @@ from excel_grapher.exporter.export_runtime.tensor import (
     SeriesSpec,
     TemplateSeriesSpec,
     Tensor,
+    align_runtime_keys,
     define_series,
     label_axis,
 )
@@ -214,6 +215,68 @@ def test_provenance_template_bind_rewrites_row_cells_over_runtime_keys() -> None
         (2027,): "Engine!D10",
         (2028,): "Engine!E10",
     }
+
+
+def _snapshot_growth() -> Series[float]:
+    template = AxisTemplate("TIME_PERIOD", int, size=2, labeller="years", snapshot=(2024, 2025))
+    domain = Domain.product(Axis("TIME_PERIOD", (2024, 2025), int))
+    schema = SchemaTemplate(
+        "growth", DomainTemplate.product(template), (int, float, str, type(None))
+    )
+    return Series(domain, (3.5, 4.0), schema=schema, cells=None)
+
+
+def _year_labeller(*keys: int) -> Series[int]:
+    axis = Axis("TIME_PERIOD", keys, int)
+    domain = Domain.product(axis)
+    return define_series("years", domain, keys, cells=None, value_types=(int, str, type(None)))
+
+
+def test_align_runtime_keys_moves_snapshot_values_onto_labeller_keys() -> None:
+    aligned = align_runtime_keys(_snapshot_growth(), TIME_PERIOD=_year_labeller(2025, 2026))
+    assert aligned.domain.axes[0].keys == (2025, 2026)
+    assert tuple(value for _coord, value in aligned.items()) == (3.5, 4.0)
+
+
+def test_align_runtime_keys_keeps_a_tensor_already_on_the_labeller() -> None:
+    labeller = _year_labeller(2025, 2026)
+    shifted = Series(
+        labeller.domain,
+        (3.5, 4.0),
+        schema=_snapshot_growth().schema,
+        cells=None,
+    )
+    assert align_runtime_keys(shifted, TIME_PERIOD=labeller) is shifted
+
+
+def test_align_runtime_keys_slices_a_subset_of_a_longer_labeller() -> None:
+    template = AxisTemplate(
+        "TIME_PERIOD",
+        int,
+        size=2,
+        labeller="years",
+        snapshot=(2026, 2027),
+        source=(2024, 2025, 2026, 2027, 2028),
+    )
+    domain = Domain.product(Axis("TIME_PERIOD", (2026, 2027), int))
+    schema = SchemaTemplate(
+        "growth", DomainTemplate.product(template), (int, float, str, type(None))
+    )
+    series = Series(domain, (1.0, 2.0), schema=schema, cells=None)
+    aligned = align_runtime_keys(series, TIME_PERIOD=_year_labeller(2030, 2031, 2032, 2033, 2034))
+    assert aligned.domain.axes[0].keys == (2032, 2033)
+    assert tuple(value for _coord, value in aligned.items()) == (1.0, 2.0)
+
+
+def test_align_runtime_keys_rejects_keys_outside_snapshot_and_labeller() -> None:
+    foreign = Series(
+        Domain.product(Axis("TIME_PERIOD", (2030, 2031), int)),
+        (3.5, 4.0),
+        schema=_snapshot_growth().schema,
+        cells=None,
+    )
+    with pytest.raises(SchemaError, match="2030"):
+        align_runtime_keys(foreign, TIME_PERIOD=_year_labeller(2025, 2026))
 
 
 def test_publish_and_as_records_accept_a_schema_template() -> None:

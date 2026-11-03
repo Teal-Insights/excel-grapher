@@ -208,8 +208,197 @@ def test_from_workbook_reuses_deferred_runtime_labeller_init(tmp_path: Path) -> 
     model = pkg.Model.from_workbook(workbook)
     assert list(model.path.items()) == list(expected.items())
     shifted = _labelled_workbook(tmp_path, first=2025, shock_year=2026)
-    with pytest.raises(pkg.tensor.SchemaError):
-        pkg.Model.from_workbook(shifted)
+    shifted_model = pkg.Model.from_workbook(shifted)
+    assert shifted_model.first_year == 2025
+    assert tuple(shifted_model.growth.domain.axes[0].keys) == (2025, 2026, 2027)
+    assert tuple(value for _coord, value in shifted_model.growth.items()) == (3.5, 4.0, 4.5)
+    assert tuple(shifted_model.path.domain.axes[0].keys) == (2025, 2026, 2027)
+    assert [value for _coord, value in shifted_model.path.items()] == pytest.approx([3.5, 4.5, 5.5])
+
+
+def _formula_header_workbook(path: Path, *, anchor: int, left: float, right: float) -> Path:
+    """Value row keyed by formula headers driven by `anchor`."""
+    return write_workbook(
+        path,
+        {
+            "Inputs": {
+                "A1": anchor,
+                "A2": "=A1",
+                "B2": "=A2+1",
+                "A3": left,
+                "B3": right,
+                "A4": "=A3+1",
+                "B4": "=B3+1",
+            }
+        },
+    )
+
+
+def _formula_header_bindings() -> dict:
+    return bindings_document(
+        series_entry("anchor", "Inputs!A1", direction="input", dtype="int"),
+        series_entry(
+            "amount",
+            "Inputs!A3:B3",
+            layout="series",
+            direction="input",
+            header_row=2,
+        ),
+        series_entry(
+            "path",
+            "Inputs!A4:B4",
+            layout="series",
+            direction="output",
+            header_row=2,
+        ),
+    )
+
+
+def _literal_header_workbook(path: Path, *, left_year: int, right_year: int) -> Path:
+    return write_workbook(
+        path,
+        {
+            "Inputs": {
+                "A2": left_year,
+                "B2": right_year,
+                "A3": 10,
+                "B3": 20,
+                "A4": "=A3+1",
+                "B4": "=B3+1",
+            }
+        },
+    )
+
+
+def _literal_header_bindings() -> dict:
+    return bindings_document(
+        series_entry(
+            "amount",
+            "Inputs!A3:B3",
+            layout="series",
+            direction="input",
+            header_row=2,
+        ),
+        series_entry(
+            "path",
+            "Inputs!A4:B4",
+            layout="series",
+            direction="output",
+            header_row=2,
+        ),
+    )
+
+
+def _row_label_workbook(path: Path, *, anchor: int, top: float, bottom: float) -> Path:
+    return write_workbook(
+        path,
+        {
+            "Inputs": {
+                "A1": anchor,
+                "A2": "=A1",
+                "A3": "=A2+1",
+                "B2": top,
+                "B3": bottom,
+                "C2": "=B2+1",
+                "C3": "=B3+1",
+            }
+        },
+    )
+
+
+def _row_label_bindings() -> dict:
+    return bindings_document(
+        series_entry("anchor", "Inputs!A1", direction="input", dtype="int"),
+        series_entry(
+            "amount",
+            "Inputs!B2:B3",
+            layout="series",
+            direction="input",
+            label_column="A",
+        ),
+        series_entry(
+            "path",
+            "Inputs!C2:C3",
+            layout="series",
+            direction="output",
+            label_column="A",
+        ),
+    )
+
+
+def test_from_workbook_rekeys_formula_column_headers(tmp_path: Path) -> None:
+    template = _formula_header_workbook(tmp_path / "template.xlsx", anchor=2024, left=10, right=20)
+    _plant_formula_cache(template, "A2", "2024")
+    _plant_formula_cache(template, "B2", "2025")
+    pkg = load_package(
+        generate_inverted(template, _formula_header_bindings()),
+        tmp_path,
+        name="from_workbook_formula_headers",
+    )
+    Model = pkg.Model
+    assert tuple(Model.from_workbook(template).amount.domain.axes[0].keys) == (2024, 2025)
+    assert Model.from_workbook(template).path[2024] == pytest.approx(11)
+    assert Model.from_defaults().amount.domain.axes[0].keys == (2024, 2025)
+
+    case = _formula_header_workbook(tmp_path / "case.xlsx", anchor=2025, left=7, right=8)
+    _plant_formula_cache(case, "A2", "2025")
+    _plant_formula_cache(case, "B2", "2026")
+    model = Model.from_workbook(case)
+    assert model.anchor == 2025
+    assert tuple(model.amount.domain.axes[0].keys) == (2025, 2026)
+    assert tuple(value for _coord, value in model.amount.items()) == (7, 8)
+    assert tuple(model.path.domain.axes[0].keys) == (2025, 2026)
+    assert model.path[2025] == pytest.approx(8)
+    assert model.path[2026] == pytest.approx(9)
+
+
+def test_from_workbook_formula_headers_fail_closed(tmp_path: Path) -> None:
+    template = _formula_header_workbook(tmp_path / "template.xlsx", anchor=2024, left=10, right=20)
+    _plant_formula_cache(template, "A2", "2024")
+    _plant_formula_cache(template, "B2", "2025")
+    pkg = load_package(
+        generate_inverted(template, _formula_header_bindings()),
+        tmp_path,
+        name="from_workbook_formula_headers_closed",
+    )
+    missing = _formula_header_workbook(tmp_path / "missing.xlsx", anchor=2025, left=7, right=8)
+    with pytest.raises(pkg.tensor.SchemaError, match="no cached value"):
+        pkg.Model.from_workbook(missing)
+    duplicate = _formula_header_workbook(tmp_path / "duplicate.xlsx", anchor=2025, left=7, right=8)
+    _plant_formula_cache(duplicate, "A2", "2025")
+    _plant_formula_cache(duplicate, "B2", "2025")
+    with pytest.raises(pkg.tensor.SchemaError, match="duplicate"):
+        pkg.Model.from_workbook(duplicate)
+
+
+def test_from_workbook_keeps_literal_column_headers(tmp_path: Path) -> None:
+    template = _literal_header_workbook(tmp_path / "template.xlsx", left_year=2024, right_year=2025)
+    pkg = load_package(
+        generate_inverted(template, _literal_header_bindings()),
+        tmp_path,
+        name="from_workbook_literal_headers",
+    )
+    edited = _literal_header_workbook(tmp_path / "edited.xlsx", left_year=2099, right_year=2100)
+    model = pkg.Model.from_workbook(edited)
+    assert tuple(model.amount.domain.axes[0].keys) == (2024, 2025)
+    assert model.path[2024] == pytest.approx(11)
+
+
+def test_from_workbook_rekeys_formula_row_labels(tmp_path: Path) -> None:
+    template = _row_label_workbook(tmp_path / "template.xlsx", anchor=2024, top=10, bottom=20)
+    _plant_formula_cache(template, "A2", "2024")
+    _plant_formula_cache(template, "A3", "2025")
+    pkg = load_package(
+        generate_inverted(template, _row_label_bindings()),
+        tmp_path,
+        name="from_workbook_formula_rows",
+    )
+    case = _row_label_workbook(tmp_path / "case.xlsx", anchor=2025, top=7, bottom=8)
+    _plant_formula_cache(case, "A2", "2025")
+    _plant_formula_cache(case, "A3", "2026")
+    model = pkg.Model.from_workbook(case)
+    assert tuple(model.amount.domain.axes[0].keys) == (2025, 2026)
+    assert model.path[2026] == pytest.approx(9)
 
 
 def _override_workbook(path: Path, *, seed: float = 0.05, slot: object = "=A1") -> Path:
