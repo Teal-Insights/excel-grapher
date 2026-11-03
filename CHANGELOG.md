@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.4 (2026-11-03)
+
+### Bug Fixes
+
+- **exporter**: Accept value_map needles in from_workbook
+  ([`17bbc08`](https://github.com/Teal-Insights/excel-grapher/commit/17bbc082d4c7972f3d0fbd5cc491dd39bf8c89d7))
+
+### Chores
+
+- **deps**: Require certifi>=2026.10.19
+  ([`3e0bb57`](https://github.com/Teal-Insights/excel-grapher/commit/3e0bb57d4ddfcd6b4850acc92e84b3b02140dcf4))
+
+
 ## v24.1.3 (2026-10-01)
 
 ### Bug Fixes
