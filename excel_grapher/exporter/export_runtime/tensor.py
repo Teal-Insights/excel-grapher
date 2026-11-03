@@ -35,6 +35,26 @@ class SchemaError(ValueError):
     """A tensor violates a generated series contract."""
 
 
+class Unset:
+    """No typed-over value; the template formula stays in force.
+
+    `input.mode: override` uses the `UNSET` singleton when a caller or a
+    case workbook does not displace the cell. A tensor may carry `UNSET`
+    at individual coordinates so other coordinates can still be literals.
+    """
+
+    def __repr__(self) -> str:
+        return "UNSET"
+
+
+UNSET = Unset()
+
+
+def _is_tensor_value(value: object) -> bool:
+    """Return True for a workbook scalar or an unset override coordinate."""
+    return value is UNSET or type(value) in (int, float, str, bool, date, datetime, type(None))
+
+
 @dataclass(frozen=True, slots=True)
 class Axis:
     """An ordered semantic dimension with explicitly typed keys."""
@@ -396,10 +416,7 @@ class Tensor(Generic[T]):
         values = tuple(self._values)
         if len(values) != len(self.domain):
             raise DomainError(f"expected {len(self.domain)} values, received {len(values)}")
-        if any(
-            type(value) not in (int, float, str, bool, date, datetime, type(None))
-            for value in values
-        ):
+        if any(not _is_tensor_value(value) for value in values):
             raise SchemaError("tensor values must be immutable workbook scalars")
         object.__setattr__(self, "_values", values)
 
@@ -620,6 +637,8 @@ class TensorSchema:
         if exact and len(tensor.domain) != len(self.domain):
             raise SchemaError(f"{self.series_id}: result must exactly cover its declared domain")
         for coord, value in tensor.items():
+            if value is UNSET:
+                continue
             if type(value) not in self.value_types:
                 raise SchemaError(
                     f"{self.series_id}: coordinate {coord!r} has invalid value type {type(value).__name__}"

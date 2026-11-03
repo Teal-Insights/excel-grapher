@@ -152,7 +152,7 @@ Use **`input.mode: override`** for the Excel **typed-over-formula** pattern: cel
 
 - Resolve **graph nodes** in `data_range` (formula cells and, when mixed, leaf cells too).
 - Require **at least one formula cell** in the range (`no_formula_override_targets` otherwise).
-- Package export does **not** emit `set_*` methods; bind the cell as an input so callers pass the value as a `compute_*` argument. The evaluation walk uses that argument instead of re-evaluating the cell formula.
+- Package export emits the series as an optional input (there is no `set_*` method). The default is unset, so omitting the argument evaluates the template formula. A `compute_*` / `Model` argument, or a literal in a case workbook, displaces that formula for the evaluation walk. `from_workbook` reads the cell itself: a remaining formula stays unset, so the extracted formula runs even when the cached result is stale, and a literal binds in its place. A literal outside the series domain fails closed. An untouched template matches `from_defaults`.
 - Leave graph formulas and dependency edges unchanged (evaluation-time displacement only).
 
 ```yaml

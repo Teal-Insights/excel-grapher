@@ -55,6 +55,7 @@ from excel_grapher.series_bindings.input_coerce import (
     measure_domain_from_series,
     public_value_from_workbook,
 )
+from excel_grapher.series_bindings.normalize import is_override_input
 from excel_grapher.series_bindings.resolve import _WorkbookValues
 
 if TYPE_CHECKING:
@@ -275,6 +276,64 @@ def _annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS) -
     if alias is not None:
         return f"data.{alias}"
     return f"data.Series[{_value_annotation(series, domains)}]"
+
+
+def _is_override_series(series: BoundSeries) -> bool:
+    """True when callers may displace this series' template formula."""
+    return series.direction == "input" and is_override_input(dict(series.raw))
+
+
+def _input_annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS) -> str:
+    """Annotation for a bound input, including an absent override."""
+    base = _annotation(series, domains)
+    if _is_override_series(series):
+        return f"{base} | Unset"
+    return base
+
+
+def _override_input_ids(
+    catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None
+) -> tuple[str, ...]:
+    """Override input ids in the same order as `Model` constructor fields."""
+    return tuple(
+        series_id
+        for series_id in _input_series_ids(catalog, deps)
+        if _is_override_series(catalog.get(series_id))
+    )
+
+
+def _append_override_param(signature: str, annotation: str) -> str:
+    """Add the raw override value to a keyword-only formula signature."""
+    param = f"_override: {annotation}"
+    head, _arrow, tail = signature.partition(" -> ")
+    if head.endswith("()"):
+        head = f"{head[:-2]}(*, {param})"
+    elif head.endswith(")"):
+        head = f"{head[:-1]}, {param})"
+    else:
+        raise InvertedTreeExportError(f"cannot add an override parameter to {signature!r}")
+    return f"{head} -> {tail}"
+
+
+def _override_subscript(series: BoundSeries, names: Mapping[str, str]) -> str:
+    """Index expression for one coordinate of an override tensor."""
+    axes = series.tensor_domain.axes
+    if len(axes) == 1:
+        return names[axes[0].name]
+    return ", ".join(names[axis.name] for axis in axes)
+
+
+def _refuse_override_recurrence(scc: tuple[str, ...], catalog: SeriesCatalog) -> None:
+    """Fail closed when an override series sits in a multi-series cycle."""
+    if len(scc) < 2:
+        return
+    names = [sid for sid in scc if _is_override_series(catalog.get(sid))]
+    if not names:
+        return
+    listed = ", ".join(repr(name) for name in names)
+    raise InvertedTreeExportError(
+        f"input.mode override series {listed} cannot join a recurrence group"
+    )
 
 
 def _binding(series: BoundSeries) -> str:
@@ -819,6 +878,11 @@ def _semantic_body(
         expression = next(iter(groups))
         scanned = "\n".join((*tables, expression))
         lines = [*_runtime_axis_prologue(catalog, scanned), *table_lines]
+        if _is_override_series(series):
+            lines[0:0] = [
+                "    if _override is not data.UNSET:",
+                "        return _override",
+            ]
         if not deferred:
             lines.extend(
                 [
@@ -876,6 +940,16 @@ def _semantic_body(
             )
     for remap_name, mapping in key_remaps.items():
         lines.append(f"        {remap_name} = {mapping!r}")
+    if _is_override_series(series):
+        subscript = _override_subscript(series, names)
+        lines.extend(
+            [
+                "        if _override is not data.UNSET:",
+                f"            _displaced = _override[{subscript}]",
+                "            if _displaced is not data.UNSET:",
+                "                return _displaced",
+            ]
+        )
     all_coordinates = {coord for coordinates in groups.values() for coord in coordinates}
 
     def condition(coordinates: list[tuple[object, ...]]) -> str:
@@ -1038,6 +1112,7 @@ def emit_named_internals(
             if scc in emitted_groups:
                 continue
             emitted_groups.add(scc)
+            _refuse_override_recurrence(scc, catalog)
             source, group_used = _emit_recurrence_group(
                 scc, catalog, deps, graph, named_axes, literal_tables, domains
             )
@@ -1050,11 +1125,14 @@ def emit_named_internals(
             series, catalog, info, graph, named_axes, literal_tables=literal_tables
         )
         used |= body_used
+        signature = _signature(series.series_id, params, _annotation(series, domains), domains)
+        if _is_override_series(series):
+            signature = _append_override_param(signature, _input_annotation(series, domains))
         functions.append(
             "\n".join(
                 [
                     _publish_line(series),
-                    _signature(series.series_id, params, _annotation(series, domains), domains),
+                    signature,
                     f'    """Compute `{series.series_id}` using authored coordinate identities."""',
                     *_schema_checks(params, catalog),
                     *body,
@@ -1063,6 +1141,8 @@ def emit_named_internals(
         )
     joined = "\n\n".join(functions)
     tensor_names = ["Domain", "Series"]
+    if any(_is_override_series(series) for series in _retained_formula_series(catalog)):
+        tensor_names.append("Unset")
     if "label_axis" in used:
         tensor_names.append("label_axis")
         used.remove("label_axis")
@@ -1377,6 +1457,13 @@ def _input_check(
     used: set[str] = set()
     series_id = series.series_id
     quoted_id = _python_literal(series_id)
+    if _is_override_series(series):
+        lines.extend(
+            [
+                f"    if {series_id} is UNSET:",
+                f"        return {series_id}",
+            ]
+        )
     runtime_axes = [
         (axis, labeller)
         for axis in series.tensor_domain.axes
@@ -1407,6 +1494,13 @@ def _input_check(
                 else f"{_binding(series)}.required"
             )
             lines.append(f"    for coordinate in {required}:")
+            if _is_override_series(series):
+                lines.extend(
+                    [
+                        f"        if {series_id}[coordinate] is UNSET:",
+                        "            continue",
+                    ]
+                )
             lines.extend(
                 _require_domain_lines(
                     f"{series_id}[coordinate]",
@@ -1431,11 +1525,16 @@ def _input_check(
                 if bind
                 else f"{_binding(series)}.required"
             )
-            lines.extend(
-                [
-                    f"    for coordinate in {required}:",
-                    f"        require_input_domain({series_id}[coordinate], {domain_literal}, series_id={quoted_id} + repr(coordinate))",
-                ]
+            lines.append(f"    for coordinate in {required}:")
+            if _is_override_series(series):
+                lines.extend(
+                    [
+                        f"        if {series_id}[coordinate] is UNSET:",
+                        "            continue",
+                    ]
+                )
+            lines.append(
+                f"        require_input_domain({series_id}[coordinate], {domain_literal}, series_id={quoted_id} + repr(coordinate))"
             )
     mapping = input_value_map_from_series(series.raw)
     if mapping is not None:
@@ -1464,7 +1563,7 @@ def _input_check_functions(
             continue
         used |= check_used
         checked.append(series.series_id)
-        annotation = _annotation(series, domains)
+        annotation = _input_annotation(series, domains)
         checks.append(
             "\n".join(
                 [
@@ -1501,6 +1600,8 @@ def emit_named_validation(
     if any(not catalog.get(sid).single_valued for sid in checked):
         local.append("from . import data")
     local.extend(_generated_helper_imports(used))
+    if "UNSET" in blob or "Unset" in blob:
+        local.append("from .tensor import UNSET, Unset")
     extra = [*stdlib, *(["", *local] if stdlib and local else local)]
     if extra:
         lines.extend(extra)
@@ -1524,12 +1625,16 @@ def _model_attribute(
     domains: Mapping[str, str] = _NO_DOMAINS,
 ) -> list[str]:
     series_id = series.series_id
-    args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids)
-    return [
+    call_args = [f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids]
+    lines = [
         "    @cached_property",
         f"    def {series_id}(self) -> {_annotation(series, domains)}:",
-        f"        return internals.{series_id}({args})",
     ]
+    if _is_override_series(series):
+        lines.append(f'        _override = getattr(self, "_{series_id}__override", data.UNSET)')
+        call_args.append("_override=_override")
+    lines.append(f"        return internals.{series_id}({', '.join(call_args)})")
+    return lines
 
 
 def _model_recurrence_group(
@@ -1593,20 +1698,41 @@ def _input_name_set(names: Sequence[str]) -> str:
     return "{" + ", ".join(_python_literal(name) for name in names) + "}"
 
 
-def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
+def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()) -> list[str]:
     """Emit `_bind_inputs`, the shared CHECKS path for Model and input bundles."""
     deferred_ids = _deferred_runtime_inputs(catalog)
     deferred = tuple(
         series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
     )
-    lines = [
-        "def _bind_inputs(target: object, inputs: dict[str, Any], *, validate: bool = True) -> None:",
-        "    if not validate:",
-        "        for name, value in inputs.items():",
-        "            setattr(target, name, value)",
-        "        return",
-        "    for name, value in inputs.items():",
-    ]
+    lines: list[str] = []
+    lines.append(
+        "def _bind_inputs(target: object, inputs: dict[str, Any], *, validate: bool = True) -> None:"
+    )
+    if override_ids:
+        lines.extend(
+            [
+                "    def store(name: str, value: object) -> None:",
+                "        if name in _OVERRIDE_IDS:",
+                '            setattr(target, f"_{name}__override", value)',
+                "            return",
+                "        setattr(target, name, value)",
+                "",
+            ]
+        )
+        plain = "store(name, value)"
+        checked = "store(name, value if check is None else check(value))"
+    else:
+        plain = "setattr(target, name, value)"
+        checked = "setattr(target, name, value if check is None else check(value))"
+    lines.extend(
+        [
+            "    if not validate:",
+            "        for name, value in inputs.items():",
+            f"            {plain}",
+            "        return",
+            "    for name, value in inputs.items():",
+        ]
+    )
     if deferred:
         names = ", ".join(repr(name) for name in deferred)
         lines.append(f"        if name in {{{names}}}:")
@@ -1614,11 +1740,11 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
     lines.extend(
         [
             "        check = validation.CHECKS.get(name)",
-            "        setattr(target, name, value if check is None else check(value))",
+            f"        {checked}",
         ]
     )
     if not deferred:
-        return lines
+        return _with_override_ids(lines, override_ids)
     labellers = tuple(
         series.series_id for series in _retained(catalog) if _is_runtime_labeller(series)
     )
@@ -1633,18 +1759,37 @@ def _bind_inputs_source(catalog: SeriesCatalog) -> list[str]:
             if labeller is not None and labeller.series_id != series.series_id:
                 extras.append(f"{axis.name}=target.{labeller.series_id}")
         extra = f", {', '.join(extras)}" if extras else ""
-        lines.extend(
-            [
-                f"    if {series_id!r} in inputs:",
-                f"        value = inputs[{series_id!r}]",
-                f"        check = validation.CHECKS.get({series_id!r})",
-                "        setattr(",
-                "            target,",
-                f"            {series_id!r},",
-                f"            value if check is None else check(value{extra}),",
-                "        )",
-            ]
-        )
+        if override_ids:
+            lines.extend(
+                [
+                    f"    if {series_id!r} in inputs:",
+                    f"        value = inputs[{series_id!r}]",
+                    f"        check = validation.CHECKS.get({series_id!r})",
+                    f"        store({series_id!r}, value if check is None else check(value{extra}))",
+                ]
+            )
+        else:
+            lines.extend(
+                [
+                    f"    if {series_id!r} in inputs:",
+                    f"        value = inputs[{series_id!r}]",
+                    f"        check = validation.CHECKS.get({series_id!r})",
+                    "        setattr(",
+                    "            target,",
+                    f"            {series_id!r},",
+                    f"            value if check is None else check(value{extra}),",
+                    "        )",
+                ]
+            )
+    return _with_override_ids(lines, override_ids)
+
+
+def _with_override_ids(lines: list[str], override_ids: Sequence[str]) -> list[str]:
+    """Place override ids after `_bind_inputs` so the module opens on a function."""
+    if not override_ids:
+        return lines
+    listed = ", ".join(_python_literal(name) for name in override_ids)
+    lines.extend(["", "", f"_OVERRIDE_IDS = frozenset({{{listed}}})"])
     return lines
 
 
@@ -1672,7 +1817,8 @@ def _model_from_defaults(
     lines.append("        *,")
     for series in inputs:
         default = exprs.get(series.series_id, f"data.{series.series_id.upper()}_DEFAULT")
-        lines.append(f"        {series.series_id}: {_annotation(series, domains)} = {default},")
+        annotation = _input_annotation(series, domains)
+        lines.append(f"        {series.series_id}: {annotation} = {default},")
     lines.extend(
         [
             "    ) -> Model:",
@@ -1689,8 +1835,32 @@ def _model_from_defaults(
     return lines
 
 
-def _bound_inputs_mixin(*, translate_workbook_values: bool) -> str:
+def _bound_inputs_mixin(
+    *, translate_workbook_values: bool, override_ids: Sequence[str] = ()
+) -> str:
     """Shared workbook bind and CHECKS validation for Model and input bundles."""
+    if override_ids:
+        read_call = [
+            "        values = read_bound_inputs(",
+            "            Path(workbook),",
+            "            names,",
+            "            data,",
+            "            override_names=data.OVERRIDE_INPUTS,",
+            "        )",
+        ]
+        copy_back = [
+            "        for name in names:",
+            "            if name in _OVERRIDE_IDS:",
+            '                object.__setattr__(self, name, getattr(holder, f"_{name}__override"))',
+            "                continue",
+            "            object.__setattr__(self, name, getattr(holder, name))",
+        ]
+    else:
+        read_call = ["        values = read_bound_inputs(Path(workbook), names, data)"]
+        copy_back = [
+            "        for name in names:",
+            "            object.__setattr__(self, name, getattr(holder, name))",
+        ]
     if translate_workbook_values:
         read_tail = [
             "        values = {"
@@ -1718,13 +1888,13 @@ def _bound_inputs_mixin(*, translate_workbook_values: bool) -> str:
         "",
         "    @classmethod",
         "    def from_workbook(cls, workbook: Path | str, **overrides: object) -> Self:",
-        '        """Bind input leaves from a populated workbook of this vintage."""',
+        '        """Bind declared inputs from a populated workbook of this vintage."""',
         '        declared = getattr(cls, "__dataclass_fields__", None)',
         "        names = tuple(declared) if declared else cls._INPUT_IDS",
         "        unknown = overrides.keys() - set(names)",
         "        if unknown:",
         '            raise TypeError(f"unknown inputs: {sorted(unknown)}")',
-        "        values = read_bound_inputs(Path(workbook), names, data)",
+        *read_call,
         *read_tail,
         "        values.update(overrides)",
         "        return cls(**values)",
@@ -1737,8 +1907,7 @@ def _bound_inputs_mixin(*, translate_workbook_values: bool) -> str:
         "        names = {field.name for field in fields(self)}",
         "        values = {name: getattr(self, name) for name in names}",
         "        _bind_inputs(holder, values)",
-        "        for name in names:",
-        "            object.__setattr__(self, name, getattr(holder, name))",
+        *copy_back,
         "",
         "",
         "class _SnapshotInputs(_BoundInputs):",
@@ -1809,7 +1978,7 @@ def _input_class(
     for series in inputs:
         lines.extend(
             [
-                f"    {series.series_id}: {_annotation(series, domains)} = _field(",
+                f"    {series.series_id}: {_input_annotation(series, domains)} = _field(",
                 f"        metadata={_input_field_metadata(series)},",
                 "    )",
             ]
@@ -1893,7 +2062,7 @@ def _model_class(
         "",
     ]
     for series in inputs:
-        model.append(f"    {series.series_id}: {_annotation(series, domains)}")
+        model.append(f"    {series.series_id}: {_input_annotation(series, domains)}")
     model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog, deps))
     model.extend(_model_from_defaults(catalog, domains, deps, default_exprs))
@@ -1908,6 +2077,7 @@ def _model_class(
                 model.pop()
                 continue
             emitted_groups.add(scc)
+            _refuse_override_recurrence(scc, catalog)
             model.extend(_model_recurrence_group(scc, deps, catalog, domains))
             continue
         model.extend(_model_attribute(series, deps, catalog, domains))
@@ -1975,23 +2145,35 @@ def _value_maps_literal(maps: Mapping[str, Mapping[Any, Any]]) -> str:
     return "\n".join(lines)
 
 
-def _value_map_source(maps: Mapping[str, Mapping[Any, Any]]) -> str:
+def _value_map_source(
+    maps: Mapping[str, Mapping[Any, Any]], *, preserve_unset: bool = False
+) -> str:
     """Emit the needle-to-public helper used by workbook constructors."""
     if not maps:
         return ""
-    return "\n".join(
+    lines = [
+        f"_VALUE_MAPS: dict[str, dict[Any, Any]] = {_value_maps_literal(maps)}",
+        "",
+        "",
+        "def _public_workbook_value(name: str, value: object) -> object:",
+        '    """Map a workbook needle to its public `input.value_map` key."""',
+    ]
+    if preserve_unset:
+        lines.extend(
+            [
+                "    if value is data.UNSET:",
+                "        return value",
+            ]
+        )
+    lines.extend(
         [
-            f"_VALUE_MAPS: dict[str, dict[Any, Any]] = {_value_maps_literal(maps)}",
-            "",
-            "",
-            "def _public_workbook_value(name: str, value: object) -> object:",
-            '    """Map a workbook needle to its public `input.value_map` key."""',
             "    mapping = _VALUE_MAPS.get(name)",
             "    if mapping is None:",
             "        return value",
             "    return public_value_from_workbook(value, mapping, series_id=name)",
         ]
     )
+    return "\n".join(lines)
 
 
 def _public_default_exprs(
@@ -2009,6 +2191,8 @@ def _public_default_exprs(
         return {}
     exprs: dict[str, str] = {}
     for series_id, mapping in _catalog_value_maps(catalog, deps).items():
+        if _is_override_series(catalog.get(series_id)):
+            continue
         cell_value = next(iter(defaults.get(series_id, {}).values()), None)
         try:
             public = public_value_from_workbook(cell_value, mapping, series_id=series_id)
@@ -2029,6 +2213,7 @@ def emit_named_model(
 ) -> str:
     """Emit `Model` and per-output Inputs dataclasses."""
     value_maps = _catalog_value_maps(catalog, deps)
+    override_ids = _override_input_ids(catalog, deps)
     default_exprs = _public_default_exprs(catalog, deps, defaults)
     class_lines = _model_class(catalog, deps, scc_map, domains, default_exprs)
     input_classes: list[str] = []
@@ -2038,9 +2223,12 @@ def emit_named_model(
         input_classes.append(_input_class(output, leaves, catalog, domains))
         input_names.append(_inputs_class_name(output))
     sections = [
-        "\n".join(_bind_inputs_source(catalog)),
-        _value_map_source(value_maps),
-        _bound_inputs_mixin(translate_workbook_values=bool(value_maps)),
+        "\n".join(_bind_inputs_source(catalog, override_ids)),
+        _value_map_source(value_maps, preserve_unset=bool(override_ids)),
+        _bound_inputs_mixin(
+            translate_workbook_values=bool(value_maps),
+            override_ids=override_ids,
+        ),
         "\n".join(class_lines),
         *input_classes,
     ]
@@ -2070,6 +2258,8 @@ def emit_named_model(
         local.append("from .excel import public_value_from_workbook")
     runtime_names = sorted(["InputField", *_runtime_domain_names(body), "describe_inputs"])
     local.append(f"from .runtime import {', '.join(runtime_names)}")
+    if "Unset" in body:
+        local.append("from .tensor import Unset")
     if "read_bound_inputs" in body:
         local.append("from .workbook import read_bound_inputs")
     lines = [
@@ -2631,6 +2821,7 @@ def emit_named_data(
     from excel_grapher.exporter.inverted_tree.emit import _py_literal
 
     retained = _data_series(catalog, deps)
+    override_ids = _override_input_ids(catalog, deps)
     if defaults is None:
         defaults = _read_defaults(catalog, workbook, retained)
     labelled = _labelled_axes_map(catalog)
@@ -2654,6 +2845,8 @@ def emit_named_data(
             "coordinate_runs",
             "define_series",
         ]
+    if override_ids:
+        tensor_names.insert(0, "UNSET")
     off_graph_ids = tuple(
         series.series_id
         for series in retained
@@ -2704,7 +2897,9 @@ def emit_named_data(
             constant_series.append(series)
         if series.single_valued:
             lines.append(f"{name}_CELLS = {_provenance_source(series, named_axes)}")
-            if series.direction in {"input", "constant"}:
+            if _is_override_series(series):
+                lines.append(f"{name}_DEFAULT = UNSET")
+            elif series.direction in {"input", "constant"}:
                 constant = name + ("_DEFAULT" if series.direction == "input" else "")
                 value = next(iter(defaults[series.series_id].values()), None)
                 lines.append(f"{constant} = {_py_literal(value)}")
@@ -2759,7 +2954,7 @@ def emit_named_data(
             define_domain = f"Domain.product({snapshot})"
             if required_source is None:
                 required_source = domain_source
-        if series.direction in {"input", "constant"}:
+        if series.direction in {"input", "constant"} and not _is_override_series(series):
             cells = series.coordinate_cells
             values = tuple(defaults[series.series_id][cells[coord]] for coord in domain)
             values_source = _py_literal(values)
@@ -2789,8 +2984,12 @@ def emit_named_data(
         alias = _public_alias(series)
         if alias is not None:
             lines.append(f"{alias} = Series[{_value_annotation(series, domains)}]")
-        if series.direction == "input":
+        if _is_override_series(series):
+            lines.append(f"{name}_DEFAULT = UNSET")
+        elif series.direction == "input":
             lines.append(f"{name}_DEFAULT = {name}")
+    if override_ids:
+        lines.append(f"OVERRIDE_INPUTS = {_python_literal(override_ids)}")
     for table, values in literal_tables.items():
         lines.append(f"{table} = {dict(values)!r}")
     names = tuple(series.series_id.upper() for series in constant_series)
