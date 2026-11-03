@@ -842,3 +842,117 @@ def define_series(
     if not isinstance(domain, Domain):
         raise TypeError("define_series with values requires a bound Domain")
     return Series(domain, tuple(values), schema=schema, cells=cells)
+
+
+def relabel_series(series: Series[T], **axes: Axis) -> Series[T]:
+    """Return `series` with named axes replaced, keeping values by position.
+
+    Each replacement lists new keys in the same order as the axis it replaces.
+    Axes omitted from `axes` stay as they are. An identical replacement is a
+    no-op.
+
+    Args:
+        series: Series whose coordinates are rewritten.
+        **axes: Replacement axes keyed by axis name.
+
+    Returns:
+        `series` when no axis changes, otherwise a series on the new domain.
+
+    Raises:
+        SchemaError: A replacement differs in name or length from its axis.
+    """
+    if not axes:
+        return series
+    key_maps: list[dict[Any, Any] | None] = []
+    new_axes: list[Axis] = []
+    changed = False
+    series_id = series.schema.series_id
+    for axis in series.domain.axes:
+        replacement = axes.get(axis.name)
+        if replacement is None or replacement.keys == axis.keys:
+            key_maps.append(None)
+            new_axes.append(axis)
+            continue
+        if replacement.name != axis.name or len(replacement.keys) != len(axis.keys):
+            raise SchemaError(
+                f"{series_id}: axis {axis.name!r} cannot be relabelled "
+                f"from {axis.keys!r} to {replacement.keys!r}"
+            )
+        key_maps.append(dict(zip(axis.keys, replacement.keys, strict=True)))
+        new_axes.append(replacement)
+        changed = True
+    if not changed:
+        return series
+    records: list[tuple[Coordinate, T]] = []
+    for coord, value in series.items():
+        rewritten: list[Any] = []
+        for index, key in enumerate(coord):
+            mapping = key_maps[index]
+            rewritten.append(key if mapping is None else mapping[key])
+        records.append((tuple(rewritten), value))
+    if series.domain.coordinates is None:
+        domain = Domain.product(*new_axes)
+    else:
+        domain = Domain.explicit(
+            axes=tuple(new_axes), coordinates=tuple(coord for coord, _value in records)
+        )
+    tensor = Tensor.from_records(domain=domain, records=records)
+    return type(series)(tensor.domain, tensor._values, schema=series.schema, cells=series.cells)
+
+
+@overload
+def align_runtime_keys(series: Series[T], **labellers: Tensor[Any]) -> Series[T]: ...
+
+
+@overload
+def align_runtime_keys(series: object, **labellers: Tensor[Any]) -> object: ...
+
+
+def align_runtime_keys(series: object, **labellers: Tensor[Any]) -> object:
+    """Move snapshot-keyed values onto labeller keys, preserving position.
+
+    A series already on the labeller's keys is returned unchanged. Keys that
+    are neither the export snapshot nor those labels fail closed. Values that
+    are not a `Series`, including `UNSET`, pass through.
+
+    Args:
+        series: Input series read on the export snapshot, or an already
+            labelled series.
+        **labellers: Labeller tensors keyed by axis name.
+
+    Returns:
+        `series`, or the same values on the labeller's keys.
+
+    Raises:
+        SchemaError: `series` is on neither the snapshot nor the labeller, or
+            a labeller cannot bind the axis template.
+    """
+    if not isinstance(series, Series):
+        return series
+    schema = series.schema
+    if not isinstance(schema, SchemaTemplate):
+        return series
+    templates = {axis.name: axis for axis in schema.domain.axes if isinstance(axis, AxisTemplate)}
+    replacements: dict[str, Axis] = {}
+    for axis in series.domain.axes:
+        template = templates.get(axis.name)
+        labeller = labellers.get(axis.name)
+        if template is None or labeller is None:
+            continue
+        if not labeller.domain.axes:
+            raise SchemaError(f"{schema.series_id}: labeller for {axis.name!r} has no axes")
+        try:
+            bound = template.bind(labeller.domain.axes[0])
+        except AxisError as exc:
+            raise SchemaError(f"{schema.series_id}: {exc}") from exc
+        if axis.keys == bound.keys:
+            continue
+        if axis.keys != template.snapshot:
+            raise SchemaError(
+                f"{schema.series_id}: axis {axis.name!r} keys {axis.keys!r} "
+                f"do not match snapshot {template.snapshot!r} or labels {bound.keys!r}"
+            )
+        replacements[axis.name] = bound
+    if not replacements:
+        return series
+    return relabel_series(series, **replacements)

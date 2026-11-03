@@ -8,7 +8,11 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from excel_grapher.exporter.inverted_tree.catalog import SeriesCatalog, build_catalog
+from excel_grapher.exporter.inverted_tree.catalog import (
+    SeriesCatalog,
+    build_catalog,
+    refuse_incomparable_header_labellers,
+)
 from excel_grapher.exporter.inverted_tree.deps import (
     SeriesDeps,
     all_formula_root_cells,
@@ -253,6 +257,7 @@ def plan_inverted_tree(
     catalog = build_catalog(
         series_bindings, workbook=bindings_workbook, graph=graph, blank_ranges=blank_ranges
     )
+    refuse_incomparable_header_labellers(catalog)
     if not catalog.output_series():
         raise InvertedTreeExportError("inverted-tree codegen requires at least one output series")
     catalog_edges = collect_catalog_edges(catalog, graph, blank_rects=blank_rects)

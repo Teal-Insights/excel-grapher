@@ -70,6 +70,7 @@ from excel_grapher.series_bindings.ranges import (
     series_data_ranges,
 )
 from excel_grapher.series_bindings.resolve import (
+    _bind_source_addresses,
     _component_dtype,
     _effective_read_as,
     _structure_source_addresses,
@@ -162,6 +163,7 @@ class BoundSeries:
     graph_cells: frozenset[CanonicalAddress] | None = None
     key_types: tuple[str, ...] = ()
     blank_default: bool = False
+    formula_label_addresses: tuple[tuple[str, tuple[str, ...]], ...] = ()
     _cell_indices: dict[CanonicalAddress, int] = field(init=False, repr=False, compare=False)
     _rect: tuple[str, int, int, int, int] | None = field(init=False, repr=False, compare=False)
     _holes_by_index: dict[int, SeriesHole] = field(init=False, repr=False, compare=False)
@@ -724,6 +726,38 @@ def _labeller_index(
     return MappingProxyType({name: tuple(entries) for name, entries in grouped.items()})
 
 
+def _header_label_index(
+    series: Mapping[str, BoundSeries],
+) -> Mapping[str, tuple[tuple[BoundSeries, frozenset[str | int]], ...]]:
+    """Group inputs whose column or row labels are formulas, by axis name.
+
+    Covered keys are that axis's snapshot keys. Catalog order is preserved
+    so the widest input is a stable anchor when several nest.
+
+    Raises:
+        InvertedTreeExportError: A covered key is not a string or integer.
+    """
+    grouped: dict[str, list[tuple[BoundSeries, frozenset[str | int]]]] = {}
+    for item in series.values():
+        if item.direction != "input" or not item.formula_label_addresses:
+            continue
+        points = item.domain if item.authored_domain is None else item.authored_domain
+        for axis_name, _addresses in item.formula_label_addresses:
+            if axis_name not in item.key_fields:
+                continue
+            covered: set[str | int] = set()
+            for point in points:
+                key = point[axis_name]
+                if type(key) is not str and type(key) is not int:
+                    raise InvertedTreeExportError(
+                        f"series {item.series_id!r}: axis {axis_name!r} key {key!r} "
+                        "must be a string or integer"
+                    )
+                covered.add(key)
+            grouped.setdefault(axis_name, []).append((item, frozenset(covered)))
+    return MappingProxyType({name: tuple(entries) for name, entries in grouped.items()})
+
+
 @dataclass(frozen=True, slots=True)
 class SeriesCatalog:
     """Bindings series keyed by id, with reverse address lookup.
@@ -747,9 +781,13 @@ class SeriesCatalog:
     _labellers_by_axis: Mapping[str, tuple[tuple[BoundSeries, frozenset[str | int]], ...]] = field(
         init=False, repr=False, compare=False
     )
+    _header_labels_by_axis: Mapping[str, tuple[tuple[BoundSeries, frozenset[str | int]], ...]] = (
+        field(init=False, repr=False, compare=False)
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "_labellers_by_axis", _labeller_index(self.series))
+        object.__setattr__(self, "_header_labels_by_axis", _header_label_index(self.series))
 
     def get(self, series_id: str) -> BoundSeries:
         """Return the series named `series_id`."""
@@ -825,11 +863,37 @@ class SeriesCatalog:
         """Return the non-constant labeller covering `keys` for `axis_name`.
 
         A `constant` labeller is a static axis: keys are known at export.
+        When no `axis_labels` series covers `keys`, an input whose
+        `column_header` or `row_label` cells are formulas supplies the keys
+        from the case workbook at load time. The widest such input wins.
         """
         labeller = self.labeller_for(axis_name, keys)
-        if labeller is None or labeller.direction == "constant":
+        if labeller is not None:
+            if labeller.direction == "constant":
+                return None
+            return labeller
+        return self._header_labeller(axis_name, keys)
+
+    def _header_labeller(self, axis_name: str, keys: Sequence[str | int]) -> BoundSeries | None:
+        entries = self._header_labels_by_axis.get(axis_name)
+        if not entries:
             return None
-        return labeller
+        requested = set(keys)
+        matches = [(series, covered) for series, covered in entries if requested <= covered]
+        if not matches:
+            return None
+        series, _covered = max(matches, key=lambda item: len(item[1]))
+        return series
+
+    def header_labeller_ids(self) -> dict[str, str]:
+        """Map each formula-header axis to its widest input series id."""
+        mapping: dict[str, str] = {}
+        for axis_name, entries in self._header_labels_by_axis.items():
+            if not entries:
+                continue
+            series, _covered = max(entries, key=lambda item: len(item[1]))
+            mapping[axis_name] = series.series_id
+        return mapping
 
 
 def _direction_of(entry: Mapping[str, Any]) -> Direction:
@@ -1210,6 +1274,103 @@ def _value_is_formula(value: object) -> bool:
     return getattr(value, "text", None) is not None
 
 
+def _direct_label_addresses(series: BoundSeries) -> dict[str, tuple[str, ...]]:
+    """Return each label axis's header cells in snapshot key order.
+
+    Only `column_header` and `row_label` binds are included. `fill` walks are
+    not followed: each key contributes its own header or label cell. Addresses
+    come from the key-point domain, so repeated coordinates are not forced
+    through `Domain`.
+    """
+    points = series.domain if series.authored_domain is None else series.authored_domain
+    cells = series.cells if series.authored_cells is None else series.authored_cells
+    found: dict[str, tuple[str, ...]] = {}
+    for field_name in series.key_fields:
+        bind = series.dimension_bind(field_name)
+        if not isinstance(bind, Mapping) or bind.get("kind") not in {"column_header", "row_label"}:
+            continue
+        addresses: list[str] = []
+        seen: set[object] = set()
+        for point, cell in zip(points, cells, strict=True):
+            key = point[field_name]
+            if key in seen:
+                continue
+            seen.add(key)
+            sources = _bind_source_addresses(dict(bind), cell)
+            if not sources:
+                raise InvertedTreeExportError(
+                    f"series {series.series_id!r}: axis {field_name!r} key {key!r} has no header cell"
+                )
+            addresses.append(sources[0])
+        if addresses:
+            found[field_name] = tuple(addresses)
+    return found
+
+
+def _attach_formula_label_addresses(
+    series_map: dict[str, BoundSeries],
+    workbook: Path | str,
+    *,
+    graph: DependencyGraph | None,
+) -> None:
+    """Record header cells for inputs whose labels are workbook formulas.
+
+    Literal headers stay on the export snapshot. An axis is formula-labelled
+    when any of its direct header or label cells stores a formula. Builds
+    without a dependency graph skip the scan: export always supplies a graph,
+    and formula text is not on the cached-value workbook already open for
+    key resolution.
+    """
+    if graph is None:
+        return
+    pending: list[tuple[BoundSeries, dict[str, tuple[str, ...]]]] = []
+    for series in series_map.values():
+        if series.direction != "input" or series.single_valued:
+            continue
+        addresses = _direct_label_addresses(series)
+        if addresses:
+            pending.append((series, addresses))
+    if not pending:
+        return
+    wanted = [
+        as_canonical(address)
+        for _series, axes in pending
+        for addresses in axes.values()
+        for address in addresses
+    ]
+    formulas = _stored_formula_addresses(workbook, wanted)
+    for series, addresses in pending:
+        formula_axes = tuple(
+            (axis_name, axis_addresses)
+            for axis_name, axis_addresses in addresses.items()
+            if any(as_canonical(address) in formulas for address in axis_addresses)
+        )
+        if not formula_axes:
+            continue
+        series_map[series.series_id] = replace(series, formula_label_addresses=formula_axes)
+
+
+def refuse_incomparable_header_labellers(catalog: SeriesCatalog) -> None:
+    """Fail when formula-header inputs on one axis do not nest.
+
+    Downstream series bind one labeller per axis name. Two inputs whose key
+    sets neither contain the other cannot share that labeller.
+
+    Raises:
+        InvertedTreeExportError: Two formula-header inputs on one axis have
+            incomparable key sets.
+    """
+    for axis_name, entries in catalog._header_labels_by_axis.items():
+        for index, (series, keys) in enumerate(entries):
+            for other, other_keys in entries[index + 1 :]:
+                if keys <= other_keys or other_keys <= keys:
+                    continue
+                raise InvertedTreeExportError(
+                    f"axis {axis_name!r}: formula headers on {series.series_id!r} and "
+                    f"{other.series_id!r} do not nest"
+                )
+
+
 def _stored_formula_addresses(
     workbook: Path | str, addresses: Sequence[CanonicalAddress]
 ) -> frozenset[CanonicalAddress]:
@@ -1368,6 +1529,8 @@ def build_catalog(
     series keep graph formula cells and on-graph leaves (issues #693 / #707).
     Input and constant series stay unfiltered. `layout: matrix` keeps hole
     cells so the rectangle, stride, and key domain stay intact (issue #696).
+    When `graph` is provided, inputs whose `column_header` or `row_label`
+    cells store formulas record those addresses for case-workbook rekeying.
     A retained graph leaf may also be named by one input or constant series
     (issue #708); occupancy stays with the formula series. Series with
     `validation.catalog: false` are omitted (extract-time `CellTypeEnv` pins);
@@ -1530,6 +1693,7 @@ def build_catalog(
     address_to_id, series_map = _resolve_occupancy(series_map, graph)
     if graph is not None:
         _reject_uncataloged_formula_owners(skipped, series_map, graph)
+    _attach_formula_label_addresses(series_map, workbook, graph=graph)
     catalog = SeriesCatalog(
         series=series_map,
         order=tuple(order),
