@@ -56,6 +56,7 @@ from excel_grapher.series_bindings.normalize import (
     has_internal_direction,
     has_output_direction,
     is_cataloged_series,
+    is_override_input,
 )
 from excel_grapher.series_bindings.occupancy import (
     BoundLeafPair,
@@ -300,8 +301,14 @@ class BoundSeries:
 
     @property
     def is_formula_series(self) -> bool:
-        """True when inverted codegen emits a helper for this series."""
-        return self.direction in {"internal", "output"}
+        """True when inverted codegen emits a helper for this series.
+
+        `input.mode: override` keeps its template formula and may also be
+        displaced by a caller-supplied value.
+        """
+        if self.direction in {"internal", "output"}:
+            return True
+        return is_override_input(cast(dict[str, Any], self.raw))
 
     @property
     def python_dtype(self) -> str:

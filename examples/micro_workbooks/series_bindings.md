@@ -411,11 +411,12 @@ directly as `result[4]` and `result[5]`. Package discovery is
 
 ## 02. Formula-cell overrides (`input.mode: override`)
 
-Schema **1.6.0** still accepts `input.mode: override` for Excel
-typed-over-formula cells. Package export does **not** emit override
-setters: bind those cells as **inputs** if callers must vary them. See
-the migration table in [Exporting standalone
-Python](../../user_guide/06-export.qmd).
+Schema **1.6.0** accepts `input.mode: override` for Excel
+typed-over-formula cells. Package export emits the series as an optional
+input: the default is unset, a supplied value or a case-workbook literal
+displaces the template formula, and a remaining formula stays unset so
+the extracted formula runs. See the migration table in [Exporting
+standalone Python](../../user_guide/06-export.qmd).
 
 Example manifest:
 [formula_override.bindings.yaml](formula_override.bindings.yaml).
