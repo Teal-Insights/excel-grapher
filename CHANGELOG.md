@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.5 (2026-11-03)
+
+### Bug Fixes
+
+- **exporter**: Load typed-over formula overrides in from_workbook
+  ([`3edd7e5`](https://github.com/Teal-Insights/excel-grapher/commit/3edd7e5df8e98dbffb56924e299976e88b9d33ef))
+
+
 ## v24.1.4 (2026-11-03)
 
 ### Bug Fixes

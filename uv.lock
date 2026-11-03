@@ -596,7 +596,7 @@ wheels = [
 
 [[package]]
 name = "excel-grapher"
-version = "24.1.4"
+version = "24.1.5"
 source = { editable = "." }
 dependencies = [
     { name = "fastpyxl" },
@@ -698,7 +698,7 @@ test-core = [
 
 [[package]]
 name = "excel-grapher-author-bindings"
-version = "24.1.4"
+version = "24.1.5"
 source = { editable = "packages/excel-grapher-author-bindings" }
 
 [[package]]
