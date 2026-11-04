@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.7 (2026-11-04)
+
+### Bug Fixes
+
+- **exporter**: Allow formula-header windows that do not nest
+  ([`b8332c1`](https://github.com/Teal-Insights/excel-grapher/commit/b8332c1c9d0b8075831e1c843b0ad3084f73ea36))
+
+
 ## v24.1.6 (2026-11-04)
 
 ### Bug Fixes
