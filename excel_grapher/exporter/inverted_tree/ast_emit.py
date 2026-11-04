@@ -181,14 +181,35 @@ class EmitContext:
         return self.host.axis_labels == axis.name and self.host.direction != "constant"
 
     def axis_source(self, axis: Any) -> str:
-        """Expression for `axis`: a bound runtime axis or a `data` constant."""
-        if self.runtime_labeller_for(axis) is not None:
+        """Expression for `axis`: the host labeller, a producer's axis, or a constant.
+
+        The host's labeller is the `_ax_*` binding. A producer labelled by a
+        different formula-header input reads that input's domain axis, so
+        windows that do not share a labeller keep their own keys.
+        """
+        labeller = self.runtime_labeller_for(axis)
+        if labeller is None:
+            if self.named_axes is None:
+                raise InvertedTreeExportError(
+                    f"series {self.host.series_id!r}: named axis constants are required"
+                )
+            return f"data.{self.named_axes.constant(axis)}"
+        host_labeller = self._host_labeller(axis.name)
+        if host_labeller is not None and host_labeller.series_id == labeller.series_id:
             return "_ax_" + python_identifier(axis.name.lower())
-        if self.named_axes is None:
-            raise InvertedTreeExportError(
-                f"series {self.host.series_id!r}: named axis constants are required"
-            )
-        return f"data.{self.named_axes.constant(axis)}"
+        # Authored `axis_labels` series are one per axis name. Scalar bodies
+        # bind that series as `_ax_*`. Formula-header inputs can label
+        # different windows, so each reference names its own series.
+        if labeller.axis_labels is not None and labeller.direction != "constant":
+            return "_ax_" + python_identifier(axis.name.lower())
+        return f"{self.param(labeller.series_id)}.domain.axes[0]"
+
+    def _host_labeller(self, axis_name: str) -> BoundSeries | None:
+        """Return the runtime labeller of the host axis named `axis_name`."""
+        for candidate in self.host.tensor_domain.axes:
+            if candidate.name == axis_name:
+                return self.runtime_labeller_for(candidate)
+        return None
 
 
 def python_measure_type(series: BoundSeries) -> str:
@@ -759,7 +780,16 @@ def _named_keys(
                 keys.append(follow)
                 continue
         if field_axis in pinned:
-            keys.append(repr(target))
+            owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
+            runtime = ctx.runtime_labeller_for(owner_axis)
+            # A pinned column keeps its position. Formula headers and other
+            # runtime labellers rename that position, so the snapshot key
+            # would address the wrong coordinate after a case workbook loads.
+            if runtime is not None and type(target) is owner_axis.key_type:
+                layout = ctx.layout_axis(owner_axis)
+                keys.append(f"{ctx.axis_source(owner_axis)}.keys[{layout.keys.index(target)}]")
+            else:
+                keys.append(repr(target))
             continue
         owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
         runtime = ctx.runtime_labeller_for(owner_axis)

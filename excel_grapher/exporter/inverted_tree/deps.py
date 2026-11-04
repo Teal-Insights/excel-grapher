@@ -3263,18 +3263,29 @@ def collect_all_deps(
 def _with_labeller_edges(
     catalog: SeriesCatalog, deps: dict[str, SeriesDeps]
 ) -> dict[str, SeriesDeps]:
-    """Depend every series with a runtime axis on that axis's labeller."""
+    """Depend every runtime axis on the labeller that covers it.
+
+    The host axis contributes its labeller. A producer can be labelled by a
+    wider formula-header input than the host, or by a different window of
+    the same axis. That labeller has to be a parameter too: validation binds
+    the producer's axis template to it, and key indexes read its domain.
+    """
     for series in catalog.formula_series():
         info = deps.get(series.series_id)
         if info is None:
             continue
-        extra = [
-            labeller.series_id
-            for axis in series.tensor_domain.axes
-            if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
-            and labeller.series_id != series.series_id
-            and labeller.series_id not in info.param_ids
-        ]
+        present = set(info.param_ids)
+        extra: list[str] = []
+        owners = (series, *(catalog.get(series_id) for series_id in info.param_ids))
+        for item in owners:
+            for axis in item.tensor_domain.axes:
+                labeller = catalog.runtime_labeller(axis.name, axis.keys)
+                if labeller is None or labeller.series_id == series.series_id:
+                    continue
+                if labeller.series_id in present:
+                    continue
+                present.add(labeller.series_id)
+                extra.append(labeller.series_id)
         if not extra:
             continue
         extras = tuple(sid for sid in catalog.order if sid in set(extra))
