@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.6 (2026-11-04)
+
+### Bug Fixes
+
+- **exporter**: Align snapshot keys only for workbook loads
+  ([`5c691a0`](https://github.com/Teal-Insights/excel-grapher/commit/5c691a085456c140392bf645cbc61960cf79802f))
+
+- **exporter**: Rekey formula headers when loading a case workbook
+  ([`2262a9f`](https://github.com/Teal-Insights/excel-grapher/commit/2262a9f2a05d9fa30c11bbae4b3d3defed80dcff))
+
+
 ## v24.1.5 (2026-11-03)
 
 ### Bug Fixes
