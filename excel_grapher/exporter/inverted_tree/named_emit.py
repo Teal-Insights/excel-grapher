@@ -1761,9 +1761,10 @@ def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()
     labellers = tuple(
         series.series_id for series in _retained(catalog) if _is_runtime_labeller(series)
     )
-    quoted = ", ".join(repr(name) for name in labellers)
-    lines.append(f"    for name in ({quoted},):")
-    lines.append("        getattr(target, name)")
+    if labellers:
+        quoted = ", ".join(repr(name) for name in labellers)
+        lines.append(f"    for name in ({quoted},):")
+        lines.append("        getattr(target, name)")
     for series_id in deferred:
         series = catalog.get(series_id)
         extras = []
@@ -2053,7 +2054,12 @@ def _input_field_metadata(series: BoundSeries) -> str:
 
 
 def _model_cells_method() -> list[str]:
-    """Bind provenance templates over this model's evaluated labellers."""
+    """Bind provenance over each series' labeller, falling back to `LABELLED_AXES`.
+
+    `LABELLED_AXES` names one series per axis. A formula-header window that
+    is not covered by that series labels itself, and the schema records that
+    labeller. `setdefault` keeps the schema choice when both exist.
+    """
     return [
         "",
         "    def cells(self, series_id: str) -> object:",
@@ -2065,12 +2071,16 @@ def _model_cells_method() -> list[str]:
         "        bind = getattr(cells, 'bind', None)",
         "        if bind is None:",
         "            return cells",
-        "        return bind(",
-        "            **{",
-        "                axis: getattr(self, labeller)",
-        "                for axis, labeller in data.LABELLED_AXES.items()",
-        "            }",
-        "        )",
+        "        labellers: dict[str, object] = {}",
+        "        schema = getattr(binding, 'schema', None)",
+        "        domain = getattr(schema, 'domain', None)",
+        "        for axis in getattr(domain, 'axes', ()):",
+        "            labeller_id = getattr(axis, 'labeller', None)",
+        "            if isinstance(labeller_id, str):",
+        "                labellers[axis.name] = getattr(self, labeller_id)",
+        "        for axis_name, labeller_id in data.LABELLED_AXES.items():",
+        "            labellers.setdefault(axis_name, getattr(self, labeller_id))",
+        "        return bind(**labellers)",
     ]
 
 

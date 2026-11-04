@@ -732,7 +732,8 @@ def _header_label_index(
     """Group inputs whose column or row labels are formulas, by axis name.
 
     Covered keys are that axis's snapshot keys. Catalog order is preserved
-    so the widest input is a stable anchor when several nest.
+    so equal-width inputs keep a stable widest anchor. Key sets do not have
+    to nest: an input that no wider input contains labels itself.
 
     Raises:
         InvertedTreeExportError: A covered key is not a string or integer.
@@ -865,7 +866,9 @@ class SeriesCatalog:
         A `constant` labeller is a static axis: keys are known at export.
         When no `axis_labels` series covers `keys`, an input whose
         `column_header` or `row_label` cells are formulas supplies the keys
-        from the case workbook at load time. The widest such input wins.
+        from the case workbook at load time. The widest such input that
+        contains `keys` wins. A window that no wider input contains labels
+        itself, so sibling slices of one timeline do not have to nest.
         """
         labeller = self.labeller_for(axis_name, keys)
         if labeller is not None:
@@ -1348,27 +1351,6 @@ def _attach_formula_label_addresses(
         if not formula_axes:
             continue
         series_map[series.series_id] = replace(series, formula_label_addresses=formula_axes)
-
-
-def refuse_incomparable_header_labellers(catalog: SeriesCatalog) -> None:
-    """Fail when formula-header inputs on one axis do not nest.
-
-    Downstream series bind one labeller per axis name. Two inputs whose key
-    sets neither contain the other cannot share that labeller.
-
-    Raises:
-        InvertedTreeExportError: Two formula-header inputs on one axis have
-            incomparable key sets.
-    """
-    for axis_name, entries in catalog._header_labels_by_axis.items():
-        for index, (series, keys) in enumerate(entries):
-            for other, other_keys in entries[index + 1 :]:
-                if keys <= other_keys or other_keys <= keys:
-                    continue
-                raise InvertedTreeExportError(
-                    f"axis {axis_name!r}: formula headers on {series.series_id!r} and "
-                    f"{other.series_id!r} do not nest"
-                )
 
 
 def _stored_formula_addresses(
