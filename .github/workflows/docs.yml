@@ -42,6 +42,7 @@ jobs:
     permissions:
       actions: read
       contents: read
+      issues: read
       pages: write
       id-token: write
     environment:
@@ -74,7 +75,7 @@ jobs:
 
       - name: Build docs
         env:
-          GITHUB_TOKEN: ${{ secrets.ISSUE_READ_PAT }}
+          GITHUB_TOKEN: ${{ github.token }}
           WORKFLOW_PUBLIC_ONLY: "1"
         run: |
           # A replay can check out an older release commit without the public-only filter.
