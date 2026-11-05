@@ -791,3 +791,61 @@ def test_swapped_rows_use_a_position_dict(tmp_path: Path) -> None:
     shifted = pkg.Model.from_workbook(case)
     assert shifted.shock[("Metal", 2024)] == pytest.approx(20)
     assert shifted.shock[("Cereal", 2025)] == pytest.approx(11)
+
+
+def _matrix_sheet(*, columns: tuple[str, str]) -> dict[str, object]:
+    return {
+        "B1": f'="{columns[0]}"',
+        "C1": f'="{columns[1]}"',
+        "A2": '="R1"',
+        "A3": '="R2"',
+        "B2": 10,
+        "C2": 20,
+        "B3": 30,
+        "C3": 40,
+        "D2": "=B2",
+        "D3": "=C3",
+    }
+
+
+def test_matrix_diagonal_follows_each_formula_axis(tmp_path: Path) -> None:
+    """Matching spellings on a matrix's two formula axes stay positional.
+
+    Row and column labels come from the same series and can change
+    independently. Passing the row string through addresses the wrong column
+    after only the headers change.
+    """
+    path = tmp_path / "diag.xlsx"
+    write_workbook(path, {"Inputs": _matrix_sheet(columns=("R1", "R2"))})
+    _plant_strings(path, {"B1": "R1", "C1": "R2", "A2": "R1", "A3": "R2"})
+    grid = _grid(
+        "grid",
+        "Inputs!B2:C3",
+        [
+            _dim("ROW", {"kind": "row_label", "label_column": "A", "read": "string"}),
+            _dim("COL", {"kind": "column_header", "header_row": 1, "read": "string"}),
+        ],
+        ["ROW", "COL"],
+        direction="input",
+    )
+    document = _document(grid, _row("shock", "Inputs!D2:D3", "A", direction="output", key="ROW"))
+    for concept in ("ROW", "COL"):
+        document["concept_scheme"]["concepts"].append({"id": concept, "dtype": "string"})
+    modules, pkg, catalog, graph = _load(tmp_path, path, document, "matrix_diagonal")
+    body = _compute_body(modules["internals.py"], "shock")
+    assert "grid.domain.axis('COL').keys" in body
+    assert ".position(" in body
+    assert "grid[row, row]" not in body
+    model = pkg.Model.from_workbook(path)
+    _values_by_cell(model, catalog.get("shock"), graph)
+    assert model.shock[("R1",)] == pytest.approx(10)
+    assert model.shock[("R2",)] == pytest.approx(40)
+
+    case = tmp_path / "diag_case.xlsx"
+    write_workbook(case, {"Inputs": _matrix_sheet(columns=("R1", "R2"))})
+    _plant_strings(case, {"B1": "X", "C1": "Y", "A2": "R1", "A3": "R2"})
+    shifted = pkg.Model.from_workbook(case)
+    assert tuple(shifted.grid.domain.axes[0].keys) == ("R1", "R2")
+    assert tuple(shifted.grid.domain.axes[1].keys) == ("X", "Y")
+    assert shifted.shock[("R1",)] == pytest.approx(10)
+    assert shifted.shock[("R2",)] == pytest.approx(40)

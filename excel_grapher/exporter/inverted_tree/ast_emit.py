@@ -791,7 +791,13 @@ def _remap_constant_name(host_field: str, producer_id: str, producer_field: str)
 
 
 def _same_runtime_labeller(ctx: EmitContext, host_axis: Any, owner_axis: Any) -> bool:
-    """True when both axes are labelled by the same series."""
+    """True when both axes share a name and a labelling series.
+
+    A matrix can formula-label two axes. Those labels live on different
+    cells, so matching spellings are not one vocabulary.
+    """
+    if host_axis.name != owner_axis.name:
+        return False
     host_labeller = ctx.runtime_labeller_for(host_axis)
     owner_labeller = ctx.runtime_labeller_for(owner_axis)
     return (
