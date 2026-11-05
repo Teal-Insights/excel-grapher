@@ -994,14 +994,14 @@ def main() -> None:
         token = None
 
     if token is not None:
+        owner = "Teal-Insights"
         repos = None
         if public_only:
-            repos = [
-                repo
-                for repo in DEFAULT_REPOS
-                if _github_request("Teal-Insights", repo, "", token)["visibility"] == "public"
-            ]
-        meta = write_cytoscape_site(output_dir, token=token, repos=repos)
+            owner, repo = os.environ["GITHUB_REPOSITORY"].split("/", 1)
+            if _github_request(owner, repo, "", token)["visibility"] != "public":
+                raise RuntimeError("The public workflow graph requires a public repository.")
+            repos = [repo]
+        meta = write_cytoscape_site(output_dir, token=token, owner=owner, repos=repos)
         print(f"Generated workflow site in {output_dir.relative_to(build_dir)}/")
         print(f"Issues included: {meta['issue_count']}")
         generated = True
