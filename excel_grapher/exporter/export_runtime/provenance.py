@@ -19,6 +19,7 @@ from .tensor import (
     CoordinateError,
     Domain,
     DomainTemplate,
+    labeller_axis,
 )
 
 AxisGroup = tuple[tuple[str, ...], Mapping[Any, Any]]
@@ -164,7 +165,7 @@ def _axis_from_labellers(axis: Axis | AxisTemplate, labellers: Mapping[str, Any]
     labeller = labellers.get(axis.name)
     if labeller is None:
         raise AxisError(f"axis {axis.name!r}: missing labeller {axis.labeller!r}")
-    return axis.bind(labeller.domain.axes[0])
+    return axis.bind(labeller_axis(labeller, axis.name, labeller_id=axis.labeller))
 
 
 @overload

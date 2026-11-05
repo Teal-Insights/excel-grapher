@@ -386,6 +386,16 @@ def _is_runtime_labeller(series: BoundSeries) -> bool:
     return series.axis_labels is not None and series.direction != "constant"
 
 
+def _authored_label_axis(series: BoundSeries) -> Any:
+    """Return the axis an authored runtime labeller publishes."""
+    name = series.axis_labels
+    if name is None:
+        raise InvertedTreeExportError(
+            f"series {series.series_id!r}: runtime labeller declares no labelled axis"
+        )
+    return series.axis_named(name)
+
+
 def _axis_position_name(axis: Any) -> str:
     return "_p_" + python_identifier(axis.name.lower())
 
@@ -414,12 +424,12 @@ def _runtime_axis_prologue(catalog: SeriesCatalog, source: str) -> list[str]:
     for series in catalog.series.values():
         if not _is_runtime_labeller(series) or not series.tensor_domain.axes:
             continue
-        axis = series.tensor_domain.axes[0]
+        axis = _authored_label_axis(series)
         variable = _axis_var_name(axis)
         if variable not in source or series.series_id in seen:
             continue
         seen.add(series.series_id)
-        lines.append(f"    {variable} = {series.series_id}.domain.axes[0]")
+        lines.append(f"    {variable} = {series.series_id}.domain.axis({axis.name!r})")
     return lines
 
 
@@ -447,7 +457,7 @@ def _layout_axis(axis: Any, catalog: SeriesCatalog) -> Any:
     labeller = catalog.runtime_labeller(axis.name, axis.keys)
     if labeller is None:
         return axis
-    return labeller.tensor_domain.axes[0]
+    return labeller.axis_named(axis.name)
 
 
 def _labelled_axes_map(catalog: SeriesCatalog) -> dict[str, str]:
@@ -926,13 +936,14 @@ def _semantic_body(
     )
     prologue: list[str] = []
     if not _is_runtime_labeller(series):
-        seen_labellers: set[str] = set()
+        seen_axes: set[str] = set()
         for axis in series.tensor_domain.axes:
             labeller = catalog.runtime_labeller(axis.name, axis.keys)
-            if labeller is None or labeller.series_id in seen_labellers:
+            variable = _axis_var_name(axis)
+            if labeller is None or variable in seen_axes:
                 continue
-            seen_labellers.add(labeller.series_id)
-            prologue.append(f"    {_axis_var_name(axis)} = {labeller.series_id}.domain.axes[0]")
+            seen_axes.add(variable)
+            prologue.append(f"    {variable} = {labeller.series_id}.domain.axis({axis.name!r})")
     lines.extend(prologue)
     lines.append(f"    def {formula}({parameters}) -> {_value_annotation(series)}:")
     for axis in series.tensor_domain.axes:
@@ -1009,7 +1020,7 @@ def _semantic_body(
     elif _is_runtime_labeller(series):
         used.add("label_axis")
         used.add("CoordinateReader")
-        axis = series.tensor_domain.axes[0]
+        axis = _authored_label_axis(series)
         lines.extend(
             [
                 f"    {series.series_id} = CoordinateReader({series.series_id!r}, {required}, {formula})",
@@ -1033,7 +1044,7 @@ def _materialize(series: BoundSeries, catalog: SeriesCatalog, required: str | No
     if required is None:
         required = _required_expr(series, catalog)
     if _is_runtime_labeller(series):
-        axis = series.tensor_domain.axes[0]
+        axis = _authored_label_axis(series)
         return (
             f"Series.from_labels({_binding(series)}, "
             f"label_axis({axis.name!r}, tuple({series.series_id}[p] for p in {required}), "
@@ -2815,7 +2826,7 @@ def _axis_source_for_domain(axis: Any, named_axes: NamedAxes, catalog: SeriesCat
     emitted = named_axes.emitted(axis)
     if axis.keys == emitted.keys:
         return named_axes.constant(axis)
-    source = labeller.tensor_domain.axes[0].keys
+    source = labeller.axis_named(axis.name).keys
     extra = f", source={source!r}" if source != axis.keys else ""
     return (
         f"AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
@@ -2944,7 +2955,7 @@ def emit_named_data(
                 f"{constant} = Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})"
             )
             continue
-        source = labeller.tensor_domain.axes[0].keys
+        source = labeller.axis_named(axis.name).keys
         extra = f", source={source!r}" if source != axis.keys else ""
         lines.append(
             f"{constant} = AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
@@ -3030,7 +3041,7 @@ def emit_named_data(
             values = tuple(defaults[series.series_id][cells[coord]] for coord in domain)
             values_source = _py_literal(values)
         if _is_runtime_labeller(series):
-            axis = domain.axes[0]
+            axis = _authored_label_axis(series)
             lines.append(
                 f"{name}_POSITIONS = Domain.product(Axis({axis.name!r}, "
                 f"{tuple(range(len(axis.keys)))!r}, int))"

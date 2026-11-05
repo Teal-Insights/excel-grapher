@@ -13,6 +13,7 @@ from excel_grapher.exporter.export_runtime.tensor import (
     AxisTemplate,
     CoordinateError,
     Domain,
+    DomainError,
     DomainTemplate,
     SchemaError,
     SchemaTemplate,
@@ -277,6 +278,67 @@ def test_align_runtime_keys_rejects_keys_outside_snapshot_and_labeller() -> None
     )
     with pytest.raises(SchemaError, match="2030"):
         align_runtime_keys(foreign, TIME_PERIOD=_year_labeller(2025, 2026))
+
+
+def _matrix_year_labeller() -> Tensor[int]:
+    """Three-axis labeller whose labelled year axis is neither end of the domain."""
+    return Tensor(
+        Domain.product(
+            Axis("VINTAGE", (1, 2), int),
+            Axis("TIME_PERIOD", (2030, 2031, 2032, 2033), int),
+            Axis("SCENARIO", ("base", "shock"), str),
+        ),
+        tuple(range(16)),
+    )
+
+
+def _year_window_template() -> AxisTemplate:
+    return AxisTemplate(
+        "TIME_PERIOD",
+        int,
+        size=2,
+        labeller="grid",
+        snapshot=(2026, 2027),
+        source=(2024, 2025, 2026, 2027),
+    )
+
+
+def test_domain_axis_returns_the_named_axis() -> None:
+    domain = _matrix_year_labeller().domain
+    assert domain.axis("TIME_PERIOD").keys == (2030, 2031, 2032, 2033)
+    with pytest.raises(DomainError, match="INSTRUMENT"):
+        domain.axis("INSTRUMENT")
+
+
+def test_domain_template_bind_uses_the_named_axis_of_a_matrix_labeller() -> None:
+    """A same-length leading axis must not supply another axis's keys."""
+    template = DomainTemplate.product(_year_window_template())
+    bound = template.bind(TIME_PERIOD=_matrix_year_labeller())
+    assert bound.axes[0].name == "TIME_PERIOD"
+    assert bound.axes[0].keys == (2032, 2033)
+
+
+def test_align_runtime_keys_reads_the_named_axis_of_a_matrix_labeller() -> None:
+    template = _year_window_template()
+    series = Series(
+        Domain.product(Axis("TIME_PERIOD", (2026, 2027), int)),
+        (1.0, 2.0),
+        schema=SchemaTemplate(
+            "growth",
+            DomainTemplate.product(template),
+            (int, float, str, type(None)),
+        ),
+        cells=None,
+    )
+    aligned = align_runtime_keys(series, TIME_PERIOD=_matrix_year_labeller())
+    assert aligned.domain.axes[0].keys == (2032, 2033)
+    assert tuple(value for _coord, value in aligned.items()) == (1.0, 2.0)
+
+
+def test_provenance_bind_uses_the_named_axis_of_a_matrix_labeller() -> None:
+    template = row_cells("Inputs", 6, "A", _year_window_template())
+    cells = template.bind(TIME_PERIOD=_matrix_year_labeller())
+    assert dict(cells) == {(2032,): "Inputs!A6", (2033,): "Inputs!B6"}
 
 
 def test_publish_and_as_records_accept_a_schema_template() -> None:

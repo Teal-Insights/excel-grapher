@@ -187,6 +187,17 @@ class Domain:
                     f"coordinate {coord!r}: invalid key {key!r} for axis {axis.name!r}"
                 )
 
+    def axis(self, name: str) -> Axis:
+        """Return the axis named `name`.
+
+        Raises:
+            DomainError: No axis has `name`.
+        """
+        for item in self.axes:
+            if item.name == name:
+                return item
+        raise DomainError(f"domain has no axis {name!r}")
+
     def require(self, coord: Coordinate) -> None:
         """Raise a coordinate error unless the complete coordinate exists."""
         self.position(coord)
@@ -304,15 +315,36 @@ class AxisTemplate:
         raise AxisError(f"axis {self.name!r}: expected {self.size} keys, received {n_keys}")
 
 
+def labeller_axis(labeller: Tensor[Any], name: str, *, labeller_id: str) -> Axis:
+    """Return the axis named `name` on `labeller`.
+
+    A labeller may carry other keys. Binding an axis template selects the
+    axis with `name`, at whatever position that series declares it.
+
+    Args:
+        labeller: Evaluated labeller series.
+        name: Axis the template is binding.
+        labeller_id: Series id named by the template, used in errors.
+
+    Returns:
+        The domain axis named `name`.
+
+    Raises:
+        AxisError: `labeller` has no axis named `name`.
+    """
+    try:
+        return labeller.domain.axis(name)
+    except DomainError as exc:
+        raise AxisError(f"axis {name!r}: labeller {labeller_id!r} has no axis {name!r}") from exc
+
+
 def _bound_axis(axis: Axis | AxisTemplate, labellers: Mapping[str, Tensor[Any]]) -> Axis:
     if isinstance(axis, Axis):
         return axis
     labeller = labellers.get(axis.name)
     if labeller is None:
         raise AxisError(f"axis {axis.name!r}: missing labeller {axis.labeller!r}")
-    if not labeller.domain.axes:
-        raise AxisError(f"axis {axis.name!r}: labeller {axis.labeller!r} has no axes")
-    return axis.bind(labeller.domain.axes[0])
+    return axis.bind(labeller_axis(labeller, axis.name, labeller_id=axis.labeller))
 
 
 @dataclass(frozen=True, slots=True)
@@ -939,10 +971,8 @@ def align_runtime_keys(series: object, **labellers: Tensor[Any]) -> object:
         labeller = labellers.get(axis.name)
         if template is None or labeller is None:
             continue
-        if not labeller.domain.axes:
-            raise SchemaError(f"{schema.series_id}: labeller for {axis.name!r} has no axes")
         try:
-            bound = template.bind(labeller.domain.axes[0])
+            bound = template.bind(labeller_axis(labeller, axis.name, labeller_id=template.labeller))
         except AxisError as exc:
             raise SchemaError(f"{schema.series_id}: {exc}") from exc
         if axis.keys == bound.keys:

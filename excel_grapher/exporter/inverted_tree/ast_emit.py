@@ -174,7 +174,7 @@ class EmitContext:
         labeller = self.runtime_labeller_for(axis)
         if labeller is None:
             return axis
-        return labeller.tensor_domain.axes[0]
+        return labeller.axis_named(axis.name)
 
     def host_uses_positions(self, axis: Any) -> bool:
         """True when the host iterates `axis` by position (it is that axis's labeller)."""
@@ -199,10 +199,11 @@ class EmitContext:
             return "_ax_" + python_identifier(axis.name.lower())
         # Authored `axis_labels` series are one per axis name. Scalar bodies
         # bind that series as `_ax_*`. Formula-header inputs can label
-        # different windows, so each reference names its own series.
+        # different windows, so each reference names its own series and the
+        # axis being labelled.
         if labeller.axis_labels is not None and labeller.direction != "constant":
             return "_ax_" + python_identifier(axis.name.lower())
-        return f"{self.param(labeller.series_id)}.domain.axes[0]"
+        return f"{self.param(labeller.series_id)}.domain.axis({axis.name!r})"
 
     def _host_labeller(self, axis_name: str) -> BoundSeries | None:
         """Return the runtime labeller of the host axis named `axis_name`."""

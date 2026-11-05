@@ -29,7 +29,7 @@ from excel_grapher.core.formula_ast import (
     resolve_cell_ref,
 )
 from excel_grapher.core.formula_shape import fingerprint_formula_shape
-from excel_grapher.exporter.export_runtime.tensor import Axis, Domain
+from excel_grapher.exporter.export_runtime.tensor import Axis, Domain, DomainError
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.grapher.blank_ranges import (
     BlankRangeRect,
@@ -264,6 +264,17 @@ class BoundSeries:
             ) from exc
         rectangular = Domain.product(*axes)
         return rectangular if len(rectangular) == len(domain) else domain
+
+    def axis_named(self, name: str) -> Axis:
+        """Return the domain axis named `name`.
+
+        Raises:
+            InvertedTreeExportError: This series has no axis named `name`.
+        """
+        try:
+            return self.tensor_domain.axis(name)
+        except DomainError as exc:
+            raise InvertedTreeExportError(f"series {self.series_id!r}: {exc}") from exc
 
     @property
     def coordinate_cells(self) -> Mapping[tuple[Scalar, ...], CanonicalAddress]:
@@ -711,18 +722,15 @@ def _labeller_index(
     """Group labellers by `axis_labels` with each labeller's covered keys.
 
     A series is a labeller when `axis_labels` is set and its tensor domain
-    has an axis. Covered keys are the keys of that first axis, which is
-    the set `labeller_for` tests for containment.
+    has an axis. Covered keys are the keys of the axis with that name.
+    `labeller_for` tests containment against that set.
     """
     grouped: dict[str, list[tuple[BoundSeries, frozenset[str | int]]]] = {}
     for item in series.values():
         axis_name = item.axis_labels
-        if axis_name is None:
+        if axis_name is None or not item.tensor_domain.axes:
             continue
-        axes = item.tensor_domain.axes
-        if not axes:
-            continue
-        grouped.setdefault(axis_name, []).append((item, frozenset(axes[0].keys)))
+        grouped.setdefault(axis_name, []).append((item, frozenset(item.axis_named(axis_name).keys)))
     return MappingProxyType({name: tuple(entries) for name, entries in grouped.items()})
 
 
