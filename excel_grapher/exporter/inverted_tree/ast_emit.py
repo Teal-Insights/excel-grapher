@@ -444,8 +444,8 @@ def _pinned_axes(ref: CellRefNode | None, ctx: EmitContext) -> set[str]:
 
 def _integer_driver(
     ctx: EmitContext, key_field: str, field_axis: str | None
-) -> tuple[str, int] | None:
-    """The host loop variable an integer key of `key_field` moves with."""
+) -> tuple[str, str, int] | None:
+    """The host field, loop variable, and key an integer of `key_field` moves with."""
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
     host_point = ctx.host.domain[ctx.host_index].as_mapping()
@@ -465,7 +465,112 @@ def _integer_driver(
         ),
     )
     field, variable = ranked[0]
-    return variable, cast(int, host_point[field])
+    return field, variable, cast(int, host_point[field])
+
+
+def _host_axis(ctx: EmitContext, field: str) -> Any:
+    """Return the host domain axis named by key field `field`."""
+    return ctx.host.tensor_domain.axes[ctx.host.key_fields.index(field)]
+
+
+def _integer_keys_share_scale(host_axis: Any, layout: Any) -> bool:
+    """True when every key of `host_axis` is a key of `layout`.
+
+    Shared membership means both series use one timeline, so a host key can
+    be stepped on `layout`. A period index and a calendar year can share an
+    axis name and still fail this test.
+    """
+    return all(key in layout for key in host_axis.keys)
+
+
+def _export_key_position(ctx: EmitContext, host_axis: Any, key: int) -> int:
+    """Return the export-time position of `key` on the axis the host iterates.
+
+    A runtime labeller contributes its own axis, which `.position` reads
+    at runtime. A static axis contributes the emitted constant, which may
+    be a union of subsequence key sets.
+    """
+    if ctx.runtime_labeller_for(host_axis) is not None:
+        axis = ctx.layout_axis(host_axis)
+    elif ctx.named_axes is not None and ctx.named_axes.contains(host_axis):
+        axis = ctx.named_axes.emitted(host_axis)
+    else:
+        axis = host_axis
+    try:
+        return axis.keys.index(key)
+    except ValueError as exc:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: key {key!r} is not on axis {host_axis.name!r}"
+        ) from exc
+
+
+def _runtime_position_expr(ctx: EmitContext, host_axis: Any, field: str, variable: str) -> str:
+    """Expression for the host position of loop variable `variable`.
+
+    Raises:
+        InvertedTreeExportError: No in-scope position of `variable` exists.
+    """
+    labels_this_axis = ctx.host.axis_labels == host_axis.name and ctx.host.direction != "constant"
+    if (
+        labels_this_axis
+        and len(ctx.host.key_fields) == 1
+        and ctx.coordinate_vars.get(field) == variable
+    ):
+        return variable
+    # `_p_<axis>` is local to the formula. A hoisted `view` is built before
+    # that assignment, so name the labeller axis and the loop variable.
+    host_is_labeller = ctx.host.axis_labels is not None and ctx.host.direction != "constant"
+    if ctx.runtime_labeller_for(host_axis) is not None and not host_is_labeller:
+        return f"{ctx.axis_source(host_axis)}.position({variable})"
+    if ctx.named_axes is None or not ctx.named_axes.contains(host_axis):
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: axis {host_axis.name!r} has no position constant"
+        )
+    emitted = ctx.named_axes.emitted(host_axis)
+    if ctx.catalog.runtime_labeller(emitted.name, emitted.keys) is not None:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: axis {host_axis.name!r} position is not a static key"
+        )
+    return f"data.{ctx.named_axes.constant(host_axis)}.position({variable})"
+
+
+def _key_at_position(source: str, position: str, difference: int) -> str:
+    """Return `source.keys` at `position` shifted by `difference`."""
+    if difference == 0:
+        index = position
+    elif difference > 0:
+        index = f"{position} + {difference}"
+    else:
+        index = f"{position} - {abs(difference)}"
+    return f"{source}.keys[{index}]"
+
+
+def _cross_scale_integer_key(
+    ctx: EmitContext,
+    owner_axis: Any,
+    layout: Any,
+    host_axis: Any,
+    field: str,
+    variable: str,
+    target: int,
+    current: int,
+) -> str:
+    """Owner key at the host position of `current`, plus the positional offset.
+
+    `target` is the referenced key on the owner's labeller. `current` is the
+    host key on a different scale. The difference of those positions is the
+    authored move; the generated index follows the host loop variable.
+    """
+    try:
+        target_pos = layout.keys.index(target)
+    except ValueError as exc:
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: key {target!r} is not on runtime axis "
+            f"{owner_axis.name!r}"
+        ) from exc
+    difference = target_pos - _export_key_position(ctx, host_axis, current)
+    position = _runtime_position_expr(ctx, host_axis, field, variable)
+    return _key_at_position(ctx.axis_source(owner_axis), position, difference)
 
 
 def _string_driver(
@@ -732,7 +837,10 @@ def _named_keys(
     A key equal to a host coordinate value is the loop variable, including
     when the producer field name differs from the host's. An integer key
     reached through a moving reference is the host's period variable plus
-    the authored difference; formula-family grouping then verifies the same
+    the authored difference when the host keys sit on that labeller.
+    A host integer from another scale that shares the axis name (a period
+    index against calendar years) is the owner's key at the host's position
+    plus that difference. Formula-family grouping then verifies the same
     difference at every coordinate sharing the expression. A `$` pin onto
     this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
     across vintages. Other fixed references stay literal. A lockstep walk
@@ -807,19 +915,36 @@ def _named_keys(
         if type(target) is int:
             driver = _integer_driver(ctx, key_field, field_axis)
             if driver is not None:
-                variable, current = driver
+                driver_field, variable, current = driver
                 if runtime is not None:
-                    difference = layout.keys.index(target) - layout.keys.index(current)
-                    if ctx.host_uses_positions(owner_axis):
-                        sign = "+" if difference > 0 else "-"
-                        keys.append(
-                            variable if difference == 0 else f"{variable} {sign} {abs(difference)}"
-                        )
-                    elif difference == 0:
-                        keys.append(variable)
+                    host_axis = _host_axis(ctx, driver_field)
+                    if _integer_keys_share_scale(host_axis, layout):
+                        difference = layout.keys.index(target) - layout.keys.index(current)
+                        if ctx.host_uses_positions(owner_axis):
+                            sign = "+" if difference > 0 else "-"
+                            keys.append(
+                                variable
+                                if difference == 0
+                                else f"{variable} {sign} {abs(difference)}"
+                            )
+                        elif difference == 0:
+                            keys.append(variable)
+                        else:
+                            keys.append(
+                                f"{ctx.use('axis_step')}({ctx.axis_source(owner_axis)}, {variable}, {difference})"
+                            )
                     else:
                         keys.append(
-                            f"{ctx.use('axis_step')}({ctx.axis_source(owner_axis)}, {variable}, {difference})"
+                            _cross_scale_integer_key(
+                                ctx,
+                                owner_axis,
+                                layout,
+                                host_axis,
+                                driver_field,
+                                variable,
+                                target,
+                                current,
+                            )
                         )
                     continue
                 difference = target - current
