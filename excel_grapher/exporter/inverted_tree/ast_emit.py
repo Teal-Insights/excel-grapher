@@ -747,14 +747,17 @@ def _cached_string_pairs(
     slots: Mapping[int, int],
     host_field: str,
 ) -> dict[object, object] | None:
-    """Return cached host -> producer string pairs for this slot map."""
+    """Return cached host -> producer string pairs for this slot map.
+
+    The slot map is retained so a later map cannot reuse its identity.
+    """
     cache = ctx.host._emit_cache
     cache_key = ("string_pairs", producer.series_id, producer_field, host_field, id(slots))
     cached = cache.get(cache_key, _UNSET)
     if cached is not _UNSET:
-        return cached
+        return cached[1]
     mapping = _string_pair_map(ctx, producer, producer_field, slots, host_field)
-    cache[cache_key] = mapping
+    cache[cache_key] = (slots, mapping)
     return mapping
 
 
