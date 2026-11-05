@@ -985,6 +985,7 @@ def main() -> None:
     project_root = _find_project_root(build_dir)
     output_dir = build_dir / WORKFLOW_DIR
     quarto_yml = build_dir / "_quarto.yml"
+    public_only = os.environ.get("WORKFLOW_PUBLIC_ONLY") == "1"
 
     generated = False
     try:
@@ -993,11 +994,18 @@ def main() -> None:
         token = None
 
     if token is not None:
-        meta = write_cytoscape_site(output_dir, token=token)
+        repos = None
+        if public_only:
+            repos = [
+                repo
+                for repo in DEFAULT_REPOS
+                if _github_request("Teal-Insights", repo, "", token)["visibility"] == "public"
+            ]
+        meta = write_cytoscape_site(output_dir, token=token, repos=repos)
         print(f"Generated workflow site in {output_dir.relative_to(build_dir)}/")
         print(f"Issues included: {meta['issue_count']}")
         generated = True
-    else:
+    elif not public_only:
         for source_dir in _workflow_fallback_dirs(project_root):
             if copy_workflow_fallback(source_dir=source_dir, output_dir=output_dir):
                 print(

@@ -2,6 +2,8 @@
 
 Build and analyze dependency graphs from Excel workbooks, **evaluate formulas with Excel semantics**, and **export standalone Python code**.
 
+A SovTech tool, built by Teal Insights and commissioned by NatureFinance.
+
 **Documentation:** [https://teal-insights.github.io/excel-grapher/](https://teal-insights.github.io/excel-grapher/)
 
 ### Why this exists
@@ -37,7 +39,7 @@ from excel_grapher.core import XlError  # and other shared types, if needed
 
 ### Installation
 
-Released under the [MIT license](LICENSE). Install from GitHub:
+The Excel Grapher code is released under the [MIT license](https://github.com/Teal-Insights/excel-grapher/blob/main/LICENSE). Install from GitHub:
 
 **Using `uv` (recommended):**
 
