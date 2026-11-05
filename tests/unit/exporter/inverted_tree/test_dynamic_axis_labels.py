@@ -15,6 +15,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
     all_param_names,
     assert_package_matches_evaluator,
     bindings_document,
+    call_compute,
     generate_inverted,
     input_field_names,
     inverted_graph_parts,
@@ -888,7 +889,12 @@ def test_ragged_runtime_range_does_not_invent_keys(tmp_path: Path) -> None:
     assert result == pytest.approx(4.0)
 
 
-def test_runtime_string_remap_is_an_export_error(tmp_path: Path) -> None:
+def test_authored_runtime_string_remap_follows_labeller_positions(tmp_path: Path) -> None:
+    """An `axis_labels` vocabulary addresses a static producer by position.
+
+    Changing the labeller inputs renames the host keys and leaves the
+    catalog names in place.
+    """
     workbook = write_workbook(
         tmp_path / "string_remap.xlsx",
         {
@@ -944,8 +950,19 @@ def test_runtime_string_remap_is_an_export_error(tmp_path: Path) -> None:
         schema_version="1.17.0",
     )
     document["concept_scheme"]["concepts"].append({"id": "REF_AREA", "dtype": "string"})
-    with pytest.raises(InvertedTreeExportError, match="remap"):
-        generate_inverted(workbook, document)
+    modules = generate_inverted(workbook, document)
+    body = modules["internals.py"].split("def trigger_ifs", 1)[1].split("\ndef ", 1)[0]
+    assert "('Alpha', 'Beta')" in body
+    assert ".position(" in body
+    pkg = load_package(modules, tmp_path, name="authored_string_remap")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    kwargs = named_input_kwargs(pkg, catalog, graph)
+    result = call_compute(pkg, "trigger_ifs", kwargs)
+    assert list(result.items()) == [(("A",), pytest.approx(10.0)), (("B",), pytest.approx(20.0))]
+    kwargs["code_a"] = "X"
+    kwargs["code_b"] = "Y"
+    shifted = call_compute(pkg, "trigger_ifs", kwargs)
+    assert list(shifted.items()) == [(("X",), pytest.approx(10.0)), (("Y",), pytest.approx(20.0))]
 
 
 def test_two_runtime_labellers_for_one_axis_name_are_an_export_error(tmp_path: Path) -> None:

@@ -483,7 +483,7 @@ def _integer_keys_share_scale(host_axis: Any, layout: Any) -> bool:
     return all(key in layout for key in host_axis.keys)
 
 
-def _export_key_position(ctx: EmitContext, host_axis: Any, key: int) -> int:
+def _export_key_position(ctx: EmitContext, host_axis: Any, key: str | int) -> int:
     """Return the export-time position of `key` on the axis the host iterates.
 
     A runtime labeller contributes its own axis, which `.position` reads
@@ -713,14 +713,14 @@ def _lockstep_string_map(
     return mapping
 
 
-def _lockstep_string_pairs(
+def _string_pair_map(
     ctx: EmitContext,
     producer: BoundSeries,
     producer_field: str,
     slots: Mapping[int, int],
     host_field: str,
 ) -> dict[object, object] | None:
-    """Build one host-field -> producer-field map, or `None` when it is not a function."""
+    """Host-field -> producer-field pairs, or `None` when they are not a function."""
     mapping: dict[object, object] = {}
     for host_index in sorted(slots):
         producer_index = slots[host_index]
@@ -737,6 +737,43 @@ def _lockstep_string_pairs(
         if existing is not _UNSET and existing != producer_value:
             return None
         mapping[host_value] = producer_value
+    return mapping
+
+
+def _cached_string_pairs(
+    ctx: EmitContext,
+    producer: BoundSeries,
+    producer_field: str,
+    slots: Mapping[int, int],
+    host_field: str,
+) -> dict[object, object] | None:
+    """Return cached host -> producer string pairs for this slot map."""
+    cache = ctx.host._emit_cache
+    cache_key = ("string_pairs", producer.series_id, producer_field, host_field, id(slots))
+    cached = cache.get(cache_key, _UNSET)
+    if cached is not _UNSET:
+        return cached
+    mapping = _string_pair_map(ctx, producer, producer_field, slots, host_field)
+    cache[cache_key] = mapping
+    return mapping
+
+
+def _lockstep_string_pairs(
+    ctx: EmitContext,
+    producer: BoundSeries,
+    producer_field: str,
+    slots: Mapping[int, int],
+    host_field: str,
+) -> dict[object, object] | None:
+    """Build one host-field -> producer-field map, or `None` when it is not a function.
+
+    A constant producer field and an identity spelling stay literals. Callers
+    that address a runtime axis use `_cached_string_pairs` instead, because
+    those spellings are positions on the labeller rather than a snapshot dict.
+    """
+    mapping = _cached_string_pairs(ctx, producer, producer_field, slots, host_field)
+    if mapping is None:
+        return None
     if len(mapping) < 2 or len(set(mapping.values())) < 2:
         return None
     if all(source == target for source, target in mapping.items()):
@@ -753,17 +790,150 @@ def _remap_constant_name(host_field: str, producer_id: str, producer_field: str)
     return f"{host_part}_TO_{producer_part}_{python_identifier(producer_field.upper())}"
 
 
+def _same_runtime_labeller(ctx: EmitContext, host_axis: Any, owner_axis: Any) -> bool:
+    """True when both axes are labelled by the same series."""
+    host_labeller = ctx.runtime_labeller_for(host_axis)
+    owner_labeller = ctx.runtime_labeller_for(owner_axis)
+    return (
+        host_labeller is not None
+        and owner_labeller is not None
+        and host_labeller.series_id == owner_labeller.series_id
+    )
+
+
+def _producer_keys_expr(ctx: EmitContext, owner_axis: Any) -> str:
+    """Expression for the producer key sequence the remap indexes.
+
+    A runtime labeller is read from that series so a case workbook can
+    replace the labels. A static axis contributes its own keys, not the
+    interned union: another series on the same name can interleave keys
+    and shift every index.
+    """
+    labeller = ctx.runtime_labeller_for(owner_axis)
+    if labeller is None:
+        return repr(tuple(owner_axis.keys))
+    return f"{ctx.param(labeller.series_id)}.domain.axis({owner_axis.name!r}).keys"
+
+
+def _index_sequence(sequence: str, position: str, difference: int) -> str:
+    """Return `sequence` at `position` shifted by `difference`."""
+    if difference == 0:
+        index = position
+    elif difference > 0:
+        index = f"{position} + {difference}"
+    else:
+        index = f"{position} - {abs(difference)}"
+    return f"{sequence}[{index}]"
+
+
+def _positional_string_remap(
+    ctx: EmitContext,
+    owner: BoundSeries,
+    key_field: str,
+    host_axis: Any,
+    host_field: str,
+    variable: str,
+    mapping: Mapping[object, object],
+) -> str | None:
+    """Producer key at the host labeller position of each host string.
+
+    Snapshot spellings are not stable on a runtime axis. The lockstep
+    pairing is a function of position, so a constant shift indexes the
+    producer keys directly and any other function indexes them through a
+    position dict. Identical spellings on one shared labeller pass the
+    host variable through instead.
+
+    Returns:
+        The key expression, or `None` when the host variable already is
+        that key.
+
+    Raises:
+        InvertedTreeExportError: A paired key is not on the axis that
+            expression indexes.
+    """
+    owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
+    producer_axis = (
+        ctx.layout_axis(owner_axis)
+        if ctx.runtime_labeller_for(owner_axis) is not None
+        else owner_axis
+    )
+    positions: dict[int, int] = {}
+    for host_value, producer_value in mapping.items():
+        if type(host_value) is not str or type(producer_value) is not str:
+            return None
+        host_pos = _export_key_position(ctx, host_axis, host_value)
+        try:
+            producer_pos = producer_axis.keys.index(producer_value)
+        except ValueError as exc:
+            raise InvertedTreeExportError(
+                f"series {ctx.host.series_id!r}: key {producer_value!r} is not on axis "
+                f"{owner_axis.name!r}"
+            ) from exc
+        positions[host_pos] = producer_pos
+    if len(positions) != len(mapping):
+        raise InvertedTreeExportError(
+            f"series {ctx.host.series_id!r}: host-key remap over runtime axis "
+            f"{host_axis.name!r} is not a function of position"
+        )
+    offsets = {producer - host for host, producer in positions.items()}
+    difference = next(iter(offsets))
+    if (
+        len(offsets) == 1
+        and difference == 0
+        and _same_runtime_labeller(ctx, host_axis, owner_axis)
+        and all(source == target for source, target in mapping.items())
+    ):
+        return None
+    position = _runtime_position_expr(ctx, host_axis, host_field, variable)
+    sequence = _producer_keys_expr(ctx, owner_axis)
+    if len(offsets) == 1:
+        return _index_sequence(sequence, position, difference)
+    ordered = {host: positions[host] for host in sorted(positions)}
+    return f"{sequence}[{ordered!r}[{position}]]"
+
+
+def _cross_scale_identity_pairs(
+    ctx: EmitContext,
+    owner: BoundSeries,
+    key_field: str,
+    slots: Mapping[int, int],
+    host_field: str,
+) -> dict[object, object] | None:
+    """Identity spellings that do not share the host's runtime labeller.
+
+    Matching snapshot text is not one axis when the producer keeps its own
+    keys. A case workbook can change the host labels and leave the producer
+    vocabulary in place, so the follow has to be positional.
+    """
+    host_axis = ctx.host.tensor_domain.axes[ctx.host.key_fields.index(host_field)]
+    if ctx.runtime_labeller_for(host_axis) is None:
+        return None
+    owner_axis = owner.tensor_domain.axes[owner.key_fields.index(key_field)]
+    if _same_runtime_labeller(ctx, host_axis, owner_axis):
+        return None
+    mapping = _cached_string_pairs(ctx, owner, key_field, slots, host_field)
+    if mapping is None or len(mapping) < 2:
+        return None
+    if any(source != target for source, target in mapping.items()):
+        return None
+    return mapping
+
+
 def _string_follow_expr(
     ctx: EmitContext, owner: BoundSeries, key_field: str, target: str
 ) -> str | None:
-    """A dict lookup when `target` is a lockstep function of a host string key.
+    """A follow expression when `target` is a lockstep function of a host string key.
 
     Equality and templates already cover the same spelling and an embedded
     host label. A lockstep walk whose producer labels are a different
-    vocabulary of a host key is that pairing as a dict, so formula families
-    collapse instead of branching on the host coordinate. The pairing is a
-    function of the host key, so it still applies when the producer row is
-    pinned against a sliding `TIME_PERIOD` walk.
+    vocabulary of a static host key is that pairing as a dict, so formula
+    families collapse instead of branching on the host coordinate. The
+    pairing is a function of the host key, so it still applies when the
+    producer row is pinned against a sliding `TIME_PERIOD` walk.
+
+    A runtime host axis is rekeyed from formula headers or an `axis_labels`
+    series. The follow is then the producer key at the host's labeller
+    position, not a dict of the snapshot spellings.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
 
@@ -779,6 +949,8 @@ def _string_follow_expr(
         if type(host_point.get(host_field)) is not str:
             continue
         mapping = _lockstep_string_map(ctx, owner, key_field, slots, host_field)
+        if mapping is None:
+            mapping = _cross_scale_identity_pairs(ctx, owner, key_field, slots, host_field)
         if mapping is None or mapping.get(host_point[host_field]) != target:
             continue
         ranked.append((host_field, variable, mapping))
@@ -793,9 +965,8 @@ def _string_follow_expr(
     host_field, variable, mapping = ranked[0]
     host_axis = ctx.host.tensor_domain.axes[ctx.host.key_fields.index(host_field)]
     if ctx.runtime_labeller_for(host_axis) is not None:
-        raise InvertedTreeExportError(
-            f"series {ctx.host.series_id!r}: host-key remaps over runtime axis "
-            f"{host_axis.name!r} are unsupported"
+        return _positional_string_remap(
+            ctx, owner, key_field, host_axis, host_field, variable, mapping
         )
     name = _remap_constant_name(host_field, owner.series_id, key_field)
     existing = ctx.key_remaps.get(name)
@@ -844,9 +1015,11 @@ def _named_keys(
     difference at every coordinate sharing the expression. A `$` pin onto
     this vintage's `ISSUANCE_YEAR` is that variable, so opening stock folds
     across vintages. Other fixed references stay literal. A lockstep walk
-    whose producer string keys are a function of a host key is that
+    whose producer string keys are a function of a static host key is that
     function as a dict, including when the producer row is pinned against
-    `TIME_PERIOD`. A label that embeds the host's own key is a template
+    `TIME_PERIOD`. On a runtime axis the same function is the producer key
+    at the host's labeller position, so a case workbook can change the
+    labels. A label that embeds the host's own key is a template
     over it; exact string equality is pass-through, not a template.
     """
     from excel_grapher.exporter.inverted_tree.deps import _key_field_axis
