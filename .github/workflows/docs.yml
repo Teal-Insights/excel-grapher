@@ -30,11 +30,9 @@ jobs:
                 run_id: context.payload.workflow_run.id,
               }
             );
-            const ci = jobs.find((job) => job.name === "ci");
-            core.setOutput(
-              "proceed",
-              ci?.conclusion === "success" ? "true" : "false"
-            );
+            const ciJobs = jobs.filter((job) => job.name.startsWith("ci / "));
+            const ciPassed = ciJobs.length > 0 && ciJobs.every((job) => job.conclusion === "success");
+            core.setOutput("proceed", ciPassed ? "true" : "false");
 
   build-and-publish:
     name: Build and publish docs
@@ -77,6 +75,7 @@ jobs:
       - name: Build docs
         env:
           GITHUB_TOKEN: ${{ secrets.ISSUE_READ_PAT }}
+          WORKFLOW_PUBLIC_ONLY: "1"
         run: uv run great-docs build
 
       - name: Upload Pages artifact
