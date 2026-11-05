@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.8 (2026-11-05)
+
+### Bug Fixes
+
+- **exporter**: Select a labeller axis by name
+  ([`6bea312`](https://github.com/Teal-Insights/excel-grapher/commit/6bea312d95d75e108483f85f8032f4d4d9410ab4))
+
+
 ## v24.1.7 (2026-11-04)
 
 ### Bug Fixes
