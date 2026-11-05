@@ -76,7 +76,10 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.ISSUE_READ_PAT }}
           WORKFLOW_PUBLIC_ONLY: "1"
-        run: uv run great-docs build
+        run: |
+          # A replay can check out an older release commit without the public-only filter.
+          grep -q 'WORKFLOW_PUBLIC_ONLY' scripts/build_workflow.py
+          uv run great-docs build
 
       - name: Upload Pages artifact
         uses: actions/upload-pages-artifact@v5
