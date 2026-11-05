@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.9 (2026-11-05)
+
+### Bug Fixes
+
+- **exporter**: Index a period-index TIME_PERIOD on its own axis
+  ([`647f233`](https://github.com/Teal-Insights/excel-grapher/commit/647f23351715f3e44a89b7dc738b20c65a3cc538))
+
+
 ## v24.1.8 (2026-11-05)
 
 ### Bug Fixes
