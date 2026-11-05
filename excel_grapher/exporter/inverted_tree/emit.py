@@ -264,7 +264,10 @@ def plan_inverted_tree(
     identities: set[tuple[str, tuple[str | int, ...]]] = set()
     runtime_by_name: dict[str, str] = {}
     for labeller in labellers:
-        axis = labeller.tensor_domain.axes[0]
+        axis_name = labeller.axis_labels
+        if axis_name is None:
+            continue
+        axis = labeller.axis_named(axis_name)
         identity = (axis.name, axis.keys)
         if identity in identities:
             raise InvertedTreeExportError(
@@ -316,7 +319,7 @@ def plan_inverted_tree(
             candidates = [item for item in labellers if item.axis_labels == axis.name]
             if candidates and catalog.labeller_for(axis.name, axis.keys) is None:
                 covered = set().union(
-                    *(set(item.tensor_domain.axes[0].keys) for item in candidates)
+                    *(set(item.axis_named(axis.name).keys) for item in candidates)
                 )
                 missing = tuple(key for key in axis.keys if key not in covered)
                 raise InvertedTreeExportError(
