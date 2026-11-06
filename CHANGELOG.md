@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.12 (2026-11-06)
+
+### Bug Fixes
+
+- **export**: Bind self-labelling input checks before iterating
+  ([`6665957`](https://github.com/Teal-Insights/excel-grapher/commit/6665957860a4944140017aa6d1b32d813be3a694))
+
+
 ## v24.1.11 (2026-11-06)
 
 ### Bug Fixes
