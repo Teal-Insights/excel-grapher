@@ -406,8 +406,19 @@ class SchemaTemplate:
         object.__setattr__(self, "value_types", tuple(self.value_types))
 
     def bind(self, **labellers: Tensor[Any]) -> TensorSchema:
-        """Bind runtime axes and return a concrete `TensorSchema`."""
-        return TensorSchema(self.series_id, self.domain.bind(**labellers), self.value_types)
+        """Bind runtime axes and return a concrete `TensorSchema`.
+
+        Raises:
+            SchemaError: A labeller is not a `Tensor`, or an axis cannot be bound.
+        """
+        for labeller in labellers.values():
+            if not isinstance(labeller, Tensor):
+                raise SchemaError(f"{self.series_id}: expected Tensor")
+        try:
+            domain = self.domain.bind(**labellers)
+        except AxisError as exc:
+            raise SchemaError(f"{self.series_id}: {exc}") from exc
+        return TensorSchema(self.series_id, domain, self.value_types)
 
     def validate(self, tensor: object, *, exact: bool = False) -> None:
         """Check size and type on runtime axes, resolving keys from `tensor`."""
