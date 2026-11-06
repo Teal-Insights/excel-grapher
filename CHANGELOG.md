@@ -7,6 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.10 (2026-11-06)
+
+### Bug Fixes
+
+- **exporter**: Follow a matrix diagonal on each formula axis
+  ([`a7ec466`](https://github.com/Teal-Insights/excel-grapher/commit/a7ec4669292cf5e5c73b009b63233c85cdcf515b))
+
+- **exporter**: Follow runtime string keys by labeller position
+  ([`68b193f`](https://github.com/Teal-Insights/excel-grapher/commit/68b193f0e8095df05f946a342fbf05f374b78ddc))
+
+- **exporter**: Retain the slot map in the string-pair cache
+  ([`34197d1`](https://github.com/Teal-Insights/excel-grapher/commit/34197d1c13f37b594d3236817245afe70dc09b89))
+
+### Continuous Integration
+
+- **docs**: Reject historical graph builds without the public filter
+  ([`fce8031`](https://github.com/Teal-Insights/excel-grapher/commit/fce8031a32a5c1137fb1e5b7a7d66cfcd7c760f2))
+
+- **docs**: Use repository token for the public graph
+  ([`dbb6bee`](https://github.com/Teal-Insights/excel-grapher/commit/dbb6bee4c125780e6c79d47e781ca6bb54f410ec))
+
+### Documentation
+
+- **credit**: Add NatureFinance attribution and restore Pages
+  ([`be5537c`](https://github.com/Teal-Insights/excel-grapher/commit/be5537cc3595fdf81f7ccf36fbc6d3d66ef619d5))
+
+
 ## v24.1.9 (2026-11-05)
 
 ### Bug Fixes
