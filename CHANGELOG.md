@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.15 (2026-11-06)
+
+### Bug Fixes
+
+- **export**: Compare labelled-axis diagonals in key space
+  ([`bbe19db`](https://github.com/Teal-Insights/excel-grapher/commit/bbe19db0b2355a9310d4116ab822eed167679fae))
+
+
 ## v24.1.14 (2026-11-06)
 
 ### Bug Fixes
