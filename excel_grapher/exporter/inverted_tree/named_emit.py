@@ -483,9 +483,10 @@ def _input_check_binds(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str
     self-labelled axis. Omitting the self axis makes `schema.bind` reject it
     as a missing labeller.
 
-    Header-inferred labellers are not runtime labellers, so `.required` stays
-    on the template rather than a `{SERIES}_POSITIONS` product. A required
-    template can be a proper subset of the series domain.
+    `catalog.runtime_labeller` returns a header-inferred labeller. Only an
+    authored `axis_labels` series is `_is_runtime_labeller`, so no
+    `{SERIES}_POSITIONS` symbol is emitted. `.required` stays on the template.
+    A required template can be a proper subset of the series domain.
     """
     parts: list[str] = []
     external = False
