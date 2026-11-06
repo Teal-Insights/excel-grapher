@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.14 (2026-11-06)
+
+### Bug Fixes
+
+- **export**: Bind scan labeller axes inside formulas
+  ([`e365c7a`](https://github.com/Teal-Insights/excel-grapher/commit/e365c7a0aa85a90b7737a8719ca1f9ff412eb559))
+
+
 ## v24.1.13 (2026-11-06)
 
 ### Bug Fixes
