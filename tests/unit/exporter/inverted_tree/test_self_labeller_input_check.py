@@ -312,6 +312,13 @@ def test_mixed_self_and_external_axes_bind_by_name(tmp_path: Path) -> None:
     pkg = load_package(modules, tmp_path, name="mixed_axis_labeller")
     assert pkg.compute_codes_total(pkg.CodesTotalInputs.from_defaults()) == 6.0
     assert pkg.compute_grid_total(pkg.GridTotalInputs.from_defaults()) == 100.0
+    nested = ((10.0, 20.0), (30.0, 40.0))
+    with pytest.raises(pkg.tensor.SchemaError, match="grid: expected Tensor"):
+        pkg.GridTotalInputs(grid=nested, codes=pkg.data.CODES)
+    with pytest.raises(pkg.tensor.SchemaError, match="grid: expected Tensor"):
+        pkg.internals.grid_total(grid=nested, codes=pkg.data.CODES)
+    with pytest.raises(pkg.tensor.SchemaError, match="axis 'TIME_PERIOD'"):
+        pkg.GridTotalInputs(grid=pkg.data.CODES, codes=pkg.data.CODES)
 
 
 def test_required_subset_skips_coordinates_left_out_of_extraction(tmp_path: Path) -> None:

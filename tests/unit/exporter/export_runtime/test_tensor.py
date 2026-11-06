@@ -180,6 +180,39 @@ def test_domain_and_schema_templates_bind_labellers_by_axis_name() -> None:
         )
 
 
+def test_schema_template_bind_rejects_a_non_tensor_labeller() -> None:
+    """A non-tensor labeller raises `SchemaError`."""
+    schema = SchemaTemplate(
+        "grid",
+        DomainTemplate.product(
+            AxisTemplate("TIME_PERIOD", int, size=2, labeller="grid", snapshot=(2017, 2018))
+        ),
+        (int, float, str, type(None)),
+    )
+    with pytest.raises(SchemaError, match="grid: expected Tensor"):
+        schema.bind(TIME_PERIOD=(2017, 2018))
+
+
+def test_schema_template_bind_wraps_a_missing_labeller_axis() -> None:
+    """A tensor that lacks the labelled axis fails as `SchemaError`."""
+    schema = SchemaTemplate(
+        "grid",
+        DomainTemplate.product(
+            AxisTemplate(
+                "INSTRUMENT", int, size=2, labeller="codes", snapshot=(1, 2), source=(1, 2, 3)
+            ),
+            AxisTemplate("TIME_PERIOD", int, size=2, labeller="grid", snapshot=(2017, 2018)),
+        ),
+        (int, float, str, type(None)),
+    )
+    codes = Tensor.from_nested(
+        domain=Domain.product(Axis("INSTRUMENT", (1, 2, 3), int)),
+        values=(1, 2, 3),
+    )
+    with pytest.raises(SchemaError, match="axis 'TIME_PERIOD'"):
+        schema.bind(INSTRUMENT=codes, TIME_PERIOD=codes)
+
+
 def test_schema_template_validate_uses_the_tensor_own_axes() -> None:
     schema = SchemaTemplate(
         "out",
