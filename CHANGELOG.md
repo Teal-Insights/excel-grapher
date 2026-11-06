@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.11 (2026-11-06)
+
+### Bug Fixes
+
+- **export**: Bind ragged labelled constants on their explicit domain
+  ([`d1994c7`](https://github.com/Teal-Insights/excel-grapher/commit/d1994c7612700482f7444229123181fb84e77966))
+
+
 ## v24.1.10 (2026-11-06)
 
 ### Bug Fixes
