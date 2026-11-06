@@ -1350,6 +1350,19 @@ def _family_condition(
     return _union_condition(members, universe, axes, names, index_names=positions)
 
 
+def _diagonal_operand(
+    axis: Any, names: Mapping[str, str], positions: Mapping[str, str], *, key_space: bool
+) -> str:
+    """Name one side of a diagonal test.
+
+    A runtime axis in key space is the key at its position. That keeps a
+    static integer axis and a runtime axis in one space.
+    """
+    if key_space and axis.name in positions:
+        return f"{_axis_var_name(axis)}.keys[{positions[axis.name]}]"
+    return positions.get(axis.name, names[axis.name])
+
+
 def _diagonal_condition(
     members: set[tuple[object, ...]],
     universe: set[tuple[object, ...]],
@@ -1359,31 +1372,43 @@ def _diagonal_condition(
     names: Mapping[str, str],
     index_names: Mapping[str, str] | None = None,
 ) -> str | None:
-    """A family on one diagonal band of two integer axes."""
+    """Return a band test for one diagonal of two integer axes.
+
+    A runtime axis paired with a static integer axis is compared in key
+    space: the labelled side is the key at its position. Two runtime axes
+    stay in position space.
+    """
     positions = index_names or {}
     integer_axes = [
         index for index, axis in enumerate(axes) if axis.key_type is int or axis.name in positions
     ]
     for position, left in enumerate(integer_axes):
         for right in integer_axes[position + 1 :]:
-            use_positions = axes[left].name in positions or axes[right].name in positions
+            left_axis = axes[left]
+            right_axis = axes[right]
+            left_positional = left_axis.name in positions
+            right_positional = right_axis.name in positions
+            key_space = left_positional != right_positional
+            if key_space and (left_axis.key_type is not int or right_axis.key_type is not int):
+                continue
 
             def difference(
                 coord: tuple[object, ...],
                 left: int = left,
                 right: int = right,
-                use_positions: bool = use_positions,
+                key_space: bool = key_space,
+                use_positions: bool = left_positional or right_positional,
             ) -> int:
-                if use_positions:
-                    return axes[right].keys.index(coord[right]) - axes[left].keys.index(coord[left])
-                return cast(int, coord[right]) - cast(int, coord[left])
+                if key_space or not use_positions:
+                    return cast(int, coord[right]) - cast(int, coord[left])
+                return axes[right].keys.index(coord[right]) - axes[left].keys.index(coord[left])
 
             differences = sorted({difference(coord) for coord in members})
             low, high = differences[0], differences[-1]
             if differences != list(range(low, high + 1)):
                 continue
-            left_name = positions.get(axes[left].name, names[axes[left].name])
-            right_name = positions.get(axes[right].name, names[axes[right].name])
+            left_name = _diagonal_operand(left_axis, names, positions, key_space=key_space)
+            right_name = _diagonal_operand(right_axis, names, positions, key_space=key_space)
             for candidates, prefix in ((universe, []), (product, tests)):
                 if {coord for coord in candidates if low <= difference(coord) <= high} != members:
                     continue
