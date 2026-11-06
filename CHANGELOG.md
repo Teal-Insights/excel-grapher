@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.13 (2026-11-06)
+
+### Bug Fixes
+
+- **export**: Raise SchemaError when schema.bind fails
+  ([`187f90e`](https://github.com/Teal-Insights/excel-grapher/commit/187f90e7ec7c702cf64406acc74f3757e34700ff))
+
+### Documentation
+
+- **export**: Distinguish header labellers from authored labellers
+  ([`5464ff0`](https://github.com/Teal-Insights/excel-grapher/commit/5464ff0a0259d7e622c445f0558d1abafeb69162))
+
+
 ## v24.1.12 (2026-11-06)
 
 ### Bug Fixes
