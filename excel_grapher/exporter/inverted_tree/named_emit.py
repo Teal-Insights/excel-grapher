@@ -417,7 +417,9 @@ def _index_names_for(
     }
 
 
-def _runtime_axis_prologue(catalog: SeriesCatalog, source: str) -> list[str]:
+def _runtime_axis_prologue(
+    catalog: SeriesCatalog, source: str, *, indent: str = "    "
+) -> list[str]:
     """Bind `_ax_*` labeller axes referenced by a scalar formula body."""
     lines: list[str] = []
     seen: set[str] = set()
@@ -429,8 +431,28 @@ def _runtime_axis_prologue(catalog: SeriesCatalog, source: str) -> list[str]:
         if variable not in source or series.series_id in seen:
             continue
         seen.add(series.series_id)
-        lines.append(f"    {variable} = {series.series_id}.domain.axis({axis.name!r})")
+        lines.append(f"{indent}{variable} = {series.series_id}.domain.axis({axis.name!r})")
     return lines
+
+
+def _labeller_axis_bindings(series: BoundSeries, catalog: SeriesCatalog) -> list[tuple[str, str]]:
+    """Return `_ax_*` bindings for the labellers of `series` axes.
+
+    Each item is `(variable, source)`, with `source` an expression
+    `{labeller}.domain.axis(name)`.
+    """
+    if _is_runtime_labeller(series):
+        return []
+    bindings: list[tuple[str, str]] = []
+    seen: set[str] = set()
+    for axis in series.tensor_domain.axes:
+        labeller = catalog.runtime_labeller(axis.name, axis.keys)
+        variable = _axis_var_name(axis)
+        if labeller is None or variable in seen:
+            continue
+        seen.add(variable)
+        bindings.append((variable, f"{labeller.series_id}.domain.axis({axis.name!r})"))
+    return bindings
 
 
 def _bind_kwargs(series: BoundSeries, catalog: SeriesCatalog) -> str:
@@ -567,11 +589,27 @@ def _result_type(scc: Sequence[str]) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _lambda_closes_over_axis(node: ast.AST) -> bool:
+    """True when a lambda in `node` reads an `_ax_*` labeller binding.
+
+    The binding is local to the formula. A lambda built in the enclosing
+    scan would see whichever member assigned the name last.
+    """
+    for child in ast.walk(node):
+        if not isinstance(child, ast.Lambda):
+            continue
+        for name in ast.walk(child):
+            if isinstance(name, ast.Name) and name.id.startswith("_ax_"):
+                return True
+    return False
+
+
 def _outermost_tables(node: ast.AST, local_names: set[str]) -> list[ast.Call]:
     """Tables and views that can be built once per call, outermost first.
 
     A table that reads the loop coordinate or a recurrence member is built
-    where it is used; views nested inside a hoisted table go with it.
+    where it is used; views nested inside a hoisted table go with it. A
+    lambda that reads `_ax_*` stays inside the formula that binds that name.
     """
     if (
         isinstance(node, ast.Call)
@@ -580,6 +618,7 @@ def _outermost_tables(node: ast.AST, local_names: set[str]) -> list[ast.Call]:
         and not any(
             isinstance(child, ast.Name) and child.id in local_names for child in ast.walk(node)
         )
+        and not _lambda_closes_over_axis(node)
     ):
         return [node]
     found: list[ast.Call] = []
@@ -953,13 +992,13 @@ def _semantic_body(
             )
         expression = next(iter(groups))
         scanned = "\n".join((*tables, expression))
-        lines = [*_runtime_axis_prologue(catalog, scanned), *table_lines]
-        if _is_override_series(series):
-            lines[0:0] = [
-                "    if _override is not data.UNSET:",
-                "        return _override",
-            ]
         if not deferred:
+            lines = [*_runtime_axis_prologue(catalog, scanned), *table_lines]
+            if _is_override_series(series):
+                lines[0:0] = [
+                    "    if _override is not data.UNSET:",
+                    "        return _override",
+                ]
             lines.extend(
                 [
                     "    try:",
@@ -969,18 +1008,38 @@ def _semantic_body(
                 ]
             )
             return lines, used
+        # The reader runs after every member of the scan has assigned `_ax_*`.
+        # The binding has to be local to this function, ahead of the body.
         used.add("CoordinateReader")
         formula = f"{series.series_id}_formula"
+        lines = []
+        if _is_override_series(series):
+            lines.extend(
+                [
+                    "    if _override is not data.UNSET:",
+                    "        return _override",
+                ]
+            )
         lines.extend(
             [
                 f"    def {formula}() -> {_value_annotation(series)}:",
+                *_runtime_axis_prologue(catalog, scanned, indent="        "),
+                *[f"    {line}" if line else line for line in table_lines],
                 f"        return {expression}",
                 "",
                 f"    {series.series_id} = CoordinateReader({series.series_id!r}, Domain.product(), {formula})",
             ]
         )
         return lines, used
-    lines = table_lines
+    bindings = _labeller_axis_bindings(series, catalog)
+    # A hoisted table is built in this function, before the formula runs.
+    hoisted = "\n".join(tables)
+    lines = [
+        f"    {variable} = {source}"
+        for variable, source in bindings
+        if re.search(rf"\b{re.escape(variable)}\b", hoisted)
+    ]
+    lines.extend(table_lines)
     occupied = reserved
     required = _required_expr(series, catalog)
 
@@ -998,18 +1057,10 @@ def _semantic_body(
         else f"{names[axis.name]}: int"
         for axis in series.tensor_domain.axes
     )
-    prologue: list[str] = []
-    if not _is_runtime_labeller(series):
-        seen_axes: set[str] = set()
-        for axis in series.tensor_domain.axes:
-            labeller = catalog.runtime_labeller(axis.name, axis.keys)
-            variable = _axis_var_name(axis)
-            if labeller is None or variable in seen_axes:
-                continue
-            seen_axes.add(variable)
-            prologue.append(f"    {variable} = {labeller.series_id}.domain.axis({axis.name!r})")
-    lines.extend(prologue)
     lines.append(f"    def {formula}({parameters}) -> {_value_annotation(series)}:")
+    # Readers run after every scan member assigns `_ax_*`, so the name is local.
+    for variable, source in bindings:
+        lines.append(f"        {variable} = {source}")
     for axis in series.tensor_domain.axes:
         if axis.name in index_names and not _is_runtime_labeller(series):
             lines.append(
