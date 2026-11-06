@@ -737,11 +737,13 @@ def _labeller_index(
 def _header_label_index(
     series: Mapping[str, BoundSeries],
 ) -> Mapping[str, tuple[tuple[BoundSeries, frozenset[str | int]], ...]]:
-    """Group inputs whose column or row labels are formulas, by axis name.
+    """Group leaf inputs whose column or row labels are formulas, by axis name.
 
-    Covered keys are that axis's snapshot keys. Catalog order is preserved
-    so equal-width inputs keep a stable widest anchor. Key sets do not have
-    to nest: an input that no wider input contains labels itself.
+    Override inputs are omitted. Their headers are the template snapshot, not
+    keys a case workbook rewrites. Covered keys are that axis's snapshot keys.
+    Catalog order is preserved so equal-width inputs keep a stable widest
+    anchor. Key sets do not have to nest: an input that no wider input
+    contains labels itself.
 
     Raises:
         InvertedTreeExportError: A covered key is not a string or integer.
@@ -749,6 +751,8 @@ def _header_label_index(
     grouped: dict[str, list[tuple[BoundSeries, frozenset[str | int]]]] = {}
     for item in series.values():
         if item.direction != "input" or not item.formula_label_addresses:
+            continue
+        if is_override_input(cast(dict[str, Any], item.raw)):
             continue
         points = item.domain if item.authored_domain is None else item.authored_domain
         for axis_name, _addresses in item.formula_label_addresses:
@@ -872,9 +876,10 @@ class SeriesCatalog:
         """Return the non-constant labeller covering `keys` for `axis_name`.
 
         A `constant` labeller is a static axis: keys are known at export.
-        When no `axis_labels` series covers `keys`, an input whose
+        When no `axis_labels` series covers `keys`, a leaf input whose
         `column_header` or `row_label` cells are formulas supplies the keys
-        from the case workbook at load time. The widest such input that
+        from the case workbook at load time. Override inputs do not: their
+        headers stay the export snapshot. The widest such input that
         contains `keys` wins. A window that no wider input contains labels
         itself, so sibling slices of one timeline do not have to nest.
         """
@@ -897,7 +902,7 @@ class SeriesCatalog:
         return series
 
     def header_labeller_ids(self) -> dict[str, str]:
-        """Map each formula-header axis to its widest input series id."""
+        """Map each formula-header axis to its widest leaf input series id."""
         mapping: dict[str, str] = {}
         for axis_name, entries in self._header_labels_by_axis.items():
             if not entries:
@@ -1324,19 +1329,22 @@ def _attach_formula_label_addresses(
     *,
     graph: DependencyGraph | None,
 ) -> None:
-    """Record header cells for inputs whose labels are workbook formulas.
+    """Record header cells for leaf inputs whose labels are workbook formulas.
 
     Literal headers stay on the export snapshot. An axis is formula-labelled
-    when any of its direct header or label cells stores a formula. Builds
-    without a dependency graph skip the scan: export always supplies a graph,
-    and formula text is not on the cached-value workbook already open for
-    key resolution.
+    when any of its direct header or label cells stores a formula. Override
+    inputs are skipped: a case workbook types over the template formula, and
+    the header text stays the export snapshot. Builds without a dependency
+    graph skip the scan: export always supplies a graph, and formula text is
+    not on the cached-value workbook already open for key resolution.
     """
     if graph is None:
         return
     pending: list[tuple[BoundSeries, dict[str, tuple[str, ...]]]] = []
     for series in series_map.values():
         if series.direction != "input" or series.single_valued:
+            continue
+        if is_override_input(cast(dict[str, Any], series.raw)):
             continue
         addresses = _direct_label_addresses(series)
         if addresses:
