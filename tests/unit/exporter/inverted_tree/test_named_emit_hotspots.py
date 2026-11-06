@@ -23,6 +23,7 @@ from excel_grapher.evaluator import FormulaEvaluator
 from excel_grapher.exporter.inverted_tree import ast_emit as ast_emit_mod
 from excel_grapher.exporter.inverted_tree.ast_emit import (
     EmitContext,
+    _cached_string_pairs,
     _lockstep_producer_slots,
     _lockstep_string_map,
 )
@@ -627,6 +628,21 @@ def test_lockstep_string_map_caches_remap_per_field() -> None:
     assert again == found
     assert other is None
     assert slots.walks == 3
+
+
+def test_cached_string_pairs_retains_the_slot_map() -> None:
+    """The pair cache keeps the slot map so a later map cannot reuse its id."""
+    ctx, producer = _lockstep_pair(4)
+    slots = _CountingSlots({index: index for index in range(4)})
+    mapping = _cached_string_pairs(ctx, producer, "INSTRUMENT", slots, "INSTRUMENT")
+    again = _cached_string_pairs(ctx, producer, "INSTRUMENT", slots, "INSTRUMENT")
+    assert again == mapping
+    assert slots.walks == 1
+    retained, cached = ctx.host._emit_cache[
+        ("string_pairs", producer.series_id, "INSTRUMENT", "INSTRUMENT", id(slots))
+    ]
+    assert retained is slots
+    assert cached == mapping
 
 
 def test_lockstep_string_map_cache_is_per_slot_map() -> None:
