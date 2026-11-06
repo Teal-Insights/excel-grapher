@@ -443,6 +443,69 @@ def _bind_kwargs(series: BoundSeries, catalog: SeriesCatalog) -> str:
     return ", ".join(parts)
 
 
+def _schema_check_kwargs(series: BoundSeries, catalog: SeriesCatalog) -> str:
+    """Return `schema.bind` kwargs for a formula parameter, or `""`.
+
+    External labellers use their series id, the name of that parameter.
+    A pure self-labeller returns `""` so the caller uses `schema.validate`,
+    which reads axes from the tensor. When an external labeller is present,
+    self-labelled axes are included as the parameter under validation.
+    `schema.bind` otherwise rejects them as missing labellers.
+    """
+    parts: list[str] = []
+    external = False
+    for axis in series.tensor_domain.axes:
+        labeller = catalog.runtime_labeller(axis.name, axis.keys)
+        if labeller is None:
+            continue
+        if labeller.series_id == series.series_id:
+            parts.append(f"{axis.name}={series.series_id}")
+        else:
+            external = True
+            parts.append(f"{axis.name}={labeller.series_id}")
+    if not external:
+        return ""
+    return ", ".join(parts)
+
+
+def _input_check_binds(series: BoundSeries, catalog: SeriesCatalog) -> tuple[str, str]:
+    """Return the `.required` expression and `schema.bind` kwargs.
+
+    An external labeller stays the check's keyword parameter
+    (`TIME_PERIOD=TIME_PERIOD`). A series that labels its own axis is not a
+    parameter; the value under validation supplies that axis
+    (`TIME_PERIOD=current_account`). `DomainTemplate.bind` selects the axis
+    by name, so the labelled axis need not be `axes[0]`.
+
+    A pure self-labeller leaves the schema kwargs empty so the checker calls
+    `schema.validate` and reads axes from the tensor. When any axis has an
+    external labeller, the schema kwargs include that labeller and every
+    self-labelled axis. Omitting the self axis makes `schema.bind` reject it
+    as a missing labeller.
+
+    Header-inferred labellers are not runtime labellers, so `.required` stays
+    on the template rather than a `{SERIES}_POSITIONS` product. A required
+    template can be a proper subset of the series domain.
+    """
+    parts: list[str] = []
+    external = False
+    for axis in series.tensor_domain.axes:
+        labeller = catalog.runtime_labeller(axis.name, axis.keys)
+        if labeller is None:
+            continue
+        if labeller.series_id == series.series_id:
+            parts.append(f"{axis.name}={series.series_id}")
+        else:
+            external = True
+            parts.append(f"{axis.name}={axis.name}")
+    binding = _binding(series)
+    if not parts:
+        required = f"{binding}.required"
+    else:
+        required = f"{binding}.required.bind({', '.join(parts)})"
+    return required, (", ".join(parts) if external else "")
+
+
 def _required_expr(series: BoundSeries, catalog: SeriesCatalog) -> str:
     if _is_runtime_labeller(series):
         return f"{_binding(series)}_POSITIONS"
@@ -1081,7 +1144,7 @@ def _schema_checks(params: Sequence[BoundSeries], catalog: SeriesCatalog) -> lis
     for series in params:
         if series.single_valued or series.direction not in {"input", "constant"}:
             continue
-        kwargs = _bind_kwargs(series, catalog)
+        kwargs = _schema_check_kwargs(series, catalog)
         schema = f"{_binding(series)}.schema"
         if kwargs:
             lines.append(f"    {schema}.bind({kwargs}).validate({series.series_id})")
@@ -1483,12 +1546,12 @@ def _input_check(
         if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
         and labeller.series_id != series.series_id
     ]
-    bind = ", ".join(f"{axis.name}={axis.name}" for axis, _labeller in runtime_axes)
     extras = [f"{axis.name}: {_annotation(labeller, domains)}" for axis, labeller in runtime_axes]
+    required, schema_bind = _input_check_binds(series, catalog)
     if not series.single_valued:
         schema = f"{_binding(series)}.schema"
-        if bind:
-            lines.append(f"    {schema}.bind({bind}).validate({series_id})")
+        if schema_bind:
+            lines.append(f"    {schema}.bind({schema_bind}).validate({series_id})")
         else:
             lines.append(f"    {schema}.validate({series_id})")
     measure_domain = measure_domain_from_series(series.raw)
@@ -1501,11 +1564,6 @@ def _input_check(
         if series.single_valued:
             lines.extend(_require_domain_lines(series_id, element, quoted_id, indent="    "))
         else:
-            required = (
-                f"{_binding(series)}.required.bind({bind})"
-                if bind
-                else f"{_binding(series)}.required"
-            )
             lines.append(f"    for coordinate in {required}:")
             if _is_override_series(series):
                 lines.extend(
@@ -1533,11 +1591,6 @@ def _input_check(
         else:
             # Restrict validation to this extraction's required domain;
             # wider source tensors retain their off-graph observations.
-            required = (
-                f"{_binding(series)}.required.bind({bind})"
-                if bind
-                else f"{_binding(series)}.required"
-            )
             lines.append(f"    for coordinate in {required}:")
             if _is_override_series(series):
                 lines.extend(
