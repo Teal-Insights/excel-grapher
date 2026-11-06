@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.16 (2026-11-06)
+
+### Bug Fixes
+
+- **export**: Keep override formula headers off runtime axes
+  ([`31707a4`](https://github.com/Teal-Insights/excel-grapher/commit/31707a45f70dca896079ea9e8102068c5184db4a))
+
+
 ## v24.1.15 (2026-11-06)
 
 ### Bug Fixes
