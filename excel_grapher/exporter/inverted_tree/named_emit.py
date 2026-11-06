@@ -3033,7 +3033,17 @@ def emit_named_data(
                 f"Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})"
                 for axis in domain.axes
             )
-            define_domain = f"Domain.product({snapshot})"
+            # Axis keys are the union of keys that appear. A ragged constant
+            # or input is an explicit domain, so the snapshot must list those
+            # coordinates. The product of the keys counts cells the series
+            # does not bind.
+            if domain.coordinates is None:
+                define_domain = f"Domain.product({snapshot})"
+            else:
+                # Key coordinates, not `coordinate_runs` of the interned axis:
+                # a runtime-labelled axis is an `AxisTemplate` and has no keys.
+                coordinates = repr(tuple(domain))
+                define_domain = f"Domain.explicit(axes=({snapshot},), coordinates={coordinates})"
             if required_source is None:
                 required_source = domain_source
         if series.direction in {"input", "constant"} and not _is_override_series(series):

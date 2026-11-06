@@ -9,7 +9,9 @@ from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, KeyPoint, 
 from tests.unit.exporter.inverted_tree.helpers import (
     bindings_document,
     generate_inverted,
+    load_package,
     make_catalog,
+    series_entry,
     write_workbook,
 )
 
@@ -151,3 +153,71 @@ def test_sparse_domain_source_and_import_scale(tmp_path: Path) -> None:
         assert "Country " not in interned_line
     assert domain_sizes[-1] / domain_sizes[0] < 2.0
     assert data_sizes[-1] / data_sizes[0] < 3.0
+
+
+def _ragged_labelled_workbook(tmp_path: Path) -> Path:
+    return write_workbook(
+        tmp_path / "ragged_labelled.xlsx",
+        {
+            "Origin": {"A1": 2017},
+            "Data": {
+                "B1": "=Origin!A1",
+                "C1": "=B1+1",
+                "D1": "=C1+1",
+                "A4": "outstanding",
+                "B4": 10.0,
+                "C4": 20.0,
+                "D4": 30.0,
+                "A5": "short",
+                "B5": 1.0,
+                "C5": 2.0,
+                "E4": "=B4+C4+D4+B5+C5",
+            },
+        },
+    )
+
+
+def _ragged_labelled_bindings() -> dict[str, Any]:
+    return bindings_document(
+        series_entry("first_year", "Origin!A1", direction="input", dtype="int"),
+        series_entry(
+            "year_labels",
+            "Data!B1:D1",
+            layout="series",
+            direction="internal",
+            dtype="int",
+            header_row=1,
+            axis_labels="TIME_PERIOD",
+        ),
+        {
+            "id": "stock",
+            "sheet": "Data",
+            "data_range": ["Data!B4:D4", "Data!B5:C5"],
+            "layout": "matrix",
+            "constant": {},
+            "key": ["COUNTRY", "TIME_PERIOD"],
+            "structure": {
+                "measure": _measure(),
+                "dimensions": [_country_dim(), _time_dim()],
+            },
+        },
+        series_entry("total", "Data!E4", direction="output"),
+        schema_version="1.17.0",
+    )
+
+
+def test_runtime_labelled_sparse_constant_imports(tmp_path: Path) -> None:
+    """A labelled constant keeps the cells it binds, including a missing corner.
+
+    The snapshot domain passed to `define_series` must match those cells.
+    A product of the axis keys counts the missing corner and the import fails.
+    """
+    modules = generate_inverted(_ragged_labelled_workbook(tmp_path), _ragged_labelled_bindings())
+    pkg = load_package(modules, tmp_path, "ragged_const")
+    stock = pkg.data.STOCK
+    assert len(stock.domain) == 5
+    assert ("short", 2019) not in set(stock.domain)
+    assert stock[("outstanding", 2017)] == 10.0
+    assert stock[("outstanding", 2019)] == 30.0
+    assert stock[("short", 2018)] == 2.0
+    assert stock[("short", 2019)] is None
