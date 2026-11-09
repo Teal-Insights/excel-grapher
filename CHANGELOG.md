@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.18 (2026-11-09)
+
+### Bug Fixes
+
+- **export**: Import domain constructors from the emitter
+  ([`22e8756`](https://github.com/Teal-Insights/excel-grapher/commit/22e87569edea277ed68ce9960a09f7111c94ff8f))
+
+
 ## v24.1.17 (2026-11-09)
 
 ### Bug Fixes
