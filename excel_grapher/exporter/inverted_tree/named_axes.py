@@ -77,10 +77,24 @@ def _master_keys(observed: Sequence[_KeyTuple]) -> _KeyTuple:
     return max(candidates, key=rank)
 
 
-def layout_keys_source(axis: Axis, named: NamedAxes, *, module: str = "") -> str:
+def layout_keys_source(
+    axis: Axis,
+    named: NamedAxes,
+    *,
+    module: str = "",
+    calls: set[str] | None = None,
+) -> str:
     """Source for this series' keys: Axis constant, `span`, or a key tuple.
 
-    `module` is `data.` when the caller is outside `data.py`.
+    `module` is `data.` when the caller is outside `data.py`. A `span(...)`
+    expression adds `"span"` to `calls` so the caller can import it. Callers
+    that discard the source omit `calls`.
+
+    Args:
+        axis: Series axis whose keys are rendered.
+        named: Interned axis constants for this export.
+        module: Prefix for the axis constant, empty inside `data.py`.
+        calls: Runtime names this expression calls, when the caller keeps it.
     """
     name = f"{module}{named.constant(axis)}"
     emitted = named.emitted(axis)
@@ -97,6 +111,8 @@ def layout_keys_source(axis: Axis, named: NamedAxes, *, module: str = "") -> str
     except ValueError:
         return repr(keys)
     if keys == emitted.keys[start : stop + 1]:
+        if calls is not None:
+            calls.add("span")
         return f"span({name}, {keys[0]!r}, {keys[-1]!r})"
     return repr(keys)
 

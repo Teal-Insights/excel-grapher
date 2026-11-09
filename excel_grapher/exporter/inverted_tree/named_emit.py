@@ -42,7 +42,10 @@ from excel_grapher.exporter.inverted_tree.deps import (
     try_formula_ast,
 )
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
-from excel_grapher.exporter.inverted_tree.input_annotations import public_input_annotations
+from excel_grapher.exporter.inverted_tree.input_annotations import (
+    RenderedAnnotation,
+    public_input_annotations,
+)
 from excel_grapher.exporter.inverted_tree.named_axes import (
     NamedAxes,
     layout_keys_source,
@@ -79,7 +82,8 @@ _SKIP_INDEX_CALLS = frozenset(
     }
 )
 _NO_DOMAINS: Mapping[str, str] = MappingProxyType({})
-_BETWEEN_CALL = re.compile(r"(?<!Real)Between\(")
+_TYPING_CONSTRUCTORS = frozenset({"Annotated", "Literal"})
+_RUNTIME_CONSTRUCTORS = frozenset({"Between", "RealBetween"})
 
 _RESERVED_NAMES = frozenset(
     {
@@ -199,6 +203,61 @@ def _constraint_element(
     return domains.get(series.series_id)
 
 
+def _annotation_names(annotation: str) -> frozenset[str]:
+    """Constructors recorded when `annotation` was rendered, if any."""
+    if isinstance(annotation, RenderedAnnotation):
+        return annotation.names
+    return frozenset()
+
+
+def _carry_annotation(text: str, source: str) -> str:
+    """Return `text`, keeping constructor names when `source` splices them."""
+    names = _annotation_names(source)
+    if not names:
+        return text
+    return RenderedAnnotation(text, names)
+
+
+class _Splices:
+    """Constructors a generated module writes as code."""
+
+    def __init__(self) -> None:
+        self.typing: set[str] = set()
+        self.runtime: set[str] = set()
+
+    def annotation(self, text: str) -> str:
+        """Record constructors named by a spliced annotation."""
+        for name in _annotation_names(text):
+            if name in _TYPING_CONSTRUCTORS:
+                self.typing.add(name)
+            elif name in _RUNTIME_CONSTRUCTORS:
+                self.runtime.add(name)
+            else:
+                raise InvertedTreeExportError(
+                    f"public annotation names unknown constructor {name!r}"
+                )
+        return text
+
+    def note_span(self) -> None:
+        """Record an emitted `span(...)` call."""
+        self.runtime.add("span")
+
+
+def _layout_source(
+    axis: Any,
+    named_axes: NamedAxes,
+    splices: _Splices | None,
+    *,
+    module: str = "",
+) -> str:
+    """Return key source, recording `span` when this module keeps the call."""
+    calls: set[str] = set()
+    source = layout_keys_source(axis, named_axes, module=module, calls=calls)
+    if splices is not None and "span" in calls:
+        splices.note_span()
+    return source
+
+
 def _value_annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS) -> str:
     """Describe every permitted workbook value, including blanks and errors.
 
@@ -210,32 +269,12 @@ def _value_annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMA
     if element is not None:
         if series.single_valued:
             return element
-        return f"{element} | None"
+        return _carry_annotation(f"{element} | None", element)
     types = python_measure_type(series).split(" | ")
     types.append("str")
     if not series.single_valued:
         types.append("None")
     return " | ".join(dict.fromkeys(types))
-
-
-def _runtime_domain_names(source: str) -> list[str]:
-    """Names from `runtime` that `source` constructs in an annotation."""
-    names: list[str] = []
-    if _BETWEEN_CALL.search(source):
-        names.append("Between")
-    if "RealBetween(" in source:
-        names.append("RealBetween")
-    return names
-
-
-def _typing_domain_names(source: str) -> list[str]:
-    """Typing constructors `source` uses in a generated annotation."""
-    names: list[str] = []
-    if "Annotated[" in source:
-        names.append("Annotated")
-    if "Literal[" in source:
-        names.append("Literal")
-    return names
 
 
 def _require_domain_lines(
@@ -275,7 +314,8 @@ def _annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMAINS) -
     alias = _public_alias(series)
     if alias is not None:
         return f"data.{alias}"
-    return f"data.Series[{_value_annotation(series, domains)}]"
+    value = _value_annotation(series, domains)
+    return _carry_annotation(f"data.Series[{value}]", value)
 
 
 def _is_override_series(series: BoundSeries) -> bool:
@@ -287,7 +327,7 @@ def _input_annotation(series: BoundSeries, domains: Mapping[str, str] = _NO_DOMA
     """Annotation for a bound input, including an absent override."""
     base = _annotation(series, domains)
     if _is_override_series(series):
-        return f"{base} | Unset"
+        return _carry_annotation(f"{base} | Unset", base)
     return base
 
 
@@ -302,9 +342,9 @@ def _override_input_ids(
     )
 
 
-def _append_override_param(signature: str, annotation: str) -> str:
+def _append_override_param(signature: str, annotation: str, *, splices: _Splices) -> str:
     """Add the raw override value to a keyword-only formula signature."""
-    param = f"_override: {annotation}"
+    param = f"_override: {splices.annotation(annotation)}"
     head, _arrow, tail = signature.partition(" -> ")
     if head.endswith("()"):
         head = f"{head[:-2]}(*, {param})"
@@ -1181,9 +1221,15 @@ def _signature(
     params: Sequence[BoundSeries],
     returns: str,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> str:
-    joined = ", ".join(f"{series.series_id}: {_annotation(series, domains)}" for series in params)
-    return f"def {name}({('*, ' + joined) if joined else ''}) -> {returns}:"
+    parts: list[str] = []
+    for series in params:
+        parts.append(f"{series.series_id}: {splices.annotation(_annotation(series, domains))}")
+    joined = ", ".join(parts)
+    rendered = splices.annotation(returns)
+    return f"def {name}({('*, ' + joined) if joined else ''}) -> {rendered}:"
 
 
 def _schema_checks(params: Sequence[BoundSeries], catalog: SeriesCatalog) -> list[str]:
@@ -1233,6 +1279,7 @@ def emit_named_internals(
     """Emit one named calculation function per formula series or recurrence group."""
     functions: list[str] = []
     used: set[str] = {"publish"}
+    splices = _Splices()
     emitted_groups: set[tuple[str, ...]] = set()
     for series in _retained_formula_series(catalog):
         scc = scc_map.get(series.series_id, (series.series_id,))
@@ -1242,7 +1289,7 @@ def emit_named_internals(
             emitted_groups.add(scc)
             _refuse_override_recurrence(scc, catalog)
             source, group_used = _emit_recurrence_group(
-                scc, catalog, deps, graph, named_axes, literal_tables, domains
+                scc, catalog, deps, graph, named_axes, literal_tables, domains, splices=splices
             )
             functions.append(source)
             used |= group_used
@@ -1253,9 +1300,13 @@ def emit_named_internals(
             series, catalog, info, graph, named_axes, literal_tables=literal_tables
         )
         used |= body_used
-        signature = _signature(series.series_id, params, _annotation(series, domains), domains)
+        signature = _signature(
+            series.series_id, params, _annotation(series, domains), domains, splices=splices
+        )
         if _is_override_series(series):
-            signature = _append_override_param(signature, _input_annotation(series, domains))
+            signature = _append_override_param(
+                signature, _input_annotation(series, domains), splices=splices
+            )
         functions.append(
             "\n".join(
                 [
@@ -1274,8 +1325,8 @@ def emit_named_internals(
     if "label_axis" in used:
         tensor_names.append("label_axis")
         used.remove("label_axis")
-    used.update(_runtime_domain_names(joined))
-    typing_names = ", ".join(sorted({"cast", *_typing_domain_names(joined)}))
+    used.update(splices.runtime)
+    typing_names = ", ".join(sorted({"cast", *splices.typing}))
     lines = [
         '"""Named calculation functions for every bound formula series."""',
         "from __future__ import annotations",
@@ -1467,6 +1518,8 @@ def _emit_recurrence_group(
     named_axes: NamedAxes,
     literal_tables: dict[str, dict[tuple[object, ...], object]],
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> tuple[str, set[str]]:
     """Emit a mutually recursive series group as demand-driven readers."""
     params = [catalog.get(sid) for sid in scc_external_params(scc, deps, catalog.order)]
@@ -1478,12 +1531,12 @@ def _emit_recurrence_group(
         '    """Complete named results of one recurrence group evaluation."""',
     ]
     for sid in scc:
-        lines.append(f"    {sid}: {_annotation(catalog.get(sid), domains)}")
+        lines.append(f"    {sid}: {splices.annotation(_annotation(catalog.get(sid), domains))}")
     joined = ", ".join(f"`{sid}`" for sid in scc)
     lines.extend(
         [
             "",
-            _signature(scan_function_name(scc), params, result_type, domains),
+            _signature(scan_function_name(scc), params, result_type, domains, splices=splices),
             f'    """Evaluate the recurrence group {joined} and publish complete tensors."""',
             *_schema_checks(params, catalog),
         ]
@@ -1604,6 +1657,8 @@ def _input_check(
     series: BoundSeries,
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> tuple[list[str], set[str], list[str]]:
     """Coerce dtype, validate schema and domain, then apply the value map."""
     lines: list[str] = []
@@ -1623,7 +1678,10 @@ def _input_check(
         if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
         and labeller.series_id != series.series_id
     ]
-    extras = [f"{axis.name}: {_annotation(labeller, domains)}" for axis, labeller in runtime_axes]
+    extras = [
+        f"{axis.name}: {splices.annotation(_annotation(labeller, domains))}"
+        for axis, labeller in runtime_axes
+    ]
     required, schema_bind = _input_check_binds(series, catalog)
     if not series.single_valued:
         schema = f"{_binding(series)}.schema"
@@ -1637,7 +1695,7 @@ def _input_check(
     element = _constraint_element(series, domains)
     if element is not None:
         used.add("require_annotated_domain")
-        used.update(_runtime_domain_names(element))
+        element = splices.annotation(element)
         if series.single_valued:
             lines.extend(_require_domain_lines(series_id, element, quoted_id, indent="    "))
         else:
@@ -1694,6 +1752,8 @@ def _input_check_functions(
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
     deps: Mapping[str, SeriesDeps] | None = None,
+    *,
+    splices: _Splices,
 ) -> tuple[list[str], list[str], set[str]]:
     """Collect non-trivial input check sources and the runtime helpers they use."""
     checks: list[str] = []
@@ -1701,12 +1761,12 @@ def _input_check_functions(
     used: set[str] = set()
     for series_id in _input_series_ids(catalog, deps):
         series = catalog.get(series_id)
-        body, check_used, extras = _input_check(series, catalog, domains)
+        body, check_used, extras = _input_check(series, catalog, domains, splices=splices)
         if len(body) == 1 and body[0] == f"    return {series.series_id}":
             continue
         used |= check_used
         checked.append(series.series_id)
-        annotation = _input_annotation(series, domains)
+        annotation = splices.annotation(_input_annotation(series, domains))
         checks.append(
             "\n".join(
                 [
@@ -1725,7 +1785,9 @@ def emit_named_validation(
     deps: Mapping[str, SeriesDeps] | None = None,
 ) -> str:
     """Emit input schema, dtype, domain, and value-map checks for `Model` construction."""
-    checks, checked, used = _input_check_functions(catalog, domains, deps)
+    splices = _Splices()
+    checks, checked, used = _input_check_functions(catalog, domains, deps, splices=splices)
+    used |= splices.runtime
     lines = [
         '"""Input schema, domain, and value-map checks for bound Model arguments."""',
         "",
@@ -1737,7 +1799,7 @@ def emit_named_validation(
     blob = "\n".join(checks)
     if any("datetime" in _annotation(catalog.get(sid), domains) for sid in checked):
         stdlib.append("from datetime import datetime")
-    typing_names = _typing_domain_names(blob)
+    typing_names = sorted(splices.typing)
     if typing_names:
         stdlib.append(f"from typing import {', '.join(typing_names)}")
     if any(not catalog.get(sid).single_valued for sid in checked):
@@ -1766,12 +1828,14 @@ def _model_attribute(
     deps: Mapping[str, SeriesDeps],
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> list[str]:
     series_id = series.series_id
     call_args = [f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids]
     lines = [
         "    @cached_property",
-        f"    def {series_id}(self) -> {_annotation(series, domains)}:",
+        f"    def {series_id}(self) -> {splices.annotation(_annotation(series, domains))}:",
     ]
     if _is_override_series(series):
         lines.append(f'        _override = getattr(self, "_{series_id}__override", data.UNSET)')
@@ -1785,6 +1849,8 @@ def _model_recurrence_group(
     deps: Mapping[str, SeriesDeps],
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> list[str]:
     name = scan_function_name(scc)
     params = scc_external_params(scc, deps, catalog.order)
@@ -1799,7 +1865,7 @@ def _model_recurrence_group(
             [
                 "",
                 "    @cached_property",
-                f"    def {sid}(self) -> {_annotation(catalog.get(sid), domains)}:",
+                f"    def {sid}(self) -> {splices.annotation(_annotation(catalog.get(sid), domains))}:",
                 f"        return self._{name}.{sid}",
             ]
         )
@@ -1963,6 +2029,8 @@ def _model_from_defaults(
     domains: Mapping[str, str] = _NO_DOMAINS,
     deps: Mapping[str, SeriesDeps] | None = None,
     default_exprs: Mapping[str, str] | None = None,
+    *,
+    splices: _Splices,
 ) -> list[str]:
     """Bind every input from `data.*_DEFAULT`, then apply keyword overrides."""
     exprs = default_exprs or {}
@@ -1982,7 +2050,7 @@ def _model_from_defaults(
     lines.append("        *,")
     for series in inputs:
         default = exprs.get(series.series_id, f"data.{series.series_id.upper()}_DEFAULT")
-        annotation = _input_annotation(series, domains)
+        annotation = splices.annotation(_input_annotation(series, domains))
         lines.append(f"        {series.series_id}: {annotation} = {default},")
     lines.extend(
         [
@@ -2165,6 +2233,8 @@ def _input_class(
     leaves: Sequence[str],
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> str:
     """Emit the frozen dataclass that documents one output's input leaf closure."""
     inputs = [catalog.get(sid) for sid in leaves if catalog.get(sid).direction == "input"]
@@ -2179,7 +2249,7 @@ def _input_class(
     for series in inputs:
         lines.extend(
             [
-                f"    {series.series_id}: {_input_annotation(series, domains)} = _field(",
+                f"    {series.series_id}: {splices.annotation(_input_annotation(series, domains))} = _field(",
                 f"        metadata={_input_field_metadata(series)},",
                 "    )",
             ]
@@ -2254,6 +2324,8 @@ def _model_class(
     scc_map: Mapping[str, tuple[str, ...]],
     domains: Mapping[str, str] = _NO_DOMAINS,
     default_exprs: Mapping[str, str] | None = None,
+    *,
+    splices: _Splices,
 ) -> list[str]:
     """Lines of the memoized `Model` class."""
     input_ids = _input_series_ids(catalog, deps)
@@ -2272,10 +2344,12 @@ def _model_class(
         "",
     ]
     for series in inputs:
-        model.append(f"    {series.series_id}: {_input_annotation(series, domains)}")
+        model.append(
+            f"    {series.series_id}: {splices.annotation(_input_annotation(series, domains))}"
+        )
     model.append(f"    _INPUT_IDS: tuple[str, ...] = {_python_literal(input_ids)}")
     model.extend(_model_init(catalog, deps))
-    model.extend(_model_from_defaults(catalog, domains, deps, default_exprs))
+    model.extend(_model_from_defaults(catalog, domains, deps, default_exprs, splices=splices))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
     emitted_groups: set[tuple[str, ...]] = set()
@@ -2288,9 +2362,9 @@ def _model_class(
                 continue
             emitted_groups.add(scc)
             _refuse_override_recurrence(scc, catalog)
-            model.extend(_model_recurrence_group(scc, deps, catalog, domains))
+            model.extend(_model_recurrence_group(scc, deps, catalog, domains, splices=splices))
             continue
-        model.extend(_model_attribute(series, deps, catalog, domains))
+        model.extend(_model_attribute(series, deps, catalog, domains, splices=splices))
     return model
 
 
@@ -2425,12 +2499,13 @@ def emit_named_model(
     value_maps = _catalog_value_maps(catalog, deps)
     override_ids = _override_input_ids(catalog, deps)
     default_exprs = _public_default_exprs(catalog, deps, defaults)
-    class_lines = _model_class(catalog, deps, scc_map, domains, default_exprs)
+    splices = _Splices()
+    class_lines = _model_class(catalog, deps, scc_map, domains, default_exprs, splices=splices)
     input_classes: list[str] = []
     input_names: list[str] = []
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
-        input_classes.append(_input_class(output, leaves, catalog, domains))
+        input_classes.append(_input_class(output, leaves, catalog, domains, splices=splices))
         input_names.append(_inputs_class_name(output))
     sections = [
         "\n".join(_bind_inputs_source(catalog, override_ids)),
@@ -2453,7 +2528,7 @@ def emit_named_model(
         stdlib.append("from functools import cached_property")
     if "Path" in body:
         stdlib.append("from pathlib import Path")
-    typing_names = sorted({"Any", "ClassVar", "Self", *_typing_domain_names(body)})
+    typing_names = sorted({"Any", "ClassVar", "Self", *splices.typing})
     stdlib.append(f"from typing import {', '.join(typing_names)}")
     imported = ["data"]
     imported.extend(
@@ -2467,7 +2542,7 @@ def emit_named_model(
     local = [f"from . import {', '.join(imported)}"]
     if "public_value_from_workbook" in body:
         local.append("from .excel import public_value_from_workbook")
-    runtime_names = sorted(["InputField", *_runtime_domain_names(body), "describe_inputs"])
+    runtime_names = sorted({"InputField", "describe_inputs", *splices.runtime})
     local.append(f"from .runtime import {', '.join(runtime_names)}")
     tensor_imports = [name for name in ("Unset", "align_runtime_keys") if name in body]
     if tensor_imports:
@@ -2502,11 +2577,14 @@ def emit_named_api(
     functions: list[str] = []
     compute_names: list[str] = []
     input_names: list[str] = []
+    splices = _Splices()
     for output in catalog.output_series():
         leaves = leaf_closure(output.series_id, catalog=catalog, deps=dict(deps))
         constants = frozenset(sid for sid in leaves if catalog.get(sid).direction == "constant")
         input_names.append(_inputs_class_name(output))
-        source, name = _public_function(output, catalog, constant_sets[constants], deps, domains)
+        source, name = _public_function(
+            output, catalog, constant_sets[constants], deps, domains, splices=splices
+        )
         functions.append(source)
         compute_names.append(name)
     aliases = list(constant_sets.values())
@@ -2514,6 +2592,8 @@ def emit_named_api(
     stdlib: list[str] = []
     if "datetime" in joined:
         stdlib.append("from datetime import datetime")
+    if splices.typing:
+        stdlib.append(f"from typing import {', '.join(sorted(splices.typing))}")
     local: list[str] = []
     if "data." in joined:
         local.append("from . import data")
@@ -2525,7 +2605,10 @@ def emit_named_api(
         else:
             local.append("from . import model")
         local.append(_wrapped_from_import("model", input_names))
-        local.append("from .runtime import publish")
+        runtime = sorted({"publish", *splices.runtime})
+        local.append(f"from .runtime import {', '.join(runtime)}")
+    elif splices.runtime:
+        local.append(f"from .runtime import {', '.join(sorted(splices.runtime))}")
     lines = [
         *_generated_module_preamble(
             "Generated functions accepting and returning named-coordinate values.",
@@ -2609,16 +2692,19 @@ def _public_function(
     constants: str,
     deps: Mapping[str, SeriesDeps] | None = None,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
 ) -> tuple[str, str]:
     name = output.compute_name or f"compute_{output.series_id}"
     class_name = _inputs_class_name(output)
     summary = f"Compute `{output.series_id}` using authored coordinate identities."
     notes = _key_note(output, catalog, deps) if deps is not None else []
     docstring = [f'    """{summary}', "", *notes, '    """'] if notes else [f'    """{summary}"""']
+    returns = splices.annotation(_annotation(output, domains))
     source = "\n".join(
         [
             _publish_line(output, constants),
-            f"def {name}(inputs: {class_name}) -> {_annotation(output, domains)}:",
+            f"def {name}(inputs: {class_name}) -> {returns}:",
             *docstring,
             f"    if not isinstance(inputs, {class_name}):",
             f'        raise TypeError(f"{name}() expected {class_name}, got {{type(inputs).__name__}}")',
@@ -2738,6 +2824,8 @@ def _provenance_source(
     named_axes: NamedAxes,
     domain_source: str | None = None,
     catalog: SeriesCatalog | None = None,
+    *,
+    splices: _Splices | None = None,
 ) -> str:
     """Describe authored cells as a worksheet rectangle when they form one.
 
@@ -2749,7 +2837,7 @@ def _provenance_source(
     literal = repr(dict(cells))
     if not cells or series.single_valued:
         return literal
-    rectangle = _rectangle_source(series, cells, named_axes, catalog)
+    rectangle = _rectangle_source(series, cells, named_axes, catalog, splices=splices)
     if rectangle is not None:
         return rectangle
     domain = domain_source or f"{series.series_id.upper()}_DOMAIN"
@@ -2764,6 +2852,8 @@ def _rectangle_source(
     cells: Mapping[tuple[Any, ...], CanonicalAddress],
     named_axes: NamedAxes,
     catalog: SeriesCatalog | None = None,
+    *,
+    splices: _Splices | None = None,
 ) -> str | None:
     """Describe a dense rectangle over one or two axes, or `None`."""
     from excel_grapher.core.address_keys import format_cell_key
@@ -2779,8 +2869,8 @@ def _rectangle_source(
 
     def layout_arg(axis: Any) -> str:
         if catalog is None:
-            return layout_keys_source(axis, named_axes)
-        return _axis_source_for_domain(axis, named_axes, catalog)
+            return _layout_source(axis, named_axes, splices)
+        return _axis_source_for_domain(axis, named_axes, catalog, splices)
 
     def matches(layout: Mapping[tuple[Any, ...], str]) -> dict[tuple[Any, ...], str]:
         return {coord: address for coord, address in cells.items() if layout.get(coord) != address}
@@ -2906,12 +2996,13 @@ def _render_grid(
     return f"grid_cells({', '.join(arguments)})"
 
 
-def _product_axis_source(axis: Any, named_axes: NamedAxes) -> str:
+def _product_axis_source(axis: Any, named_axes: NamedAxes, splices: _Splices | None = None) -> str:
     """Name the emitted axis, or build a subset `Axis` from `span` / keys."""
     emitted = named_axes.emitted(axis)
     if axis.keys == emitted.keys:
         return named_axes.constant(axis)
-    return f"Axis({axis.name!r}, {layout_keys_source(axis, named_axes)}, {axis.key_type.__name__})"
+    layout = _layout_source(axis, named_axes, splices)
+    return f"Axis({axis.name!r}, {layout}, {axis.key_type.__name__})"
 
 
 def _coordinates_source(
@@ -2948,11 +3039,16 @@ def _coordinates_source(
     return source if len(source) < len(literal) else literal
 
 
-def _axis_source_for_domain(axis: Any, named_axes: NamedAxes, catalog: SeriesCatalog) -> str:
+def _axis_source_for_domain(
+    axis: Any,
+    named_axes: NamedAxes,
+    catalog: SeriesCatalog,
+    splices: _Splices | None = None,
+) -> str:
     """Name an interned axis, or an `AxisTemplate` for a runtime-labelled axis."""
     labeller = catalog.runtime_labeller(axis.name, axis.keys)
     if labeller is None:
-        return _product_axis_source(axis, named_axes)
+        return _product_axis_source(axis, named_axes, splices)
     emitted = named_axes.emitted(axis)
     if axis.keys == emitted.keys:
         return named_axes.constant(axis)
@@ -2964,20 +3060,29 @@ def _axis_source_for_domain(axis: Any, named_axes: NamedAxes, catalog: SeriesCat
     )
 
 
-def _domain_source(series: BoundSeries, named_axes: NamedAxes, catalog: SeriesCatalog) -> str:
+def _domain_source(
+    series: BoundSeries,
+    named_axes: NamedAxes,
+    catalog: SeriesCatalog,
+    splices: _Splices | None = None,
+) -> str:
     domain = series.tensor_domain
     runtime = any(
         catalog.runtime_labeller(axis.name, axis.keys) is not None for axis in domain.axes
     )
     if domain.coordinates is None:
-        axes = ", ".join(_axis_source_for_domain(axis, named_axes, catalog) for axis in domain.axes)
+        axes = ", ".join(
+            _axis_source_for_domain(axis, named_axes, catalog, splices) for axis in domain.axes
+        )
         ctor = "DomainTemplate" if runtime else "Domain"
         return f"{ctor}.product({axes})"
     if runtime:
-        axes = ", ".join(_axis_source_for_domain(axis, named_axes, catalog) for axis in domain.axes)
+        axes = ", ".join(
+            _axis_source_for_domain(axis, named_axes, catalog, splices) for axis in domain.axes
+        )
         coordinates = _coordinates_source(tuple(domain), domain.axes, named_axes, catalog)
         return f"DomainTemplate.explicit(axes=({axes},), coordinates={coordinates})"
-    axes = ", ".join(_product_axis_source(axis, named_axes) for axis in domain.axes)
+    axes = ", ".join(_product_axis_source(axis, named_axes, splices) for axis in domain.axes)
     emitted = tuple(named_axes.emitted(axis) for axis in domain.axes)
     coordinates = _coordinates_source(tuple(domain), emitted, named_axes)
     return f"Domain.explicit(axes=({axes},), coordinates={coordinates})"
@@ -3108,6 +3213,7 @@ def emit_named_data(
         claimed.claim(imported, f"import {imported}")
     claimed.claim("CODEGEN_SCHEMA_VERSION", "module binding CODEGEN_SCHEMA_VERSION")
     claimed.claim("CODEGEN_FINGERPRINT", "module binding CODEGEN_FINGERPRINT")
+    splices = _Splices()
     lines = [
         '"""Authored domains, validated tensor types, and workbook defaults."""',
         "from __future__ import annotations",
@@ -3115,7 +3221,6 @@ def emit_named_data(
         "from contextlib import contextmanager",
         "from datetime import datetime",
         "from .provenance import block_cells, column_cells, grid_cells, row_cells",
-        "from .runtime import span",
         f"from .tensor import {', '.join(tensor_names)}",
         f"CODEGEN_SCHEMA_VERSION = {REPRESENTATION_VERSION!r}",
         f"CODEGEN_FINGERPRINT = {fingerprint!r}",
@@ -3157,7 +3262,9 @@ def emit_named_data(
             constant_series.append(series)
         if series.single_valued:
             claimed.claim(f"{name}_CELLS", f"series {series.series_id!r} cells")
-            lines.append(f"{name}_CELLS = {_provenance_source(series, named_axes)}")
+            lines.append(
+                f"{name}_CELLS = {_provenance_source(series, named_axes, splices=splices)}"
+            )
             if _is_override_series(series):
                 claimed.claim(f"{name}_DEFAULT", f"input {series.series_id!r} sentinel")
                 lines.append(f"{name}_DEFAULT = UNSET")
@@ -3171,7 +3278,7 @@ def emit_named_data(
                 lines.append(f"{constant} = {_py_literal(value)}")
             continue
         domain = series.tensor_domain
-        constructed = _domain_source(series, named_axes, catalog)
+        constructed = _domain_source(series, named_axes, catalog, splices)
         required_coords = series.required_coordinates
         required = tuple(coord for coord in domain if coord in required_coords)
         required_differs = len(required) != len(domain)
@@ -3204,7 +3311,9 @@ def emit_named_data(
                     domain_source = constructed
             else:
                 domain_source = f"{owner}.domain"
-        cells_source = _provenance_source(series, named_axes, domain_source, catalog)
+        cells_source = _provenance_source(
+            series, named_axes, domain_source, catalog, splices=splices
+        )
         required_source = None
         if required_differs:
             ctor = "DomainTemplate" if runtime else "Domain"
@@ -3247,7 +3356,8 @@ def emit_named_data(
             spec_type = "Series"
         else:
             spec_type = "TemplateSeriesSpec" if runtime else "SeriesSpec"
-        annotation = f"{spec_type}[{_value_annotation(series, domains)}]"
+        value_annotation = splices.annotation(_value_annotation(series, domains))
+        annotation = f"{spec_type}[{value_annotation}]"
         claimed.claim(name, f"series {series.series_id!r}")
         lines.append(
             _format_define_series(
@@ -3264,7 +3374,7 @@ def emit_named_data(
         alias = _public_alias(series)
         if alias is not None:
             claimed.claim(alias, f"series {series.series_id!r} alias")
-            lines.append(f"{alias} = Series[{_value_annotation(series, domains)}]")
+            lines.append(f"{alias} = Series[{value_annotation}]")
         if series.direction == "input":
             claimed.claim(f"{name}_DEFAULT", f"input {series.series_id!r} sentinel")
             if _is_override_series(series):
@@ -3324,14 +3434,15 @@ def emit_named_data(
             "",
         ]
     )
-    source = "\n".join(lines)
-    for extra in (*_typing_domain_names(source), *_runtime_domain_names(source)):
-        claimed.claim(extra, f"import {extra}")
-    if any("span(" in line for line in lines):
-        claimed.claim("span", "import span")
-    else:
-        lines.remove("from .runtime import span")
-    return "\n".join(_patch_data_domain_imports(lines))
+    for name in (*sorted(splices.typing), *sorted(splices.runtime)):
+        claimed.claim(name, f"import {name}")
+    return "\n".join(
+        _install_data_constructor_imports(
+            lines,
+            typing_names=sorted(splices.typing),
+            runtime_names=sorted(splices.runtime),
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -3339,12 +3450,14 @@ def emit_named_data(
 # ---------------------------------------------------------------------------
 
 
-def _patch_data_domain_imports(lines: list[str]) -> list[str]:
-    """Import `Literal` / `Between` when a data alias evaluates a constraint type."""
-    text = "\n".join(lines)
-    typing_names = _typing_domain_names(text)
-    runtime_extra = _runtime_domain_names(text)
-    if not typing_names and not runtime_extra:
+def _install_data_constructor_imports(
+    lines: list[str],
+    *,
+    typing_names: Sequence[str],
+    runtime_names: Sequence[str],
+) -> list[str]:
+    """Insert constructor imports selected while emitting `data.py`."""
+    if not typing_names and not runtime_names:
         return lines
     patched: list[str] = []
     typing_inserted = False
@@ -3372,16 +3485,16 @@ def _patch_data_domain_imports(lines: list[str]) -> list[str]:
             patched.append(f"from typing import {', '.join(names)}")
             typing_inserted = True
             continue
-        if runtime_extra and line.startswith("from .runtime import "):
+        if runtime_names and line.startswith("from .runtime import "):
             existing = [
                 part.strip() for part in line.removeprefix("from .runtime import ").split(",")
             ]
-            names = sorted({*existing, *runtime_extra})
+            names = sorted({*existing, *runtime_names})
             patched.append(f"from .runtime import {', '.join(names)}")
             runtime_done = True
             continue
-        if runtime_extra and not runtime_done and line.startswith("from .tensor import"):
-            patched.append(f"from .runtime import {', '.join(runtime_extra)}")
+        if runtime_names and not runtime_done and line.startswith("from .tensor import"):
+            patched.append(f"from .runtime import {', '.join(runtime_names)}")
             runtime_done = True
         patched.append(line)
     if typing_names and not typing_inserted:

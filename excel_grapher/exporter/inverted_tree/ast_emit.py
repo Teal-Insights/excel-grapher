@@ -2121,8 +2121,9 @@ def _emit_named_offset(node: FunctionCallNode, ctx: EmitContext) -> str:
             axis_src = ctx.axis_source(owner_axis)
             keys[position] = f"{ctx.use('axis_step')}({axis_src}, {keys[position]}, {steps[axis]})"
         else:
-            layout = layout_keys_source(owner_axis, ctx.named_axes, module="data.")
-            if layout.startswith("span("):
+            calls: set[str] = set()
+            layout = layout_keys_source(owner_axis, ctx.named_axes, module="data.", calls=calls)
+            if "span" in calls:
                 ctx.use("span")
             keys[position] = f"{ctx.use('axis_step')}({layout}, {keys[position]}, {steps[axis]})"
     return f"{name}[{', '.join(keys)}]"
