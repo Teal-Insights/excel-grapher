@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.17 (2026-11-09)
+
+### Bug Fixes
+
+- **export**: Fail closed when data.py bindings share a name
+  ([`32f7b48`](https://github.com/Teal-Insights/excel-grapher/commit/32f7b4855e67ef8afb758eb8b6a4176d4b6b14c3))
+
+
 ## v24.1.16 (2026-11-06)
 
 ### Bug Fixes
