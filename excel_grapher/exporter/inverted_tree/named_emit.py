@@ -3019,6 +3019,31 @@ def _format_define_series(
     return f"{name}: {annotation} = define_series(\n{body},\n)"
 
 
+class _DataNames:
+    """Owners of bindings in generated `data.py`.
+
+    A second claim raises `InvertedTreeExportError` and names both owners.
+    Series constants, input sentinels, suffixes, axis constants, and imports
+    share this namespace, so a later assignment cannot overwrite an earlier one.
+    """
+
+    def __init__(self) -> None:
+        self._owners: dict[str, str] = {}
+
+    def claim(self, name: str, owner: str) -> None:
+        """Reserve `name` for `owner`.
+
+        Raises:
+            InvertedTreeExportError: `name` already belongs to another owner.
+        """
+        previous = self._owners.get(name)
+        if previous is not None:
+            raise InvertedTreeExportError(
+                f"generated name {name} is used by both {previous} and {owner}"
+            )
+        self._owners[name] = owner
+
+
 def emit_named_data(
     catalog: SeriesCatalog,
     workbook: Path | str,
@@ -3029,7 +3054,11 @@ def emit_named_data(
     deps: Mapping[str, SeriesDeps] | None = None,
     defaults: Mapping[str, Mapping[str, object]] | None = None,
 ) -> str:
-    """Emit shared axes, bound series, provenance, and workbook defaults."""
+    """Emit shared axes, bound series, provenance, and workbook defaults.
+
+    Raises:
+        InvertedTreeExportError: Two bindings would share a Python name.
+    """
     from excel_grapher.exporter.inverted_tree.emit import _py_literal
 
     retained = _data_series(catalog, deps)
@@ -3065,6 +3094,20 @@ def emit_named_data(
         if series.graph_cells is not None and not series.graph_cells
     )
     fingerprint = named_codegen_fingerprint(catalog, include=off_graph_ids)
+    claimed = _DataNames()
+    for imported in (
+        "Iterator",
+        "contextmanager",
+        "datetime",
+        "block_cells",
+        "column_cells",
+        "grid_cells",
+        "row_cells",
+        *tensor_names,
+    ):
+        claimed.claim(imported, f"import {imported}")
+    claimed.claim("CODEGEN_SCHEMA_VERSION", "module binding CODEGEN_SCHEMA_VERSION")
+    claimed.claim("CODEGEN_FINGERPRINT", "module binding CODEGEN_FINGERPRINT")
     lines = [
         '"""Authored domains, validated tensor types, and workbook defaults."""',
         "from __future__ import annotations",
@@ -3079,6 +3122,7 @@ def emit_named_data(
         "",
     ]
     for constant, axis in named_axes.items():
+        claimed.claim(constant, f"axis {axis.name!r}")
         labeller = catalog.runtime_labeller(axis.name, axis.keys)
         if labeller is None:
             lines.append(
@@ -3092,14 +3136,18 @@ def emit_named_data(
             f"size={len(axis.keys)}, labeller={labeller.series_id!r}, snapshot={axis.keys!r}{extra})"
         )
     if labelled:
+        claimed.claim("LABELLED_AXES", "module binding LABELLED_AXES")
         lines.append(f"LABELLED_AXES = {labelled!r}")
     lines.append("")
     dtypes = sorted({series.python_dtype for series in retained if not series.single_valued})
-    lines.extend(f"{dtype.upper()}_VALUES = {_value_types(dtype)}" for dtype in dtypes)
+    for dtype in dtypes:
+        claimed.claim(f"{dtype.upper()}_VALUES", f"dtype {dtype!r} values")
+        lines.append(f"{dtype.upper()}_VALUES = {_value_types(dtype)}")
     if any(
         series.python_dtype == "str" and series.is_formula_series and not series.single_valued
         for series in retained
     ):
+        claimed.claim("STR_EXCEL_VALUES", "module binding STR_EXCEL_VALUES")
         lines.append("STR_EXCEL_VALUES = (str, int, float, bool, type(None))")
     domain_owner: dict[str | tuple[str, str], str] = {}
     constant_series: list[BoundSeries] = []
@@ -3108,12 +3156,18 @@ def emit_named_data(
         if series.direction == "constant":
             constant_series.append(series)
         if series.single_valued:
+            claimed.claim(f"{name}_CELLS", f"series {series.series_id!r} cells")
             lines.append(f"{name}_CELLS = {_provenance_source(series, named_axes)}")
             if _is_override_series(series):
+                claimed.claim(f"{name}_DEFAULT", f"input {series.series_id!r} sentinel")
                 lines.append(f"{name}_DEFAULT = UNSET")
             elif series.direction in {"input", "constant"}:
                 constant = name + ("_DEFAULT" if series.direction == "input" else "")
                 value = next(iter(defaults[series.series_id].values()), None)
+                if series.direction == "input":
+                    claimed.claim(constant, f"input {series.series_id!r} sentinel")
+                else:
+                    claimed.claim(constant, f"series {series.series_id!r}")
                 lines.append(f"{constant} = {_py_literal(value)}")
             continue
         domain = series.tensor_domain
@@ -3134,6 +3188,7 @@ def emit_named_data(
             if owner is None:
                 domain_owner[("rt", domain.fingerprint)] = name
                 domain_source = f"{name}_DOMAIN"
+                claimed.claim(domain_source, f"series {series.series_id!r} domain")
                 lines.append(f"{name}_DOMAIN = {constructed}")
             else:
                 domain_source = f"{owner}_DOMAIN"
@@ -3143,6 +3198,7 @@ def emit_named_data(
                 domain_owner[domain.fingerprint] = name
                 if uses_grid or required_differs or constructed.startswith("Domain.explicit"):
                     domain_source = f"{name}_DOMAIN"
+                    claimed.claim(domain_source, f"series {series.series_id!r} domain")
                     lines.append(f"{name}_DOMAIN = {constructed}")
                 else:
                     domain_source = constructed
@@ -3182,6 +3238,7 @@ def emit_named_data(
             values_source = _py_literal(values)
         if _is_runtime_labeller(series):
             axis = _authored_label_axis(series)
+            claimed.claim(f"{name}_POSITIONS", f"series {series.series_id!r} positions")
             lines.append(
                 f"{name}_POSITIONS = Domain.product(Axis({axis.name!r}, "
                 f"{tuple(range(len(axis.keys)))!r}, int))"
@@ -3191,6 +3248,7 @@ def emit_named_data(
         else:
             spec_type = "TemplateSeriesSpec" if runtime else "SeriesSpec"
         annotation = f"{spec_type}[{_value_annotation(series, domains)}]"
+        claimed.claim(name, f"series {series.series_id!r}")
         lines.append(
             _format_define_series(
                 name,
@@ -3205,22 +3263,34 @@ def emit_named_data(
         )
         alias = _public_alias(series)
         if alias is not None:
+            claimed.claim(alias, f"series {series.series_id!r} alias")
             lines.append(f"{alias} = Series[{_value_annotation(series, domains)}]")
-        if _is_override_series(series):
-            lines.append(f"{name}_DEFAULT = UNSET")
-        elif series.direction == "input":
-            lines.append(f"{name}_DEFAULT = {name}")
+        if series.direction == "input":
+            claimed.claim(f"{name}_DEFAULT", f"input {series.series_id!r} sentinel")
+            if _is_override_series(series):
+                lines.append(f"{name}_DEFAULT = UNSET")
+            else:
+                lines.append(f"{name}_DEFAULT = {name}")
     label_cells = {
         series.series_id: dict(series.formula_label_addresses)
         for series in retained
         if series.direction == "input" and series.formula_label_addresses
     }
     if label_cells:
+        claimed.claim("LABEL_CELLS", "module binding LABEL_CELLS")
         lines.append(f"LABEL_CELLS = {label_cells!r}")
     if override_ids:
+        claimed.claim("OVERRIDE_INPUTS", "module binding OVERRIDE_INPUTS")
         lines.append(f"OVERRIDE_INPUTS = {_python_literal(override_ids)}")
     for table, values in literal_tables.items():
+        claimed.claim(table, f"literal table {table}")
         lines.append(f"{table} = {dict(values)!r}")
+    for line in constant_lines:
+        alias = line.split(" = ", 1)[0]
+        claimed.claim(alias, f"constant set {alias}")
+    claimed.claim("_CONSTANT_NAMES", "module binding _CONSTANT_NAMES")
+    claimed.claim("_CONSTANT_SCHEMAS", "module binding _CONSTANT_SCHEMAS")
+    claimed.claim("overrides", "module binding overrides")
     names = tuple(series.series_id.upper() for series in constant_series)
     schemas = ", ".join(
         f"{series.series_id.upper()!r}: {series.series_id.upper()}.schema"
@@ -3254,7 +3324,12 @@ def emit_named_data(
             "",
         ]
     )
-    if not any("span(" in line for line in lines):
+    source = "\n".join(lines)
+    for extra in (*_typing_domain_names(source), *_runtime_domain_names(source)):
+        claimed.claim(extra, f"import {extra}")
+    if any("span(" in line for line in lines):
+        claimed.claim("span", "import span")
+    else:
         lines.remove("from .runtime import span")
     return "\n".join(_patch_data_domain_imports(lines))
 
