@@ -40,12 +40,28 @@ class _Marker:
     domain: _PublicDomain | None = None
 
 
+class RenderedAnnotation(str):
+    """Source of one public domain annotation and the constructors it names.
+
+    `names` is chosen with the kind (`Literal`, `Annotated`, `Between`,
+    `RealBetween`) and stays on this object. Modules that splice the text
+    import those names. A later `str` built from the text does not.
+    """
+
+    names: frozenset[str]
+
+    def __new__(cls, text: str, names: frozenset[str]) -> RenderedAnnotation:
+        rendered = str.__new__(cls, text)
+        rendered.names = names
+        return rendered
+
+
 def public_input_annotations(
     catalog: SeriesCatalog,
     graph: DependencyGraph,
     *,
     include: Collection[str] = (),
-) -> dict[str, str]:
+) -> dict[str, RenderedAnnotation]:
     """Return element annotations for public inputs constrained on the graph.
 
     Singleton literals, `Literal[None]` blanks, and `constant` series are not
@@ -63,7 +79,8 @@ def public_input_annotations(
 
     Returns:
         Series id to a `Literal`, `Annotated`, or union element annotation.
-        Inputs with no public domain are omitted.
+        Each value records the constructors it names. Inputs with no public
+        domain are omitted.
 
     Raises:
         InvertedTreeExportError: A public input spans incompatible domains, or
@@ -73,7 +90,7 @@ def public_input_annotations(
     if env is None:
         return {}
     included = set(include)
-    annotations: dict[str, str] = {}
+    annotations: dict[str, RenderedAnnotation] = {}
     for series in catalog.series.values():
         if series.direction != "input":
             continue
@@ -89,7 +106,9 @@ def public_input_annotations(
     return annotations
 
 
-def _annotation_for_series(series: BoundSeries, env: Mapping[str, CellType]) -> str | None:
+def _annotation_for_series(
+    series: BoundSeries, env: Mapping[str, CellType]
+) -> RenderedAnnotation | None:
     if not series.cells:
         return None
     markers = [
@@ -274,26 +293,28 @@ def _domain_text(domain: _PublicDomain) -> str:
     return f"{name}(min={domain.minimum!r}, max={domain.maximum!r})"
 
 
-def _render(domain: _PublicDomain) -> str:
+def _render(domain: _PublicDomain) -> RenderedAnnotation:
     if domain.kind == "union":
         assert domain.interval_kind is not None
         literal = _render(_PublicDomain("enum", enum=domain.enum))
         interval = _render(
             _PublicDomain(domain.interval_kind, minimum=domain.minimum, maximum=domain.maximum)
         )
-        return f"{literal} | {interval}"
+        return RenderedAnnotation(f"{literal} | {interval}", literal.names | interval.names)
     if domain.kind == "enum":
         assert domain.enum is not None
         members = ", ".join(_render_member(value) for value in _sorted_members(domain.enum))
-        return f"Literal[{members}]"
+        return RenderedAnnotation(f"Literal[{members}]", frozenset({"Literal"}))
     if domain.kind == "between":
-        return (
+        return RenderedAnnotation(
             "Annotated[int, Between("
-            f"{_render_bound(domain.minimum)}, {_render_bound(domain.maximum)})]"
+            f"{_render_bound(domain.minimum)}, {_render_bound(domain.maximum)})]",
+            frozenset({"Annotated", "Between"}),
         )
-    return (
+    return RenderedAnnotation(
         "Annotated[float, RealBetween("
-        f"{_render_bound(domain.minimum)}, {_render_bound(domain.maximum)})]"
+        f"{_render_bound(domain.minimum)}, {_render_bound(domain.maximum)})]",
+        frozenset({"Annotated", "RealBetween"}),
     )
 
 
