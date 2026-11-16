@@ -290,12 +290,7 @@ class AxisTemplate:
     snapshot: tuple[str | int, ...]
     source: tuple[str | int, ...] | None = None
 
-    def bind(self, axis: Axis) -> Axis:
-        """Return `axis`, or the snapshot-aligned slice of a longer labeller axis.
-
-        `axis` may already be the subset (`len(keys) == size`) or the full
-        labeller (`len(keys) == len(source)`). Other lengths fail closed.
-        """
+    def _check_identity(self, axis: Axis) -> None:
         if axis.name != self.name:
             raise AxisError(
                 f"axis {self.name!r}: expected name {self.name!r}, received {axis.name!r}"
@@ -305,13 +300,29 @@ class AxisTemplate:
                 f"axis {self.name!r}: expected {self.key_type.__name__} keys, "
                 f"received {axis.key_type.__name__}"
             )
+
+    def validate_axis(self, axis: Axis) -> Axis:
+        """Check name, key type, and size of a tensor's own axis."""
+        self._check_identity(axis)
+        n_keys = len(axis.keys)
+        if n_keys != self.size:
+            raise AxisError(f"axis {self.name!r}: expected {self.size} keys, received {n_keys}")
+        return axis
+
+    def bind(self, axis: Axis) -> Axis:
+        """Return `axis`, or the snapshot-aligned slice of a labeller axis.
+
+        `axis` may be the full labeller (`len(keys) == len(source)`) or an
+        already-sliced subset (`len(keys) == size`). Other lengths fail closed.
+        """
+        self._check_identity(axis)
         source = self.source if self.source is not None else self.snapshot
         n_keys = len(axis.keys)
-        if n_keys == self.size:
-            return axis
         if n_keys == len(source) and source != self.snapshot:
             keys = tuple(axis.keys[source.index(key)] for key in self.snapshot)
             return Axis(self.name, keys, self.key_type)
+        if n_keys == self.size:
+            return axis
         raise AxisError(f"axis {self.name!r}: expected {self.size} keys, received {n_keys}")
 
 
@@ -432,7 +443,7 @@ class SchemaTemplate:
         for template, actual in zip(self.domain.axes, tensor.domain.axes, strict=True):
             if isinstance(template, AxisTemplate):
                 try:
-                    bound.append(template.bind(actual))
+                    bound.append(template.validate_axis(actual))
                 except AxisError as exc:
                     raise SchemaError(f"{self.series_id}: {exc}") from exc
                 continue
@@ -446,6 +457,19 @@ class SchemaTemplate:
         TensorSchema(
             self.series_id, self.domain.domain_from_axes(bound), self.value_types
         ).validate(tensor, exact=exact)
+
+    def coerce_series(
+        self,
+        tensor: object,
+        *,
+        cells: Mapping[Coordinate, str] | ProvenanceTemplate | None = None,
+    ) -> Series[Any]:
+        """Validate `tensor` and attach this template schema as a `Series`."""
+        self.validate(tensor)
+        assert isinstance(tensor, Tensor)
+        if isinstance(tensor, Series) and tensor.schema is self:
+            return tensor
+        return Series(tensor.domain, tensor._values, schema=self, cells=cells)
 
 
 @dataclass(frozen=True, slots=True)
@@ -686,6 +710,19 @@ class TensorSchema:
                 raise SchemaError(
                     f"{self.series_id}: coordinate {coord!r} has invalid value type {type(value).__name__}"
                 )
+
+    def coerce_series(
+        self,
+        tensor: object,
+        *,
+        cells: Mapping[Coordinate, str] | ProvenanceTemplate | None = None,
+    ) -> Series[Any]:
+        """Validate `tensor` and attach this schema as a `Series`."""
+        self.validate(tensor)
+        assert isinstance(tensor, Tensor)
+        if isinstance(tensor, Series) and tensor.schema is self:
+            return tensor
+        return Series(tensor.domain, tensor._values, schema=self, cells=cells)
 
 
 @dataclass(frozen=True, slots=True)

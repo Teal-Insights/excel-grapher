@@ -604,16 +604,17 @@ def _labelled_axes_map(catalog: SeriesCatalog) -> dict[str, str]:
     return mapping
 
 
-def _deferred_runtime_inputs(catalog: SeriesCatalog) -> frozenset[str]:
+def _deferred_runtime_inputs(
+    catalog: SeriesCatalog, deps: Mapping[str, SeriesDeps] | None = None
+) -> tuple[str, ...]:
     """Inputs keyed on a runtime axis they do not themselves label."""
-    return frozenset(
-        series.series_id
-        for series in _retained(catalog)
-        if series.direction == "input"
-        and any(
+    return tuple(
+        series_id
+        for series_id in _input_series_ids(catalog, deps)
+        if any(
             (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
-            and labeller.series_id != series.series_id
-            for axis in series.tensor_domain.axes
+            and labeller.series_id != series_id
+            for axis in catalog.get(series_id).tensor_domain.axes
         )
     )
 
@@ -1569,9 +1570,112 @@ def _emit_recurrence_group(
 # ---------------------------------------------------------------------------
 
 
-def _argument_source(series_id: str, catalog: SeriesCatalog) -> str:
+def _runtime_constant_labellers(
+    series: BoundSeries, catalog: SeriesCatalog
+) -> list[tuple[str, str]]:
+    """Return `(axis_name, labeller_id)` pairs for a runtime-labelled constant."""
+    if series.direction != "constant" or series.single_valued:
+        return []
+    return [
+        (axis.name, labeller.series_id)
+        for axis in series.tensor_domain.axes
+        if (labeller := catalog.runtime_labeller(axis.name, axis.keys)) is not None
+    ]
+
+
+def _aligned_constant_names(
+    catalog: SeriesCatalog,
+    deps: Mapping[str, SeriesDeps],
+    scc_map: Mapping[str, tuple[str, ...]],
+) -> dict[str, str]:
+    """Assign collision-free private `Model` attributes for runtime-labelled constants."""
+    referenced: set[str] = set()
+    reserved: set[str] = {
+        *catalog.series,
+        *(f"_{sid}__override" for sid in _override_input_ids(catalog, deps)),
+        "from_defaults",
+        "from_workbook",
+        "describe",
+        "cells",
+        "_validate",
+        "_INPUT_IDS",
+    }
+    for series in _retained_formula_series(catalog):
+        scc = scc_map.get(series.series_id, (series.series_id,))
+        if len(scc) > 1:
+            reserved.add(f"_{scan_function_name(scc)}")
+        info = deps.get(series.series_id)
+        if info is not None:
+            referenced.update(info.param_ids)
+    names: dict[str, str] = {}
+    for sid in catalog.order:
+        if sid not in referenced:
+            continue
+        series = catalog.get(sid)
+        if not _runtime_constant_labellers(series, catalog):
+            continue
+        candidate = f"_{sid}"
+        while candidate in reserved:
+            candidate += "_"
+        reserved.add(candidate)
+        names[sid] = candidate
+    return names
+
+
+def _model_return_call(callee: str, call_args: Sequence[str]) -> list[str]:
+    """Render `return {callee}(...)`, wrapping past 100 columns."""
+    one_line = f"        return {callee}({', '.join(call_args)})"
+    if len(one_line) <= 100 or not call_args:
+        return [one_line]
+    lines = [f"        return {callee}("]
+    lines.extend(f"            {arg}," for arg in call_args)
+    lines.append("        )")
+    return lines
+
+
+def _model_method_def(name: str, return_type: str) -> list[str]:
+    """Render `def {name}(self) -> {return_type}:`, wrapping past 100 columns."""
+    one_line = f"    def {name}(self) -> {return_type}:"
+    if len(one_line) <= 100:
+        return [one_line]
+    return [
+        f"    def {name}(",
+        "        self,",
+        f"    ) -> {return_type}:",
+    ]
+
+
+def _model_aligned_constant(
+    series: BoundSeries,
+    attr_name: str,
+    catalog: SeriesCatalog,
+    domains: Mapping[str, str] = _NO_DOMAINS,
+    *,
+    splices: _Splices,
+) -> list[str]:
+    """Emit a memoized `Model` helper aligning a constant onto active labellers."""
+    pairs = _runtime_constant_labellers(series, catalog)
+    call_args = [
+        f"data.{series.series_id.upper()}",
+        *(f"{axis_name}=self.{labeller_id}" for axis_name, labeller_id in pairs),
+    ]
+    return [
+        "    @cached_property",
+        *_model_method_def(attr_name, splices.annotation(_annotation(series, domains))),
+        *_model_return_call("align_runtime_keys", call_args),
+    ]
+
+
+def _argument_source(
+    series_id: str,
+    catalog: SeriesCatalog,
+    aligned_constants: Mapping[str, str] = _NO_DOMAINS,
+) -> str:
     series = catalog.get(series_id)
     if series.direction == "constant":
+        aligned = aligned_constants.get(series_id)
+        if aligned is not None:
+            return f"self.{aligned}"
         return f"data.{series_id.upper()}"
     return f"self.{series_id}"
 
@@ -1639,9 +1743,18 @@ def _coerce_input_lines(
     dtype_lit = _python_literal(_binding_dtype(series))
     enum_literal = _union_enum_literal(measure_domain)
     if enum_literal is None:
-        return [
+        one_line = (
             f"    {series_id} = coerce_input_measure("
             f"{series_id}, dtype={dtype_lit}, series_id={quoted_id})"
+        )
+        if len(one_line) <= 100:
+            return [one_line]
+        return [
+            f"    {series_id} = coerce_input_measure(",
+            f"        {series_id},",
+            f"        dtype={dtype_lit},",
+            f"        series_id={quoted_id},",
+            "    )",
         ]
     return [
         f"    {series_id} = coerce_input_measure(",
@@ -1828,19 +1941,23 @@ def _model_attribute(
     deps: Mapping[str, SeriesDeps],
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    aligned_constants: Mapping[str, str] = _NO_DOMAINS,
     *,
     splices: _Splices,
 ) -> list[str]:
     series_id = series.series_id
-    call_args = [f"{sid}={_argument_source(sid, catalog)}" for sid in deps[series_id].param_ids]
+    call_args = [
+        f"{sid}={_argument_source(sid, catalog, aligned_constants)}"
+        for sid in deps[series_id].param_ids
+    ]
     lines = [
         "    @cached_property",
-        f"    def {series_id}(self) -> {splices.annotation(_annotation(series, domains))}:",
+        *_model_method_def(series_id, splices.annotation(_annotation(series, domains))),
     ]
     if _is_override_series(series):
         lines.append(f'        _override = getattr(self, "_{series_id}__override", data.UNSET)')
         call_args.append("_override=_override")
-    lines.append(f"        return internals.{series_id}({', '.join(call_args)})")
+    lines.extend(_model_return_call(f"internals.{series_id}", call_args))
     return lines
 
 
@@ -1849,23 +1966,24 @@ def _model_recurrence_group(
     deps: Mapping[str, SeriesDeps],
     catalog: SeriesCatalog,
     domains: Mapping[str, str] = _NO_DOMAINS,
+    aligned_constants: Mapping[str, str] = _NO_DOMAINS,
     *,
     splices: _Splices,
 ) -> list[str]:
     name = scan_function_name(scc)
     params = scc_external_params(scc, deps, catalog.order)
-    args = ", ".join(f"{sid}={_argument_source(sid, catalog)}" for sid in params)
+    call_args = [f"{sid}={_argument_source(sid, catalog, aligned_constants)}" for sid in params]
     lines = [
         "    @cached_property",
-        f"    def _{name}(self) -> internals.{_result_type(scc)}:",
-        f"        return internals.{name}({args})",
+        *_model_method_def(f"_{name}", f"internals.{_result_type(scc)}"),
+        *_model_return_call(f"internals.{name}", call_args),
     ]
     for sid in scc:
         lines.extend(
             [
                 "",
                 "    @cached_property",
-                f"    def {sid}(self) -> {splices.annotation(_annotation(catalog.get(sid), domains))}:",
+                *_model_method_def(sid, splices.annotation(_annotation(catalog.get(sid), domains))),
                 f"        return self._{name}.{sid}",
             ]
         )
@@ -1907,16 +2025,17 @@ def _input_name_set(names: Sequence[str]) -> str:
     return "{" + ", ".join(_python_literal(name) for name in names) + "}"
 
 
-def _bind_inputs_source(catalog: SeriesCatalog, override_ids: Sequence[str] = ()) -> list[str]:
+def _bind_inputs_source(
+    catalog: SeriesCatalog,
+    override_ids: Sequence[str] = (),
+    deps: Mapping[str, SeriesDeps] | None = None,
+) -> list[str]:
     """Emit `_bind_inputs`, the shared CHECKS path for Model and input bundles.
 
     `align_snapshot` is set by `from_workbook`. Caller-built models and
     `compute_*` bundles leave snapshot keys in place so CHECKS rejects them.
     """
-    deferred_ids = _deferred_runtime_inputs(catalog)
-    deferred = tuple(
-        series.series_id for series in _retained(catalog) if series.series_id in deferred_ids
-    )
+    deferred = _deferred_runtime_inputs(catalog, deps)
     lines: list[str] = []
     if deferred:
         lines.append(
@@ -2247,10 +2366,22 @@ def _input_class(
         "",
     ]
     for series in inputs:
+        meta_line = f"        metadata={_input_field_metadata(series)},"
+        if len(meta_line) <= 100:
+            meta_lines = [meta_line]
+        else:
+            name = series.series_id.upper()
+            cells = f"data.{name}_CELLS" if series.single_valued else f"{_binding(series)}.cells"
+            meta_lines = [
+                "        metadata={",
+                f'            "default": data.{name}_DEFAULT,',
+                f'            "cells": {cells},',
+                "        },",
+            ]
         lines.extend(
             [
                 f"    {series.series_id}: {splices.annotation(_input_annotation(series, domains))} = _field(",
-                f"        metadata={_input_field_metadata(series)},",
+                *meta_lines,
                 "    )",
             ]
         )
@@ -2276,21 +2407,22 @@ def _model_cells_method() -> list[str]:
         "    def cells(self, series_id: str) -> object:",
         '        """Authored worksheet cells of `series_id` over this model\'s labels."""',
         "        binding = getattr(data, series_id.upper())",
-        "        cells = getattr(binding, 'cells', None)",
+        '        cells = getattr(binding, "cells", None)',
         "        if cells is None:",
-        "            cells = getattr(data, f'{series_id.upper()}_CELLS')",
-        "        bind = getattr(cells, 'bind', None)",
+        '            cells = getattr(data, f"{series_id.upper()}_CELLS")',
+        '        bind = getattr(cells, "bind", None)',
         "        if bind is None:",
         "            return cells",
         "        labellers: dict[str, object] = {}",
-        "        schema = getattr(binding, 'schema', None)",
-        "        domain = getattr(schema, 'domain', None)",
-        "        for axis in getattr(domain, 'axes', ()):",
-        "            labeller_id = getattr(axis, 'labeller', None)",
+        '        schema = getattr(binding, "schema", None)',
+        '        domain = getattr(schema, "domain", None)',
+        '        for axis in getattr(domain, "axes", ()):',
+        '            labeller_id = getattr(axis, "labeller", None)',
         "            if isinstance(labeller_id, str):",
         "                labellers[axis.name] = getattr(self, labeller_id)",
         "        for axis_name, labeller_id in data.LABELLED_AXES.items():",
-        "            labellers.setdefault(axis_name, getattr(self, labeller_id))",
+        "            if axis_name not in labellers:",
+        "                labellers[axis_name] = getattr(self, labeller_id)",
         "        return bind(**labellers)",
     ]
 
@@ -2352,6 +2484,14 @@ def _model_class(
     model.extend(_model_from_defaults(catalog, domains, deps, default_exprs, splices=splices))
     if _labelled_axes_map(catalog):
         model.extend(_model_cells_method())
+    aligned_constants = _aligned_constant_names(catalog, deps, scc_map)
+    for const_id, attr_name in aligned_constants.items():
+        model.append("")
+        model.extend(
+            _model_aligned_constant(
+                catalog.get(const_id), attr_name, catalog, domains, splices=splices
+            )
+        )
     emitted_groups: set[tuple[str, ...]] = set()
     for series in _retained_formula_series(catalog):
         scc = scc_map.get(series.series_id, (series.series_id,))
@@ -2362,9 +2502,15 @@ def _model_class(
                 continue
             emitted_groups.add(scc)
             _refuse_override_recurrence(scc, catalog)
-            model.extend(_model_recurrence_group(scc, deps, catalog, domains, splices=splices))
+            model.extend(
+                _model_recurrence_group(
+                    scc, deps, catalog, domains, aligned_constants, splices=splices
+                )
+            )
             continue
-        model.extend(_model_attribute(series, deps, catalog, domains, splices=splices))
+        model.extend(
+            _model_attribute(series, deps, catalog, domains, aligned_constants, splices=splices)
+        )
     return model
 
 
@@ -2508,12 +2654,12 @@ def emit_named_model(
         input_classes.append(_input_class(output, leaves, catalog, domains, splices=splices))
         input_names.append(_inputs_class_name(output))
     sections = [
-        "\n".join(_bind_inputs_source(catalog, override_ids)),
+        "\n".join(_bind_inputs_source(catalog, override_ids, deps)),
         _value_map_source(value_maps, preserve_unset=bool(override_ids)),
         _bound_inputs_mixin(
             translate_workbook_values=bool(value_maps),
             override_ids=override_ids,
-            align_snapshot=bool(_deferred_runtime_inputs(catalog)),
+            align_snapshot=bool(_deferred_runtime_inputs(catalog, deps)),
         ),
         "\n".join(class_lines),
         *input_classes,
@@ -2701,13 +2847,24 @@ def _public_function(
     notes = _key_note(output, catalog, deps) if deps is not None else []
     docstring = [f'    """{summary}', "", *notes, '    """'] if notes else [f'    """{summary}"""']
     returns = splices.annotation(_annotation(output, domains))
+    raise_line = (
+        f'        raise TypeError(f"{name}() expected {class_name}, got {{type(inputs).__name__}}")'
+    )
+    if len(raise_line) <= 100:
+        raise_lines = [raise_line]
+    else:
+        raise_lines = [
+            "        raise TypeError(",
+            f'            f"{name}() expected {class_name}, got {{type(inputs).__name__}}"',
+            "        )",
+        ]
     source = "\n".join(
         [
             _publish_line(output, constants),
             f"def {name}(inputs: {class_name}) -> {returns}:",
             *docstring,
             f"    if not isinstance(inputs, {class_name}):",
-            f'        raise TypeError(f"{name}() expected {class_name}, got {{type(inputs).__name__}}")',
+            *raise_lines,
             f"    return model.Model(inputs).{output.series_id}",
         ]
     )
@@ -3422,11 +3579,14 @@ def emit_named_data(
             "    if unknown:",
             "        raise AttributeError(f'unknown constants: {sorted(unknown)}')",
             "    namespace = globals()",
+            "    resolved = dict(values)",
             "    for name, value in values.items():",
             "        if name in _CONSTANT_SCHEMAS:",
-            "            _CONSTANT_SCHEMAS[name].validate(value)",
-            "    previous = {name: namespace[name] for name in values}",
-            "    namespace.update(values)",
+            "            resolved[name] = _CONSTANT_SCHEMAS[name].coerce_series(",
+            "                value, cells=namespace[name].cells",
+            "            )",
+            "    previous = {name: namespace[name] for name in resolved}",
+            "    namespace.update(resolved)",
             "    try:",
             "        yield",
             "    finally:",

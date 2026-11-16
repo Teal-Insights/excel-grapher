@@ -303,17 +303,18 @@ def plan_inverted_tree(
                 f"labeller {labeller.series_id!r}: cached values {cached!r} "
                 f"do not equal snapshot keys {axis.keys!r}"
             )
-        for leaf_id in leaf_closure(labeller.series_id, catalog=catalog, deps=deps):
-            if leaf_id == labeller.series_id:
-                continue
-            leaf = catalog.get(leaf_id)
-            if leaf.direction == "input" and any(
-                candidate.name == axis.name for candidate in leaf.tensor_domain.axes
-            ):
-                raise InvertedTreeExportError(
-                    f"labeller {labeller.series_id!r}: input {leaf_id!r} is keyed "
-                    f"on labelled axis {axis.name!r}"
-                )
+        if labeller.direction != "constant":
+            for leaf_id in leaf_closure(labeller.series_id, catalog=catalog, deps=deps):
+                if leaf_id == labeller.series_id:
+                    continue
+                leaf = catalog.get(leaf_id)
+                if leaf.direction in {"input", "constant"} and any(
+                    candidate.name == axis.name for candidate in leaf.tensor_domain.axes
+                ):
+                    raise InvertedTreeExportError(
+                        f"labeller {labeller.series_id!r}: {leaf.direction} {leaf_id!r} is keyed "
+                        f"on labelled axis {axis.name!r}"
+                    )
     for series in catalog.series.values():
         for axis in series.tensor_domain.axes:
             candidates = [item for item in labellers if item.axis_labels == axis.name]
