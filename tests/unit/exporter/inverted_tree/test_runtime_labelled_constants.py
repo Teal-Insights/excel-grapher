@@ -324,7 +324,7 @@ def test_constant_overrides_align_on_shifted_axis_and_fail_closed(tmp_path: Path
 
 
 def test_authored_axis_labels_constant_and_ragged_matrix_shift(tmp_path: Path) -> None:
-    """Constants on authored `axis_labels` series keep per-year positions under a shift."""
+    """Shifted `axis_labels` keep ragged stock positions and per-year outputs."""
     workbook = write_workbook(
         tmp_path / "ragged_labelled_pos.xlsx",
         {
@@ -360,18 +360,33 @@ def test_authored_axis_labels_constant_and_ragged_matrix_shift(tmp_path: Path) -
     pkg = load_package(generate_inverted(workbook, document), tmp_path, name="ragged_const_shift")
     catalog, _deps, graph = inverted_graph_parts(workbook, document)
     graph.set_node_value("Origin!A1", 2025)
-    expected = FormulaEvaluator(graph).evaluate(["Data!E4", *catalog.get("annual_stock").cells])
+    annual_cells = list(catalog.get("annual_stock").cells)
+    expected = FormulaEvaluator(graph).evaluate(["Data!E4", *annual_cells])
 
     shifted_model = pkg.Model(first_year=2025)
     assert shifted_model.total == pytest.approx(expected["Data!E4"])
     assert shifted_model.total == pytest.approx(154.0)
     assert pkg.Model.from_defaults(first_year=2025).total == pytest.approx(154.0)
     assert pkg.compute_total(pkg.TotalInputs(first_year=2025)) == pytest.approx(154.0)
+
+    stock = shifted_model._stock
+    assert stock.domain.axis("TIME_PERIOD").keys == (2025, 2026, 2027)
+    assert ("short", 2027) not in set(stock.domain)
+    assert stock[("short", 2027)] is None
+    assert list(stock.items()) == [
+        (("outstanding", 2025), 10.0),
+        (("outstanding", 2026), 20.0),
+        (("outstanding", 2027), 30.0),
+        (("short", 2025), 1.0),
+        (("short", 2026), 2.0),
+    ]
+
+    assert annual_cells == ["Data!B6", "Data!C6", "Data!D6"]
+    assert [expected[cell] for cell in annual_cells] == pytest.approx([11.0, 22.0, 30.0])
     assert shifted_model.annual_stock.domain.axis("TIME_PERIOD").keys == (2025, 2026, 2027)
     assert list(shifted_model.annual_stock.items()) == [
-        ((2025,), pytest.approx(11.0)),
-        ((2026,), pytest.approx(22.0)),
-        ((2027,), pytest.approx(30.0)),
+        (coord, pytest.approx(expected[cell]))
+        for coord, cell in zip(shifted_model.annual_stock.domain, annual_cells, strict=True)
     ]
 
 
