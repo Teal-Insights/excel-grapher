@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.21 (2026-11-17)
+
+### Bug Fixes
+
+- **export**: Bind formula-header timelines extending past leaf inputs
+  ([#1087](https://github.com/Teal-Insights/excel-grapher/pull/1087),
+  [`5e5de7c`](https://github.com/Teal-Insights/excel-grapher/commit/5e5de7c47d9d8604dae5e789d5c3cfc6ec2fd247))
+
+
 ## v24.1.20 (2026-11-17)
 
 ### Bug Fixes
