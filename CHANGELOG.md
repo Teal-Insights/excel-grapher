@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.19 (2026-11-17)
+
+### Bug Fixes
+
+- **export**: Align runtime-labelled constants onto active labellers
+  ([#1084](https://github.com/Teal-Insights/excel-grapher/pull/1084),
+  [`ba694a3`](https://github.com/Teal-Insights/excel-grapher/commit/ba694a369a0f0591899e3702da7adce9e895f711))
+
+
 ## v24.1.18 (2026-11-09)
 
 ### Bug Fixes
