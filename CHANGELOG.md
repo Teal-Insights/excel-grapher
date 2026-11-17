@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 <!-- version list -->
 
+## v24.1.20 (2026-11-17)
+
+### Bug Fixes
+
+- **export**: Separate AxisTemplate labeller bind from snapshot provenance
+  ([`a041a35`](https://github.com/Teal-Insights/excel-grapher/commit/a041a35be58dda5b124ddaa9f81209a7f0f3a99d))
+
+### Documentation
+
+- **export**: Describe AxisTemplate.bind as the full labeller
+  ([`363535f`](https://github.com/Teal-Insights/excel-grapher/commit/363535fd3b7367cfb7822459157cc6c8ae983ff4))
+
+### Testing
+
+- **export**: Lock shifted ragged stock against the evaluator
+  ([`e588cc2`](https://github.com/Teal-Insights/excel-grapher/commit/e588cc2c031d89ce2b2dec04e6ee6686804172a7))
+
+
 ## v24.1.19 (2026-11-17)
 
 ### Bug Fixes
