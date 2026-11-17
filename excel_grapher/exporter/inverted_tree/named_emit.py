@@ -34,6 +34,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     BoundSeries,
     SeriesCatalog,
     _cell_refs_support_series_index,
+    axis_extends_labeller,
 )
 from excel_grapher.exporter.inverted_tree.deps import (
     leaf_closure,
@@ -48,6 +49,8 @@ from excel_grapher.exporter.inverted_tree.input_annotations import (
 )
 from excel_grapher.exporter.inverted_tree.named_axes import (
     NamedAxes,
+    axis_template_data_source,
+    constant_runtime_labeller,
     layout_keys_source,
     python_identifier,
 )
@@ -475,11 +478,14 @@ def _runtime_axis_prologue(
     return lines
 
 
-def _labeller_axis_bindings(series: BoundSeries, catalog: SeriesCatalog) -> list[tuple[str, str]]:
+def _labeller_axis_bindings(
+    series: BoundSeries, catalog: SeriesCatalog, named_axes: NamedAxes | None = None
+) -> list[tuple[str, str]]:
     """Return `_ax_*` bindings for the labellers of `series` axes.
 
     Each item is `(variable, source)`, with `source` an expression
-    `{labeller}.domain.axis(name)`.
+    `{labeller}.domain.axis(name)` or `{template}.bind(...)` when `series`
+    extends that labeller's integer timeline.
     """
     if _is_runtime_labeller(series):
         return []
@@ -491,7 +497,12 @@ def _labeller_axis_bindings(series: BoundSeries, catalog: SeriesCatalog) -> list
         if labeller is None or variable in seen:
             continue
         seen.add(variable)
-        bindings.append((variable, f"{labeller.series_id}.domain.axis({axis.name!r})"))
+        base_source = f"{labeller.series_id}.domain.axis({axis.name!r})"
+        if axis_extends_labeller(axis, labeller):
+            template = axis_template_data_source(axis, named_axes, catalog)
+            bindings.append((variable, f"{template}.bind({base_source})"))
+        else:
+            bindings.append((variable, base_source))
     return bindings
 
 
@@ -579,9 +590,9 @@ def _required_expr(series: BoundSeries, catalog: SeriesCatalog) -> str:
 
 
 def _layout_axis(axis: Any, catalog: SeriesCatalog) -> Any:
-    """Return the labeller (or interned-master analog) used for position indexes."""
+    """Return the labeller (or extended host axis) used for position indexes."""
     labeller = catalog.runtime_labeller(axis.name, axis.keys)
-    if labeller is None:
+    if labeller is None or axis_extends_labeller(axis, labeller):
         return axis
     return labeller.axis_named(axis.name)
 
@@ -1072,15 +1083,6 @@ def _semantic_body(
             ]
         )
         return lines, used
-    bindings = _labeller_axis_bindings(series, catalog)
-    # A hoisted table is built in this function, before the formula runs.
-    hoisted = "\n".join(tables)
-    lines = [
-        f"    {variable} = {source}"
-        for variable, source in bindings
-        if re.search(rf"\b{re.escape(variable)}\b", hoisted)
-    ]
-    lines.extend(table_lines)
     occupied = reserved
     required = _required_expr(series, catalog)
 
@@ -1090,6 +1092,25 @@ def _semantic_body(
             candidate += "_"
         occupied.add(candidate)
         return candidate
+
+    raw_bindings = _labeller_axis_bindings(series, catalog, named_axes)
+    lines: list[str] = []
+    bindings: list[tuple[str, str]] = []
+    for variable, source in raw_bindings:
+        if ".bind(" in source:
+            cached_axis = temporary(f"_{series.series_id}{variable}")
+            lines.append(f"    {cached_axis} = {source}")
+            bindings.append((variable, cached_axis))
+        else:
+            bindings.append((variable, source))
+    # A hoisted table is built in this function, before the formula runs.
+    hoisted = "\n".join(tables)
+    lines.extend(
+        f"    {variable} = {source}"
+        for variable, source in bindings
+        if re.search(rf"\b{re.escape(variable)}\b", hoisted)
+    )
+    lines.extend(table_lines)
 
     formula = temporary(f"{series.series_id}_formula" if deferred else "formula")
     parameters = ", ".join(
@@ -3197,6 +3218,18 @@ def _coordinates_source(
     return source if len(source) < len(literal) else literal
 
 
+def _axis_template_source(axis: Any, labeller: BoundSeries) -> str:
+    """Render an `AxisTemplate(...)` constructor for `axis` on `labeller`."""
+    source = labeller.axis_named(axis.name).keys
+    extra = f", source={source!r}" if source != axis.keys else ""
+    if axis_extends_labeller(axis, labeller):
+        extra += ", step=1"
+    return (
+        f"AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
+        f"size={len(axis.keys)}, labeller={labeller.series_id!r}, snapshot={axis.keys!r}{extra})"
+    )
+
+
 def _axis_source_for_domain(
     axis: Any,
     named_axes: NamedAxes,
@@ -3207,15 +3240,14 @@ def _axis_source_for_domain(
     labeller = catalog.runtime_labeller(axis.name, axis.keys)
     if labeller is None:
         return _product_axis_source(axis, named_axes, splices)
+    constant = named_axes.constant(axis)
     emitted = named_axes.emitted(axis)
-    if axis.keys == emitted.keys:
-        return named_axes.constant(axis)
-    source = labeller.axis_named(axis.name).keys
-    extra = f", source={source!r}" if source != axis.keys else ""
-    return (
-        f"AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
-        f"size={len(axis.keys)}, labeller={labeller.series_id!r}, snapshot={axis.keys!r}{extra})"
-    )
+    if (
+        axis.keys == emitted.keys
+        and constant_runtime_labeller(constant, emitted, named_axes, catalog) is not None
+    ):
+        return constant
+    return _axis_template_source(axis, labeller)
 
 
 def _domain_source(
@@ -3386,18 +3418,13 @@ def emit_named_data(
     ]
     for constant, axis in named_axes.items():
         claimed.claim(constant, f"axis {axis.name!r}")
-        labeller = catalog.runtime_labeller(axis.name, axis.keys)
+        labeller = constant_runtime_labeller(constant, axis, named_axes, catalog)
         if labeller is None:
             lines.append(
                 f"{constant} = Axis({axis.name!r}, {axis.keys!r}, {axis.key_type.__name__})"
             )
             continue
-        source = labeller.axis_named(axis.name).keys
-        extra = f", source={source!r}" if source != axis.keys else ""
-        lines.append(
-            f"{constant} = AxisTemplate({axis.name!r}, {axis.key_type.__name__}, "
-            f"size={len(axis.keys)}, labeller={labeller.series_id!r}, snapshot={axis.keys!r}{extra})"
-        )
+        lines.append(f"{constant} = {_axis_template_source(axis, labeller)}")
     if labelled:
         claimed.claim("LABELLED_AXES", "module binding LABELLED_AXES")
         lines.append(f"LABELLED_AXES = {labelled!r}")

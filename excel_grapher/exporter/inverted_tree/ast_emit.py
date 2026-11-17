@@ -37,6 +37,7 @@ from excel_grapher.exporter.inverted_tree.catalog import (
     KeyPoint,
     SeriesCatalog,
     Statement,
+    axis_extends_labeller,
     covering_series,
     covering_series_of_range,
     fit_affine_map,
@@ -68,6 +69,8 @@ from excel_grapher.exporter.inverted_tree.deps import (
 from excel_grapher.exporter.inverted_tree.errors import InvertedTreeExportError
 from excel_grapher.exporter.inverted_tree.named_axes import (
     NamedAxes,
+    axis_template_data_source,
+    constant_runtime_labeller,
     is_subsequence,
     layout_keys_source,
     python_identifier,
@@ -172,7 +175,7 @@ class EmitContext:
     def layout_axis(self, axis: Any) -> Any:
         """Return the labeller axis used for position indexes, else `axis`."""
         labeller = self.runtime_labeller_for(axis)
-        if labeller is None:
+        if labeller is None or axis_extends_labeller(axis, labeller):
             return axis
         return labeller.axis_named(axis.name)
 
@@ -185,7 +188,8 @@ class EmitContext:
 
         The host's labeller is the `_ax_*` binding. A producer labelled by a
         different formula-header input reads that input's domain axis, so
-        windows that do not share a labeller keep their own keys.
+        windows that do not share a labeller keep their own keys. An extended
+        integer axis binds its `AxisTemplate` against the labeller axis.
         """
         labeller = self.runtime_labeller_for(axis)
         if labeller is None:
@@ -194,23 +198,56 @@ class EmitContext:
                     f"series {self.host.series_id!r}: named axis constants are required"
                 )
             return f"data.{self.named_axes.constant(axis)}"
-        host_labeller = self._host_labeller(axis.name)
-        if host_labeller is not None and host_labeller.series_id == labeller.series_id:
+        host_axis = next(
+            (item for item in self.host.tensor_domain.axes if item.name == axis.name),
+            None,
+        )
+        host_labeller = None if host_axis is None else self.runtime_labeller_for(host_axis)
+        if axis_extends_labeller(axis, labeller):
+            if (
+                host_axis is not None
+                and host_labeller is not None
+                and host_labeller.series_id == labeller.series_id
+                and host_axis.keys == axis.keys
+            ):
+                return "_ax_" + python_identifier(axis.name.lower())
+            template = axis_template_data_source(
+                axis,
+                self.named_axes,
+                self.catalog,
+                allowed_off_graph=self.deps.param_ids,
+            )
+            if (
+                labeller.axis_labels is not None
+                and labeller.direction != "constant"
+                and (host_axis is None or not axis_extends_labeller(host_axis, labeller))
+            ):
+                base_axis = "_ax_" + python_identifier(axis.name.lower())
+            else:
+                base_axis = f"{self.param(labeller.series_id)}.domain.axis({axis.name!r})"
+            return f"{template}.bind({base_axis})"
+        if (
+            host_axis is not None
+            and host_labeller is not None
+            and host_labeller.series_id == labeller.series_id
+            and not axis_extends_labeller(host_axis, host_labeller)
+        ):
             return "_ax_" + python_identifier(axis.name.lower())
         # Authored `axis_labels` series are one per axis name. Scalar bodies
         # bind that series as `_ax_*`. Formula-header inputs can label
         # different windows, so each reference names its own series and the
         # axis being labelled.
-        if labeller.axis_labels is not None and labeller.direction != "constant":
+        if (
+            labeller.axis_labels is not None
+            and labeller.direction != "constant"
+            and (
+                host_axis is None
+                or host_labeller is None
+                or not axis_extends_labeller(host_axis, host_labeller)
+            )
+        ):
             return "_ax_" + python_identifier(axis.name.lower())
         return f"{self.param(labeller.series_id)}.domain.axis({axis.name!r})"
-
-    def _host_labeller(self, axis_name: str) -> BoundSeries | None:
-        """Return the runtime labeller of the host axis named `axis_name`."""
-        for candidate in self.host.tensor_domain.axes:
-            if candidate.name == axis_name:
-                return self.runtime_labeller_for(candidate)
-        return None
 
 
 def python_measure_type(series: BoundSeries) -> str:
@@ -526,12 +563,13 @@ def _runtime_position_expr(ctx: EmitContext, host_axis: Any, field: str, variabl
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: axis {host_axis.name!r} has no position constant"
         )
+    constant = ctx.named_axes.constant(host_axis)
     emitted = ctx.named_axes.emitted(host_axis)
-    if ctx.catalog.runtime_labeller(emitted.name, emitted.keys) is not None:
+    if constant_runtime_labeller(constant, emitted, ctx.named_axes, ctx.catalog) is not None:
         raise InvertedTreeExportError(
             f"series {ctx.host.series_id!r}: axis {host_axis.name!r} position is not a static key"
         )
-    return f"data.{ctx.named_axes.constant(host_axis)}.position({variable})"
+    return f"data.{constant}.position({variable})"
 
 
 def _key_at_position(source: str, position: str, difference: int) -> str:
