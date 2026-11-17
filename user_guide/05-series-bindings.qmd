@@ -881,11 +881,13 @@ axis in the labeller's leaf closure fail at export. Non-injective header
 formulas fail at `compute_*` with `AxisError`.
 
 **Defaults.** Workbook-default input tensors are published over the snapshot
-axis. A suffix input (fewer keys than the labeller) still imports: `AxisTemplate.bind`
-accepts an already-sliced axis. Shifting the labeller's input without re-keying
-those tensors raises `SchemaError` listing the accepted labels. The same
-unknown-labels message applies to any tensor whose keys overlap the required
-set on neither side.
+axis. A suffix input (fewer keys than the labeller) still imports:
+`SchemaTemplate.validate` checks that tensor with `AxisTemplate.validate_axis`
+(name, key type, and `size`). `AxisTemplate.bind` accepts only the full
+source-ordered labeller and rejects any other length with `AxisError`.
+Shifting the labeller's input without re-keying those tensors raises
+`SchemaError` listing the accepted labels. The same unknown-labels message
+applies to any tensor whose keys overlap the required set on neither side.
 
 **Out of scope.** Translated input enums / `value_map` needles; f-string key
 templates over a runtime string axis; host-key remaps over a runtime string
