@@ -896,10 +896,10 @@ class SeriesCatalog:
             return None
         requested = set(keys)
         matches = [(series, covered) for series, covered in entries if requested <= covered]
-        if not matches:
-            return None
-        series, _covered = max(matches, key=lambda item: len(item[1]))
-        return series
+        if matches:
+            series, _covered = max(matches, key=lambda item: len(item[1]))
+            return series
+        return _stepped_header_labeller(axis_name, keys, entries)
 
     def header_labeller_ids(self) -> dict[str, str]:
         """Map each formula-header axis to its widest leaf input series id."""
@@ -910,6 +910,47 @@ class SeriesCatalog:
             series, _covered = max(entries, key=lambda item: len(item[1]))
             mapping[axis_name] = series.series_id
         return mapping
+
+
+def axis_extends_labeller(axis: Any, labeller: BoundSeries) -> bool:
+    """True when `axis` steps outside `labeller`'s own snapshot keys."""
+    covered = set(labeller.axis_named(axis.name).keys)
+    return not set(axis.keys) <= covered
+
+
+def _stepped_header_labeller(
+    axis_name: str,
+    keys: Sequence[str | int],
+    entries: Sequence[tuple[BoundSeries, frozenset[str | int]]],
+) -> BoundSeries | None:
+    """Match an ascending unit-step integer timeline that extends a formula-header input."""
+    if not keys or not all(type(key) is int for key in keys):
+        return None
+    int_keys = cast(Sequence[int], keys)
+    if any(b <= a for a, b in zip(int_keys, int_keys[1:], strict=False)):
+        return None
+    requested = set(int_keys)
+    candidates: list[tuple[tuple[int, int], BoundSeries]] = []
+    for series, covered in entries:
+        axis = series.axis_named(axis_name)
+        if axis.key_type is not int or not axis.keys:
+            continue
+        int_source = cast(tuple[int, ...], axis.keys)
+        if any(b <= a for a, b in zip(int_source, int_source[1:], strict=False)):
+            continue
+        overlap = requested & covered
+        if not overlap:
+            continue
+        if any(
+            (a not in covered or b not in covered) and b - a != 1
+            for a, b in zip(int_keys, int_keys[1:], strict=False)
+        ):
+            continue
+        candidates.append(((len(overlap), len(covered)), series))
+    if not candidates:
+        return None
+    _score, winner = max(candidates, key=lambda item: item[0])
+    return winner
 
 
 def _direction_of(entry: Mapping[str, Any]) -> Direction:

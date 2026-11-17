@@ -289,7 +289,9 @@ class AxisTemplate:
     labeller: str
     snapshot: tuple[str | int, ...]
     source: tuple[str | int, ...] | None = None
+    step: int | None = None
     _source_positions: tuple[int, ...] | None = field(init=False, repr=False, compare=False)
+    _source_steps: tuple[tuple[int, int], ...] | None = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         snapshot = tuple(self.snapshot)
@@ -300,18 +302,74 @@ class AxisTemplate:
             )
         object.__setattr__(self, "snapshot", snapshot)
         if self.source is None:
+            if self.step is not None:
+                raise AxisError(f"axis {self.name!r}: step requires an explicit source axis")
             object.__setattr__(self, "_source_positions", None)
+            object.__setattr__(self, "_source_steps", None)
             return
         source = tuple(self.source)
         source_axis = label_axis(self.name, source, self.key_type)
+        if not source:
+            raise AxisError(f"axis {self.name!r}: source must be nonempty")
         missing = tuple(key for key in snapshot if key not in source_axis)
-        if missing:
-            raise AxisError(
-                f"axis {self.name!r}: snapshot keys {missing!r} are not in source {source!r}"
+        if self.step is None:
+            if missing:
+                raise AxisError(
+                    f"axis {self.name!r}: snapshot keys {missing!r} are not in source {source!r}"
+                )
+            object.__setattr__(self, "source", source)
+            positions = (
+                None if source == snapshot else tuple(source_axis.position(k) for k in snapshot)
             )
+            object.__setattr__(self, "_source_positions", positions)
+            object.__setattr__(self, "_source_steps", None)
+            return
+        if self.key_type is not int:
+            raise AxisError(f"axis {self.name!r}: step requires int keys")
+        if type(self.step) is not int or self.step <= 0:
+            raise AxisError(
+                f"axis {self.name!r}: step must be a positive int, received {self.step!r}"
+            )
+        int_snapshot = cast(tuple[int, ...], snapshot)
+        int_source = cast(tuple[int, ...], source)
+        if any(b <= a for a, b in zip(int_source, int_source[1:], strict=False)):
+            raise AxisError(
+                f"axis {self.name!r}: source keys {source!r} must be strictly ascending"
+            )
+        if any((b - a) % self.step != 0 for a, b in zip(int_source, int_source[1:], strict=False)):
+            raise AxisError(
+                f"axis {self.name!r}: source keys {source!r} do not align with step {self.step}"
+            )
+        if any(b <= a for a, b in zip(int_snapshot, int_snapshot[1:], strict=False)):
+            raise AxisError(
+                f"axis {self.name!r}: snapshot keys {snapshot!r} must be strictly ascending"
+            )
+        if not any(key in source_axis for key in int_snapshot):
+            raise AxisError(
+                f"axis {self.name!r}: snapshot {snapshot!r} does not overlap source {source!r}"
+            )
+        if any(
+            (a not in source_axis or b not in source_axis) and b - a != self.step
+            for a, b in zip(int_snapshot, int_snapshot[1:], strict=False)
+        ):
+            raise AxisError(
+                f"axis {self.name!r}: snapshot {snapshot!r} does not extend source {source!r} "
+                f"by step {self.step}"
+            )
+        steps: list[tuple[int, int]] = []
+        for key in int_snapshot:
+            if key in source_axis:
+                steps.append((source_axis.position(key), 0))
+            elif key < int_source[0]:
+                steps.append((0, key - int_source[0]))
+            elif key > int_source[-1]:
+                steps.append((len(int_source) - 1, key - int_source[-1]))
+            else:
+                anchor = max(pos for pos, candidate in enumerate(int_source) if candidate < key)
+                steps.append((anchor, key - int_source[anchor]))
         object.__setattr__(self, "source", source)
-        positions = None if source == snapshot else tuple(source_axis.position(k) for k in snapshot)
-        object.__setattr__(self, "_source_positions", positions)
+        object.__setattr__(self, "_source_positions", None)
+        object.__setattr__(self, "_source_steps", tuple(steps))
 
     def _check_identity(self, axis: Axis) -> None:
         if axis.name != self.name:
@@ -340,9 +398,10 @@ class AxisTemplate:
         """Select this series' keys from its evaluated `source`-ordered labeller axis.
 
         `axis` must be the full labeller axis (`len(keys) == len(source)`).
-        Positions of `snapshot` inside `source` select the bound keys. Other
-        lengths fail closed; use `validate_axis` to check an already-sliced
-        tensor's own axis and `snapshot_axis` for the export snapshot.
+        Positions of `snapshot` inside `source` (plus integer endpoint offsets
+        when `step` is set) select the bound keys. Other lengths fail closed;
+        use `validate_axis` to check an already-sliced tensor's own axis and
+        `snapshot_axis` for the export snapshot.
         """
         self._check_identity(axis)
         source = self.source if self.source is not None else self.snapshot
@@ -351,6 +410,14 @@ class AxisTemplate:
             raise AxisError(
                 f"axis {self.name!r}: expected {len(source)} labeller keys, received {n_keys}"
             )
+        if self._source_steps is not None:
+            int_keys = tuple(cast(int, axis.keys[pos]) + delta for pos, delta in self._source_steps)
+            bound = label_axis(self.name, int_keys, self.key_type)
+            if any(b <= a for a, b in zip(int_keys, int_keys[1:], strict=False)):
+                raise AxisError(
+                    f"axis {self.name!r}: stepped labels {int_keys!r} must be strictly ascending"
+                )
+            return bound
         if self._source_positions is None:
             return axis
         keys = tuple(axis.keys[pos] for pos in self._source_positions)
@@ -407,6 +474,28 @@ class DomainTemplate:
     ) -> DomainTemplate:
         """Store sparse membership as positions along each template axis."""
         return cls(tuple(axes), tuple(tuple(coord) for coord in coordinates))
+
+    def axis(self, name: str) -> Axis | AxisTemplate:
+        """Return the axis or template named `name`.
+
+        Raises:
+            DomainError: No axis has `name`.
+        """
+        for item in self.axes:
+            if item.name == name:
+                return item
+        raise DomainError(f"domain has no axis {name!r}")
+
+    def axis_template(self, name: str) -> AxisTemplate:
+        """Return the `AxisTemplate` named `name`.
+
+        Raises:
+            DomainError: No axis template has `name`.
+        """
+        found = self.axis(name)
+        if not isinstance(found, AxisTemplate):
+            raise DomainError(f"domain axis {name!r} is not an AxisTemplate")
+        return found
 
     def bind(self, **labellers: Tensor[Any]) -> Domain:
         """Materialize axes from `labellers` keyed by axis name."""

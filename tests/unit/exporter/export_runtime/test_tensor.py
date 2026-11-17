@@ -515,3 +515,112 @@ def test_schema_coerce_series_preserves_series_and_wraps_plain_tensors() -> None
 
     with pytest.raises(SchemaError, match="rates: expected Tensor"):
         schema.coerce_series((1.0, 2.0), cells=cells)
+
+
+def test_axis_template_step_extends_integer_source_and_validates_bounds() -> None:
+    """`step=1` binds prior and trailing integer keys from the labeller endpoints."""
+    template = AxisTemplate(
+        "TIME_PERIOD",
+        int,
+        size=5,
+        labeller="debt",
+        snapshot=(2023, 2024, 2025, 2026, 2027),
+        source=(2024, 2025, 2026),
+        step=1,
+    )
+    assert template.snapshot_axis() == Axis("TIME_PERIOD", (2023, 2024, 2025, 2026, 2027), int)
+    assert template.bind(Axis("TIME_PERIOD", (2025, 2026, 2027), int)) == Axis(
+        "TIME_PERIOD", (2024, 2025, 2026, 2027, 2028), int
+    )
+    assert template.bind(Axis("TIME_PERIOD", (2020, 2021, 2022), int)) == Axis(
+        "TIME_PERIOD", (2019, 2020, 2021, 2022, 2023), int
+    )
+    bridged = AxisTemplate(
+        "TIME_PERIOD",
+        int,
+        size=4,
+        labeller="debt",
+        snapshot=(2023, 2024, 2025, 2026),
+        source=(2024, 2026),
+        step=1,
+    )
+    assert bridged.bind(Axis("TIME_PERIOD", (2030, 2032), int)) == Axis(
+        "TIME_PERIOD", (2029, 2030, 2031, 2032), int
+    )
+    domain = DomainTemplate.product(Axis("INSTRUMENT", ("IMF",), str), template)
+    assert domain.axis("TIME_PERIOD") is template
+    assert domain.axis_template("TIME_PERIOD") is template
+    with pytest.raises(DomainError, match="not an AxisTemplate"):
+        domain.axis_template("INSTRUMENT")
+    with pytest.raises(DomainError, match="COUNTRY"):
+        domain.axis("COUNTRY")
+
+
+def test_axis_template_step_fails_closed_on_invalid_definitions_and_labellers() -> None:
+    """`step` rejects non-int, missing source, non-overlapping, gapped, or disordered keys."""
+    with pytest.raises(AxisError, match="source"):
+        AxisTemplate("TIME_PERIOD", int, size=2, labeller="debt", snapshot=(2024, 2025), step=1)
+    with pytest.raises(AxisError, match="int"):
+        AxisTemplate(
+            "COMMODITY",
+            str,
+            size=2,
+            labeller="flags",
+            snapshot=("A", "B"),
+            source=("B",),
+            step=1,
+        )
+    for bad_step in (0, -1, True):
+        with pytest.raises(AxisError, match="step"):
+            AxisTemplate(
+                "TIME_PERIOD",
+                int,
+                size=2,
+                labeller="debt",
+                snapshot=(2023, 2024),
+                source=(2024,),
+                step=cast(Any, bad_step),
+            )
+    with pytest.raises(AxisError, match="overlap"):
+        AxisTemplate(
+            "TIME_PERIOD",
+            int,
+            size=2,
+            labeller="debt",
+            snapshot=(2020, 2021),
+            source=(2024, 2025),
+            step=1,
+        )
+    with pytest.raises(AxisError, match="step"):
+        AxisTemplate(
+            "TIME_PERIOD",
+            int,
+            size=2,
+            labeller="debt",
+            snapshot=(2024, 2099),
+            source=(2024, 2025, 2026),
+            step=1,
+        )
+    with pytest.raises(AxisError, match="ascending"):
+        AxisTemplate(
+            "TIME_PERIOD",
+            int,
+            size=2,
+            labeller="debt",
+            snapshot=(2025, 2024),
+            source=(2024, 2025),
+            step=1,
+        )
+    template = AxisTemplate(
+        "TIME_PERIOD",
+        int,
+        size=4,
+        labeller="debt",
+        snapshot=(2023, 2024, 2025, 2026),
+        source=(2024, 2025, 2026),
+        step=1,
+    )
+    with pytest.raises(AxisError, match="expected 3 labeller keys, received 4"):
+        template.bind(Axis("TIME_PERIOD", (2024, 2025, 2026, 2027), int))
+    with pytest.raises(AxisError, match="ascending|duplicate"):
+        template.bind(Axis("TIME_PERIOD", (2030, 2025, 2026), int))

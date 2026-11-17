@@ -12,10 +12,14 @@ from __future__ import annotations
 
 import keyword
 import re
-from collections.abc import Iterable, Sequence
+from collections.abc import Collection, Iterable, Sequence
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any
 
 from excel_grapher.exporter.export_runtime.tensor import Axis
+
+if TYPE_CHECKING:
+    from excel_grapher.exporter.inverted_tree.catalog import BoundSeries, SeriesCatalog
 
 _AXIS_KEY = tuple[str, tuple[str | int, ...], str]
 _KeyTuple = tuple[str | int, ...]
@@ -183,3 +187,62 @@ class NamedAxes:
     def items(self) -> list[tuple[str, Axis]]:
         """Return `(constant name, axis)` pairs in allocation order."""
         return list(self._axes.items())
+
+    def members_of(self, constant: str) -> list[_AXIS_KEY]:
+        """Return registered `(name, keys, key_type)` entries assigned to `constant`."""
+        return [key for key, assigned in self._names.items() if assigned == constant]
+
+
+def constant_runtime_labeller(
+    constant: str,
+    axis: Axis,
+    named: NamedAxes,
+    catalog: SeriesCatalog,
+) -> BoundSeries | None:
+    """Return the labeller for `constant` when every member sharing it uses that labeller."""
+    labeller = catalog.runtime_labeller(axis.name, axis.keys)
+    if labeller is None:
+        return None
+    for member_name, member_keys, _key_type in named.members_of(constant):
+        member_labeller = catalog.runtime_labeller(member_name, member_keys)
+        if member_labeller is None or member_labeller.series_id != labeller.series_id:
+            return None
+    return labeller
+
+
+def axis_template_data_source(
+    axis: Any,
+    named: NamedAxes | None,
+    catalog: SeriesCatalog,
+    *,
+    allowed_off_graph: Collection[str] | None = None,
+) -> str:
+    """Return the `data.*` expression evaluating to `axis`'s `AxisTemplate`."""
+    if named is not None and named.contains(axis):
+        constant = named.constant(axis)
+        emitted = named.emitted(axis)
+        if (
+            axis.keys == emitted.keys
+            and constant_runtime_labeller(constant, emitted, named, catalog) is not None
+        ):
+            return f"data.{constant}"
+    retained = [
+        series
+        for series in catalog.series.values()
+        if not series.single_valued and (series.graph_cells is None or series.graph_cells)
+    ]
+    off_graph = [
+        series
+        for series in catalog.series.values()
+        if not series.single_valued
+        and series.direction in {"input", "constant"}
+        and series.graph_cells is not None
+        and not series.graph_cells
+        and (allowed_off_graph is None or series.series_id in allowed_off_graph)
+    ]
+    for series in (*retained, *off_graph):
+        if any(
+            cand.name == axis.name and cand.keys == axis.keys for cand in series.tensor_domain.axes
+        ):
+            return f"data.{series.series_id.upper()}_DOMAIN.axis_template({axis.name!r})"
+    raise ValueError(f"no catalog series owns axis {axis.name!r} with keys {axis.keys!r}")
