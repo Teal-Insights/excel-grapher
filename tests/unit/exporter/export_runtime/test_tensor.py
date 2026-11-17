@@ -111,8 +111,8 @@ def test_axis_template_bind_checks_name_type_and_size() -> None:
         template.bind(Axis("TIME_PERIOD", (2026,), int))
 
 
-def test_axis_template_bind_accepts_already_sliced_axis() -> None:
-    """A subset template binds a full labeller or a tensor that is already sliced."""
+def test_axis_template_bind_requires_full_labeller_and_validate_axis_checks_slice() -> None:
+    """`bind` selects from the full labeller; `validate_axis` checks a sliced tensor axis."""
     template = AxisTemplate(
         "TIME_PERIOD",
         int,
@@ -124,11 +124,41 @@ def test_axis_template_bind_accepts_already_sliced_axis() -> None:
     labeller = Axis("TIME_PERIOD", (2034, 2035, 2036, 2037, 2038), int)
     assert template.bind(labeller) == Axis("TIME_PERIOD", (2036, 2037, 2038), int)
     sliced = Axis("TIME_PERIOD", (2036, 2037, 2038), int)
-    assert template.bind(sliced) is sliced
-    with pytest.raises(AxisError, match="expected 3 keys"):
+    assert template.validate_axis(sliced) is sliced
+    assert template.snapshot_axis() == Axis("TIME_PERIOD", (2026, 2027, 2028), int)
+    with pytest.raises(AxisError, match="expected 5 labeller keys, received 3"):
+        template.bind(sliced)
+    with pytest.raises(AxisError, match="expected 5 labeller keys, received 2"):
         template.bind(Axis("TIME_PERIOD", (2036, 2037), int))
-    with pytest.raises(AxisError, match="expected 3 keys"):
+    with pytest.raises(AxisError, match="expected 5 labeller keys, received 4"):
         template.bind(Axis("TIME_PERIOD", (2034, 2035, 2036, 2037), int))
+    with pytest.raises(AxisError, match="expected 3 keys, received 2"):
+        template.validate_axis(Axis("TIME_PERIOD", (2036, 2037), int))
+
+
+def test_axis_template_rejects_malformed_snapshot_or_source_with_axis_error() -> None:
+    """Invalid `AxisTemplate` definitions fail closed with `AxisError`."""
+    with pytest.raises(AxisError, match="expected 3 snapshot keys, received 2"):
+        AxisTemplate("TIME_PERIOD", int, size=3, labeller="years", snapshot=(2024, 2025))
+    with pytest.raises(AxisError, match="not in source"):
+        AxisTemplate(
+            "TIME_PERIOD",
+            int,
+            size=2,
+            labeller="years",
+            snapshot=(2024, 2099),
+            source=(2024, 2025, 2026),
+        )
+    with pytest.raises(AxisError, match="duplicate"):
+        AxisTemplate("TIME_PERIOD", int, size=2, labeller="years", snapshot=(2024, 2024))
+    with pytest.raises(AxisError, match="must be int"):
+        AxisTemplate(
+            "TIME_PERIOD",
+            int,
+            size=2,
+            labeller="years",
+            snapshot=cast(Any, ("2024", "2025")),
+        )
 
 
 def test_schema_template_validate_accepts_sliced_tensor_own_axes() -> None:
@@ -464,6 +494,24 @@ def test_schema_coerce_series_preserves_series_and_wraps_plain_tensors() -> None
     concrete = original.collect([((2024,), 7.0), ((2025,), 8.0)], original.domain)
     rebound = schema.coerce_series(concrete, cells=cells)
     assert rebound.schema is schema
+    assert rebound.cells == cells
+
+    cellless = Series(
+        Domain.product(Axis("TIME_PERIOD", (2024, 2025), int)),
+        (3.0, 4.0),
+        schema=schema,
+        cells=None,
+    )
+    restored = schema.coerce_series(cellless, cells=cells)
+    assert restored.schema is schema
+    assert restored.cells == cells
+
+    concrete_schema = concrete.schema
+    concrete_cellless = Series(concrete.domain, (3.0, 4.0), schema=concrete_schema, cells=None)
+    assert concrete_schema.coerce_series(concrete_cellless, cells=cells).cells == cells
+
+    prov = row_cells("Engine", 4, "B", template)
+    assert dict(prov.snapshot()) == {(2024,): "Engine!B4", (2025,): "Engine!C4"}
 
     with pytest.raises(SchemaError, match="rates: expected Tensor"):
         schema.coerce_series((1.0, 2.0), cells=cells)

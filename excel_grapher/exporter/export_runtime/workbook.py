@@ -15,10 +15,8 @@ from .tensor import (
     UNSET,
     AxisError,
     Coordinate,
-    Domain,
     SchemaError,
     Series,
-    Tensor,
     label_axis,
     relabel_series,
 )
@@ -87,22 +85,17 @@ def _read_override_value(cell: Any) -> object:
     return cell.value
 
 
-def _axis_probe(axis: Any) -> Tensor[Any]:
-    return Tensor(Domain.product(axis), tuple(axis.keys))
-
-
 def _snapshot_cells(binding: object) -> Mapping[Coordinate, str]:
-    """Materialize authored cells, binding runtime templates to snapshot axes."""
+    """Materialize authored cells on the export-snapshot domain."""
     cells = getattr(binding, "cells", None)
     if cells is None:
         raise TypeError(f"{binding!r} has no cells provenance")
-    bind = getattr(cells, "bind", None)
-    if bind is None:
+    snapshot = getattr(cells, "snapshot", None)
+    if snapshot is not None:
+        return snapshot()
+    if isinstance(cells, Mapping):
         return cells
-    domain = getattr(binding, "domain", None)
-    if domain is None:
-        raise TypeError(f"{binding!r} has no domain for snapshot cell bind")
-    return bind(**{axis.name: _axis_probe(axis) for axis in domain.axes})
+    raise TypeError(f"expected cell provenance mapping or template, received {cells!r}")
 
 
 def _scalar_address(cells: object) -> str:

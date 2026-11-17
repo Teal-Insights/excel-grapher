@@ -149,14 +149,25 @@ class RectangleCells(Mapping[Coordinate, str]):
 class ProvenanceTemplate:
     """Authored cells that bind runtime axes before lookup."""
 
-    __slots__ = ("_bind",)
+    __slots__ = ("_bind", "_snapshot")
 
-    def __init__(self, bind: Callable[..., Mapping[Coordinate, str]]) -> None:
+    def __init__(
+        self,
+        bind: Callable[..., Mapping[Coordinate, str]],
+        snapshot: Callable[[], Mapping[Coordinate, str]] | None = None,
+    ) -> None:
         self._bind = bind
+        self._snapshot = snapshot
 
     def bind(self, **labellers: Any) -> Mapping[Coordinate, str]:
         """Materialize authored cells over the bound runtime axes."""
         return self._bind(**labellers)
+
+    def snapshot(self) -> Mapping[Coordinate, str]:
+        """Materialize authored cells over the export-snapshot axes."""
+        if self._snapshot is None:
+            raise TypeError("ProvenanceTemplate has no snapshot materializer")
+        return self._snapshot()
 
 
 def _axis_from_labellers(axis: Axis | AxisTemplate, labellers: Mapping[str, Any]) -> Axis:
@@ -187,7 +198,10 @@ def row_cells(
         def bind_row(**labellers: Any) -> RectangleCells:
             return row_cells(sheet, row, first_column, _axis_from_labellers(axis, labellers))
 
-        return ProvenanceTemplate(bind_row)
+        def snapshot_row() -> RectangleCells:
+            return row_cells(sheet, row, first_column, axis.snapshot_axis())
+
+        return ProvenanceTemplate(bind_row, snapshot_row)
     return RectangleCells(sheet, row, column_index(first_column), None, axis)
 
 
@@ -210,7 +224,10 @@ def column_cells(
         def bind_column(**labellers: Any) -> RectangleCells:
             return column_cells(sheet, column, first_row, _axis_from_labellers(axis, labellers))
 
-        return ProvenanceTemplate(bind_column)
+        def snapshot_column() -> RectangleCells:
+            return column_cells(sheet, column, first_row, axis.snapshot_axis())
+
+        return ProvenanceTemplate(bind_column, snapshot_column)
     return RectangleCells(sheet, first_row, column_index(column), axis, None)
 
 
@@ -287,7 +304,24 @@ def block_cells(
                 exceptions=exceptions,
             )
 
-        return ProvenanceTemplate(bind_block)
+        def snapshot_block() -> RectangleCells:
+            rows: LayoutKeys = (
+                row_axis.snapshot_axis() if isinstance(row_axis, AxisTemplate) else row_axis
+            )
+            cols: LayoutKeys = (
+                col_axis.snapshot_axis() if isinstance(col_axis, AxisTemplate) else col_axis
+            )
+            return block_cells(
+                sheet,
+                first_row,
+                first_column,
+                rows,
+                cols,
+                cols_first=cols_first,
+                exceptions=exceptions,
+            )
+
+        return ProvenanceTemplate(bind_block, snapshot_block)
     return RectangleCells(
         sheet,
         first_row,
@@ -406,5 +440,14 @@ def grid_cells(
                 exceptions=exceptions,
             )
 
-        return ProvenanceTemplate(bind_grid)
+        def snapshot_grid() -> GridCells:
+            return grid_cells(
+                sheet,
+                domain.snapshot(),
+                rows=rows,
+                cols=cols,
+                exceptions=exceptions,
+            )
+
+        return ProvenanceTemplate(bind_grid, snapshot_grid)
     return GridCells(sheet, domain, rows=rows, cols=cols, exceptions=exceptions)
