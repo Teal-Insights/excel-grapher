@@ -1743,9 +1743,14 @@ def _named_range_view(
         axis_src = ctx.axis_source(axis)
         start_key, end_key = first_keys[position], last_keys[position]
         if ctx.runtime_labeller_for(axis) is not None:
-            if seen != keys[first : last + 1]:
+            layout_keys = ctx.layout_axis(axis).keys
+            if seen[0] not in layout_keys or seen[-1] not in layout_keys:
                 return None
-            if first == 0 and last == len(keys) - 1:
+            layout_first = layout_keys.index(seen[0])
+            layout_last = layout_keys.index(seen[-1])
+            if seen != layout_keys[layout_first : layout_last + 1]:
+                return None
+            if layout_first == 0 and layout_last == len(layout_keys) - 1:
                 expr = f"{axis_src}.keys"
             elif start_key == end_key:
                 expr = f"({start_key},)"

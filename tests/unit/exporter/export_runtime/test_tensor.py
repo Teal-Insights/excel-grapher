@@ -397,3 +397,73 @@ def test_publish_and_as_records_accept_a_schema_template() -> None:
         {"TIME_PERIOD": 2030, "OBS_VALUE": 6},
         {"TIME_PERIOD": 2031, "OBS_VALUE": 8},
     ]
+
+
+def test_permuted_full_length_template_binds_by_source_position() -> None:
+    """A full-length axis whose snapshot permutes `source` keeps source positions."""
+    template = AxisTemplate(
+        "COMMODITY",
+        str,
+        size=2,
+        labeller="flags",
+        snapshot=("Beta", "Alpha"),
+        source=("Alpha", "Beta"),
+    )
+    labeller_axis = Axis("COMMODITY", ("Metal", "Cereal"), str)
+    assert template.bind(labeller_axis) == Axis("COMMODITY", ("Cereal", "Metal"), str)
+
+    schema = SchemaTemplate(
+        "rates",
+        DomainTemplate.explicit(
+            axes=(template, Axis("TIME_PERIOD", (2024, 2025), int)),
+            coordinates=((0, 0), (0, 1), (1, 0)),
+        ),
+        (int, float, str, type(None)),
+    )
+    snapshot_domain = Domain.explicit(
+        axes=(Axis("COMMODITY", ("Beta", "Alpha"), str), Axis("TIME_PERIOD", (2024, 2025), int)),
+        coordinates=(("Beta", 2024), ("Beta", 2025), ("Alpha", 2024)),
+    )
+    series = Series(snapshot_domain, (10.0, 20.0, 30.0), schema=schema, cells=None)
+    flags = Tensor(Domain.product(labeller_axis), ("Metal", "Cereal"))
+    aligned = align_runtime_keys(series, COMMODITY=flags)
+    assert aligned.domain.axis("COMMODITY").keys == ("Cereal", "Metal")
+    assert dict(aligned.items()) == {
+        ("Cereal", 2024): 10.0,
+        ("Cereal", 2025): 20.0,
+        ("Metal", 2024): 30.0,
+    }
+    schema.bind(COMMODITY=flags).validate(aligned)
+
+
+def test_schema_coerce_series_preserves_series_and_wraps_plain_tensors() -> None:
+    """Constant overrides retain `Series` schema metadata for plain or foreign tensors."""
+    template = AxisTemplate("TIME_PERIOD", int, size=2, labeller="years", snapshot=(2024, 2025))
+    schema = SchemaTemplate(
+        "rates", DomainTemplate.product(template), (int, float, str, type(None))
+    )
+    cells = {(2024,): "S!A1", (2025,): "S!B1"}
+    original = Series(
+        Domain.product(Axis("TIME_PERIOD", (2024, 2025), int)),
+        (1.0, 2.0),
+        schema=schema,
+        cells=cells,
+    )
+    assert schema.coerce_series(original, cells=cells) is original
+
+    plain = Tensor.from_nested(
+        domain=Domain.product(Axis("TIME_PERIOD", (2024, 2025), int)),
+        values=(5.0, 6.0),
+    )
+    wrapped = schema.coerce_series(plain, cells=cells)
+    assert isinstance(wrapped, Series)
+    assert wrapped.schema is schema
+    assert wrapped.cells == cells
+    assert tuple(v for _c, v in wrapped.items()) == (5.0, 6.0)
+
+    concrete = original.collect([((2024,), 7.0), ((2025,), 8.0)], original.domain)
+    rebound = schema.coerce_series(concrete, cells=cells)
+    assert rebound.schema is schema
+
+    with pytest.raises(SchemaError, match="rates: expected Tensor"):
+        schema.coerce_series((1.0, 2.0), cells=cells)
