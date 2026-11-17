@@ -2400,7 +2400,8 @@ def _model_cells_method() -> list[str]:
 
     `LABELLED_AXES` names one series per axis. A formula-header window that
     is not covered by that series labels itself, and the schema records that
-    labeller. `setdefault` keeps the schema choice when both exist.
+    labeller. Checking `axis_name not in labellers` keeps the schema choice
+    without eagerly evaluating unrelated `LABELLED_AXES` attributes on `self`.
     """
     return [
         "",

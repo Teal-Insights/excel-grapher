@@ -289,6 +289,29 @@ class AxisTemplate:
     labeller: str
     snapshot: tuple[str | int, ...]
     source: tuple[str | int, ...] | None = None
+    _source_positions: tuple[int, ...] | None = field(init=False, repr=False, compare=False)
+
+    def __post_init__(self) -> None:
+        snapshot = tuple(self.snapshot)
+        label_axis(self.name, snapshot, self.key_type)
+        if type(self.size) is not int or self.size <= 0 or len(snapshot) != self.size:
+            raise AxisError(
+                f"axis {self.name!r}: expected {self.size} snapshot keys, received {len(snapshot)}"
+            )
+        object.__setattr__(self, "snapshot", snapshot)
+        if self.source is None:
+            object.__setattr__(self, "_source_positions", None)
+            return
+        source = tuple(self.source)
+        source_axis = label_axis(self.name, source, self.key_type)
+        missing = tuple(key for key in snapshot if key not in source_axis)
+        if missing:
+            raise AxisError(
+                f"axis {self.name!r}: snapshot keys {missing!r} are not in source {source!r}"
+            )
+        object.__setattr__(self, "source", source)
+        positions = None if source == snapshot else tuple(source_axis.position(k) for k in snapshot)
+        object.__setattr__(self, "_source_positions", positions)
 
     def _check_identity(self, axis: Axis) -> None:
         if axis.name != self.name:
@@ -301,6 +324,10 @@ class AxisTemplate:
                 f"received {axis.key_type.__name__}"
             )
 
+    def snapshot_axis(self) -> Axis:
+        """Return the static export-snapshot axis."""
+        return Axis(self.name, self.snapshot, self.key_type)
+
     def validate_axis(self, axis: Axis) -> Axis:
         """Check name, key type, and size of a tensor's own axis."""
         self._check_identity(axis)
@@ -310,20 +337,24 @@ class AxisTemplate:
         return axis
 
     def bind(self, axis: Axis) -> Axis:
-        """Return `axis`, or the snapshot-aligned slice of a labeller axis.
+        """Select this series' keys from its evaluated `source`-ordered labeller axis.
 
-        `axis` may be the full labeller (`len(keys) == len(source)`) or an
-        already-sliced subset (`len(keys) == size`). Other lengths fail closed.
+        `axis` must be the full labeller axis (`len(keys) == len(source)`).
+        Positions of `snapshot` inside `source` select the bound keys. Other
+        lengths fail closed; use `validate_axis` to check an already-sliced
+        tensor's own axis and `snapshot_axis` for the export snapshot.
         """
         self._check_identity(axis)
         source = self.source if self.source is not None else self.snapshot
         n_keys = len(axis.keys)
-        if n_keys == len(source) and source != self.snapshot:
-            keys = tuple(axis.keys[source.index(key)] for key in self.snapshot)
-            return Axis(self.name, keys, self.key_type)
-        if n_keys == self.size:
+        if n_keys != len(source):
+            raise AxisError(
+                f"axis {self.name!r}: expected {len(source)} labeller keys, received {n_keys}"
+            )
+        if self._source_positions is None:
             return axis
-        raise AxisError(f"axis {self.name!r}: expected {self.size} keys, received {n_keys}")
+        keys = tuple(axis.keys[pos] for pos in self._source_positions)
+        return Axis(self.name, keys, self.key_type)
 
 
 def labeller_axis(labeller: Tensor[Any], name: str, *, labeller_id: str) -> Axis:
@@ -380,6 +411,13 @@ class DomainTemplate:
     def bind(self, **labellers: Tensor[Any]) -> Domain:
         """Materialize axes from `labellers` keyed by axis name."""
         axes = tuple(_bound_axis(axis, labellers) for axis in self.axes)
+        return self._domain(axes)
+
+    def snapshot(self) -> Domain:
+        """Materialize this template over its export-snapshot axes."""
+        axes = tuple(
+            axis.snapshot_axis() if isinstance(axis, AxisTemplate) else axis for axis in self.axes
+        )
         return self._domain(axes)
 
     def domain_from_axes(self, axes: Sequence[Axis]) -> Domain:
@@ -467,8 +505,11 @@ class SchemaTemplate:
         """Validate `tensor` and attach this template schema as a `Series`."""
         self.validate(tensor)
         assert isinstance(tensor, Tensor)
-        if isinstance(tensor, Series) and tensor.schema is self:
-            return tensor
+        if isinstance(tensor, Series):
+            effective_cells = tensor.cells if tensor.cells is not None else cells
+            if tensor.schema is self and effective_cells is tensor.cells:
+                return tensor
+            return Series(tensor.domain, tensor._values, schema=self, cells=effective_cells)
         return Series(tensor.domain, tensor._values, schema=self, cells=cells)
 
 
@@ -720,8 +761,11 @@ class TensorSchema:
         """Validate `tensor` and attach this schema as a `Series`."""
         self.validate(tensor)
         assert isinstance(tensor, Tensor)
-        if isinstance(tensor, Series) and tensor.schema is self:
-            return tensor
+        if isinstance(tensor, Series):
+            effective_cells = tensor.cells if tensor.cells is not None else cells
+            if tensor.schema is self and effective_cells is tensor.cells:
+                return tensor
+            return Series(tensor.domain, tensor._values, schema=self, cells=effective_cells)
         return Series(tensor.domain, tensor._values, schema=self, cells=cells)
 
 

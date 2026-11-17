@@ -26,10 +26,7 @@ from tests.unit.exporter.inverted_tree.helpers import (
 )
 from tests.unit.exporter.inverted_tree.test_formula_header_string_remap import _plant_strings
 from tests.unit.exporter.inverted_tree.test_model_from_workbook import _plant_formula_cache
-from tests.unit.exporter.inverted_tree.test_sparse_domain_emit import (
-    _ragged_labelled_bindings,
-    _ragged_labelled_workbook,
-)
+from tests.unit.exporter.inverted_tree.test_sparse_domain_emit import _ragged_labelled_bindings
 
 _REPO_ROOT = Path(__file__).resolve().parents[4]
 
@@ -290,6 +287,29 @@ def test_constant_overrides_align_on_shifted_axis_and_fail_closed(tmp_path: Path
         got = pkg.Model.from_workbook(shifted).deflator_path
         assert tuple(v for _c, v in got.items()) == (1.0, 2.0, 3.0, 4.0, 5.0)
 
+    cellless_same_schema = pkg.Series(
+        pkg.Domain.product(pkg.Axis("TIME_PERIOD", SNAPSHOT, int)),
+        (9.0, 8.0, 7.0, 6.0, 5.0),
+        schema=pkg.data.US_DEFLATOR.schema,
+        cells=None,
+    )
+    with pkg.data.overrides(US_DEFLATOR=cellless_same_schema):
+        shifted_model = pkg.Model.from_workbook(shifted)
+        assert tuple(v for _c, v in shifted_model.deflator_path.items()) == (
+            9.0,
+            8.0,
+            7.0,
+            6.0,
+            5.0,
+        )
+        assert dict(shifted_model.cells("us_deflator")) == {
+            (2019,): f"Input!{_year_column(2018)}{CONSTANT_ROW}",
+            (2020,): f"Input!{_year_column(2019)}{CONSTANT_ROW}",
+            (2021,): f"Input!{_year_column(2020)}{CONSTANT_ROW}",
+            (2022,): f"Input!{_year_column(2021)}{CONSTANT_ROW}",
+            (2023,): f"Input!{_year_column(2022)}{CONSTANT_ROW}",
+        }
+
     foreign = pkg.Series(
         pkg.Domain.product(pkg.Axis("TIME_PERIOD", (2090, 2091, 2092, 2093, 2094), int)),
         (1.0, 2.0, 3.0, 4.0, 5.0),
@@ -304,16 +324,126 @@ def test_constant_overrides_align_on_shifted_axis_and_fail_closed(tmp_path: Path
 
 
 def test_authored_axis_labels_constant_and_ragged_matrix_shift(tmp_path: Path) -> None:
-    """Constants on authored `axis_labels` series align for both dense and ragged domains."""
-    pkg = load_package(
-        generate_inverted(_ragged_labelled_workbook(tmp_path), _ragged_labelled_bindings()),
-        tmp_path,
-        name="ragged_const_shift",
+    """Constants on authored `axis_labels` series keep per-year positions under a shift."""
+    workbook = write_workbook(
+        tmp_path / "ragged_labelled_pos.xlsx",
+        {
+            "Origin": {"A1": 2017},
+            "Data": {
+                "B1": "=Origin!A1",
+                "C1": "=B1+1",
+                "D1": "=C1+1",
+                "A4": "outstanding",
+                "B4": 10.0,
+                "C4": 20.0,
+                "D4": 30.0,
+                "A5": "short",
+                "B5": 1.0,
+                "C5": 2.0,
+                "E4": "=1*B4+2*C4+3*D4+4*B5+5*C5",
+                "B6": "=B4+B5",
+                "C6": "=C4+C5",
+                "D6": "=D4",
+            },
+        },
     )
-    assert pkg.Model.from_defaults().total == pytest.approx(63.0)
-    assert pkg.Model(first_year=2025).total == pytest.approx(63.0)
-    assert pkg.Model.from_defaults(first_year=2025).total == pytest.approx(63.0)
-    assert pkg.compute_total(pkg.TotalInputs(first_year=2025)) == pytest.approx(63.0)
+    document = _ragged_labelled_bindings()
+    document["series"].append(
+        series_entry(
+            "annual_stock",
+            "Data!B6:D6",
+            layout="series",
+            direction="output",
+            header_row=1,
+        )
+    )
+    pkg = load_package(generate_inverted(workbook, document), tmp_path, name="ragged_const_shift")
+    catalog, _deps, graph = inverted_graph_parts(workbook, document)
+    graph.set_node_value("Origin!A1", 2025)
+    expected = FormulaEvaluator(graph).evaluate(["Data!E4", *catalog.get("annual_stock").cells])
+
+    shifted_model = pkg.Model(first_year=2025)
+    assert shifted_model.total == pytest.approx(expected["Data!E4"])
+    assert shifted_model.total == pytest.approx(154.0)
+    assert pkg.Model.from_defaults(first_year=2025).total == pytest.approx(154.0)
+    assert pkg.compute_total(pkg.TotalInputs(first_year=2025)) == pytest.approx(154.0)
+    assert shifted_model.annual_stock.domain.axis("TIME_PERIOD").keys == (2025, 2026, 2027)
+    assert list(shifted_model.annual_stock.items()) == [
+        ((2025,), pytest.approx(11.0)),
+        ((2026,), pytest.approx(22.0)),
+        ((2027,), pytest.approx(30.0)),
+    ]
+
+
+def test_permuted_full_length_input_reads_unswapped_snapshot_cells_from_workbook(
+    tmp_path: Path,
+) -> None:
+    """`from_workbook` materializes snapshot cells without permuting `snapshot` into `source`."""
+
+    def write_case(path: Path, *, rows: tuple[str, str]) -> Path:
+        write_workbook(
+            path,
+            {
+                "Inputs": {
+                    "A2": f'="{rows[0]}"',
+                    "A3": f'="{rows[1]}"',
+                    "B2": 1.0,
+                    "B3": 2.0,
+                    # Literal row labels in reverse order ("Beta", "Alpha") on template
+                    "D2": "Beta",
+                    "D3": "Alpha",
+                    "E2": 100.0,
+                    "E3": 10.0,
+                    "C2": "=B2+E3",
+                    "C3": "=B3+E2",
+                }
+            },
+        )
+        _plant_strings(path, {"A2": rows[0], "A3": rows[1]})
+        return path
+
+    template = write_case(tmp_path / "perm_in_template.xlsx", rows=("Alpha", "Beta"))
+    document = bindings_document(
+        series_entry(
+            "flags",
+            "Inputs!B2:B3",
+            layout="series",
+            direction="input",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+        series_entry(
+            "rates",
+            "Inputs!E2:E3",
+            layout="series",
+            direction="input",
+            label_column="D",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+        series_entry(
+            "out",
+            "Inputs!C2:C3",
+            layout="series",
+            direction="output",
+            label_column="A",
+            key_concept="COUNTRY",
+            key_read="string",
+        ),
+    )
+    pkg = load_package(generate_inverted(template, document), tmp_path, name="perm_input_wb")
+    case = write_case(tmp_path / "perm_in_case.xlsx", rows=("Public", "Private"))
+    case_catalog, _deps, case_graph = inverted_graph_parts(case, document)
+    expected = FormulaEvaluator(case_graph).evaluate(list(case_catalog.get("out").cells))
+
+    model = pkg.Model.from_workbook(case)
+    assert model.rates.domain.axis("COUNTRY").keys == ("Private", "Public")
+    assert dict(model.rates.items()) == {("Private",): 100.0, ("Public",): 10.0}
+    assert dict(model.out.items()) == {
+        ("Public",): pytest.approx(expected["Inputs!C2"]),
+        ("Private",): pytest.approx(expected["Inputs!C3"]),
+    }
 
 
 def test_recurrence_group_and_matrix_constants_on_formula_axes(tmp_path: Path) -> None:
