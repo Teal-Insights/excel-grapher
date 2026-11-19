@@ -501,6 +501,12 @@ class ProjectionResult:
     def named_range_ranges(self) -> dict[str, tuple[str, str, str]] | None:
         return self.original_graph.named_range_ranges
 
+    @property
+    def extracted_keys(self) -> frozenset[NodeKey] | None:
+        if self.original_graph.extracted_keys is not None:
+            return self.original_graph.extracted_keys
+        return frozenset(self.original_graph)
+
     def __contains__(self, key: NodeKey) -> bool:
         return key in self.projected_graph
 

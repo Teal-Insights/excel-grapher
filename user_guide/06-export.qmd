@@ -290,7 +290,9 @@ modules = CodeGenerator(projection).generate_modules(
     series_bindings=series_bindings,
     bindings_workbook=workbook_path,
 )
+# Clean-room workbook with only projected cells, or patch a template workbook
 write_workbook(projection, Path("projected.xlsx"))
+write_workbook(projection, Path("projected_patched.xlsx"), template=workbook_path)
 ```
 
 `project()` compresses a clone and drops `formula_shapes`. `write_workbook` does

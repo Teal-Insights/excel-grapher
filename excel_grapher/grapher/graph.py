@@ -164,6 +164,7 @@ class GraphReadView(Protocol):
     sheet_order: list[str] | None
     named_ranges: dict[str, tuple[str, str]] | None
     named_range_ranges: dict[str, tuple[str, str, str]] | None
+    extracted_keys: frozenset[NodeKey] | None
 
     def __contains__(self, key: NodeKey) -> bool: ...
 
@@ -273,6 +274,11 @@ class DependencyGraph:
     cell_type_env: CellTypeEnv | None = None
     domains: SeriesDomainIndex | None = field(default=None, repr=False, compare=False)
     _domains_handle: Any = field(default=None, repr=False, compare=False)
+    # Workbook cell keys originally materialized by `create_dependency_graph`
+    # (extended when `replace_node_formula(..., workbook=...)` pulls in new
+    # cells). Used by in-place `write_workbook` to distinguish vacated cells
+    # from unextracted workbook cells.
+    extracted_keys: frozenset[NodeKey] | None = field(default=None, repr=False, compare=False)
     # Bumped by `set_node_value` so FormulaEvaluator can skip a full leaf poll
     # when no durable value write has happened since the last eager scan.
     _value_generation: int = field(default=0, repr=False, compare=False)
@@ -345,6 +351,7 @@ class DependencyGraph:
             )
             cloned.domains = None
         cloned._domains_handle = self._domains_handle
+        cloned.extracted_keys = self.extracted_keys
         cloned._value_generation = self._value_generation
         return cloned
 

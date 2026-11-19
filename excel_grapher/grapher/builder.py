@@ -2000,6 +2000,7 @@ def create_dependency_graph(
     graph.named_ranges = dict(named_ranges)
     graph.named_range_ranges = dict(named_range_ranges)
     graph.sheet_bounds = dict(sheet_bounds)
+    graph.extracted_keys = frozenset(graph._nodes)
     if warm_ast_cache or warm_formula_shapes:
         from .formula_shapes import warm_formula_shapes as intern_graph_formula_shapes
         from .preparsed_formulas import warm_preparsed_formulas

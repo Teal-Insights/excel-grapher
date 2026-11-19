@@ -241,6 +241,8 @@ def _merge_extracted_subgraph(
 
     for key in new_keys:
         graph.add_node(copy_node(extracted._nodes[key]))
+    if new_keys and graph.extracted_keys is not None:
+        graph.extracted_keys = graph.extracted_keys | frozenset(new_keys)
 
     for dep in extracted.get_dependencies(host):
         attrs = extracted.get_edge_attrs(host, dep)
