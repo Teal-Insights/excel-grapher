@@ -1,4 +1,4 @@
-"""Write a `GraphReadView` to a new Excel workbook.
+"""Write a `GraphReadView` to a new or patched Excel workbook.
 
 This is workbook I/O next to `create_dependency_graph`, not Python codegen.
 `write_workbook` is an export backend on the same read surface `CodeGenerator`
@@ -12,7 +12,7 @@ from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastpyxl import Workbook
+from fastpyxl import Workbook, load_workbook
 from fastpyxl.utils.cell import coordinate_from_string
 from fastpyxl.utils.exceptions import CellCoordinatesException
 from fastpyxl.workbook.defined_name import DefinedName
@@ -58,6 +58,8 @@ def write_workbook(
     graph: GraphReadView,
     destination: Path | str,
     *,
+    in_place: bool = False,
+    template: Path | str | None = None,
     formula_style: FormulaStyle = FormulaStyle.A1_EXCEL,
     coerce_relative_refs: bool = False,
     overwrite: bool = False,
@@ -68,16 +70,18 @@ def write_workbook(
     include_bound_labels: bool = True,
     include_cell_validation: bool = True,
 ) -> None:
-    """Write `graph` to a new `.xlsx` at `destination`.
+    """Write `graph` to a new `.xlsx` or patch an existing workbook.
 
     Accepts any `GraphReadView`: a mutable `DependencyGraph` (the workbook
     after `set_node_ast` / `set_node_value` / `move_node` / in-place
     `compress_*`) or a non-mutating `ProjectionResult`. Formula rewriting
     is an intended write-back use case; compressed or projected views are
-    written as they are. Output contains only sheets and cells from the
-    view. Styles, charts, VBA, and cells outside the view are omitted
-    (accepted v1 lossiness). Vacated `move_node` addresses are simply
-    absent; there is no template to clear. When `series_bindings` is set
+    written as they are. Clean-room output (the default) contains only
+    sheets and cells from the view. Styles, charts, VBA, and cells outside
+    the view are omitted (accepted v1 lossiness). Vacated `move_node`
+    addresses are simply absent. Pass `in_place=True` to patch `destination`,
+    or `template` to patch a copy of another workbook: cells in the view are
+    overwritten and cells outside the view stay. When `series_bindings` is set
     and `include_bound_labels` is True (default), `row_label`,
     `column_header`, `kind: cell`, and attribute source cells that
     bindings read are written too, even if they sit outside the target
@@ -86,12 +90,17 @@ def write_workbook(
     writer fails closed rather than extracting a second dependency
     closure. The bindings workbook is opened read-only for those extra
     cells; it is never overwritten. When `include_cell_validation` is
-    True (default), constrained inputs are also written as Excel data
-    validations. Input-series domains and relations apply when
-    `series_bindings` is set; extract-time `cell_type_env` domains still
-    apply to unbound value leaves (conflicts fail closed). Constants,
-    outputs, and formula cells are omitted. Without bindings, value cells
-    in `cell_type_env` are used alone.
+    True (default), `graph.data_validations` are written for cells in the
+    view. Compiled and unsupported rules are both emitted from the stored
+    worksheet rule, so an unsupported rule is not dropped. A cell with no stored
+    validation is written without one. In-place and template mode remove
+    leftover worksheet rules from materialized cells instead of copying
+    them back; rules on cells the graph never materialized are left alone.
+    Input-series domains and `cell_type_env` constraints are still written
+    and win on a cell that also has a stored rule. Constants, outputs, and
+    formula cells are omitted from those authored constraints. Without
+    bindings, value cells in `cell_type_env` are used alone for that
+    authored layer.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -128,6 +137,10 @@ def write_workbook(
     Args:
         graph: Read view whose cells are written.
         destination: Output path. Parent directories must already exist.
+        in_place: If True, load `destination` and atomically rewrite it.
+            Implies overwriting `destination`.
+        template: Existing workbook to copy and patch into `destination`.
+            When `in_place` is also True, `template` must be `destination`.
         formula_style: Reference spelling. Default `A1_EXCEL` keeps `$` on
             absolute axes and omits the host sheet prefix. `R1C1` is not
             persisted for normal formula cells; shared-formula groups use
@@ -137,11 +150,9 @@ def write_workbook(
             indexes before spelling (`$` on both axes in `A1_EXCEL`).
             Shared-formula grouping is skipped (absolute fills are not a
             shared relative shape).
-        overwrite: If False (default), raise when `destination` exists.
-            The destination is always a new file; `graph`'s original
-            workbook is never saved in place. `bindings_workbook` is opened
-            read-only when bound labels are included (`include_bound_labels`
-            is True).
+        overwrite: If False (default) and `in_place` is False, raise when
+            `destination` exists. `bindings_workbook` is opened read-only
+            when bound labels are included (`include_bound_labels` is True).
         include_defined_names: If True (default), write `named_ranges` and
             `named_range_ranges` as workbook-global defined names. Set False
             to omit the name table.
@@ -168,22 +179,29 @@ def write_workbook(
             attribute source cells that are missing from `graph`. Formula
             labels whose static deps are not already in the view or bound
             labels are refused. The original graph is not mutated.
-        include_cell_validation: If True (default), write Excel data
-            validations for constrained inputs. With `series_bindings`,
-            rules come from input-series `enum`, `between`,
+        include_cell_validation: If True (default), write `data_validations`
+            stored on the graph and Excel data validations for constrained
+            inputs. Stored rules are the worksheet rules extracted for
+            materialized cells; removing one omits it. With `series_bindings`,
+            authored rules come from input-series `enum`, `between`,
             `real_between`, `from_workbook`, `value_map` needles, and
             `relations`, unioned with `cell_type_env` domains on unbound
-            value leaves (conflicts fail closed). Constants, outputs, and
+            value leaves (conflicts fail closed). An authored rule replaces
+            a stored worksheet rule on the same cell. Constants, outputs, and
             internals are skipped. Without bindings, value cells in
             `cell_type_env` (including a projection's projected graph)
-            are used. Enum members that cannot form an inline list fall
-            back to a custom formula. Formulas longer than 255
-            characters, relation partners missing from the written view,
-            and `from_workbook` inputs with no cached value fail closed.
+            are used for that authored layer. Enum members that cannot form
+            an inline list fall back to a custom formula. Formulas longer
+            than 255 characters, relation partners missing from the written
+            view, and `from_workbook` inputs with no cached value fail closed.
 
     Raises:
-        FileExistsError: If `destination` exists and `overwrite` is False.
-        ValueError: If the view is empty, spans multiple sheets without
+        FileExistsError: If `destination` exists, `overwrite` is False, and
+            `in_place` is False.
+        FileNotFoundError: If `in_place` is True and `destination` is missing,
+            or `template` does not exist.
+        ValueError: If `in_place` is True and `template` is a different file,
+            the view is empty, the view spans multiple sheets without
             `sheet_order`, a formula cell has no `formula_ast`,
             `formula_style` is `R1C1`, a relative axis has no host
             address, an array formula is missing its observed spill / CSE
@@ -196,8 +214,16 @@ def write_workbook(
             as Excel data validation.
     """
     dest = Path(destination)
+    template_path = None if template is None else Path(template)
     style = FormulaStyle(formula_style)
     shared_mode = parse_shared_formulas_mode(shared_formulas)
+    if in_place and template_path is not None and template_path.resolve() != dest.resolve():
+        raise ValueError("template must be the destination when in_place is True")
+    if template_path is not None and not template_path.is_file():
+        raise FileNotFoundError(f"Template workbook not found: {template_path}")
+    if in_place and not dest.is_file():
+        raise FileNotFoundError(f"Cannot update missing workbook: {dest}")
+    patching = in_place or template_path is not None
     if series_bindings is not None and include_bound_labels and bindings_workbook is None:
         raise ValueError(
             "bindings_workbook is required when series_bindings is set "
@@ -208,7 +234,7 @@ def write_workbook(
             "R1C1 formula style is not persisted for normal formula cells; "
             "shared-formula groups store the master in A1 (Excel's xlsx dialect)"
         )
-    if dest.exists() and not overwrite:
+    if dest.exists() and not overwrite and not in_place:
         raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
     if dest.exists() and dest.is_dir():
         raise IsADirectoryError(f"Destination is a directory: {dest}")
@@ -237,21 +263,32 @@ def write_workbook(
     )
     planned_names = _plan_defined_names(graph) if include_defined_names else []
 
-    wb = Workbook()
+    if patching:
+        source = dest if template_path is None else template_path
+        wb = load_workbook(source, keep_vba=source.suffix.lower() == ".xlsm")
+    else:
+        wb = Workbook()
     tmp: Path | None = None
     try:
-        sheets = _create_sheets(wb, sheet_names)
+        if patching:
+            sheets = {worksheet.title: worksheet for worksheet in wb.worksheets}
+            for name in sheet_names:
+                if name not in sheets:
+                    sheets[name] = wb.create_sheet(name)
+        else:
+            sheets = _create_sheets(wb, sheet_names)
         for sheet_name, coord, value in planned:
             sheets[sheet_name][coord] = value
         if include_cell_validation:
-            from .cell_validation import apply_constrained_input_validations
+            from .cell_validation import apply_workbook_cell_validations
 
-            apply_constrained_input_validations(
+            apply_workbook_cell_validations(
                 sheets,
                 graph,
                 planned=planned,
                 series_bindings=series_bindings,
                 bindings_workbook=bindings_workbook,
+                replace_extracted=patching,
             )
         for name, attr_text in planned_names:
             wb.defined_names.add(DefinedName(name=name, attr_text=attr_text))

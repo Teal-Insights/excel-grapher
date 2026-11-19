@@ -669,11 +669,18 @@ def create_dependency_graph(
     `FormulaNormalizer` output. Formulas the AST parser cannot handle leave
     `formula_ast` unset and fall back to regex normalization (transitional,
     non-authoritative) so extraction can still record the cell and its
-    dependencies. CSE and spilled array formulas also store
+    dependencies.     CSE and spilled array formulas also store
     `Node.is_array_formula` and the observed fastpyxl `ref` on
     `Node.array_formula_ref` so `write_workbook` can emit `ArrayFormula`
     instead of a scalar formula string. fastpyxl does not distinguish legacy
     CSE from dynamic-array spills.
+
+    Data validations that cover materialized cells are stored on
+    `DependencyGraph.data_validations` via `suggest_validation_domains`.
+    Rules that compile to `enum` / `between` / `real_between` keep that
+    domain; other rules keep the original worksheet validation so
+    write-back can emit them. Cells the traversal does not materialize are
+    omitted. `remove_node` does not drop a stored validation.
 
     `blank_ranges` is an optional iterable of sheet-qualified A1 rectangles
     (e.g. `\"Sheet1!B2:D10\"`) treated as structurally empty: no nodes are
@@ -1966,6 +1973,13 @@ def create_dependency_graph(
 
             if not graph.get_dependencies(key):
                 node.is_leaf = True
+        from excel_grapher.series_bindings.validation_domains import suggest_validation_domains
+
+        graph.data_validations = suggest_validation_domains(
+            wb_formulas,
+            tuple(graph._nodes),
+            max_cells=max_range_cells,
+        )
     finally:
         if (
             _dyn_stats["infer_calls"]
