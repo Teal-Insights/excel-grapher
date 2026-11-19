@@ -41,6 +41,7 @@ from excel_grapher.grapher.node import NodeView
 if TYPE_CHECKING:
     from excel_grapher.grapher.graph_consistency import GraphConsistencyIssue
     from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+    from excel_grapher.series_bindings.validation_domains import ValidationDomainSuggestion
 
 __all__ = [
     "BaseProjectionManifest",
@@ -500,6 +501,11 @@ class ProjectionResult:
     @property
     def named_range_ranges(self) -> dict[str, tuple[str, str, str]] | None:
         return self.original_graph.named_range_ranges
+
+    @property
+    def data_validations(self) -> tuple[ValidationDomainSuggestion, ...]:
+        """Worksheet data validations stored on the projected graph."""
+        return self.projected_graph.data_validations
 
     def __contains__(self, key: NodeKey) -> bool:
         return key in self.projected_graph

@@ -86,12 +86,14 @@ def write_workbook(
     writer fails closed rather than extracting a second dependency
     closure. The bindings workbook is opened read-only for those extra
     cells; it is never overwritten. When `include_cell_validation` is
-    True (default), constrained inputs are also written as Excel data
-    validations. Input-series domains and relations apply when
-    `series_bindings` is set; extract-time `cell_type_env` domains still
-    apply to unbound value leaves (conflicts fail closed). Constants,
-    outputs, and formula cells are omitted. Without bindings, value cells
-    in `cell_type_env` are used alone.
+    True (default), `graph.data_validations` are written for cells in the
+    view. Compiled and unsupported rules are both emitted from the stored
+    worksheet rule, so an unsupported rule is not dropped. A cell with no
+    stored validation is written without one. Input-series domains and
+    `cell_type_env` constraints are still written and win on a cell that
+    also has a stored rule. Constants, outputs, and formula cells are
+    omitted from those authored constraints. Without bindings, value cells
+    in `cell_type_env` are used alone for that authored layer.
 
     Two write orders: move then write persists current keys on this
     `DependencyGraph` (relatives already rewritten so resolved targets
@@ -168,18 +170,21 @@ def write_workbook(
             attribute source cells that are missing from `graph`. Formula
             labels whose static deps are not already in the view or bound
             labels are refused. The original graph is not mutated.
-        include_cell_validation: If True (default), write Excel data
-            validations for constrained inputs. With `series_bindings`,
-            rules come from input-series `enum`, `between`,
+        include_cell_validation: If True (default), write `data_validations`
+            stored on the graph and Excel data validations for constrained
+            inputs. Stored rules are the worksheet rules extracted for
+            materialized cells; removing one omits it. With `series_bindings`,
+            authored rules come from input-series `enum`, `between`,
             `real_between`, `from_workbook`, `value_map` needles, and
             `relations`, unioned with `cell_type_env` domains on unbound
-            value leaves (conflicts fail closed). Constants, outputs, and
+            value leaves (conflicts fail closed). An authored rule replaces
+            a stored worksheet rule on the same cell. Constants, outputs, and
             internals are skipped. Without bindings, value cells in
             `cell_type_env` (including a projection's projected graph)
-            are used. Enum members that cannot form an inline list fall
-            back to a custom formula. Formulas longer than 255
-            characters, relation partners missing from the written view,
-            and `from_workbook` inputs with no cached value fail closed.
+            are used for that authored layer. Enum members that cannot form
+            an inline list fall back to a custom formula. Formulas longer
+            than 255 characters, relation partners missing from the written
+            view, and `from_workbook` inputs with no cached value fail closed.
 
     Raises:
         FileExistsError: If `destination` exists and `overwrite` is False.
@@ -244,9 +249,9 @@ def write_workbook(
         for sheet_name, coord, value in planned:
             sheets[sheet_name][coord] = value
         if include_cell_validation:
-            from .cell_validation import apply_constrained_input_validations
+            from .cell_validation import apply_workbook_cell_validations
 
-            apply_constrained_input_validations(
+            apply_workbook_cell_validations(
                 sheets,
                 graph,
                 planned=planned,

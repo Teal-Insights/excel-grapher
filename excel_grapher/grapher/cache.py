@@ -19,10 +19,11 @@ from .guard import And, Arith, CellRef, Compare, GuardExpr, Neg, Not, Or, intern
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
+# 11: persist extracted worksheet data validations (`data_validations`).
 # 9: persist `is_array_formula` / `array_formula_ref` for CSE and spill write-back.
 # 8: drop stored `normalized_formula`; strings are derived via `render_formula`.
 # 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
-GRAPH_CACHE_SCHEMA_VERSION = 10
+GRAPH_CACHE_SCHEMA_VERSION = 11
 
 
 class GraphCacheMeta(TypedDict):
@@ -400,6 +401,130 @@ def _formula_ast_from_node_payload(
     return pool[intern_id]
 
 
+def _suggestion_to_json(item: Any) -> dict[str, Any]:
+    rule = item.validation
+    return {
+        "address": item.address,
+        "rule_id": item.rule_id,
+        "status": item.status,
+        "domain": item.domain,
+        "allow_blank": item.allow_blank,
+        "reason": item.reason,
+        "validation": {
+            "type": rule.type,
+            "operator": rule.operator,
+            "formula1": rule.formula1,
+            "formula2": rule.formula2,
+            "error_style": rule.error_style,
+            "show_error_message": rule.show_error_message,
+            "show_input_message": rule.show_input_message,
+            "show_drop_down": rule.show_drop_down,
+            "error": rule.error,
+            "error_title": rule.error_title,
+            "prompt": rule.prompt,
+            "prompt_title": rule.prompt_title,
+            "ime_mode": rule.ime_mode,
+        },
+    }
+
+
+def _suggestions_from_json(payload: object) -> tuple[Any, ...]:
+    if payload is None:
+        return ()
+    if not isinstance(payload, list):
+        raise TypeError("data_validations must be a list")
+    from excel_grapher.series_bindings.validation_domains import (
+        UNSUPPORTED_REASONS,
+        DataValidationRule,
+        ValidationDomainSuggestion,
+    )
+
+    suggestions: list[ValidationDomainSuggestion] = []
+    for raw_item in payload:
+        if not isinstance(raw_item, dict):
+            raise TypeError("data validation must be an object")
+        item = cast(dict[str, Any], raw_item)
+        address = item.get("address")
+        rule_id = item.get("rule_id")
+        status = item.get("status")
+        domain = item.get("domain")
+        reason = item.get("reason")
+        rule = item.get("validation")
+        allow_blank = item.get("allow_blank")
+        if not isinstance(address, str) or not isinstance(rule_id, str):
+            raise TypeError("data validation address and rule_id must be strings")
+        if status not in {"domain", "unsupported"}:
+            raise TypeError(f"data validation status must be domain or unsupported, got {status!r}")
+        if domain is not None and not isinstance(domain, dict):
+            raise TypeError("data validation domain must be an object or null")
+        if reason is not None and reason not in UNSUPPORTED_REASONS:
+            raise TypeError(f"unknown data validation reason {reason!r}")
+        if not isinstance(rule, dict):
+            raise TypeError("data validation rule must be an object")
+        if not isinstance(allow_blank, bool):
+            raise TypeError("data validation allow_blank must be a bool")
+        rule_payload = cast(dict[str, Any], rule)
+        domain_payload = cast(dict[str, Any] | None, domain)
+        suggestions.append(
+            ValidationDomainSuggestion(
+                address=address,
+                rule_id=rule_id,
+                status=cast(Literal["domain", "unsupported"], status),
+                domain=domain_payload,
+                allow_blank=allow_blank,
+                validation=DataValidationRule(
+                    type=_optional_str(rule_payload, "type"),
+                    operator=_optional_str(rule_payload, "operator"),
+                    formula1=_optional_str(rule_payload, "formula1"),
+                    formula2=_optional_str(rule_payload, "formula2"),
+                    error_style=_optional_str(rule_payload, "error_style"),
+                    show_error_message=_optional_bool(rule_payload, "show_error_message"),
+                    show_input_message=_optional_bool(rule_payload, "show_input_message"),
+                    show_drop_down=_optional_bool(rule_payload, "show_drop_down"),
+                    error=_optional_str(rule_payload, "error"),
+                    error_title=_optional_str(rule_payload, "error_title"),
+                    prompt=_optional_str(rule_payload, "prompt"),
+                    prompt_title=_optional_str(rule_payload, "prompt_title"),
+                    ime_mode=_optional_str(rule_payload, "ime_mode"),
+                ),
+                reason=cast(
+                    Literal[
+                        "list_formula",
+                        "list_formula_cells",
+                        "list_multi_area",
+                        "empty_enum",
+                        "non_stop",
+                        "unsupported_type",
+                        "unsupported_operator",
+                        "non_literal_bounds",
+                        "unreadable",
+                    ]
+                    | None,
+                    reason,
+                ),
+            )
+        )
+    return tuple(suggestions)
+
+
+def _optional_str(payload: dict[str, Any], key: str) -> str | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError(f"data validation {key} must be a string or null")
+    return value
+
+
+def _optional_bool(payload: dict[str, Any], key: str) -> bool | None:
+    value = payload.get(key)
+    if value is None:
+        return None
+    if not isinstance(value, bool):
+        raise TypeError(f"data validation {key} must be a bool or null")
+    return value
+
+
 def _json_domains_handle(graph: DependencyGraph) -> dict[str, str] | None:
     handle = getattr(graph, "_domains_handle", None) or getattr(
         getattr(graph, "domains", None), "handle", None
@@ -467,6 +592,7 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "leaf_classification": graph.leaf_classification,
+        "data_validations": [_suggestion_to_json(item) for item in graph.data_validations],
         "formula_asts": formula_asts,
         "domains_handle": _json_domains_handle(graph),
     }
@@ -486,6 +612,7 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         raise TypeError("graph nodes/edges must be lists")
 
     g = DependencyGraph()
+    g.data_validations = _suggestions_from_json(payload.get("data_validations"))
     if leaf_cls is not None:
         if not isinstance(leaf_cls, dict) or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in leaf_cls.items()

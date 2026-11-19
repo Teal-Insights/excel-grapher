@@ -140,6 +140,15 @@ def test_unsupported_reasons(tmp_path: Path, kwargs: dict[str, Any], reason: str
     assert s.domain is None
 
 
+def test_address_filter_keeps_multi_cell_relative_list_unsupported(tmp_path: Path) -> None:
+    """Filtering to one cell does not hide that the rule's sqref is a range."""
+    path = _book(tmp_path / "wb.xlsx", _dv("A1:A2", type="list", formula1="B1"))
+    picked = suggest_validation_domains(path, addresses=["Dash!A1"])
+    assert len(picked) == 1
+    assert picked[0].address == "Dash!A1"
+    assert picked[0].reason == "list_formula"
+
+
 def test_suggestions_compile_through_existing_env_path(tmp_path: Path) -> None:
     path = _book(
         tmp_path / "wb.xlsx",

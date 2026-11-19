@@ -125,6 +125,15 @@ the bindings workbook is opened read-only. Set `include_bound_labels=False`
 to keep the strict target-closure file. `bindings_workbook` is required
 only when bound labels are included.
 
+`create_dependency_graph` stores worksheet data validations that cover
+materialized cells on `graph.data_validations`. Inline lists and
+inclusive whole/decimal bounds are also compiled to `enum` / `between` /
+`real_between`. Other rules (`custom`, `date`, `textLength`, formula
+lists, one-sided bounds, and the rest of that table) stay as the original
+worksheet rule. `write_workbook` emits that stored set on the new file.
+Removing an entry omits the rule. A cell with no stored validation is
+written without one. Removing a node does not drop its stored validation.
+
 Constrained inputs are written back as Excel data validations.
 `series_bindings` supplies input domains: input `enum` and `value_map`
 needles become dropdown lists (or custom formulas when a member cannot
@@ -138,7 +147,8 @@ when a sidecar is present; a cell covered by both sources must agree or
 write-back fails closed. Without a sidecar, value cells in
 `cell_type_env` are used alone, including when the view is a
 `ProjectionResult`. Pass `include_cell_validation=False` to omit the
-rules. A formula longer than 255 characters, a relation partner that is
+rules. An authored domain on the same cell replaces the stored worksheet
+rule. A formula longer than 255 characters, a relation partner that is
 not in the written view, or a `from_workbook` input with no cached value
 fails closed.
 

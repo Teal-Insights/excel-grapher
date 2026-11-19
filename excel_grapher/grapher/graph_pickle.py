@@ -210,6 +210,7 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
             "named_range_ranges": (
                 dict(graph.named_range_ranges) if graph.named_range_ranges else None
             ),
+            "data_validations": tuple(graph.data_validations),
             "domains_handle": _domains_handle_payload(graph),
         },
         buf,
@@ -256,6 +257,8 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     graph.named_ranges = dict(nr) if nr else None
     nrr = part1.get("named_range_ranges")
     graph.named_range_ranges = dict(nrr) if nrr else None
+    stored_validations = part1.get("data_validations")
+    graph.data_validations = tuple(stored_validations) if stored_validations else ()
     graph.sheet_bounds = None
     graph.preparsed_formulas = None
     graph.formula_shapes = None

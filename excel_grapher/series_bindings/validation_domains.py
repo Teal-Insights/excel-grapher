@@ -22,11 +22,17 @@ from pathlib import Path
 from typing import Any, Literal
 
 import fastpyxl
-from fastpyxl.utils.cell import get_column_letter, range_boundaries
+from fastpyxl.utils.cell import (
+    column_index_from_string,
+    coordinate_from_string,
+    get_column_letter,
+    range_boundaries,
+)
 from fastpyxl.workbook.workbook import Workbook
 from fastpyxl.worksheet.datavalidation import DataValidation
 from fastpyxl.worksheet.worksheet import Worksheet
 
+from excel_grapher.core.address_keys import parse_address
 from excel_grapher.core.cell_types import (
     CellType,
     constraints_to_cell_type_env,
@@ -50,6 +56,17 @@ __all__ = [
 ]
 
 SuggestionStatus = Literal["domain", "unsupported"]
+_UNSUPPORTED_REASON_VALUES = (
+    "list_formula",
+    "list_formula_cells",
+    "list_multi_area",
+    "empty_enum",
+    "non_stop",
+    "unsupported_type",
+    "unsupported_operator",
+    "non_literal_bounds",
+    "unreadable",
+)
 UnsupportedReason = Literal[
     "list_formula",
     "list_formula_cells",
@@ -61,6 +78,7 @@ UnsupportedReason = Literal[
     "non_literal_bounds",
     "unreadable",
 ]
+UNSUPPORTED_REASONS: frozenset[str] = frozenset(_UNSUPPORTED_REASON_VALUES)
 FindingCode = Literal[
     "proposed_domain",
     "partial_coverage",
@@ -81,13 +99,26 @@ _REF = re.compile(rf"(?:(?P<sheet>'(?:[^']|'')+'|[^'!:,()\s]+)!)?(?P<area>{_CELL
 
 @dataclass(frozen=True, slots=True)
 class DataValidationRule:
-    """A worksheet `dataValidation` as stored in the workbook."""
+    """A worksheet `dataValidation` as stored in the workbook.
+
+    Attributes beyond `type` / `operator` / formulas / `error_style` are the
+    OOXML flags and messages write-back needs to emit an unsupported rule
+    unchanged.
+    """
 
     type: str | None
     operator: str | None
     formula1: str | None
     formula2: str | None
     error_style: str | None
+    show_error_message: bool | None = None
+    show_input_message: bool | None = None
+    show_drop_down: bool | None = None
+    error: str | None = None
+    error_title: str | None = None
+    prompt: str | None = None
+    prompt_title: str | None = None
+    ime_mode: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -139,7 +170,7 @@ class _Unsupported(Exception):
 
 
 def suggest_validation_domains(
-    workbook: Path | str,
+    workbook: Path | str | Workbook,
     addresses: Iterable[str] | None = None,
     *,
     max_cells: int = DEFAULT_MAX_RANGE_CELLS,
@@ -147,7 +178,8 @@ def suggest_validation_domains(
     """Report the domain each validated cell's data validation implies.
 
     Args:
-        workbook: Workbook to read.
+        workbook: Workbook path to open, or an already-open workbook. An open
+            workbook is not closed.
         addresses: Restrict the report to these cells (any quoting / `$`
             spelling). Cells without a validation are absent. `None` reports
             every validated cell on every sheet.
@@ -161,6 +193,8 @@ def suggest_validation_domains(
         ValueError: `addresses` is `None` and validations cover more than
             `max_cells` cells.
     """
+    if isinstance(workbook, Workbook):
+        return _suggest(workbook, addresses, max_cells=max_cells)
     wb = fastpyxl.load_workbook(Path(workbook), data_only=False)
     try:
         return _suggest(wb, addresses, max_cells=max_cells)
@@ -325,21 +359,34 @@ def _suggest(
     max_cells: int,
 ) -> tuple[ValidationDomainSuggestion, ...]:
     wanted = None if addresses is None else {normalize_cell_type_env_key(a) for a in addresses}
+    wanted_by_sheet = _wanted_by_sheet(wanted)
     rows: list[tuple[tuple[int, int, int, int], ValidationDomainSuggestion]] = []
     expanded = 0
     for sheet_index, ws in enumerate(wb.worksheets):
+        sheet_wanted: set[tuple[int, int]] | None
+        if wanted_by_sheet is None:
+            sheet_wanted = None
+        else:
+            sheet_wanted = wanted_by_sheet.get(ws.title)
+            if not sheet_wanted:
+                continue
         for rule_index, dv in enumerate(ws.data_validations.dataValidation):
             try:
-                cells = _sqref_cells(dv)
-            except ValueError:
+                count = _sqref_cell_count(dv)
+                cells = _sqref_cells(dv) if sheet_wanted is None else _sqref_hits(dv, sheet_wanted)
+            except (TypeError, ValueError):
+                count = 0
                 cells = []
             if wanted is None:
-                expanded += len(cells)
+                expanded += count
                 if expanded > max_cells:
                     raise ValueError(
                         f"Data validations cover more than {max_cells} cells; pass addresses"
                     )
-            multi_cell = len(cells) != 1
+            # `multi_cell` follows the worksheet sqref, not the filtered subset.
+            # A relative list over A1:A2 stays `list_formula` when the caller
+            # asks only for A1.
+            multi_cell = count != 1
             base = _rule(dv)
             for row, col in cells:
                 address = normalize_cell_type_env_key(f"{ws.title}!{_coord(row, col)}")
@@ -365,6 +412,43 @@ def _suggest(
     return tuple(s for _, s in rows)
 
 
+def _wanted_by_sheet(
+    wanted: set[str] | None,
+) -> dict[str, set[tuple[int, int]]] | None:
+    if wanted is None:
+        return None
+    by_sheet: dict[str, set[tuple[int, int]]] = defaultdict(set)
+    for address in wanted:
+        sheet, coord = parse_address(address)
+        column, row = coordinate_from_string(coord)
+        by_sheet[sheet].add((int(row), column_index_from_string(column)))
+    return by_sheet
+
+
+def _sqref_cell_count(dv: DataValidation) -> int:
+    if dv.sqref is None:
+        return 0
+    total = 0
+    for area in dv.sqref.ranges:
+        total += (area.max_row - area.min_row + 1) * (area.max_col - area.min_col + 1)
+    return total
+
+
+def _sqref_hits(dv: DataValidation, wanted: set[tuple[int, int]]) -> list[tuple[int, int]]:
+    """Return `wanted` cells covered by `dv`, without expanding the sqref."""
+    if dv.sqref is None or not wanted:
+        return []
+    areas = list(dv.sqref.ranges)
+    hits: list[tuple[int, int]] = []
+    for row, col in sorted(wanted):
+        if any(
+            area.min_row <= row <= area.max_row and area.min_col <= col <= area.max_col
+            for area in areas
+        ):
+            hits.append((row, col))
+    return hits
+
+
 def _sqref_cells(dv: DataValidation) -> list[tuple[int, int]]:
     cells: list[tuple[int, int]] = []
     if dv.sqref is None:
@@ -387,6 +471,14 @@ def _rule(dv: DataValidation) -> DataValidationRule:
         formula1=dv.formula1,
         formula2=dv.formula2,
         error_style=dv.errorStyle,
+        show_error_message=dv.showErrorMessage,
+        show_input_message=dv.showInputMessage,
+        show_drop_down=dv.showDropDown,
+        error=dv.error,
+        error_title=dv.errorTitle,
+        prompt=dv.prompt,
+        prompt_title=dv.promptTitle,
+        ime_mode=dv.imeMode,
     )
 
 

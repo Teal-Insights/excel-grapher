@@ -265,6 +265,32 @@ def _merge_extracted_subgraph(
         graph.sheet_bounds = merged_bounds
     if graph.sheet_order is None and extracted.sheet_order:
         graph.sheet_order = list(extracted.sheet_order)
+    _merge_extracted_validations(graph, extracted, new_keys)
+
+
+def _merge_extracted_validations(
+    graph: DependencyGraph,
+    extracted: DependencyGraph,
+    new_keys: list[NodeKey],
+) -> None:
+    """Add validations for cells this replace materialized.
+
+    Cells already on `graph` keep the stored set, including rules the caller
+    removed. Only addresses introduced by this extraction are appended.
+    """
+    if not new_keys or not extracted.data_validations:
+        return
+    from excel_grapher.core.cell_types import normalize_cell_type_env_key
+
+    new_addresses = {normalize_cell_type_env_key(key) for key in new_keys}
+    have = {item.address for item in graph.data_validations}
+    extra = tuple(
+        item
+        for item in extracted.data_validations
+        if item.address in new_addresses and item.address not in have
+    )
+    if extra:
+        graph.data_validations = graph.data_validations + extra
 
 
 def _graph_only_edges(

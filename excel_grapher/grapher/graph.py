@@ -13,6 +13,7 @@ if TYPE_CHECKING:
 
     from excel_grapher.core.cell_types import CellType
     from excel_grapher.series_bindings.domains import SeriesDomainIndex
+    from excel_grapher.series_bindings.validation_domains import ValidationDomainSuggestion
 
     from .compression import IdentityTransitCompressionRecord, OptimalCompressionRecord
     from .dynamic_refs import DynamicRefConfig
@@ -164,6 +165,7 @@ class GraphReadView(Protocol):
     sheet_order: list[str] | None
     named_ranges: dict[str, tuple[str, str]] | None
     named_range_ranges: dict[str, tuple[str, str, str]] | None
+    data_validations: tuple[ValidationDomainSuggestion, ...]
 
     def __contains__(self, key: NodeKey) -> bool: ...
 
@@ -230,6 +232,13 @@ class DependencyGraph:
     missing. Compression, formula rewrite, and JSON/pickle load drop it
     (`None`). Callers who want shapes again must rewarm; a live
     `FormulaEvaluator` does not pick up a rewarm automatically.
+
+    `data_validations` is the worksheet data-validation set extracted for
+    cells this graph materialized. Compiled rules keep the domain from
+    `suggest_validation_domains`; unsupported rules keep the original
+    worksheet rule so write-back can emit them. Removing an entry drops
+    that rule on the next `write_workbook`. `remove_node` and `move_node`
+    do not drop entries, including after the cell is vacated.
     """
 
     _nodes: dict[NodeKey, Node] = field(default_factory=dict)
@@ -273,6 +282,9 @@ class DependencyGraph:
     cell_type_env: CellTypeEnv | None = None
     domains: SeriesDomainIndex | None = field(default=None, repr=False, compare=False)
     _domains_handle: Any = field(default=None, repr=False, compare=False)
+    # Extracted worksheet rules, keyed by cell. Survives node removal so a
+    # vacated cell's validation is still persisted and available to write-back.
+    data_validations: tuple[ValidationDomainSuggestion, ...] = ()
     # Bumped by `set_node_value` so FormulaEvaluator can skip a full leaf poll
     # when no durable value write has happened since the last eager scan.
     _value_generation: int = field(default=0, repr=False, compare=False)
@@ -345,6 +357,7 @@ class DependencyGraph:
             )
             cloned.domains = None
         cloned._domains_handle = self._domains_handle
+        cloned.data_validations = copy.deepcopy(self.data_validations)
         cloned._value_generation = self._value_generation
         return cloned
 

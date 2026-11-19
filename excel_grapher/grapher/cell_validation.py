@@ -1,13 +1,14 @@
-"""Excel data-validation rules for constrained inputs on write-back.
+"""Excel data-validation rules on write-back.
 
-Input domains (`enum`, `between`, `real_between`, `from_workbook`,
-an enum unioned with one interval, `value_map` needles, and series
-relations) become worksheet data validations. When `series_bindings` is
-set, input-series domains are
+Stored worksheet rules on `DependencyGraph.data_validations` are written
+for cells in the view. Input domains (`enum`, `between`, `real_between`,
+`from_workbook`, an enum unioned with one interval, `value_map` needles,
+and series relations) are written too, and win on a cell that also has a
+stored rule. When `series_bindings` is set, input-series domains are
 applied and constant/output/internal cells are skipped; extract-time
 `cell_type_env` domains still apply to unbound value leaves, and matching
 cells must agree. Without bindings, value cells in `cell_type_env` are
-the sole constraint source.
+the sole authored constraint source.
 """
 
 from __future__ import annotations
@@ -36,6 +37,7 @@ from excel_grapher.series_bindings.normalize import has_input_direction
 from excel_grapher.series_bindings.ranges import expand_bound_series_addresses
 from excel_grapher.series_bindings.relations import iter_series_relations
 from excel_grapher.series_bindings.types import WorkbookSeriesBindings
+from excel_grapher.series_bindings.validation_domains import ValidationDomainSuggestion
 
 _FORMULA_LIMIT = 255
 _SQREF_LIMIT = 255
@@ -91,9 +93,136 @@ def apply_constrained_input_validations(
         series_bindings=series_bindings,
         bindings_workbook=bindings_workbook,
     )
+    _emit_constraint_rules(sheets, constraints, written)
+
+
+def apply_workbook_cell_validations(
+    sheets: Mapping[str, Worksheet],
+    graph: GraphReadView,
+    *,
+    planned: Sequence[tuple[str, str, object]],
+    series_bindings: WorkbookSeriesBindings | None,
+    bindings_workbook: Path | str | None,
+) -> None:
+    """Write stored worksheet rules, then authored input constraints.
+
+    Authored series domains and `cell_type_env` constraints win on a cell
+    that also has a stored worksheet rule. Only cells in `planned` receive
+    a stored rule.
+
+    Raises:
+        ValueError: A constraint cannot be expressed as one Excel data
+            validation, a relation partner is absent from `planned`, a
+            `from_workbook` input has no cached value, or relations need
+            `bindings_workbook`.
+    """
+    written = {
+        normalize_cell_type_env_key(f"{sheet}!{coord}"): (sheet, coord)
+        for sheet, coord, _value in planned
+    }
+    constraints = _constraint_cells(
+        graph,
+        written=set(written),
+        series_bindings=series_bindings,
+        bindings_workbook=bindings_workbook,
+    )
+    _apply_stored_data_validations(
+        sheets,
+        graph.data_validations,
+        skip=set(constraints),
+        limit=set(written),
+    )
+    _emit_constraint_rules(sheets, constraints, written)
+
+
+def _apply_stored_data_validations(
+    sheets: Mapping[str, Worksheet],
+    validations: Sequence[ValidationDomainSuggestion],
+    *,
+    skip: set[str],
+    limit: set[str],
+) -> None:
+    grouped: dict[tuple[str, tuple[object, ...]], list[str]] = defaultdict(list)
+    for item in validations:
+        if item.address in skip:
+            continue
+        if item.address not in limit:
+            continue
+        sheet, coord = parse_address(item.address)
+        if sheet not in sheets:
+            continue
+        grouped[(sheet, _stored_payload(item))].append(coord.replace("$", ""))
+    for (sheet_name, payload), coords in grouped.items():
+        worksheet = sheets[sheet_name]
+        for sqref in _chunk_sqref(coords):
+            worksheet.add_data_validation(_validation_from_payload(payload, sqref))
+
+
+def _stored_payload(item: ValidationDomainSuggestion) -> tuple[object, ...]:
+    rule = item.validation
+    return (
+        rule.type,
+        rule.operator,
+        rule.formula1,
+        rule.formula2,
+        item.allow_blank,
+        rule.error_style,
+        rule.show_error_message,
+        rule.show_input_message,
+        rule.show_drop_down,
+        rule.error,
+        rule.error_title,
+        rule.prompt,
+        rule.prompt_title,
+        rule.ime_mode,
+    )
+
+
+def _validation_from_payload(payload: tuple[object, ...], sqref: str) -> DataValidation:
+    (
+        kind,
+        operator,
+        formula1,
+        formula2,
+        allow_blank,
+        error_style,
+        show_error,
+        show_input,
+        show_drop_down,
+        error,
+        error_title,
+        prompt,
+        prompt_title,
+        ime_mode,
+    ) = payload
+    return DataValidation(
+        type=kind,
+        operator=operator,
+        formula1=formula1,
+        formula2=formula2,
+        allow_blank=allow_blank,
+        errorStyle=error_style,
+        showErrorMessage=show_error,
+        showInputMessage=show_input,
+        showDropDown=show_drop_down,
+        error=error,
+        errorTitle=error_title,
+        prompt=prompt,
+        promptTitle=prompt_title,
+        imeMode=ime_mode,
+        sqref=sqref,
+    )
+
+
+def _emit_constraint_rules(
+    sheets: Mapping[str, Worksheet],
+    constraints: Mapping[str, CellType],
+    written: Mapping[str, tuple[str, str]],
+) -> None:
     grouped: dict[tuple[str, _Rule], list[str]] = defaultdict(list)
+    written_keys = set(written)
     for address, cell_type in constraints.items():
-        rule = _rule_for(address, cell_type, written=set(written))
+        rule = _rule_for(address, cell_type, written=written_keys)
         sheet, coord = written[address]
         grouped[(sheet, rule)].append(coord)
 
