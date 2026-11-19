@@ -36,12 +36,11 @@ print(to_graphviz(g))  # GraphViz DOT
 ### Writing a workbook {#write-workbook}
 
 `write_workbook` is the inverse of `create_dependency_graph`: it writes a
-`GraphReadView` (`DependencyGraph` or `ProjectionResult`). The default is a
-**new** `.xlsx`. If `destination` already exists, pass `overwrite=True`, or
-pass `in_place=True` to patch that file. `template` patches a copy of another
-workbook into `destination` and does not modify the template. Passing
-`series_bindings` opens the bindings workbook read-only so bound labels can
-be copied.
+`GraphReadView` (`DependencyGraph` or `ProjectionResult`) to a **new** `.xlsx`.
+There is no template-patch mode. If `destination` already exists, pass
+`overwrite=True`. The destination is always a new file; the original workbook
+is never saved in place. Passing `series_bindings` opens that workbook
+read-only so bound labels can be copied.
 
 ```python
 from pathlib import Path
@@ -114,10 +113,8 @@ moment. A later `move_node` on the original does not update an existing
 projected workbook should include them. Writing a pre-move projection is
 still valid; it exports the pre-move view.
 
-Extraction is a target closure, so a new workbook omits styles, charts,
-VBA, and cells outside the view. That is accepted v1 lossiness. In-place
-and template writes keep those surrounding parts and only replace cells
-in the view.
+Extraction is a target closure, so styles, charts, VBA, and cells outside
+the view do not appear in the output. That is accepted v1 lossiness.
 Pass `series_bindings` and `bindings_workbook` to also write `row_label`,
 `column_header`, `kind: cell`, and attribute source cells that bindings
 read. Those labels are often outside the formula closure. Formula headers
@@ -133,11 +130,9 @@ materialized cells on `graph.data_validations`. Inline lists and
 inclusive whole/decimal bounds are also compiled to `enum` / `between` /
 `real_between`. Other rules (`custom`, `date`, `textLength`, formula
 lists, one-sided bounds, and the rest of that table) stay as the original
-worksheet rule. `write_workbook` emits that stored set. Removing an entry
-omits the rule, in a new file and when patching in place or from a
-template; leftover worksheet rules are not copied back onto extracted
-cells. Rules on cells the graph never materialized are left in place when
-patching. Removing a node does not drop its stored validation.
+worksheet rule. `write_workbook` emits that stored set on the new file.
+Removing an entry omits the rule. A cell with no stored validation is
+written without one. Removing a node does not drop its stored validation.
 
 Constrained inputs are written back as Excel data validations.
 `series_bindings` supplies input domains: input `enum` and `value_map`

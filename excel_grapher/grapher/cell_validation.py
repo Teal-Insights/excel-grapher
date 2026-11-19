@@ -1,13 +1,14 @@
-"""Excel data-validation rules for constrained inputs on write-back.
+"""Excel data-validation rules on write-back.
 
-Input domains (`enum`, `between`, `real_between`, `from_workbook`,
-an enum unioned with one interval, `value_map` needles, and series
-relations) become worksheet data validations. When `series_bindings` is
-set, input-series domains are
+Stored worksheet rules on `DependencyGraph.data_validations` are written
+for cells in the view. Input domains (`enum`, `between`, `real_between`,
+`from_workbook`, an enum unioned with one interval, `value_map` needles,
+and series relations) are written too, and win on a cell that also has a
+stored rule. When `series_bindings` is set, input-series domains are
 applied and constant/output/internal cells are skipped; extract-time
 `cell_type_env` domains still apply to unbound value leaves, and matching
 cells must agree. Without bindings, value cells in `cell_type_env` are
-the sole constraint source.
+the sole authored constraint source.
 """
 
 from __future__ import annotations
@@ -15,12 +16,10 @@ from __future__ import annotations
 import math
 from collections import defaultdict
 from collections.abc import Mapping, Sequence
-from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 from pathlib import Path
 
 from fastpyxl.utils.cell import column_index_from_string, coordinate_from_string
-from fastpyxl.worksheet.cell_range import CellRange, MultiCellRange
 from fastpyxl.worksheet.datavalidation import DataValidation
 from fastpyxl.worksheet.worksheet import Worksheet
 
@@ -42,8 +41,6 @@ from excel_grapher.series_bindings.validation_domains import ValidationDomainSug
 
 _FORMULA_LIMIT = 255
 _SQREF_LIMIT = 255
-_EXCEL_MAX_COL = 16_384
-_EXCEL_MAX_ROW = 1_048_576
 _LIST_ERROR = "Value must be one of the allowed inputs."
 _WHOLE_ERROR = "Value must be an integer in the declared range."
 _DECIMAL_ERROR = "Value must be a number in the declared range."
@@ -106,15 +103,12 @@ def apply_workbook_cell_validations(
     planned: Sequence[tuple[str, str, object]],
     series_bindings: WorkbookSeriesBindings | None,
     bindings_workbook: Path | str | None,
-    replace_extracted: bool,
 ) -> None:
     """Write stored worksheet rules, then authored input constraints.
 
     Authored series domains and `cell_type_env` constraints win on a cell
-    that also has a stored worksheet rule. When `replace_extracted` is
-    True, existing worksheet rules are removed from materialized cells and
-    from addresses that still have a stored validation before the stored
-    set is written, so a rule deleted from the graph is not copied back.
+    that also has a stored worksheet rule. Only cells in `planned` receive
+    a stored rule.
 
     Raises:
         ValueError: A constraint cannot be expressed as one Excel data
@@ -132,105 +126,13 @@ def apply_workbook_cell_validations(
         series_bindings=series_bindings,
         bindings_workbook=bindings_workbook,
     )
-    if replace_extracted:
-        strip_validation_coords(sheets, _managed_validation_coords(graph))
     _apply_stored_data_validations(
         sheets,
         graph.data_validations,
         skip=set(constraints),
-        limit=None if replace_extracted else set(written),
+        limit=set(written),
     )
     _emit_constraint_rules(sheets, constraints, written)
-
-
-def strip_validation_coords(
-    sheets: Mapping[str, Worksheet],
-    coords_by_sheet: Mapping[str, AbstractSet[str]],
-) -> None:
-    """Remove `coords_by_sheet` from existing worksheet data-validation ranges.
-
-    Splits rectangular ranges around removed coordinates so untouched cells
-    keep their rules, and drops a rule whose range becomes empty.
-
-    Args:
-        sheets: Worksheets keyed by title.
-        coords_by_sheet: A1 coordinates (such as `B2`) to strip per sheet.
-    """
-    for sheet_name, raw_coords in coords_by_sheet.items():
-        if not raw_coords or sheet_name not in sheets:
-            continue
-        worksheet = sheets[sheet_name]
-        existing = list(worksheet.data_validations.dataValidation)
-        if not existing:
-            continue
-        points = {_coord_key(coord) for coord in raw_coords}
-        kept: list[DataValidation] = []
-        for dv in existing:
-            sqref = dv.sqref
-            if sqref is None:
-                continue
-            next_ranges: list[CellRange] = []
-            changed = False
-            for rng in sqref.ranges:
-                c1 = int(rng.min_col) if rng.min_col is not None else 1
-                r1 = int(rng.min_row) if rng.min_row is not None else 1
-                c2 = int(rng.max_col) if rng.max_col is not None else _EXCEL_MAX_COL
-                r2 = int(rng.max_row) if rng.max_row is not None else _EXCEL_MAX_ROW
-                hits = [(col, row) for col, row in points if c1 <= col <= c2 and r1 <= row <= r2]
-                if not hits:
-                    next_ranges.append(rng)
-                    continue
-                changed = True
-                for sub_c1, sub_r1, sub_c2, sub_r2 in _subtract_points_from_rect(
-                    (c1, r1, c2, r2), hits
-                ):
-                    next_ranges.append(
-                        CellRange(min_col=sub_c1, min_row=sub_r1, max_col=sub_c2, max_row=sub_r2)
-                    )
-            if not next_ranges:
-                continue
-            if changed:
-                next_ranges.sort(key=lambda item: (item.min_row or 1, item.min_col or 1))
-                dv.sqref = MultiCellRange(next_ranges)
-            kept.append(dv)
-        worksheet.data_validations.dataValidation = kept
-
-
-def _subtract_points_from_rect(
-    rect: tuple[int, int, int, int],
-    points: Sequence[tuple[int, int]],
-) -> list[tuple[int, int, int, int]]:
-    rects = [rect]
-    for pcol, prow in points:
-        updated: list[tuple[int, int, int, int]] = []
-        for c1, r1, c2, r2 in rects:
-            if not (c1 <= pcol <= c2 and r1 <= prow <= r2):
-                updated.append((c1, r1, c2, r2))
-                continue
-            if r1 <= prow - 1:
-                updated.append((c1, r1, c2, prow - 1))
-            if prow + 1 <= r2:
-                updated.append((c1, prow + 1, c2, r2))
-            if c1 <= pcol - 1:
-                updated.append((c1, prow, pcol - 1, prow))
-            if pcol + 1 <= c2:
-                updated.append((pcol + 1, prow, c2, prow))
-        rects = updated
-        if not rects:
-            break
-    return rects
-
-
-def _managed_validation_coords(graph: GraphReadView) -> dict[str, set[str]]:
-    """Cells whose worksheet rules come from the graph, not the file."""
-    by_sheet: dict[str, set[str]] = defaultdict(set)
-    for key in graph:
-        sheet, coord = parse_address(str(key))
-        by_sheet[sheet].add(coord.replace("$", ""))
-    for item in graph.data_validations:
-        sheet, coord = parse_address(item.address)
-        by_sheet[sheet].add(coord.replace("$", ""))
-    return by_sheet
 
 
 def _apply_stored_data_validations(
@@ -238,13 +140,13 @@ def _apply_stored_data_validations(
     validations: Sequence[ValidationDomainSuggestion],
     *,
     skip: set[str],
-    limit: set[str] | None,
+    limit: set[str],
 ) -> None:
     grouped: dict[tuple[str, tuple[object, ...]], list[str]] = defaultdict(list)
     for item in validations:
         if item.address in skip:
             continue
-        if limit is not None and item.address not in limit:
+        if item.address not in limit:
             continue
         sheet, coord = parse_address(item.address)
         if sheet not in sheets:

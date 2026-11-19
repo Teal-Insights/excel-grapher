@@ -193,51 +193,6 @@ def test_clean_room_write_emits_stored_rules_and_honors_removal(tmp_path: Path) 
     assert custom["error"] == "edited"
 
 
-def test_in_place_round_trip_replaces_extracted_rules_only(tmp_path: Path) -> None:
-    source = _book(tmp_path / "source.xlsx")
-    graph = create_dependency_graph(source, ["Sheet1!B1", "Sheet1!C1"], load_values=True)
-    write_workbook(graph, source, in_place=True)
-
-    rows = _rows(source)
-    assert any(row["formula1"] == '"x,y"' for row in _covers(rows, "A1"))
-    assert any(row["formula1"] == "B1<>0" for row in _covers(rows, "B1"))
-    assert any(row["type"] == "whole" for row in _covers(rows, "C1"))
-    kept = _covers(rows, "D1")
-    assert len(kept) == 1
-    assert kept[0]["formula1"] == '"keep"'
-    assert _rows(source, "Notes") == []
-
-    graph.data_validations = tuple(
-        item
-        for item in graph.data_validations
-        if not (item.address == "Sheet1!A1" and item.validation.type == "list")
-    )
-    write_workbook(graph, source, in_place=True)
-    rows = _rows(source)
-    assert not any(row["type"] == "list" for row in _covers(rows, "A1"))
-    assert any(row["type"] == "decimal" for row in _covers(rows, "A1"))
-    assert any(row["formula1"] == '"keep"' for row in _covers(rows, "D1"))
-    # The shared one-sided rule still covers C1, which was not dropped.
-    assert any(row["type"] == "decimal" for row in _covers(rows, "C1"))
-    # D1 shared no extracted sqref, so its list is untouched.
-    assert all("D1" not in row["cells"] or row["formula1"] == '"keep"' for row in rows)
-
-
-def test_template_write_does_not_copy_removed_rule_onto_extracted_cell(tmp_path: Path) -> None:
-    source = _book(tmp_path / "source.xlsx")
-    graph = create_dependency_graph(source, ["Sheet1!C1"], load_values=True)
-    graph.data_validations = tuple(
-        item for item in graph.data_validations if item.validation.type != "whole"
-    )
-    dest = tmp_path / "patched.xlsx"
-    write_workbook(graph, dest, template=source)
-    rows = _rows(dest)
-    assert not any(row["type"] == "whole" for row in _covers(rows, "C1"))
-    assert any(row["formula1"] == '"keep"' for row in _covers(rows, "D1"))
-    # The template file itself is not rewritten.
-    assert any(row["type"] == "whole" for row in _covers(_rows(source), "C1"))
-
-
 def test_authored_domain_wins_over_stored_worksheet_rule(tmp_path: Path) -> None:
     source = _book(tmp_path / "source.xlsx")
     graph = create_dependency_graph(source, ["Sheet1!A1"], load_values=True)
