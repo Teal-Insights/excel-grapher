@@ -1,27 +1,40 @@
-"""Write a `GraphReadView` to a new Excel workbook.
+"""Write a `GraphReadView` to a new or patched Excel workbook.
 
 This is workbook I/O next to `create_dependency_graph`, not Python codegen.
 `write_workbook` is an export backend on the same read surface `CodeGenerator`
-already accepts (`DependencyGraph` or `ProjectionResult`).
+already accepts (`DependencyGraph` or `ProjectionResult`), supporting both
+clean-room new-file output and in-place / template-patched writeback.
 """
 
 from __future__ import annotations
 
 import os
+from collections import defaultdict
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from fastpyxl import Workbook
-from fastpyxl.utils.cell import coordinate_from_string
+from fastpyxl import Workbook, load_workbook
+from fastpyxl.utils.cell import (
+    column_index_from_string,
+    coordinate_from_string,
+    get_column_letter,
+)
 from fastpyxl.utils.exceptions import CellCoordinatesException
 from fastpyxl.workbook.defined_name import DefinedName
 from fastpyxl.worksheet.formula import ArrayFormula
 from fastpyxl.worksheet.worksheet import Worksheet
 
-from excel_grapher.core.address_keys import format_key, parse_address, quote_sheet_if_needed
+from excel_grapher.core.address_keys import (
+    format_key,
+    normalize_key,
+    parse_address,
+    quote_sheet_if_needed,
+)
 from excel_grapher.core.excel_function_names import normalize_excel_function_name
 from excel_grapher.core.formula_ast import (
+    AbsoluteAxis,
     AstNode,
     BinaryOpNode,
     CellRef,
@@ -41,8 +54,19 @@ from excel_grapher.core.types import XlError
 
 from .graph import GraphReadView
 from .node import NodeView
-from .parser import DEFAULT_MAX_RANGE_CELLS, expand_range
+from .parser import (
+    DEFAULT_MAX_RANGE_CELLS,
+    FormulaNormalizer,
+    _find_function_calls_with_spans,
+    expand_range,
+    mask_ref_only_function_calls,
+    mask_spans,
+    parse_range_refs_with_spans,
+    parse_standalone_cell_refs,
+)
+from .resolver import build_named_range_map
 from .shared_formulas import (
+    SharedFormula,
     SharedFormulasMode,
     parse_shared_formulas_mode,
     shared_formula_cell_values,
@@ -58,6 +82,8 @@ def write_workbook(
     graph: GraphReadView,
     destination: Path | str,
     *,
+    in_place: bool = False,
+    template: Path | str | None = None,
     formula_style: FormulaStyle = FormulaStyle.A1_EXCEL,
     coerce_relative_refs: bool = False,
     overwrite: bool = False,
@@ -68,137 +94,93 @@ def write_workbook(
     include_bound_labels: bool = True,
     include_cell_validation: bool = True,
 ) -> None:
-    """Write `graph` to a new `.xlsx` at `destination`.
+    """Write `graph` to a new `.xlsx` or patch an existing workbook at `destination`.
 
     Accepts any `GraphReadView`: a mutable `DependencyGraph` (the workbook
-    after `set_node_ast` / `set_node_value` / `move_node` / in-place
-    `compress_*`) or a non-mutating `ProjectionResult`. Formula rewriting
-    is an intended write-back use case; compressed or projected views are
-    written as they are. Output contains only sheets and cells from the
-    view. Styles, charts, VBA, and cells outside the view are omitted
-    (accepted v1 lossiness). Vacated `move_node` addresses are simply
-    absent; there is no template to clear. When `series_bindings` is set
-    and `include_bound_labels` is True (default), `row_label`,
-    `column_header`, `kind: cell`, and attribute source cells that
-    bindings read are written too, even if they sit outside the target
-    closure. Formula labels are copied only when every static dependency
-    is already in the view or is itself a bound label; otherwise the
-    writer fails closed rather than extracting a second dependency
-    closure. The bindings workbook is opened read-only for those extra
-    cells; it is never overwritten. When `include_cell_validation` is
-    True (default), constrained inputs are also written as Excel data
-    validations. Input-series domains and relations apply when
-    `series_bindings` is set; extract-time `cell_type_env` domains still
-    apply to unbound value leaves (conflicts fail closed). Constants,
-    outputs, and formula cells are omitted. Without bindings, value cells
-    in `cell_type_env` are used alone.
+    after `set_node_ast` / `set_node_value` / `replace_node_formula` /
+    `move_node` / in-place `compress_*`) or a non-mutating `ProjectionResult`.
 
-    Two write orders: move then write persists current keys on this
-    `DependencyGraph` (relatives already rewritten so resolved targets
-    match the pre-move meaning). Project then write exports the projected
-    clone. A `ProjectionResult` is a snapshot from `project()`; a later
-    `move_node` on the original graph does not update it. Re-run
-    projection after geometry edits to include them in a projected
-    workbook.
+    Two output modes share this surface:
+
+    - **Clean-room new file** (default, `in_place=False` and `template=None`):
+      writes a brand-new `.xlsx` containing only sheets and cells from the
+      view (plus optional bound labels). Styles, charts, VBA, and cells
+      outside the view are omitted.
+    - **In-place / template patch** (`in_place=True` or `template=...`):
+      loads the existing `.xlsx` / `.xlsm` (`destination` when `in_place=True`,
+      or `template` otherwise), preserves styles, number formats, merged
+      cells, charts, VBA (`keep_vba=True` for `.xlsm`), off-closure sheets
+      and cells, and sheet-local or formula-valued defined names. Cells
+      originally extracted into `graph` (`graph.extracted_keys`) that are no
+      longer present after `move_node`, `remove_node`, `compress_*`, or
+      `ProjectionResult` have their values cleared while keeping cell borders
+      and fills intact. Fails closed if a new or moved cell would overwrite an
+      occupied off-closure cell or array block, or if vacating a cell leaves a
+      dangling reference in an off-closure formula or defined name. Sets
+      `wb.calculation.fullCalcOnLoad = True` so desktop Excel recalculates
+      downstream formulas on open.
 
     Formula cells are spelled from current `formula_ast` via `render_formula`
     (never from the opt-in raw `Node.formula` audit string). Defined names are
     expanded to A1 before parse, so written formulas are expanded A1 (for
-    example `=A1*Settings!$B$2`, not `=A1*TaxRate`). That is expected, not a
-    bug. When `include_defined_names` is True (default), workbook-global names
-    from `graph.named_ranges` and `graph.named_range_ranges` are written so
-    aliases still exist in Excel. Names the writer cannot express as a cell
-    or rectangle are refused. Scope is not stored on the graph maps, so
-    names are emitted workbook-global. The writer does not invent a name from
-    an expanded AST.
-
-    Leaves write `node.value`. Formula cells do not receive
-    evaluator-computed cached results. Cells extracted as `ArrayFormula` are
-    written back as `ArrayFormula(text, ref=...)` using the observed spill /
-    CSE `ref`. fastpyxl does not distinguish legacy CSE from dynamic-array
-    spills, so write-back emits `t="array"` for both. A flagged array cell
-    with no observed `ref` is refused rather than written as a scalar formula.
-
-    When `graph.formula_shapes` is warm, contiguous autofill runs that share
-    an interned relative shape become one Excel shared formula (`t="shared"`).
-    The overlay is opt-in and is not rewarmed here; missing or stale shapes,
-    gaps, mixed axes, array formulas, and `INDIRECT` stay per-cell A1. See
-    `shared_formulas`.
+    example `=A1*Settings!$B$2`, not `=A1*TaxRate`). When
+    `include_defined_names` is True (default), workbook-global names from
+    `graph.named_ranges` and `graph.named_range_ranges` are written (upserted
+    in patch mode so existing unrelated defined names remain).
 
     Args:
         graph: Read view whose cells are written.
         destination: Output path. Parent directories must already exist.
+        in_place: If True, load `destination` as the base workbook and
+            atomically rewrite it in place (implies overwriting `destination`).
+        template: Optional path to an existing `.xlsx` / `.xlsm` workbook to
+            copy and patch into `destination`. Cannot point to a different file
+            than `destination` when `in_place` is True.
         formula_style: Reference spelling. Default `A1_EXCEL` keeps `$` on
             absolute axes and omits the host sheet prefix. `R1C1` is not
-            persisted for normal formula cells; shared-formula groups use
-            interned relative shapes (the R1C1 dialect) and store the master
-            cell in A1, which is what Excel and fastpyxl persist on disk.
+            persisted for normal formula cells.
         coerce_relative_refs: If True, bind relative axes to absolute
             indexes before spelling (`$` on both axes in `A1_EXCEL`).
-            Shared-formula grouping is skipped (absolute fills are not a
-            shared relative shape).
-        overwrite: If False (default), raise when `destination` exists.
-            The destination is always a new file; `graph`'s original
-            workbook is never saved in place. `bindings_workbook` is opened
-            read-only when bound labels are included (`include_bound_labels`
-            is True).
+        overwrite: If False (default) and `in_place` is False, raise when
+            `destination` exists.
         include_defined_names: If True (default), write `named_ranges` and
-            `named_range_ranges` as workbook-global defined names. Set False
-            to omit the name table.
+            `named_range_ranges` as workbook-global defined names.
         shared_formulas: Group interned autofill runs into Excel shared
-            formulas (`t="shared"`). `auto` (default) groups when
-            `graph.formula_shapes` is warm and skips grouping when it is
-            missing. `off` always writes per-cell A1. `require` fails if the
-            overlay is missing. The writer does not auto-rewarm (GitHub
-            #560). `project()` drops the overlay on the clone; rewarm
-            `projection.projected_graph.formula_shapes` before writing a
-            `ProjectionResult` if you want grouping. Stale shapes,
-            non-contiguous or mixed-axis leftovers, array formulas, and
-            `INDIRECT` emit per-cell rather than an invalid shared formula.
+            formulas (`t="shared"`): `auto`, `off`, or `require`.
         series_bindings: Optional sidecar used to locate bound labels and
-            input domains for cell validation. Requires
-            `bindings_workbook` when `include_bound_labels` is True, or
-            when input series declare `relations` and cell validation is
-            enabled.
-        bindings_workbook: Workbook the sidecar describes. Required when
-            bound labels are included, or when cell validation needs
-            relation partners from the sidecar.
+            input domains for cell validation.
+        bindings_workbook: Workbook the sidecar describes. Defaults to the
+            base workbook when `in_place=True` or `template` is set; required
+            in clean-room mode when bound labels or input relations are used.
         include_bound_labels: If True (default) and `series_bindings` is
-            set, write `row_label` / `column_header` / `kind: cell` /
-            attribute source cells that are missing from `graph`. Formula
-            labels whose static deps are not already in the view or bound
-            labels are refused. The original graph is not mutated.
+            set, include `row_label` / `column_header` / `kind: cell` /
+            attribute source cells missing from `graph`.
         include_cell_validation: If True (default), write Excel data
-            validations for constrained inputs. With `series_bindings`,
-            rules come from input-series `enum`, `between`,
-            `real_between`, `from_workbook`, `value_map` needles, and
-            `relations`, unioned with `cell_type_env` domains on unbound
-            value leaves (conflicts fail closed). Constants, outputs, and
-            internals are skipped. Without bindings, value cells in
-            `cell_type_env` (including a projection's projected graph)
-            are used. Enum members that cannot form an inline list fall
-            back to a custom formula. Formulas longer than 255
-            characters, relation partners missing from the written view,
-            and `from_workbook` inputs with no cached value fail closed.
+            validations for constrained inputs. In patch mode, existing
+            validation ranges on rewritten or vacated cells are split and
+            replaced without duplicating rules.
 
     Raises:
-        FileExistsError: If `destination` exists and `overwrite` is False.
-        ValueError: If the view is empty, spans multiple sheets without
-            `sheet_order`, a formula cell has no `formula_ast`,
-            `formula_style` is `R1C1`, a relative axis has no host
-            address, an array formula is missing its observed spill / CSE
-            `ref`, a defined name cannot be expressed as a cell or
-            rectangle, `shared_formulas` is not a known mode,
-            `shared_formulas='require'` and `formula_shapes` is missing, or
-            `series_bindings` is set with `include_bound_labels` and without
-            `bindings_workbook`, a bound formula label cannot be copied
-            as a static overlay, or a constrained input cannot be written
-            as Excel data validation.
+        FileNotFoundError: If `in_place=True` and `destination` does not exist,
+            or `template` does not exist.
+        FileExistsError: If `destination` exists, `in_place` is False, and
+            `overwrite` is False.
+        IsADirectoryError: If `destination` or `template` is a directory.
+        ValueError: On invalid options, unrenderable formulas, macro extension
+            mismatch (`.xlsm` vs `.xlsx`), off-closure overwrite collision, or
+            dangling off-closure references to vacated cells.
     """
     dest = Path(destination)
     style = FormulaStyle(formula_style)
     shared_mode = parse_shared_formulas_mode(shared_formulas)
-    if series_bindings is not None and include_bound_labels and bindings_workbook is None:
+    base_path = _resolve_base_workbook(
+        dest, in_place=in_place, template=template, overwrite=overwrite
+    )
+    effective_bindings_wb: Path | str | None = (
+        bindings_workbook if bindings_workbook is not None else base_path
+    )
+
+    if series_bindings is not None and include_bound_labels and effective_bindings_wb is None:
         raise ValueError(
             "bindings_workbook is required when series_bindings is set "
             "and include_bound_labels is True"
@@ -208,10 +190,6 @@ def write_workbook(
             "R1C1 formula style is not persisted for normal formula cells; "
             "shared-formula groups store the master in A1 (Excel's xlsx dialect)"
         )
-    if dest.exists() and not overwrite:
-        raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
-    if dest.exists() and dest.is_dir():
-        raise IsADirectoryError(f"Destination is a directory: {dest}")
     if len(graph) == 0:
         raise ValueError("Cannot write an empty graph view")
 
@@ -222,21 +200,103 @@ def write_workbook(
         shared_formulas=shared_mode,
     )
     if series_bindings is not None and include_bound_labels:
-        assert bindings_workbook is not None
-        extra_planned = _plan_bound_label_cells(
-            graph,
-            series_bindings=series_bindings,
-            bindings_workbook=bindings_workbook,
-            style=style,
-            coerce_relative_refs=coerce_relative_refs,
+        assert effective_bindings_wb is not None
+        same_as_base = (
+            base_path is not None and Path(effective_bindings_wb).resolve() == base_path.resolve()
         )
-        planned = _merge_planned_cells(extra_planned, planned)
+        if not same_as_base:
+            extra_planned = _plan_bound_label_cells(
+                graph,
+                series_bindings=series_bindings,
+                bindings_workbook=effective_bindings_wb,
+                style=style,
+                coerce_relative_refs=coerce_relative_refs,
+            )
+            planned = _merge_planned_cells(extra_planned, planned)
+    planned_names = _plan_defined_names(graph) if include_defined_names else []
+
+    if base_path is None:
+        _write_clean_workbook(
+            graph,
+            dest,
+            planned=planned,
+            planned_names=planned_names,
+            include_cell_validation=include_cell_validation,
+            series_bindings=series_bindings,
+            bindings_workbook=effective_bindings_wb,
+        )
+        return
+
+    _write_patched_workbook(
+        graph,
+        dest,
+        base_path=base_path,
+        planned=planned,
+        planned_names=planned_names,
+        include_defined_names=include_defined_names,
+        include_cell_validation=include_cell_validation,
+        series_bindings=series_bindings,
+        bindings_workbook=effective_bindings_wb,
+    )
+
+
+def _resolve_base_workbook(
+    dest: Path,
+    *,
+    in_place: bool,
+    template: Path | str | None,
+    overwrite: bool,
+) -> Path | None:
+    if dest.exists() and dest.is_dir():
+        raise IsADirectoryError(f"Destination is a directory: {dest}")
+
+    base_path: Path | None = None
+    if in_place:
+        if template is not None and Path(template).resolve() != dest.resolve():
+            raise ValueError(
+                "Cannot combine in_place=True with a different template path; "
+                "pass template=... without in_place=True to write to another file"
+            )
+        if not dest.exists():
+            raise FileNotFoundError(f"Cannot patch missing workbook in place: {dest}")
+        base_path = dest
+    elif template is not None:
+        base_path = Path(template)
+        if base_path.exists() and base_path.is_dir():
+            raise IsADirectoryError(f"Template is a directory: {base_path}")
+        if not base_path.exists():
+            raise FileNotFoundError(f"Template workbook not found: {base_path}")
+        if dest.exists() and not overwrite:
+            raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
+    else:
+        if dest.exists() and not overwrite:
+            raise FileExistsError(f"Refusing to overwrite existing file: {dest}")
+
+    if base_path is not None:
+        base_xlsm = base_path.suffix.lower() == ".xlsm"
+        dest_xlsm = dest.suffix.lower() == ".xlsm"
+        if base_xlsm != dest_xlsm:
+            raise ValueError(
+                f"Template extension ({base_path.suffix!r}) and destination extension "
+                f"({dest.suffix!r}) must agree on macro support (.xlsm)"
+            )
+    return base_path
+
+
+def _write_clean_workbook(
+    graph: GraphReadView,
+    dest: Path,
+    *,
+    planned: list[tuple[str, str, object]],
+    planned_names: list[tuple[str, str]],
+    include_cell_validation: bool,
+    series_bindings: WorkbookSeriesBindings | None,
+    bindings_workbook: Path | str | None,
+) -> None:
     sheet_names = _ordered_sheet_names(
         graph,
         present={sheet for sheet, _coord, _value in planned},
     )
-    planned_names = _plan_defined_names(graph) if include_defined_names else []
-
     wb = Workbook()
     tmp: Path | None = None
     try:
@@ -263,6 +323,554 @@ def write_workbook(
         wb.close()
         if tmp is not None:
             tmp.unlink(missing_ok=True)
+
+
+@dataclass(frozen=True, slots=True)
+class _ArrayBlock:
+    sheet: str
+    anchor_coord: str
+    ref: str
+    min_col: int
+    min_row: int
+    max_col: int
+    max_row: int
+
+    def contains(self, col_idx: int, row_idx: int) -> bool:
+        return self.min_col <= col_idx <= self.max_col and self.min_row <= row_idx <= self.max_row
+
+
+def _is_true_array_formula(value: object) -> bool:
+    return isinstance(value, ArrayFormula) and not isinstance(value, SharedFormula)
+
+
+def _parse_a1_rect_bounds(ref: str) -> tuple[int, int, int, int]:
+    cleaned = ref.replace("$", "").strip()
+    start_str, sep, end_str = cleaned.partition(":")
+    c1_str, r1 = coordinate_from_string(start_str)
+    if not sep:
+        col_i = int(column_index_from_string(c1_str))
+        return col_i, int(r1), col_i, int(r1)
+    c2_str, r2 = coordinate_from_string(end_str)
+    col_a = int(column_index_from_string(c1_str))
+    col_b = int(column_index_from_string(c2_str))
+    return min(col_a, col_b), min(int(r1), int(r2)), max(col_a, col_b), max(int(r1), int(r2))
+
+
+def _expand_rect_keys(
+    sheet: str, min_col: int, min_row: int, max_col: int, max_row: int
+) -> set[str]:
+    out: set[str] = set()
+    for row in range(min_row, max_row + 1):
+        for col in range(min_col, max_col + 1):
+            out.add(format_key(sheet, f"{get_column_letter(col)}{row}"))
+    return out
+
+
+def _write_patched_workbook(
+    graph: GraphReadView,
+    dest: Path,
+    *,
+    base_path: Path,
+    planned: list[tuple[str, str, object]],
+    planned_names: list[tuple[str, str]],
+    include_defined_names: bool,
+    include_cell_validation: bool,
+    series_bindings: WorkbookSeriesBindings | None,
+    bindings_workbook: Path | str | None,
+) -> None:
+    from .cell_validation import apply_constrained_input_validations, strip_validation_coords
+
+    keep_vba = base_path.suffix.lower() == ".xlsm"
+    wb = load_workbook(base_path, data_only=False, keep_vba=keep_vba)
+    tmp: Path | None = None
+    try:
+        raw_extracted = getattr(graph, "extracted_keys", None)
+        current_keys = {normalize_key(k) for k in graph}
+        baseline_keys = (
+            {normalize_key(k) for k in raw_extracted}
+            if raw_extracted is not None
+            else set(current_keys)
+        )
+
+        baseline_owned_keys = set(baseline_keys)
+        off_closure_arrays: dict[str, list[_ArrayBlock]] = defaultdict(list)
+        for sheet_name in wb.sheetnames:
+            ws = wb[sheet_name]
+            for anchor_coord, ref_str in ws.array_formulae.items():
+                c1, r1, c2, r2 = _parse_a1_rect_bounds(str(ref_str))
+                anchor_key = format_key(sheet_name, anchor_coord)
+                if anchor_key in baseline_keys:
+                    baseline_owned_keys.update(_expand_rect_keys(sheet_name, c1, r1, c2, r2))
+                else:
+                    off_closure_arrays[sheet_name].append(
+                        _ArrayBlock(
+                            sheet=sheet_name,
+                            anchor_coord=anchor_coord,
+                            ref=str(ref_str),
+                            min_col=c1,
+                            min_row=r1,
+                            max_col=c2,
+                            max_row=r2,
+                        )
+                    )
+
+        planned_keys = {format_key(sheet, coord) for sheet, coord, _ in planned}
+        covered_by_planned_arrays: set[str] = set()
+
+        for sheet_name, coord, value in planned:
+            cell_key = format_key(sheet_name, coord)
+            col_str, row_i = coordinate_from_string(coord)
+            col_i = int(column_index_from_string(col_str))
+            for block in off_closure_arrays.get(sheet_name, ()):
+                if block.contains(col_i, int(row_i)):
+                    raise ValueError(
+                        f"Cannot write {cell_key} during in-place writeback: overlaps "
+                        f"off-graph array formula at {format_key(sheet_name, block.anchor_coord)} "
+                        f"({block.ref})"
+                    )
+            if cell_key not in baseline_owned_keys and sheet_name in wb.sheetnames:
+                ws = wb[sheet_name]
+                if (int(row_i), col_i) in ws._cells and ws[coord].value is not None:
+                    raise ValueError(
+                        f"Cannot write {cell_key} during in-place writeback: "
+                        "off-graph cell is already occupied"
+                    )
+            if _is_true_array_formula(value):
+                assert isinstance(value, ArrayFormula)
+                if value.ref:
+                    ac1, ar1, ac2, ar2 = _parse_a1_rect_bounds(str(value.ref))
+                    covered_by_planned_arrays.update(
+                        _expand_rect_keys(sheet_name, ac1, ar1, ac2, ar2)
+                    )
+                    if sheet_name in wb.sheetnames:
+                        ws = wb[sheet_name]
+                        for r_idx in range(ar1, ar2 + 1):
+                            for c_idx in range(ac1, ac2 + 1):
+                                for block in off_closure_arrays.get(sheet_name, ()):
+                                    if block.contains(c_idx, r_idx):
+                                        raise ValueError(
+                                            f"Cannot write array formula at {cell_key} ({value.ref}) "
+                                            "during in-place writeback: overlaps off-graph array "
+                                            f"formula at {format_key(sheet_name, block.anchor_coord)} "
+                                            f"({block.ref})"
+                                        )
+                                member_coord = f"{get_column_letter(c_idx)}{r_idx}"
+                                member_key = format_key(sheet_name, member_coord)
+                                if (
+                                    member_key not in baseline_owned_keys
+                                    and (r_idx, c_idx) in ws._cells
+                                    and ws[member_coord].value is not None
+                                ):
+                                    raise ValueError(
+                                        f"Cannot write array formula at {cell_key} ({value.ref}) "
+                                        f"during in-place writeback: spill cell {member_key} "
+                                        "is occupied by an off-graph value"
+                                    )
+
+        dangling_candidates = baseline_owned_keys - planned_keys - covered_by_planned_arrays
+        if dangling_candidates:
+            _validate_no_dangling_off_closure_refs(
+                wb,
+                graph=graph,
+                vacated_keys=dangling_candidates,
+                baseline_owned_keys=baseline_owned_keys,
+                planned_keys=planned_keys,
+                planned_names=planned_names if include_defined_names else [],
+                include_defined_names=include_defined_names,
+            )
+
+        for sheet_name, _coord, _value in planned:
+            if sheet_name not in wb.sheetnames:
+                wb.create_sheet(sheet_name)
+        sheets: dict[str, Worksheet] = {name: wb[name] for name in wb.sheetnames}
+
+        cells_to_clear = baseline_owned_keys - planned_keys
+        for clear_key in sorted(cells_to_clear):
+            c_sheet, c_coord = parse_address(clear_key)
+            if c_sheet not in sheets:
+                continue
+            ws = sheets[c_sheet]
+            col_str, row_i = coordinate_from_string(c_coord)
+            col_i = int(column_index_from_string(col_str))
+            if (int(row_i), col_i) in ws._cells or c_coord in ws.array_formulae:
+                ws[c_coord] = None
+
+        for sheet_name, coord, value in planned:
+            sheets[sheet_name][coord] = value
+
+        validation_strip_keys = (
+            baseline_owned_keys | planned_keys if include_cell_validation else cells_to_clear
+        )
+        strip_by_sheet: dict[str, set[str]] = defaultdict(set)
+        for vkey in validation_strip_keys:
+            v_sheet, v_coord = parse_address(vkey)
+            strip_by_sheet[v_sheet].add(v_coord)
+        strip_validation_coords(sheets, strip_by_sheet)
+
+        if include_cell_validation:
+            apply_constrained_input_validations(
+                sheets,
+                graph,
+                planned=planned,
+                series_bindings=series_bindings,
+                bindings_workbook=bindings_workbook,
+            )
+
+        if include_defined_names:
+            for name, attr_text in planned_names:
+                wb.defined_names.add(DefinedName(name=name, attr_text=attr_text))
+
+        wb.calculation.fullCalcOnLoad = True
+        tmp = dest.with_name(f".{dest.name}.{os.getpid()}.tmp")
+        wb.save(tmp)
+        os.replace(tmp, dest)
+        tmp = None
+    finally:
+        vba_archive = getattr(wb, "vba_archive", None)
+        if (
+            vba_archive is not None
+            and getattr(vba_archive, "fp", None) is not None
+            and not vba_archive.fp.closed
+        ):
+            vba_archive.close()
+        wb.close()
+        if tmp is not None:
+            tmp.unlink(missing_ok=True)
+
+
+def _validate_no_dangling_off_closure_refs(
+    wb: Workbook,
+    *,
+    graph: GraphReadView,
+    vacated_keys: set[str],
+    baseline_owned_keys: set[str],
+    planned_keys: set[str],
+    planned_names: list[tuple[str, str]],
+    include_defined_names: bool,
+) -> None:
+    vacated_by_sheet: dict[str, list[tuple[int, int, str]]] = defaultdict(list)
+    for vkey in sorted(vacated_keys):
+        v_sheet, v_coord = parse_address(vkey)
+        c_str, r_int = coordinate_from_string(v_coord)
+        vacated_by_sheet[v_sheet].append((int(column_index_from_string(c_str)), int(r_int), vkey))
+
+    wb_maps = build_named_range_map(wb)
+    cell_names = dict(wb_maps.cell_map)
+    range_names = dict(wb_maps.range_map)
+    if include_defined_names:
+        for name, dest_cell in (graph.named_ranges or {}).items():
+            cell_names[name] = dest_cell
+            range_names.pop(name, None)
+        for name, dest_range in (graph.named_range_ranges or {}).items():
+            range_names[name] = dest_range
+            cell_names.pop(name, None)
+
+    effective_global_names: dict[str, str] = {}
+    for name, defn in wb.defined_names.items():
+        attr_text = getattr(defn, "attr_text", None)
+        if isinstance(attr_text, str) and attr_text:
+            effective_global_names[str(name)] = attr_text
+    for name, attr_text in planned_names:
+        effective_global_names[name] = attr_text
+
+    default_sheet = wb.sheetnames[0] if wb.sheetnames else "Sheet1"
+    for name, attr_text in sorted(effective_global_names.items()):
+        if attr_text.startswith(("{", '"', "#")):
+            continue
+        _check_formula_against_vacated(
+            f"={attr_text}",
+            host_sheet=default_sheet,
+            host_coord="A1",
+            source_label=f"defined name {name!r}",
+            vacated_by_sheet=vacated_by_sheet,
+            sheetnames=list(wb.sheetnames),
+            named_ranges=cell_names,
+            named_range_ranges=range_names,
+        )
+
+    for sheet_name in wb.sheetnames:
+        ws = wb[sheet_name]
+        for name, defn in ws.defined_names.items():
+            attr_text = getattr(defn, "attr_text", None)
+            if (
+                not isinstance(attr_text, str)
+                or not attr_text
+                or attr_text.startswith(("{", '"', "#"))
+            ):
+                continue
+            _check_formula_against_vacated(
+                f"={attr_text}",
+                host_sheet=sheet_name,
+                host_coord="A1",
+                source_label=f"sheet defined name {sheet_name}!{name}",
+                vacated_by_sheet=vacated_by_sheet,
+                sheetnames=list(wb.sheetnames),
+                named_ranges=cell_names,
+                named_range_ranges=range_names,
+            )
+
+        for (row_i, col_i), cell in ws._cells.items():
+            coord = f"{get_column_letter(col_i)}{row_i}"
+            cell_key = format_key(sheet_name, coord)
+            if cell_key in baseline_owned_keys or cell_key in planned_keys:
+                continue
+            raw_val = cell.value
+            formula_text: str | None = None
+            if isinstance(raw_val, ArrayFormula):
+                raw_text = raw_val.text or ""
+                if raw_text:
+                    formula_text = raw_text if raw_text.startswith("=") else f"={raw_text}"
+            elif isinstance(raw_val, str) and raw_val.startswith("="):
+                formula_text = raw_val
+            if formula_text is None:
+                continue
+            _check_formula_against_vacated(
+                formula_text,
+                host_sheet=sheet_name,
+                host_coord=coord,
+                source_label=f"off-graph cell {cell_key}",
+                vacated_by_sheet=vacated_by_sheet,
+                sheetnames=list(wb.sheetnames),
+                named_ranges=cell_names,
+                named_range_ranges=range_names,
+            )
+
+
+def _check_formula_against_vacated(
+    formula_text: str,
+    *,
+    host_sheet: str,
+    host_coord: str,
+    source_label: str,
+    vacated_by_sheet: dict[str, list[tuple[int, int, str]]],
+    sheetnames: list[str],
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]],
+) -> None:
+    anchor = format_key(host_sheet, host_coord)
+    ast = parse_preserving_axes_optional(
+        formula_text,
+        anchor=anchor,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+    if ast is not None:
+        _walk_bound_ast_for_vacated(
+            bind_axes(ast, anchor),
+            source_label=source_label,
+            vacated_by_sheet=vacated_by_sheet,
+            sheetnames=sheetnames,
+        )
+        return
+
+    _check_unparsed_formula_for_vacated(
+        formula_text,
+        host_sheet=host_sheet,
+        source_label=source_label,
+        vacated_by_sheet=vacated_by_sheet,
+        named_ranges=named_ranges,
+        named_range_ranges=named_range_ranges,
+    )
+
+
+def _sheets_in_span(start_sheet: str, end_sheet: str, sheetnames: list[str]) -> list[str]:
+    if start_sheet == end_sheet:
+        return [start_sheet]
+    if start_sheet in sheetnames and end_sheet in sheetnames:
+        i1 = sheetnames.index(start_sheet)
+        i2 = sheetnames.index(end_sheet)
+        lo, hi = min(i1, i2), max(i1, i2)
+        return sheetnames[lo : hi + 1]
+    return [start_sheet, end_sheet]
+
+
+def _raise_if_rect_hits_vacated(
+    sheets: list[str],
+    *,
+    c_lo: int,
+    r_lo: int,
+    c_hi: int,
+    r_hi: int,
+    source_label: str,
+    vacated_by_sheet: dict[str, list[tuple[int, int, str]]],
+) -> None:
+    for sheet in sheets:
+        for v_col, v_row, v_key in vacated_by_sheet.get(sheet, ()):
+            if c_lo <= v_col <= c_hi and r_lo <= v_row <= r_hi:
+                raise ValueError(
+                    f"Cannot vacate {v_key} during in-place writeback: "
+                    f"{source_label} still references it"
+                )
+
+
+def _walk_bound_ast_for_vacated(
+    node: AstNode,
+    *,
+    source_label: str,
+    vacated_by_sheet: dict[str, list[tuple[int, int, str]]],
+    sheetnames: list[str],
+) -> None:
+    match node:
+        case CellRefNode(ref):
+            assert isinstance(ref.col, AbsoluteAxis) and isinstance(ref.row, AbsoluteAxis)
+            _raise_if_rect_hits_vacated(
+                [ref.sheet],
+                c_lo=ref.col.index,
+                r_lo=ref.row.index,
+                c_hi=ref.col.index,
+                r_hi=ref.row.index,
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+        case RangeNode(start_ref, end_ref):
+            assert isinstance(start_ref.col, AbsoluteAxis) and isinstance(
+                start_ref.row, AbsoluteAxis
+            )
+            assert isinstance(end_ref.col, AbsoluteAxis) and isinstance(end_ref.row, AbsoluteAxis)
+            _raise_if_rect_hits_vacated(
+                _sheets_in_span(start_ref.sheet, end_ref.sheet, sheetnames),
+                c_lo=min(start_ref.col.index, end_ref.col.index),
+                r_lo=min(start_ref.row.index, end_ref.row.index),
+                c_hi=max(start_ref.col.index, end_ref.col.index),
+                r_hi=max(start_ref.row.index, end_ref.row.index),
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+        case WholeColumnNode(sheet=sheet, start_col=start_col, end_col=end_col):
+            assert isinstance(start_col, AbsoluteAxis) and isinstance(end_col, AbsoluteAxis)
+            _raise_if_rect_hits_vacated(
+                [sheet],
+                c_lo=min(start_col.index, end_col.index),
+                r_lo=1,
+                c_hi=max(start_col.index, end_col.index),
+                r_hi=1_048_576,
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+        case WholeRowNode(sheet=sheet, start_row=start_row, end_row=end_row):
+            assert isinstance(start_row, AbsoluteAxis) and isinstance(end_row, AbsoluteAxis)
+            _raise_if_rect_hits_vacated(
+                [sheet],
+                c_lo=1,
+                r_lo=min(start_row.index, end_row.index),
+                c_hi=16_384,
+                r_hi=max(start_row.index, end_row.index),
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+        case FunctionCallNode(name, args):
+            fn_upper = normalize_excel_function_name(name)
+            if fn_upper in _DYNAMIC_OVERLAY_FNS:
+                raise ValueError(
+                    f"Cannot vacate cells during in-place writeback: {source_label} uses "
+                    f"dynamic {fn_upper}() whose targets cannot be statically verified"
+                )
+            for arg in args:
+                _walk_bound_ast_for_vacated(
+                    arg,
+                    source_label=source_label,
+                    vacated_by_sheet=vacated_by_sheet,
+                    sheetnames=sheetnames,
+                )
+        case BinaryOpNode(_, left, right):
+            _walk_bound_ast_for_vacated(
+                left,
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+                sheetnames=sheetnames,
+            )
+            _walk_bound_ast_for_vacated(
+                right,
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+                sheetnames=sheetnames,
+            )
+        case UnaryOpNode(_, operand):
+            _walk_bound_ast_for_vacated(
+                operand,
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+                sheetnames=sheetnames,
+            )
+        case _:
+            return
+
+
+def _check_unparsed_formula_for_vacated(
+    formula_text: str,
+    *,
+    host_sheet: str,
+    source_label: str,
+    vacated_by_sheet: dict[str, list[tuple[int, int, str]]],
+    named_ranges: dict[str, tuple[str, str]],
+    named_range_ranges: dict[str, tuple[str, str, str]],
+) -> None:
+    dyn_hits = _find_function_calls_with_spans(formula_text, _DYNAMIC_OVERLAY_FNS)
+    if dyn_hits:
+        fn_name = dyn_hits[0][0].upper()
+        raise ValueError(
+            f"Cannot vacate cells during in-place writeback: {source_label} uses "
+            f"dynamic {fn_name}() whose targets cannot be statically verified"
+        )
+
+    normalizer = FormulaNormalizer(named_ranges, named_range_ranges)
+    masked = mask_ref_only_function_calls(formula_text)
+    norm = normalizer.normalize(masked, host_sheet)
+
+    range_spans: list[tuple[int, int]] = []
+    for start, end, span in parse_range_refs_with_spans(norm):
+        range_spans.append(span)
+        sh = start.sheet if start.sheet is not None else host_sheet
+        end_sh = end.sheet if end.sheet is not None else sh
+        sheets = [sh] if sh == end_sh else [sh, end_sh]
+        if start.range_kind == "whole_column":
+            c1 = int(column_index_from_string(start.column))
+            c2 = int(column_index_from_string(end.column))
+            _raise_if_rect_hits_vacated(
+                sheets,
+                c_lo=min(c1, c2),
+                r_lo=1,
+                c_hi=max(c1, c2),
+                r_hi=1_048_576,
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+        elif start.range_kind == "whole_row":
+            _raise_if_rect_hits_vacated(
+                sheets,
+                c_lo=1,
+                r_lo=min(start.row, end.row),
+                c_hi=16_384,
+                r_hi=max(start.row, end.row),
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+        else:
+            c1 = int(column_index_from_string(start.column))
+            c2 = int(column_index_from_string(end.column))
+            _raise_if_rect_hits_vacated(
+                sheets,
+                c_lo=min(c1, c2),
+                r_lo=min(start.row, end.row),
+                c_hi=max(c1, c2),
+                r_hi=max(start.row, end.row),
+                source_label=source_label,
+                vacated_by_sheet=vacated_by_sheet,
+            )
+
+    without_ranges = mask_spans(norm, range_spans) if range_spans else norm
+    for ref in parse_standalone_cell_refs(without_ranges):
+        sh = ref.sheet if ref.sheet is not None else host_sheet
+        col_i = int(column_index_from_string(ref.column))
+        _raise_if_rect_hits_vacated(
+            [sh],
+            c_lo=col_i,
+            r_lo=ref.row,
+            c_hi=col_i,
+            r_hi=ref.row,
+            source_label=source_label,
+            vacated_by_sheet=vacated_by_sheet,
+        )
 
 
 def _cell_label(node: NodeView, fallback: str) -> str:

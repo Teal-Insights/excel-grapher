@@ -210,6 +210,9 @@ def _write_graph_frames(graph: Any, buf: BinaryIO) -> None:
             "named_range_ranges": (
                 dict(graph.named_range_ranges) if graph.named_range_ranges else None
             ),
+            "extracted_keys": (
+                sorted(graph.extracted_keys) if graph.extracted_keys is not None else None
+            ),
             "domains_handle": _domains_handle_payload(graph),
         },
         buf,
@@ -256,6 +259,13 @@ def _read_graph_frames(buf: BinaryIO, *, version: int) -> Any:
     graph.named_ranges = dict(nr) if nr else None
     nrr = part1.get("named_range_ranges")
     graph.named_range_ranges = dict(nrr) if nrr else None
+    raw_extracted = part1.get("extracted_keys")
+    if raw_extracted is not None:
+        graph.extracted_keys = frozenset(
+            keys[key_index[k]] if k in key_index else k for k in raw_extracted
+        )
+    else:
+        graph.extracted_keys = None
     graph.sheet_bounds = None
     graph.preparsed_formulas = None
     graph.formula_shapes = None

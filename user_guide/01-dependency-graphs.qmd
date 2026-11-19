@@ -36,11 +36,23 @@ print(to_graphviz(g))  # GraphViz DOT
 ### Writing a workbook {#write-workbook}
 
 `write_workbook` is the inverse of `create_dependency_graph`: it writes a
-`GraphReadView` (`DependencyGraph` or `ProjectionResult`) to a **new** `.xlsx`.
-There is no template-patch mode. If `destination` already exists, pass
-`overwrite=True`. The destination is always a new file; the original workbook
-is never saved in place. Passing `series_bindings` opens that workbook
-read-only so bound labels can be copied.
+`GraphReadView` (`DependencyGraph` or `ProjectionResult`) either to a
+**clean-room new** `.xlsx` (default) or by **patching an existing**
+`.xlsx` / `.xlsm` in place (`in_place=True`) or from a template
+(`template=...`):
+
+- **Clean-room new file** (default): writes only sheets and cells from the
+  view (plus optional bound labels). If `destination` already exists, pass
+  `overwrite=True`.
+- **In-place / template patch** (`in_place=True` or `template=Path(...)`):
+  loads the existing workbook, preserves styles, number formats, merged cells,
+  charts, VBA (`keep_vba=True` for `.xlsm`), off-closure sheets/cells, and
+  unrelated defined names, clears cells vacated by `move_node`,
+  `remove_node`, `compress_*`, or `ProjectionResult`, and sets
+  `fullCalcOnLoad=True` so desktop Excel recalculates downstream formulas on
+  open. Fails closed if a new or moved cell would overwrite an occupied
+  off-closure cell or array block, or if vacating a cell leaves a dangling
+  reference in an off-closure formula or defined name.
 
 ```python
 from pathlib import Path
@@ -48,12 +60,18 @@ from pathlib import Path
 from excel_grapher.grapher import create_dependency_graph, write_workbook
 from excel_grapher.series_bindings import load_series_bindings
 
-graph = create_dependency_graph(Path("model.xlsx"), ["Sheet1!B2"])
+workbook = Path("model.xlsx")
+graph = create_dependency_graph(workbook, ["Sheet1!B2"])
 graph.set_node_value("Sheet1!A1", 42)
 graph.move_node("Sheet1!B2", "Sheet1!C3")
-write_workbook(graph, Path("edited.xlsx"))
 
-workbook = Path("model.xlsx")
+# Rewrite model.xlsx in place (preserving styles, charts, and off-closure cells)
+write_workbook(graph, workbook, in_place=True)
+
+# Or copy-and-patch from a template into a separate file
+write_workbook(graph, Path("patched.xlsx"), template=workbook)
+
+# Or write a clean-room workbook containing only the extracted closure + bound labels
 bindings = load_series_bindings(workbook.with_suffix(".bindings.yaml"))
 graph = create_dependency_graph(workbook, ["Sheet1!B2"])
 write_workbook(
@@ -113,17 +131,19 @@ moment. A later `move_node` on the original does not update an existing
 projected workbook should include them. Writing a pre-move projection is
 still valid; it exports the pre-move view.
 
-Extraction is a target closure, so styles, charts, VBA, and cells outside
-the view do not appear in the output. That is accepted v1 lossiness.
-Pass `series_bindings` and `bindings_workbook` to also write `row_label`,
-`column_header`, `kind: cell`, and attribute source cells that bindings
-read. Those labels are often outside the formula closure. Formula headers
+Extraction is a target closure, so in clean-room mode (`in_place=False`,
+`template=None`) styles, charts, VBA, and cells outside the view do not appear
+in the output; use `in_place=True` or `template=...` when you want to preserve
+the surrounding workbook. In clean-room mode, pass `series_bindings` and
+`bindings_workbook` to also write `row_label`, `column_header`, `kind: cell`,
+and attribute source cells that bindings read (in `in_place` / `template`
+mode, `bindings_workbook` defaults to the base workbook and existing bound
+labels remain in place). Formula headers
 are copied only when every static reference is already in the view or is
 itself a bound label; missing deps, `OFFSET`, and `INDIRECT` fail closed
-instead of extracting a second closure. The original graph is not mutated;
-the bindings workbook is opened read-only. Set `include_bound_labels=False`
-to keep the strict target-closure file. `bindings_workbook` is required
-only when bound labels are included.
+instead of extracting a second closure. The original graph is not mutated.
+Set `include_bound_labels=False` to keep the strict target-closure file in
+clean-room mode.
 
 Constrained inputs are written back as Excel data validations.
 `series_bindings` supplies input domains: input `enum` and `value_map`

@@ -19,10 +19,11 @@ from .guard import And, Arith, CellRef, Compare, GuardExpr, Neg, Not, Or, intern
 from .guard import Literal as GuardLiteral
 from .node import Node, NodeKey
 
+# 11: persist `extracted_keys` for in-place write-back vacated-cell tracking.
 # 9: persist `is_array_formula` / `array_formula_ref` for CSE and spill write-back.
 # 8: drop stored `normalized_formula`; strings are derived via `render_formula`.
 # 7: interned `formula_asts` pool as encoded trees; nodes store `formula_ast_id`.
-GRAPH_CACHE_SCHEMA_VERSION = 10
+GRAPH_CACHE_SCHEMA_VERSION = 11
 
 
 class GraphCacheMeta(TypedDict):
@@ -467,6 +468,9 @@ def dependency_graph_to_json(graph: DependencyGraph) -> dict[str, Any]:
         "nodes": nodes,
         "edges": edges,
         "leaf_classification": graph.leaf_classification,
+        "extracted_keys": (
+            sorted(graph.extracted_keys) if graph.extracted_keys is not None else None
+        ),
         "formula_asts": formula_asts,
         "domains_handle": _json_domains_handle(graph),
     }
@@ -486,6 +490,13 @@ def dependency_graph_from_json(payload: dict[str, Any]) -> DependencyGraph:
         raise TypeError("graph nodes/edges must be lists")
 
     g = DependencyGraph()
+    extracted_keys = payload.get("extracted_keys")
+    if extracted_keys is not None:
+        if not isinstance(extracted_keys, list) or not all(
+            isinstance(k, str) for k in extracted_keys
+        ):
+            raise TypeError("extracted_keys must be list[str] or null")
+        g.extracted_keys = frozenset(cast(list[NodeKey], extracted_keys))
     if leaf_cls is not None:
         if not isinstance(leaf_cls, dict) or not all(
             isinstance(k, str) and isinstance(v, str) for k, v in leaf_cls.items()
